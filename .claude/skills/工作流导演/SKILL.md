@@ -104,6 +104,7 @@ description: |
 ## 协作模式（B）流程
 
 - 必须从 `.claude/workflows/collab_v2.json` 读取活跃 stages，再逐阶段调度。
+- Stage 1 创建项目目录并保存 `01_theme.md` 后，必须立即执行 Stage 0 `memory-loader`，生成 `00_memory_packet.md`，然后才能进入 Stage 1.5。因为 Stage 0 需要项目名和项目目录，实际执行顺序是 Stage 1 → Stage 0 → Stage 1.5。
 - 你负责的是：
   - 选对当前 Stage 的 Subagent
   - 在强制停机点停住
@@ -149,7 +150,9 @@ description: |
 - **Stage 5.8 完成后**：抛出 3 款极道开头（暴击/撕裂/冷眼），必须明确等待用户确认选用哪款（A/B/C）。
 - **Stage 7 完成后**：主编给出评审意见后，必须明确等待用户确认：“是否同意按此建议修改草稿（产出 v2），还是直接过？”
 - **Stage 9 完成后**：给用户提供 A/B/C 三个选项，明确等待用户选择。
+- **Stage 11 完成前**：文本定稿后必须询问是否配图（Y/N），不能直接跳到纯文本交付或流程回顾。
 - **Stage 12.5 完成前**：必须明确等待用户选择是否导出 HTML，以及使用哪一套默认版式（A/B/C/D/N）。
+- **Stage 13 完成前**：禁止输出“完整流程回顾”“全部流程完成”之类总结。只要存在 `draft_v1.md` 且最终正文不是 `draft_v1.md`，就必须先调用 `edit-diff-learner`。
 
 ## Stage 6 前置门禁
 
@@ -177,6 +180,8 @@ Stage 9 测试得到用户确认放行后，将**自动跨入 Stage 10**。你�
 
 然后立即调用 humanizer 子代理，此处无需等待确认。
 
+Humanizer 返回后，下一步必须进入 Stage 11 的 Y/N 询问。禁止在 Humanizer 完成后直接宣布流程完成。
+
 ## Stage 11: 🎨 配图工坊 (Article Illustrator)
 
 在文本最终定稿后（无论是否执行了 Humanizer），**必须**询问用户：
@@ -196,6 +201,10 @@ N - 否，纯文字即可
 
 然后**再次中断（Yield）**，等待用户回复 Y/N。
 
+- 如果用户回复 `Y`：调用 `article-illustrator` 子代理，并按其两回合协议先输出配图策划方案。
+- 如果用户回复 `N`：明确记录“跳过配图”，继续 Stage 12。
+- 无论是否配图，都必须继续 Stage 12，不能在这里结束流程。
+
 ## Stage 12: 📤 终极收尾动作（生成排版纯净版）
 
 **纯净版 `_clean.txt` 现在由 Hook 脚本自动生成。**  
@@ -205,7 +214,13 @@ N - 否，纯文字即可
 2. Hook 事件里显式传入的正文文件路径
 3. 最后才回退到历史兼容的“最近修改终稿候选”逻辑
 
-如果没有触发，手动调用 `python scripts/generate_clean.py ...`
+如果没有触发，手动调用：
+
+```bash
+python scripts/generate_clean.py articles/[项目名]/[最终正文文件名]
+```
+
+Stage 12 完成前必须确认 `_clean.txt` 文件真实存在。若不存在，禁止进入 Stage 12.5 或输出最终总结。
 
 ## Stage 12.5: 📄 HTML 导出（可选）
 
@@ -247,6 +262,11 @@ N - 不导出
 ## Stage 13: 🧠 写作复盘与经验提炼
 
 Stage 12 和可选的 Stage 12.5 完成后，**自动调用 edit-diff-learner**进行复盘。前提是至少有过一次修改（非一稿到底）。
+
+硬规则：
+- 如果项目目录中存在 `draft_v1.md`，且 `run_manifest.json -> latest_body_file` 或 `clean_source_file` 不是 `draft_v1.md`，说明至少经历过一轮修改，必须调用 `edit-diff-learner`。
+- `edit-diff-learner` 必须输出 `articles/[项目名]/99_episode.md`。如果它判断无可学习差异，也要在返回摘要里明确说明跳过原因。
+- Stage 13 完成后，才允许输出完整流程回顾和“全部流程完成”。
 
 ```
 🧠 Stage 13 完成：写作复盘与经验提炼

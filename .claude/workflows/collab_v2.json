@@ -8,18 +8,20 @@
   },
   "stages": [
     {
-      "id": "0",
-      "agent": "memory-loader",
-      "optional": true,
-      "outputs": [
-        "00_memory_packet.md"
-      ]
-    },
-    {
       "id": "1",
       "agent": "writing-clarifier",
       "outputs": [
         "01_theme.md"
+      ]
+    },
+    {
+      "id": "0",
+      "agent": "memory-loader",
+      "inputs": [
+        "01_theme.md"
+      ],
+      "outputs": [
+        "00_memory_packet.md"
       ]
     },
     {
@@ -173,7 +175,6 @@
     {
       "id": "13",
       "agent": "edit-diff-learner",
-      "optional": true,
       "outputs": [
         "99_episode.md"
       ]
