@@ -104,10 +104,11 @@ description: |
 ## 协作模式（B）流程
 
 - 必须从 `.claude/workflows/collab_v2.json` 读取活跃 stages，再逐阶段调度。
+- Stage 1 创建项目目录并保存 `01_theme.md` 后，必须立即执行 Stage 0 `memory-loader`，生成 `00_memory_packet.md`，然后才能进入 Stage 1.5。因为 Stage 0 需要项目名和项目目录，实际执行顺序是 Stage 1 → Stage 0 → Stage 1.5。
 - 你负责的是：
   - 选对当前 Stage 的 Subagent
   - 在强制停机点停住
-  - 在 Stage 10、11、12、12.5、13 这些收尾环节执行例外规则
+  - 在 Stage 10、10.5、11、12、12.5、13 这些收尾环节执行例外规则
 - 你不再手工维护各阶段文件名和输入输出，那是 `collab_v2.json` 的职责。
 
 ---
@@ -149,14 +150,17 @@ description: |
 - **Stage 5.8 完成后**：抛出 3 款极道开头（暴击/撕裂/冷眼），必须明确等待用户确认选用哪款（A/B/C）。
 - **Stage 7 完成后**：主编给出评审意见后，必须明确等待用户确认：“是否同意按此建议修改草稿（产出 v2），还是直接过？”
 - **Stage 9 完成后**：给用户提供 A/B/C 三个选项，明确等待用户选择。
+- **Stage 10.5 完成前**：事实核查必须输出 `fact_claims.json` 和 `fact_check_report.md`。如果存在红色问题，禁止进入 Stage 11 / Stage 12，必须等待用户处理事实风险。
+- **Stage 11 完成前**：文本定稿后必须询问是否配图（Y/N），不能直接跳到纯文本交付或流程回顾。
 - **Stage 12.5 完成前**：必须明确等待用户选择是否导出 HTML，以及使用哪一套默认版式（A/B/C/D/N）。
+- **Stage 13 完成前**：禁止输出“完整流程回顾”“全部流程完成”之类总结。只要存在 `draft_v1.md` 且最终正文不是 `draft_v1.md`，就必须先调用 `edit-diff-learner`。
 
 ## Stage 6 前置门禁
 
 在调用 `writing-executor` 之前，必须先执行：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_title.md 04_share_map.md 05_concrete_library.md 05c_opening_hook.md
+python scripts/verify_required_files.py --project "[项目名]" --required 02_evidence_ledger.json 04_title.md 04_share_map.md 05_concrete_library.md 05c_opening_hook.md
 ```
 
 - 如果返回 `PASS`：才允许进入 Stage 6。
@@ -177,9 +181,36 @@ Stage 9 测试得到用户确认放行后，将**自动跨入 Stage 10**。你�
 
 然后立即调用 humanizer 子代理，此处无需等待确认。
 
+Humanizer 返回后，下一步必须进入 Stage 10.5 的事实核查。禁止在 Humanizer 完成后直接询问配图、生成 `_clean.txt` 或宣布流程完成。
+
+## Stage 10.5: 🔎 事实核查闸门（Fact Checker）
+
+Stage 10 完成后，必须自动调用 `fact-checker`，不需要额外询问用户。
+
+调用前先确认：
+
+```bash
+python scripts/verify_required_files.py --project "[项目名]" --required 02_evidence_ledger.json
+```
+
+调用方式：
+
+```text
+使用 fact-checker 子代理来核查最终稿事实。
+项目名称：[项目名]
+请读取 run_manifest.json、02_evidence_ledger.json 和最新正文文件。
+```
+
+硬规则：
+- `fact-checker` 必须输出 `fact_claims.json` 和 `fact_check_report.md`。
+- 如果 `fact_check_status=passed`，才允许进入 Stage 11 的配图询问。
+- 如果存在 `CONTRADICTED`、`BROKEN_LINK`、`NEEDS_USER_SOURCE` 或红色 `UNSUPPORTED`，必须停止。
+- 红色问题未处理前，禁止进入 Stage 11 / Stage 12，禁止生成 `_clean.txt`、HTML 或完整流程回顾。
+- 事实核查只处理最终正文，不检查 `_notes.md` 里的内部备注。
+
 ## Stage 11: 🎨 配图工坊 (Article Illustrator)
 
-在文本最终定稿后（无论是否执行了 Humanizer），**必须**询问用户：
+在文本最终定稿且 Stage 10.5 事实核查通过后，**必须**询问用户：
 
 ```
 📝 文本已定稿。
@@ -196,7 +227,13 @@ N - 否，纯文字即可
 
 然后**再次中断（Yield）**，等待用户回复 Y/N。
 
+- 如果用户回复 `Y`：调用 `article-illustrator` 子代理，并按其两回合协议先输出配图策划方案。
+- 如果用户回复 `N`：明确记录“跳过配图”，继续 Stage 12。
+- 无论是否配图，都必须继续 Stage 12，不能在这里结束流程。
+
 ## Stage 12: 📤 终极收尾动作（生成排版纯净版）
+
+进入 Stage 12 前必须确认 Stage 10.5 已通过。若 `fact_check_status=blocked`，禁止生成 `_clean.txt`。
 
 **纯净版 `_clean.txt` 现在由 Hook 脚本自动生成。**  
 优先来源：
@@ -205,7 +242,13 @@ N - 否，纯文字即可
 2. Hook 事件里显式传入的正文文件路径
 3. 最后才回退到历史兼容的“最近修改终稿候选”逻辑
 
-如果没有触发，手动调用 `python scripts/generate_clean.py ...`
+如果没有触发，手动调用：
+
+```bash
+python scripts/generate_clean.py articles/[项目名]/[最终正文文件名]
+```
+
+Stage 12 完成前必须确认 `_clean.txt` 文件真实存在。若不存在，禁止进入 Stage 12.5 或输出最终总结。
 
 ## Stage 12.5: 📄 HTML 导出（可选）
 
@@ -248,6 +291,11 @@ N - 不导出
 
 Stage 12 和可选的 Stage 12.5 完成后，**自动调用 edit-diff-learner**进行复盘。前提是至少有过一次修改（非一稿到底）。
 
+硬规则：
+- 如果项目目录中存在 `draft_v1.md`，且 `run_manifest.json -> latest_body_file` 或 `clean_source_file` 不是 `draft_v1.md`，说明至少经历过一轮修改，必须调用 `edit-diff-learner`。
+- `edit-diff-learner` 必须输出 `articles/[项目名]/99_episode.md`。如果它判断无可学习差异，也要在返回摘要里明确说明跳过原因。
+- Stage 13 完成后，才允许输出完整流程回顾和“全部流程完成”。
+
 ```
 🧠 Stage 13 完成：写作复盘与经验提炼
 ✅ 全部流程完成！
@@ -289,6 +337,7 @@ Stage 12 和可选的 Stage 12.5 完成后，**自动调用 edit-diff-learner**�
 | `pre-publish-review` | 发布前评审 | Stage 8 |
 | `wechat-reader-test` | 社交生态测试 | Stage 9 |
 | `humanizer` | 去AI味处理 | Stage 10 |
+| `fact-checker` | 事实核查闸门 | Stage 10.5 |
 | `article-illustrator` | 配图工坊 | Stage 11 |
 | `html-exporter` | HTML导出 | Stage 12.5 |
 | `edit-diff-learner` | 写作复盘 | Stage 13 |

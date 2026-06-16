@@ -8,18 +8,20 @@
   },
   "stages": [
     {
-      "id": "0",
-      "agent": "memory-loader",
-      "optional": true,
-      "outputs": [
-        "00_memory_packet.md"
-      ]
-    },
-    {
       "id": "1",
       "agent": "writing-clarifier",
       "outputs": [
         "01_theme.md"
+      ]
+    },
+    {
+      "id": "0",
+      "agent": "memory-loader",
+      "inputs": [
+        "01_theme.md"
+      ],
+      "outputs": [
+        "00_memory_packet.md"
       ]
     },
     {
@@ -40,7 +42,8 @@
         "01b_position.md"
       ],
       "outputs": [
-        "02_scar_tissue.md"
+        "02_scar_tissue.md",
+        "02_evidence_ledger.json"
       ]
     },
     {
@@ -109,6 +112,7 @@
         "01_theme.md",
         "01b_position.md",
         "02_scar_tissue.md",
+        "02_evidence_ledger.json",
         "03_outline.md",
         "04_title.md",
         "04_share_map.md",
@@ -150,6 +154,18 @@
       ]
     },
     {
+      "id": "10.5",
+      "agent": "fact-checker",
+      "inputs": [
+        "02_evidence_ledger.json",
+        "[latest_body_file]"
+      ],
+      "outputs": [
+        "fact_claims.json",
+        "fact_check_report.md"
+      ]
+    },
+    {
       "id": "11",
       "agent": "article-illustrator",
       "optional": true,
@@ -173,7 +189,6 @@
     {
       "id": "13",
       "agent": "edit-diff-learner",
-      "optional": true,
       "outputs": [
         "99_episode.md"
       ]

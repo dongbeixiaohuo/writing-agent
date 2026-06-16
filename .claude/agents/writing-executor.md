@@ -23,7 +23,7 @@ model: sonnet
 在真正开始读取前，先执行硬性前置校验：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_title.md 04_share_map.md 05_concrete_library.md 05c_opening_hook.md
+python scripts/verify_required_files.py --project "[项目名]" --required 02_evidence_ledger.json 04_title.md 04_share_map.md 05_concrete_library.md 05c_opening_hook.md
 ```
 
 如果脚本返回 `FAIL`，必须停止并返回导演，禁止靠会话记忆继续写作。
@@ -32,6 +32,7 @@ python scripts/verify_required_files.py --project "[项目名]" --required 04_ti
 cat articles/[项目名]/01_theme.md
 cat articles/[项目名]/01b_position.md
 cat articles/[项目名]/02_scar_tissue.md
+cat articles/[项目名]/02_evidence_ledger.json
 cat articles/[项目名]/03_outline.md
 cat articles/[项目名]/04_title.md
 cat articles/[项目名]/04_share_map.md
@@ -47,6 +48,7 @@ cat articles/[项目名]/05c_opening_hook.md
 - 如果 `01_theme.md` 没写 `案例领域边界`，默认启用**通用非IT边界**：除非主题、读者或素材明确属于科技/互联网/研发领域，否则不得默认使用互联网公司、大厂、程序员、研发、产品经理、AI创业团队等例子。
 - `04_title.md` 如果不存在，或者没有明确的最终锁定标题，必须停止并返回导演。
 - `05c_opening_hook.md` 如果不存在，或者内容不是用户明确锁定的开头，必须停止并返回导演，不得自行补一个开头继续写。
+- `02_evidence_ledger.json` 是事实性内容的来源边界。没有证据账本时禁止继续写作；账本为空时，正文不得写入具体数字、日期、报告、研究、政策、公司事实、网页引用等可核查事实。
 
 ### Step 2: 读取风格文件
 
@@ -95,6 +97,7 @@ cat articles/[项目名]/00_memory_packet.md  # 可能不存在，不存在则�
 • 数据：X 条
 • 案例：X 条
 • 观点：X 条
+• 可核查事实证据：X 条（来自 02_evidence_ledger.json）
 
 【社交触点】
 • 共鸣点：X 个
@@ -127,6 +130,8 @@ cat articles/[项目名]/00_memory_packet.md  # 可能不存在，不存在则�
 6. **遵循风格要求**：使用招牌动作，避免禁用词
 7. **案例必须服从领域边界**：优先使用 `01_theme.md` 指定的案例领域；如果没有明确指定，启用通用非IT边界，不得默认使用互联网、大厂、程序员、研发、产品经理等例子来偷懒。
 8. **风格不等于行业**：风格文件只约束语气、节奏、判断方式，不自动继承作者的职业背景或行业案例。
+9. **事实性内容必须有来源**：凡是数字、日期、人名、公司名、政策法规、研究报告、历史事件、网页链接和“数据显示/研究表明/报告指出”类表述，必须来自 `02_evidence_ledger.json` 中的 `evidence_id`。
+10. **没有证据就降级表达**：没有证据支持时，只能写成作者判断、生活观察或模糊经验，不能伪装成外部事实。禁止现场编造来源、报告、链接、机构名称或精确数字。
 
 **反AI写作规则（必须遵守）** ⭐⭐⭐⭐⭐：
 
@@ -222,6 +227,11 @@ python scripts/update_run_manifest.py --project "[项目名]" --body draft_v1.md
 - [x] 案例1：第Y段
 - [ ] 观点1：未使用
 
+## 事实使用映射
+- 第X段：[事实表述] ← evidence_id: E001
+- 第Y段：[事实表述] ← evidence_id: E002
+- 未使用外部事实时写：本稿未引入需要外部证据支撑的具体事实。
+
 ## 待优化点
 1. [自我发现的问题1]
 2. [自我发现的问题2]
@@ -270,10 +280,12 @@ python scripts/update_run_manifest.py --project "[项目名]" --body draft_v1.md
 3. **必须读取风格文件**，否则风格会走样（用户明确选择“无指定风格”除外）
 4. **必须用统一脚本统计正文字数**，不能把元数据和写作备注算进去
 5. **正文和备注必须物理分文件**，禁止再把内部备注写回 `draft_v*.md`
-6. **Stage 6 前必须通过落盘校验**，缺少 `04_title.md`、`04_share_map.md`、`05_concrete_library.md`、`05c_opening_hook.md` 任意一个都不能继续
+6. **Stage 6 前必须通过落盘校验**，缺少 `02_evidence_ledger.json`、`04_title.md`、`04_share_map.md`、`05_concrete_library.md`、`05c_opening_hook.md` 任意一个都不能继续
 7. **标记待优化点**，帮助后续审稿
-
+8. **事实使用要可追溯**，正文里的事实性内容必须能在 `draft_v1_notes.md` 的“事实使用映射”中找到对应 `evidence_id`
+ 
 ## 版本记录
+- v1.2.0 (2026-06-16): 强制读取 `02_evidence_ledger.json`，要求事实性内容可追溯，没有证据时降级为观点表达。
 - v1.1.0 (2026-01-28): 新增反AI写作规则
   - 新增：5条核心反AI写作规则（删除填充短语、打破公式结构等）
   - 新增：禁用词库（连接词、形容词、动词、结构）

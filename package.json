@@ -1,6 +1,6 @@
 {
   "name": "writing-agent",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "type": "module",
   "scripts": {
     "generate-image": "tsx scripts/generate_image.ts",

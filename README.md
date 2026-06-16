@@ -1,10 +1,10 @@
-# 写稿Agent v0.7.7
+# 写稿Agent v0.7.8
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Desktop App](https://img.shields.io/badge/Desktop%20App-Windows%20Preview-2f6f4f)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)
 [![Writing Workflow](https://img.shields.io/badge/Writing%20Workflow-Stage%20Driven-1f6feb)](https://github.com/dongbeixiaohuo/writing-agent)
 
-把写作从“一次性吐全文”，改成“分阶段策划、审稿、去 AI 味、导出终稿”的流水线。
+把写作从“一次性吐全文”，改成“分阶段策划、证据留痕、审稿、去 AI 味、导出终稿”的流水线。
 
 你拿到的不只是文章，更是一套能反复复用、能中断继续、能回头复盘的写作生产线。
 
@@ -95,6 +95,7 @@
 
 - 这是一条完整生产线，不是只放终稿
 - 默认发布出口仍然是 `_clean.txt`，也可以在最后一步额外导出公众号排版 `.html`
+- 新项目会在调研阶段建立事实证据账本，并在最终交付前做事实核查
 - 中间产物本身就能证明“可调度、可中断、可复盘”
 
 最关键的几个文件：
@@ -117,7 +118,17 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 
 ## 最新更新
 
-首页只保留当前主线版本，历史版本不再堆在前面。
+首页前部只保留最近主线版本，历史版本不再堆在前面。
+
+### v0.7.8 新增事实证据账本与发布前核查
+
+- Stage 2 `research-expert` 现在会同步生成 `02_evidence_ledger.json`：数字、日期、机构、人名、公司名、报告、政策、网页链接等事实性内容都要有 `evidence_id`
+- Stage 6 `writing-executor` 写作时必须读取证据账本：没有证据的内容只能写成观点或生活观察，不能伪装成“数据显示”“研究表明”“报告指出”
+- 新增 Stage 10.5 `fact-checker`：在 Humanizer 之后、生成 `_clean.txt` 之前抽取正文事实 claim，反查证据账本和外部来源
+- 遇到 `CONTRADICTED`、`BROKEN_LINK`、`NEEDS_USER_SOURCE` 或红色 `UNSUPPORTED`，流程会停机，禁止继续进入配图、纯文本终稿或 HTML 导出
+- 同步补齐 `claude-runtime/` 和 plugin 分发目录，避免 clone 用户和 plugin 用户拿到不同工作流
+
+这版解决的是“文章写得像人，但事实可能是错的”这个硬伤。现在流程会先要求事实有来源，再在最终提交前拦一次高风险幻觉。
 
 ### v0.7.7 新增公众号排版 HTML 导出
 
@@ -134,7 +145,7 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 - `empathy-designer` 从共情点设计升级成“社交转发动机”，核心产物是 [04_share_map.md](demo/老板的AI战略骗局/04_share_map.md)
 - 新增 `opening-tournament`，在正式写稿前先赛马开头，核心产物是 [05c_opening_hook.md](demo/老板的AI战略骗局/05c_opening_hook.md)
 
-如果你只想知道仓库现在值不值得拉下来试，先看 `v0.7.7` 这 3 条就够了。更老的版本记录去 `CHANGELOG` 或 Releases 看，不应该堵在首页前面。
+如果你只想知道仓库现在值不值得拉下来试，先看 `v0.7.8` 这几条就够了。更老的版本记录去 `CHANGELOG` 或 Releases 看，不应该堵在首页前面。
 
 ---
 
@@ -180,8 +191,10 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 
 - 先定主题和立场
 - 再打捞场景、代价和细节
+- 同步建立事实证据账本，给可核查内容留来源
 - 再做大纲、分享触点、具象化和开头赛马
 - 写完后还有主编审稿、发布前评审、微信传播测试、去 AI 味
+- 去 AI 味之后先过事实核查闸门，红色问题不放行
 - 最后输出 `_clean.txt` 终稿，并可按需额外导出公众号排版 `.html`
 
 一句话说：
@@ -236,7 +249,7 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 | `git clone` 仓库 | 想直接拿完整项目、看 demo、参与开发的人 | 仓库根目录 |
 | `plugin` 安装 | 不想先 clone 仓库，只想在任意工作目录里使用工作流的人 | 你的当前工作目录 |
 
-两条路径的底层运行时现在共用一套事实源：
+两条路径的底层运行时现在共用一套唯一源：
 
 - `claude-runtime/`
 
@@ -652,7 +665,7 @@ claude
 
 ### 双轨兼容后的真实结构
 
-现在仓库里多了一层运行时事实源：
+现在仓库里多了一层运行时唯一源：
 
 - `claude-runtime/`
 
@@ -812,8 +825,9 @@ winget upgrade Anthropic.ClaudeCode
 
 ---
 
-## 如果你只想记住最重要的 3 句话
+## 如果你只想记住最重要的 4 句话
 
 1. 先看 [`demo/老板的AI战略骗局/`](demo/老板的AI战略骗局/)，比先看安装说明更容易看懂项目价值。
 2. `DeepSeek-V3.2` 是默认推荐，不是因为它压过另外两家，而是因为它最适合低成本先把整套流程跑通。
 3. 完整版一定要在项目根目录启动 Claude Code，最后默认交付的是 `_clean.txt`，并可按需额外导出公众号排版 `.html`。
+4. 新版会在调研阶段生成 `02_evidence_ledger.json`，最终交付前生成 `fact_claims.json` 和 `fact_check_report.md`，用来拦截错误事实和失效引用。

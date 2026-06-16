@@ -5,6 +5,17 @@ All notable changes to 写稿Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.8] - 2026-06-16
+
+### Added
+- 🔎 **发布前事实核查 (`fact-checker`)**：新增 Stage 10.5，在 Humanizer 完成后、生成 `_clean.txt` 之前抽取最终正文中的事实 claim，并输出 `fact_claims.json` 与 `fact_check_report.md`。
+- 📚 **事实证据账本 (`02_evidence_ledger.json`)**：Stage 2 `research-expert` 现在会同步记录数字、日期、机构、人名、公司名、报告、政策、网页链接等事实来源，为后续写作和核查提供可追溯证据。
+
+### Changed
+- ✍️ **写作执行器事实边界收紧**：`writing-executor` 必须读取 `02_evidence_ledger.json`；没有证据支持的内容只能写成观点或生活观察，不能伪装成“数据显示”“研究表明”“报告指出”。
+- 🛑 **末端交付门禁升级**：事实核查发现 `CONTRADICTED`、`BROKEN_LINK`、`NEEDS_USER_SOURCE` 或红色 `UNSUPPORTED` 时，流程会停机，禁止继续进入配图、纯文本终稿或 HTML 导出。
+- 📦 **运行时分发同步**：同步更新 `claude-runtime/`、项目兼容层 `.claude/` 和 `plugins/writing-agent/`，确保 clone 与 plugin 两条使用路径拿到同一套事实核查工作流。
+
 ## [0.7.7] - 2026-04-08
 
 ### Added

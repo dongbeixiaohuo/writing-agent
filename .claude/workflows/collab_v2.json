@@ -42,7 +42,8 @@
         "01b_position.md"
       ],
       "outputs": [
-        "02_scar_tissue.md"
+        "02_scar_tissue.md",
+        "02_evidence_ledger.json"
       ]
     },
     {
@@ -111,6 +112,7 @@
         "01_theme.md",
         "01b_position.md",
         "02_scar_tissue.md",
+        "02_evidence_ledger.json",
         "03_outline.md",
         "04_title.md",
         "04_share_map.md",
@@ -149,6 +151,18 @@
       "agent": "humanizer",
       "outputs": [
         "draft_vN_humanized.md"
+      ]
+    },
+    {
+      "id": "10.5",
+      "agent": "fact-checker",
+      "inputs": [
+        "02_evidence_ledger.json",
+        "[latest_body_file]"
+      ],
+      "outputs": [
+        "fact_claims.json",
+        "fact_check_report.md"
       ]
     },
     {
