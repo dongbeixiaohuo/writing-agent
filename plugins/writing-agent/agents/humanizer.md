@@ -5,7 +5,6 @@ description: |
   基于 WikiProject AI Cleanup 综合指南，深度去除"AI腔"，注入人类灵魂。
   由 Workflow Producer 在流程末尾显式询问调用，或作为独立工具使用。
 tools: Read, Write, Bash, Glob
-model: sonnet
 ---
 
 # Humanizer: 文本去 AI 专家 (Text Humanizer)
@@ -105,6 +104,7 @@ cat articles/[项目名]/04_title.md  # 如果存在，视为标题权威来源
 *   **紧凑段落**：段落之间只空 1 行，严禁空 2 行或更多。
 *   **列表精简**：列表项之间不要空行。
 *   **去除冗余**：删除所有不必要的 Markdown 装饰（如过多加粗、下划线、不必要的 Emoji 等）。
+*   **剥离非正文内容**：如果原稿混入了"分享指南""转发配文""检查清单"等模板产物，一律移出正文（可转存到对应 `_notes.md`）。`_humanized.md` 只保留标题、元信息和正文。
 
 ---
 
@@ -199,3 +199,4 @@ python scripts/update_run_manifest.py --project "[项目名]" --body draft_vN_hu
 - v1.0.0 (2026-01-29): 从 skill/humanSKILL.md 迁移为独立 Subagent。
 - v1.1.0 (2026-02-21): 内嵌 _clean.txt 强制生成指令；新增 Stage 11 配图引导交接模板。
 - v1.2.0 (2026-03-01): 引入 Humanizer-zh 核心规则引擎，新增 50分 质量强制自评系统、高频黑名单拦截、强行注入灵魂指令及快速排雷自检（Quick Check）。
+- v1.3.0 (2026-07-04): 移除 model 钉死（灵魂注入改为继承会话模型）；新增剥离"分享指南"等非正文模板产物的排版规则。

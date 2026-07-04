@@ -24,7 +24,8 @@ def iter_cleaned_lines(text: str):
     for line in text.splitlines():
         stripped = line.strip()
 
-        if stripped.startswith('## 写作备注') or stripped.startswith('## 修改记录'):
+        if (stripped.startswith('## 写作备注') or stripped.startswith('## 修改记录')
+                or (stripped.startswith('##') and '分享指南' in stripped)):
             skip_internal_block = True
             continue
 
