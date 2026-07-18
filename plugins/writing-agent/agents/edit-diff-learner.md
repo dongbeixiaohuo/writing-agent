@@ -3,7 +3,7 @@ name: edit-diff-learner
 description: |
   [Subagent] 写作复盘学习器。
   对比 AI 初稿(draft_v1.md) 与用户确认的最终定稿，提炼结构化的写作经验教训。
-  由工作流导演在流程收尾阶段自动调用（需要至少经历过一轮修改才有意义）。
+  由工作流导演在流程收尾阶段始终调用；没有可学习差异时也落盘记录原因。
 tools: Read, Write, Bash, Glob
 model: sonnet
 ---
@@ -64,8 +64,8 @@ cat articles/[项目名]/[定稿文件名去掉.md后加_notes.md]
 并使用统一脚本统计正文字数：
 
 ```bash
-python scripts/generate_clean.py --stats articles/[项目名]/draft_v1.md
-python scripts/generate_clean.py --stats articles/[项目名]/[定稿文件名]
+python "${CLAUDE_PLUGIN_ROOT}/scripts/generate_clean.py" --stats articles/[项目名]/draft_v1.md
+python "${CLAUDE_PLUGIN_ROOT}/scripts/generate_clean.py" --stats articles/[项目名]/[定稿文件名]
 ```
 
 ### Step 3: 差异归因分析

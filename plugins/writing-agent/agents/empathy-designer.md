@@ -103,7 +103,7 @@ cat articles/[项目名]/03_outline.md     # 获取大纲结构
 生成内容后，**必须先真实写入** `articles/[项目名]/04_share_map.md`，然后立刻执行：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_share_map.md
+python "${CLAUDE_PLUGIN_ROOT}/scripts/verify_required_files.py" --project "[项目名]" --required 04_share_map.md
 ```
 
 只有脚本返回 `PASS`，才允许宣称 Stage 4 完成。

@@ -23,7 +23,7 @@ model: sonnet
 先确认 Stage 4 产物已经真正落盘：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_share_map.md
+python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目名]" --required 04_share_map.md
 ```
 
 如果校验失败，必须停止并返回导演，不得继续生成具象化库。
@@ -125,7 +125,7 @@ cat articles/[项目名]/04_share_map.md  # 获取社交分享地图
 生成内容后，**必须先真实写入** `articles/[项目名]/05_concrete_library.md`，然后立刻执行：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 05_concrete_library.md
+python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目名]" --required 05_concrete_library.md
 ```
 
 只有脚本返回 `PASS`，才允许宣称 Stage 5 完成。

@@ -20,9 +20,11 @@ if str(PROJECT_SOURCE_ROOT) not in sys.path:
 from scripts.claude_runtime_paths import resolve_runtime_root
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_CONTAINER = SCRIPT_DIR.parent
+PROJECT_ROOT = SCRIPT_CONTAINER.parent if SCRIPT_CONTAINER.name == "claude-runtime" else SCRIPT_CONTAINER
 ACTIVE_EXTRA_FILES = [
-    Path("skills/工作流导演/SKILL.md"),
+    Path("skills/workflow-producer/SKILL.md"),
 ]
 
 DOC_FILES = [

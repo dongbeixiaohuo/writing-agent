@@ -6,6 +6,61 @@
     "02_cases.md": "02_scar_tissue.md",
     "04_empathy_map.md": "04_share_map.md"
   },
+  "modes": {
+    "A": {
+      "description": "轻量模式：澄清后直接写作，可选简单审稿",
+      "stage_sequence": [
+        "1",
+        "6",
+        "7"
+      ],
+      "stage_overrides": {
+        "6": {
+          "inputs": [
+            "01_theme.md"
+          ]
+        },
+        "7": {
+          "optional": true
+        }
+      }
+    },
+    "B": {
+      "description": "协作模式：使用完整 stages 契约",
+      "stage_sequence_source": "stages"
+    }
+  },
+  "interaction_policy": {
+    "default_after_stage": "wait_for_user",
+    "automatic_transitions": [
+      {
+        "from": "9",
+        "to": "10",
+        "condition": "用户批准 Stage 9 结果"
+      },
+      {
+        "from": "10",
+        "to": "10.5",
+        "condition": "Humanizer 完成"
+      },
+      {
+        "from": "11",
+        "to": "12",
+        "condition": "用户的 Y/N 选择已处理；选择 Y 时配图已完成"
+      },
+      {
+        "from": "12",
+        "to": "12.5",
+        "condition": "纯净版文件已生成"
+      },
+      {
+        "from": "12.5",
+        "to": "13",
+        "condition": "HTML 选择已处理；选择导出时 HTML 已生成"
+      }
+    ],
+    "terminal_stage": "13"
+  },
   "stages": [
     {
       "id": "1",

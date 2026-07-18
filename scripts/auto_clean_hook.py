@@ -7,6 +7,7 @@ auto_clean_hook.py - 自动生成纯净版的 Hook 脚本
 import os
 import sys
 import json
+import argparse
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -60,7 +61,11 @@ def find_latest_draft(articles_dir: Path | None = None):
     return candidates[0]
 
 
-def _normalize_candidate(path_value, base_dir: Path | None = None):
+def _normalize_candidate(
+    path_value,
+    base_dir: Path | None = None,
+    allowed_root: Path | None = None,
+):
     if not path_value:
         return None
 
@@ -71,6 +76,13 @@ def _normalize_candidate(path_value, base_dir: Path | None = None):
         else:
             candidate = PROJECT_ROOT / candidate
     candidate = candidate.resolve()
+
+    if allowed_root is not None:
+        allowed_root = allowed_root.resolve()
+        try:
+            candidate.relative_to(allowed_root)
+        except ValueError:
+            return None
 
     if not candidate.exists():
         return None
@@ -96,7 +108,11 @@ def resolve_clean_source_from_manifest(manifest_path: Path):
 
     project_dir = manifest_path.parent
     for key in ('clean_source_file', 'latest_body_file'):
-        resolved = _normalize_candidate(manifest.get(key), base_dir=project_dir)
+        resolved = _normalize_candidate(
+            manifest.get(key),
+            base_dir=project_dir,
+            allowed_root=project_dir,
+        )
         if resolved is not None:
             return resolved
     return None
@@ -110,13 +126,21 @@ def resolve_clean_source(event_data: dict):
 
     direct_keys = ('clean_source_file', 'body_file', 'file_path', 'path')
     for key in direct_keys:
-        resolved = _normalize_candidate(event_data.get(key), base_dir=candidate_base_dir)
+        resolved = _normalize_candidate(
+            event_data.get(key),
+            base_dir=candidate_base_dir,
+            allowed_root=articles_dir,
+        )
         if resolved is not None:
             return resolved
 
     project_dir = event_data.get('project_dir')
     if project_dir:
-        project_manifest = _normalize_candidate(project_dir, base_dir=articles_dir)
+        project_manifest = _normalize_candidate(
+            project_dir,
+            base_dir=articles_dir,
+            allowed_root=articles_dir,
+        )
         if project_manifest is not None and project_manifest.is_dir():
             manifest_path = project_manifest / MANIFEST_NAME
             if manifest_path.exists():
@@ -142,23 +166,40 @@ def has_clean_version(draft_path: Path) -> bool:
     return clean_path.stat().st_mtime >= draft_path.stat().st_mtime
 
 
-def main():
-    # 读取 hook 传入的事件信息（如果有的话）
+def fact_check_passed(draft_path: Path) -> bool:
+    """只有正文所在项目的 manifest 明确放行时才允许生成纯净版。"""
+    manifest_path = draft_path.parent / MANIFEST_NAME
     try:
-        event_data = json.loads(sys.stdin.read()) if not sys.stdin.isatty() else {}
-    except Exception:
-        event_data = {}
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return manifest.get('fact_check_status') == 'passed'
+
+
+def main(event_data_override: dict | None = None) -> int:
+    # 读取 hook 传入的事件信息（如果有的话）
+    if event_data_override is not None:
+        event_data = event_data_override
+    else:
+        try:
+            event_data = json.loads(sys.stdin.read()) if not sys.stdin.isatty() else {}
+        except Exception:
+            event_data = {}
 
     # 优先根据显式路径 / run_manifest.json 找到正文来源
     latest_draft = resolve_clean_source(event_data)
 
     if latest_draft is None:
         # 没有找到定稿文件，静默退出
-        sys.exit(0)
+        return 0
+
+    if not fact_check_passed(latest_draft):
+        print("跳过生成：run_manifest.json 未记录 fact_check_status=passed", file=sys.stderr)
+        return 0
 
     if has_clean_version(latest_draft):
         # 已经有最新的 clean 版本了，不重复生成
-        sys.exit(0)
+        return 0
 
     # 调用 generate_clean.py 生成纯净版
     import subprocess
@@ -178,7 +219,23 @@ def main():
         print(result.stdout, file=sys.stderr)
     else:
         print(f"生成失败: {result.stderr}", file=sys.stderr)
+    return result.returncode
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="在事实核查通过后生成项目纯净版")
+    parser.add_argument("--workspace-root", help="工作区根目录，默认当前目录")
+    parser.add_argument("--project", help="articles/ 下的目标项目名")
+    return parser
 
 
 if __name__ == '__main__':
-    main()
+    args = build_parser().parse_args()
+    event_data = None
+    if args.workspace_root or args.project:
+        event_data = {}
+        if args.workspace_root:
+            event_data['workspace_root'] = args.workspace_root
+        if args.project:
+            event_data['project_dir'] = args.project
+    raise SystemExit(main(event_data))

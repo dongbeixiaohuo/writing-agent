@@ -301,7 +301,7 @@ cat articles/[项目名]/00_memory_packet.md  # 可能不存在，如果不存�
 保存后，**必须立刻执行**：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_title.md
+python "scripts/verify_required_files.py" --project "[项目名]" --required 04_title.md
 ```
 
 只有脚本返回 `PASS`，才允许宣称 Stage 5.5 第一轮完成并等待用户选择。
@@ -325,7 +325,7 @@ python scripts/verify_required_files.py --project "[项目名]" --required 04_ti
 用户选择后，必须更新 `articles/[项目名]/04_title.md` 的“最终锁定”部分，并再次执行：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_title.md
+python "scripts/verify_required_files.py" --project "[项目名]" --required 04_title.md
 ```
 
 然后再返回：

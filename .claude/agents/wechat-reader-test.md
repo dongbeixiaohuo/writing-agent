@@ -46,7 +46,7 @@ model: sonnet
 ### Step 1: 读取稿件
 ```bash
 cat articles/[项目名]/draft_v[最新版本号].md
-python scripts/generate_clean.py --stdout articles/[项目名]/draft_v[最新版本号].md > temp/wechat_reader_body.txt
+python "scripts/generate_clean.py" --stdout articles/[项目名]/draft_v[最新版本号].md > temp/wechat_reader_body.txt
 cat temp/wechat_reader_body.txt
 ```
 
@@ -120,7 +120,7 @@ C. ✅ 强度合格，进入 Stage 10: Humanizer 去AI味（强烈推荐，有�
 如果用户选择 A 且让你直接修改，保存为 `draft_vN.md` 与 `draft_vN_notes.md`，并运行：
 
 ```bash
-python scripts/update_run_manifest.py --project "[项目名]" --body draft_vN.md --notes draft_vN_notes.md --status social_test_revised --workflow-version collab-v2
+python "scripts/update_run_manifest.py" --project "[项目名]" --body draft_vN.md --notes draft_vN_notes.md --status social_test_revised --workflow-version collab-v2
 ```
 
 ## 输入规范

@@ -6,18 +6,29 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import fetch from "node-fetch";
+import { downloadFile } from "./vendor/markdown-to-html-core/src/images.ts";
 
 // 配置 dotenv
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, "../.env") });
 
+export function redactUrl(value: string): string {
+  try {
+    const parsed = new URL(value);
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, parsed.pathname === "/" ? "/" : "");
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
 // 配置代理
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
 const httpAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
-if (proxyUrl) {
-  console.log(`🔧 使用代理: ${proxyUrl}`);
-}
 
 // API 配置
 const API_BASE = process.env.GEMINI_API_BASE || process.env.THIRD_PARTY_API_BASE || "";
@@ -34,13 +45,18 @@ async function saveBinaryFile(fileName: string, content: Buffer): Promise<void> 
   console.log(`✅ 图片已保存: ${fileName}`);
 }
 
-async function downloadImage(url: string, fileName: string): Promise<void> {
-  const response = await fetch(url, { agent: httpAgent });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+export function resolveOutputFile(outputPath: string, filename?: string): string {
+  const selected = filename || `image_${Date.now()}.png`;
+  if (
+    !selected ||
+    selected !== path.basename(selected) ||
+    /[\\/\u0000-\u001f]/.test(selected) ||
+    selected === "." ||
+    selected === ".."
+  ) {
+    throw new Error("输出文件名必须是不含路径的普通文件名");
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  await saveBinaryFile(fileName, buffer);
+  return path.join(path.resolve(outputPath), selected);
 }
 
 async function generateImage(options: GenerateImageOptions): Promise<string> {
@@ -53,6 +69,9 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
 
   console.log(`\n🎨 正在生成图片...`);
   console.log(`📝 提示词: ${prompt.substring(0, 100)}...`);
+  if (proxyUrl) {
+    console.log(`🔧 使用代理: ${redactUrl(proxyUrl)}`);
+  }
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.THIRD_PARTY_API_KEY;
   if (!apiKey) {
@@ -60,8 +79,7 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
   }
 
   const isGoogle = API_BASE.includes("googleapis.com");
-  const finalFilename = filename || `image_${Date.now()}.png`;
-  const fullPath = path.join(outputPath, finalFilename);
+  const fullPath = resolveOutputFile(outputPath, filename);
 
   try {
     if (isGoogle) {
@@ -71,7 +89,7 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
       if (!baseUrl.includes("/v1beta")) {
         baseUrl = `${baseUrl}/v1beta`;
       }
-      const url = `${baseUrl}/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
+      const url = `${baseUrl}/models/${MODEL_NAME}:generateContent`;
 
       const payload = {
         contents: [{ parts: [{ text: prompt }] }]
@@ -79,19 +97,19 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
 
       const response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
         body: JSON.stringify(payload),
         agent: httpAgent
       });
 
       if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Google API Error: ${response.status} - ${errText}`);
+        throw new Error(`Google API Error: HTTP ${response.status}`);
       }
 
       const data: any = await response.json();
-      console.log("📦 API 响应:", JSON.stringify(data, null, 2).substring(0, 500));
-
       if (data.candidates?.[0]?.content?.parts) {
         for (const part of data.candidates[0].content.parts) {
           if (part.inlineData?.mimeType?.startsWith("image")) {
@@ -121,15 +139,17 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
           const buffer = Buffer.from(img.b64_json, "base64");
           await saveBinaryFile(fullPath, buffer);
         } else if (img.url) {
-          await downloadImage(img.url, fullPath);
+          await downloadFile(img.url, fullPath);
         }
         return fullPath;
       }
       throw new Error("OpenAI API 响应中未找到图片");
     }
   } catch (error) {
-    console.error("❌ 生成失败:", error);
-    throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    const safeMessage = message.split(apiKey).join("[REDACTED]");
+    console.error("❌ 生成失败:", safeMessage);
+    throw new Error(safeMessage);
   }
 
   return fullPath;
@@ -160,11 +180,18 @@ async function main() {
 用法:
   npx tsx scripts/generate_image.ts --prompt "<提示词>" [--output <目录>] [--filename <文件名>]
     `);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   await generateImage({ prompt, outputPath, filename });
 }
 
 export { generateImage, GenerateImageOptions };
-main().catch(console.error);
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

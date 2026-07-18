@@ -90,13 +90,27 @@ model: sonnet
 1.  **创建目录**：确保 `articles/[项目名]/images/` 存在。
 2.  **批量生成**：为清单中的每一张图执行生成脚本。
 
-**调用命令示例**：
+**调用命令（只选一条）**：
+
+plugin 模式下，先确认 `${CLAUDE_PLUGIN_DATA}/runtime/scripts/generate_image.ts` 存在，然后执行：
+
+```bash
+npm exec --prefix "${CLAUDE_PLUGIN_DATA}" -- tsx "${CLAUDE_PLUGIN_DATA}/runtime/scripts/generate_image.ts" \
+  --prompt "[Prompt内容]" \
+  --output "${CLAUDE_PROJECT_DIR}/articles/[项目名]/images" \
+  --filename "01-cover.png"
+```
+
+git clone 模式下执行：
+
 ```bash
 npx tsx scripts/generate_image.ts \
   --prompt "[Prompt内容]" \
   --output "articles/[项目名]/images" \
   --filename "01-cover.png"
 ```
+
+禁止同时执行两条命令；plugin 模式不得回退到工作区里可能过期的 `scripts/generate_image.ts`。
 
 ### Step 4: 植入文章 (Embed)
 

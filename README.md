@@ -1,4 +1,4 @@
-# 写稿Agent v0.8.1
+# 写稿Agent v0.9.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Desktop App](https://img.shields.io/badge/Desktop%20App-Windows%20Preview-2f6f4f)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)
@@ -120,6 +120,26 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 
 首页前部只保留最近主线版本，历史版本不再堆在前面。
 
+### v0.9.0 运行时、安全与插件交付重构
+
+这一版不只调整写作提示词，而是把“clone 能跑、plugin 也能独立跑、失败时不会越权交付”做成了可验证的运行时契约：
+
+- **工作流契约统一**：Mode A/B/C 的阶段、必需产物和自动跳转全部由 `collab_v2.json` 约束；事实核查未通过时，自动清稿、配图和 HTML 交付都不会放行
+- **插件真正独立运行**：插件脚本固定从 `${CLAUDE_PLUGIN_ROOT}` 调用，Node 依赖安装在 `${CLAUDE_PLUGIN_DATA}`，不再依赖用户工作区里恰好存在本仓库的 `scripts/` 或 `node_modules/`
+- **网页与导出安全加固**：网页内容按不可信输入处理；图片下载增加内网地址、DNS 重绑定、跳转、MIME、体积和超时校验；HTML 导出增加 XSS 清理和原子写入
+- **风格建模证据化**：稳定风格特征至少需要跨样本证据，单篇观察只作为候选；量化脚本修复句长中位数、段落和标点统计偏差
+- **可发布验证链**：新增 Windows/Linux CI、107 项回归测试、Python 无落盘语法检查、插件严格校验、npm 打包预检和隔离工作区安装测试
+
+本版同时将三个 Skill 目录对齐其 frontmatter 名称：
+
+| 旧目录 | 新目录 |
+|------|------|
+| `风格建模` | `style-modeler` |
+| `工作流导演` | `workflow-producer` |
+| `公众号文章获取` | `web-article-extractor` |
+
+正常 `git pull` 会完成目录迁移；如果你有自定义脚本、快捷命令或文档直接引用旧目录，需要同步更新路径。完整变更见 [CHANGELOG](CHANGELOG.md)，面向发布和升级的说明见 [v0.9.0 Release Notes](.github/releases/v0.9.0.md)。
+
 ### v0.8.1 风格提取重大升级：从"形似"到"神似"
 
 如果你用过风格库功能，可能遇到过这种情况：让 AI 学一个作者的风格，学出来的东西看着眼熟——设问推进、具体案例、金句收尾——但换个话题一写，读者一眼就能看出"这不是那个人"。
@@ -176,7 +196,7 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 - `empathy-designer` 从共情点设计升级成“社交转发动机”，核心产物是 [04_share_map.md](demo/老板的AI战略骗局/04_share_map.md)
 - 新增 `opening-tournament`，在正式写稿前先赛马开头，核心产物是 [05c_opening_hook.md](demo/老板的AI战略骗局/05c_opening_hook.md)
 
-如果你只想知道仓库现在值不值得拉下来试，先看 `v0.8.1` 这几条就够了。更老的版本记录去 `CHANGELOG` 或 Releases 看，不应该堵在首页前面。
+如果你只想知道仓库现在值不值得拉下来试，先看 `v0.9.0` 这几条就够了。更老的版本记录去 [CHANGELOG](CHANGELOG.md) 或 Releases 看，不应该堵在首页前面。
 
 ---
 
@@ -261,8 +281,8 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 
 最短路径：
 
-1. 先准备 `Node.js 18+` 和 `Claude Code`
-2. clone 本仓库
+1. 先准备 `Node.js 18+`、`Python 3.11+` 和 `Claude Code`
+2. clone 本仓库并执行 `npm ci`
 3. 配好你要用的模型 API 或 Claude 账号
 4. 一定在项目根目录启动 `claude`
 5. 先用 [`demo/老板的AI战略骗局/`](demo/老板的AI战略骗局/) 理解流程，再开始正式写作
@@ -294,8 +314,9 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 用法不变：
 
 1. clone 仓库
-2. 在仓库根目录启动 `claude`
-3. 继续按项目内 `.claude/`、`scripts/`、`demo/` 这套方式使用
+2. 在仓库根目录执行 `npm ci`
+3. 在仓库根目录启动 `claude`
+4. 继续按项目内 `.claude/`、`scripts/`、`demo/` 这套方式使用
 
 ### 如果你是 `plugin` 用户
 
@@ -338,14 +359,34 @@ claude plugin install writing-agent@writing-agent-marketplace
 
 装完之后，在你想写文章的目录里启动 `claude` 就可以了。
 
+如果已经安装旧版，先更新 marketplace，再更新插件：
+
+```bash
+claude plugin marketplace update writing-agent-marketplace
+claude plugin update writing-agent@writing-agent-marketplace
+```
+
+更新完成后重启 Claude Code，或执行 `/reload-plugins`。从 v0.8.x 升级时，如果自定义内容直接引用过中文 Skill 目录，还需要按上面的目录映射改成英文名称。
+
 插件第一次进入一个空工作目录时，会自动补齐最小运行结构：
 
 - `articles/`
 - `.claude/styles/`
 - `.claude/workflows/`
-- `scripts/`
 
-这意味着 plugin 用户不需要 clone 完整仓库，也能让工作流里那些依赖 `.claude/` 和 `scripts/` 的阶段继续正常工作。
+工作区自举采用“只补缺失文件”的策略：如果工作区里已经存在同名样式或工作流，现有文件优先，插件不会覆盖。插件脚本不会复制进用户工作区，而是刷新到 Claude 提供的 `${CLAUDE_PLUGIN_DATA}/runtime/`；HTML、配图等 Node 依赖按插件自己的 `package-lock.json` 首次执行 `npm ci --omit=dev --ignore-scripts`，后续只有依赖清单变化才重装。这样既不会污染现有项目，也不会因插件升级继续调用旧脚本。
+
+因此插件首次启动需要能够访问 npm registry，首次安装时间会比后续启动长；依赖成功安装后会持久缓存。离线环境应先在联网环境完成一次启动并保留对应的 `${CLAUDE_PLUGIN_DATA}`，不能只复制插件源码后假设依赖已经存在。
+
+两种路径都要求本机可以直接执行：
+
+```bash
+node --version
+npm --version
+python --version
+```
+
+最低版本为 `Node.js 18+`、`Python 3.11+`。Python 脚本只使用标准库；Node 依赖以根目录和插件目录各自的 `package-lock.json` 为准，不依赖用户手工猜包名。
 
 ---
 
@@ -381,7 +422,7 @@ Claude Code 支持 macOS、Linux、Windows。你该选哪条路，取决于你�
 
 ---
 
-## 为什么 Node.js 还要讲
+## 为什么 Node.js 和 Python 都要讲
 
 这点必须说清楚。
 
@@ -389,12 +430,14 @@ Anthropic 当前文档仍把 `Node.js 18+` 作为 Claude Code 的系统要求。
 
 - 如果你后面想走 `npm` 路线安装、升级或调试 Claude Code，Node.js 是硬前置
 - 这个仓库本身带了 `package.json` 和一些基于 Node 的脚本、工具链，后面你大概率还是会用到 `node` / `npm`
+- 工作流的校验、自举、清理和运行状态脚本使用 `Python 3.11+`
 
 所以最稳的建议是：
 
 - 先装好 `Node.js 18+`
+- 再装好 `Python 3.11+`
 - 再装 Claude Code
-- 最后 clone 仓库并启动项目
+- 最后 clone 仓库、执行 `npm ci` 并启动项目
 
 ### Node.js 怎么装
 
@@ -711,9 +754,10 @@ claude
 ```bash
 npm run sync:claude-runtime
 npm run check:claude-runtime
+npm run check
 ```
 
-第一条负责同步，第二条负责检查有没有漂移。
+第一条负责同步，第二条负责检查有没有漂移；`npm run check` 会继续执行 Python 回归、语法检查和插件严格校验，是提交或发布前的统一验证入口。
 
 这样可以避免后续出现：
 

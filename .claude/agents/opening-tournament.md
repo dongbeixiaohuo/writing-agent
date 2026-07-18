@@ -25,7 +25,7 @@ model: sonnet
 先确认前序产物已经真正落盘：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_share_map.md 05_concrete_library.md
+python "scripts/verify_required_files.py" --project "[项目名]" --required 04_share_map.md 05_concrete_library.md
 ```
 
 如果校验失败，必须停止并返回导演，不得继续生成开头方案。
@@ -104,7 +104,7 @@ cat articles/[项目名]/04_share_map.md
 保存后，**必须立刻执行**：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 05c_opening_hook.md
+python "scripts/verify_required_files.py" --project "[项目名]" --required 05c_opening_hook.md
 ```
 
 只有脚本返回 `PASS`，才允许宣称 Stage 5.8 完成。

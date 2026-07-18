@@ -1,6 +1,7 @@
 {
   "name": "writing-agent",
-  "version": "0.8.1",
+  "version": "0.9.0",
+  "displayName": "Writing Agent",
   "description": "可中断、可复盘的多阶段中文文章写作工作流",
   "author": {
     "name": "dongbeixiaohuo",
@@ -14,26 +15,5 @@
     "writing",
     "workflow",
     "chinese"
-  ],
-  "skills": "./skills/",
-  "agents": "./agents/",
-  "hooks": "./hooks/hooks.json",
-  "interface": {
-    "displayName": "Writing Agent",
-    "shortDescription": "把中文文章写作拆成可调度、可复盘的多阶段流程",
-    "longDescription": "适用于中文长文、公众号文章、观点文的多阶段写作工作流，支持 clone 与 plugin 两种交付路径。",
-    "developerName": "dongbeixiaohuo",
-    "category": "Productivity",
-    "capabilities": [
-      "Interactive",
-      "Write"
-    ],
-    "websiteURL": "https://github.com/dongbeixiaohuo/writing-agent",
-    "defaultPrompt": [
-      "帮我按写稿 Agent 工作流写一篇文章",
-      "先从选题开始，给我做协作模式写作",
-      "解释这个工作区里每个写作阶段文件的作用"
-    ],
-    "brandColor": "#1f6feb"
-  }
+  ]
 }

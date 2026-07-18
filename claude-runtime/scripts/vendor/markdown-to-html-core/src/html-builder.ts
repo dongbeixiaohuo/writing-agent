@@ -7,6 +7,15 @@ import { DEFAULT_STYLE } from "./constants.js";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CODE_THEMES_DIR = path.resolve(SCRIPT_DIR, "code-themes");
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function buildCss(baseCss: string, themeCss: string, style: StyleConfig = DEFAULT_STYLE): string {
   const variables = `
 :root {
@@ -51,13 +60,13 @@ export function buildHtmlDocument(meta: HtmlDocumentMeta, css: string, html: str
     "<head>",
     '  <meta charset="utf-8" />',
     '  <meta name="viewport" content="width=device-width, initial-scale=1" />',
-    `  <title>${meta.title}</title>`,
+    `  <title>${escapeHtml(meta.title)}</title>`,
   ];
   if (meta.author) {
-    lines.push(`  <meta name="author" content="${meta.author}" />`);
+    lines.push(`  <meta name="author" content="${escapeHtml(meta.author)}" />`);
   }
   if (meta.description) {
-    lines.push(`  <meta name="description" content="${meta.description}" />`);
+    lines.push(`  <meta name="description" content="${escapeHtml(meta.description)}" />`);
   }
   lines.push(`  <style>${css}</style>`);
   if (codeThemeCss) {

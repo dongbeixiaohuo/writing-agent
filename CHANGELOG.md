@@ -5,6 +5,44 @@ All notable changes to 写稿Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-07-18
+
+> 面向可迁移性、安全边界和可验证交付的一次运行时重构。此版本将 clone、plugin 和唯一源运行时统一到同一套契约，并补齐真实隔离安装、严格插件校验和安全回归测试。
+
+### Added
+- 📦 **插件独立运行时**：插件通过 `${CLAUDE_PLUGIN_ROOT}` 调用自身脚本，将持久依赖和刷新后的运行时放入 `${CLAUDE_PLUGIN_DATA}`；首次按锁文件执行 `npm ci --omit=dev --ignore-scripts`，依赖清单未变化时复用缓存。
+- 🧪 **完整验证入口**：新增 `npm run check`，统一执行 Python 回归、无落盘语法检查、运行时漂移检查以及插件/marketplace 严格校验。
+- 🏗️ **跨平台 CI 与打包边界**：新增 Windows/Linux packaging workflow、受限 npm `files` 清单、`.npmignore` 和隔离安装集成测试。
+- 📄 **本地网页解析工具链**：网页正文提取改用随 Skill 分发的 Readability 和 Markdown 转换器，不再依赖页面内临时 CDN 或虚构 API。
+- 🧾 **风格输出模板与提示用例**：新增固定 01–15 章节模板，并为三个核心 Skill 补齐正向、负向和边界触发用例。
+
+### Changed
+- 🔄 **唯一运行时源**：`claude-runtime/` 继续作为 source of truth，同步器现在会渲染 clone/plugin 各自脚本根路径、生成插件清单和锁文件，并移除过期镜像文件。
+- 🏷️ **Skill 目录与 frontmatter 对齐**：`风格建模`、`工作流导演`、`公众号文章获取` 分别迁移为 `style-modeler`、`workflow-producer`、`web-article-extractor`。
+- 🧭 **工作流契约收紧**：Mode A 固定为 Stage 1→6→可选 7；Stage 6 只依赖 `01_theme.md`。Stage 13 成为明确终态，HTML 主题只询问一次，且无差异时也记录原因。
+- 🔎 **事实门禁前移到实际写入路径**：自动清稿只在同项目 `run_manifest.json` 明确记录 `fact_check_status=passed` 后执行，manifest 更新会保留事实核查字段。
+- 🧬 **风格建模改为跨样本证据制**：稳定特征要求至少两篇样本的独立证据；单样本只记候选；盲测至少包含三组混淆对并允许“不足以判断”。
+- 📘 **安装和升级文档**：README 补充 Python 前置、`npm ci`、插件依赖缓存、旧 Skill 路径迁移和插件更新命令。
+
+### Security
+- 🛡️ **网页内容按不可信输入处理**：Skill 明确禁止执行网页正文中的指令，并固定安全的浏览器 MCP 参数。
+- 🌐 **远程资源下载加固**：图片下载增加 URL 协议、私网/保留地址、DNS 重绑定、重定向、MIME、体积和超时复核，使用 `.part` 和碰撞安全文件名。
+- 🧼 **HTML XSS 清理**：导出前后移除脚本、事件属性、危险协议、表单、嵌入对象及危险 CSS；元数据统一转义。
+- 🔐 **密钥与日志保护**：Google API Key 改由请求头发送，代理和错误日志不再泄露 URL 查询参数。
+- 💾 **原子交付**：HTML 完成渲染和资源处理后才替换目标文件，失败不会破坏已有成品。
+
+### Fixed
+- 🐛 修复同步脚本误改自身占位符、根目录执行时错误识别项目根路径，以及检查器自产 `.pyc` 后误报漂移的问题。
+- 🐛 修复 `style_fingerprint.py` 偶数样本中位数、Markdown 换行段落和连续标点重复计数问题。
+- 🐛 修复 HTML/图片 TypeScript 类型错误、缺失 `@antv/infographic` 运行依赖和模型返回文件名可能越界的问题。
+- 🐛 修复测试目录被 `.gitignore` 整体忽略，导致安全回归用例无法进入版本库的问题。
+- 🐛 修复真实浏览器抽取测试复用用户 Chrome profile 后可能挂起的问题；测试现在始终使用临时隔离 profile。
+
+### Migration
+- clone 用户升级后执行 `npm ci`，并将所有直接引用中文 Skill 目录的自定义脚本改为新英文目录。
+- plugin 用户先更新 marketplace 和插件，再重启 Claude Code 或执行 `/reload-plugins`；首次进入工作区需要访问 npm registry 完成依赖初始化。
+- 运行时开发只修改 `claude-runtime/`，随后执行 `npm run sync:claude-runtime`，不要分别手改三份镜像。
+
 ## [0.8.1] - 2026-07-05
 
 > 风格提取能力的重大升级。此前反复出现的问题是：风格建模跑完流程，产出的"风格内核"看起来像模像样，但换个话题一仿写就露馅——因为提取到的其实是"设问推进、具体案例、金句收尾"这类**任何优秀公众号写手都在用的通用公式**，不是这个作者独有的指纹。这一版从方法论到工具链重构了风格建模 skill，并用它重新提取了风格库里的两份样板文件。

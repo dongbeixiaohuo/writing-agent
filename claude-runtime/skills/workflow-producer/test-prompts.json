@@ -1,0 +1,38 @@
+[
+  {
+    "id": "unspecified-long-form",
+    "kind": "positive",
+    "prompt": "帮我写一篇关于远程工作的深度公众号文章",
+    "expected": "命中多阶段长文工作流；先展示 A/B/C 模式菜单并等待选择，不直接写正文"
+  },
+  {
+    "id": "explicit-mode-b",
+    "kind": "edge",
+    "prompt": "用 B 模式写一篇关于制造业数字化的长文",
+    "expected": "直接接受 B 模式并进入 Stage 1，不重复展示模式菜单"
+  },
+  {
+    "id": "simple-polish-negative",
+    "kind": "negative",
+    "prompt": "把这句话润色一下：今天开会讨论了预算",
+    "expected": "不触发 workflow-producer，直接完成简单润色"
+  },
+  {
+    "id": "topic-mode",
+    "kind": "positive",
+    "prompt": "我想写篇文章但不知道写什么主题",
+    "expected": "展示模式菜单并说明 C 适合从选题开始，等待用户选择"
+  },
+  {
+    "id": "write-in-known-style",
+    "kind": "edge",
+    "prompt": "用九边的风格写一篇关于职场的文章",
+    "expected": "成文任务由 workflow-producer 接管；模式确定后仍要求用户显式确认风格，不能交给 style-modeler 直接写"
+  },
+  {
+    "id": "tail-no-diff",
+    "kind": "edge",
+    "prompt": "正文一稿通过，没有发生修改，继续完成收尾",
+    "expected": "事实门禁和交付完成后仍执行 Stage 13，并写入说明无可学习差异的 99_episode.md"
+  }
+]

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { load } from "cheerio";
 
 import {
   COLOR_PRESETS,
@@ -42,6 +43,56 @@ interface ParsedResult {
 type ConvertMarkdownOptions = Partial<Omit<CliOptions, "inputPath">> & {
   title?: string;
 };
+
+function isSafeUrlAttribute(value: string, attribute: "href" | "src"): boolean {
+  const normalized = value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+  if (!normalized || normalized.startsWith("#")) return true;
+  if (/^(?:\/|\.\/|\.\.\/)/.test(normalized)) return true;
+  if (normalized.startsWith("//")) return true;
+  if (/^https?:/.test(normalized)) return true;
+  if (attribute === "href" && /^(?:mailto|tel):/.test(normalized)) return true;
+  if (attribute === "src" && /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/.test(normalized)) {
+    return true;
+  }
+  return !/^[a-z][a-z0-9+.-]*:/i.test(normalized);
+}
+
+export function sanitizeRenderedHtml(html: string): string {
+  const $ = load(html, { xmlMode: false });
+  $(
+    "script, iframe, object, embed, base, form, input, button, textarea, select, "
+      + "svg, math, audio, video, source, track, link, body style",
+  ).remove();
+  $("meta[http-equiv]").remove();
+
+  $("*").each((_index, element) => {
+    if (!("attribs" in element) || !element.attribs) return;
+    for (const [rawName, rawValue] of Object.entries(element.attribs)) {
+      const name = rawName.toLowerCase();
+      const value = String(rawValue || "");
+      if (name === "content" && element.tagName === "meta" && /[<>]/.test(value)) {
+        $(element).attr(rawName, value.replace(/<[^>]*>/g, "").replace(/[<>]/g, ""));
+        continue;
+      }
+      if (name.startsWith("on") || ["srcdoc", "formaction", "xlink:href", "ping"].includes(name)) {
+        $(element).removeAttr(rawName);
+        continue;
+      }
+      if ((name === "href" || name === "src") && !isSafeUrlAttribute(value, name)) {
+        if (name === "href") $(element).attr(rawName, "#");
+        else $(element).removeAttr(rawName);
+        continue;
+      }
+      if (
+        name === "style" &&
+        /(?:expression\s*\(|javascript\s*:|vbscript\s*:|-moz-binding\s*:|behavior\s*:|url\s*\()/i.test(value)
+      ) {
+        $(element).removeAttr(rawName);
+      }
+    }
+  });
+  return $.html();
+}
 
 export async function convertMarkdown(
   markdownPath: string,
@@ -99,16 +150,6 @@ export async function convertMarkdown(
   });
 
   const finalHtmlPath = markdownPath.replace(/\.md$/i, ".html");
-  let backupPath: string | undefined;
-
-  if (fs.existsSync(finalHtmlPath)) {
-    backupPath = `${finalHtmlPath}.bak-${formatTimestamp()}`;
-    console.error(`[markdown-to-html] Backing up existing file to: ${backupPath}`);
-    fs.renameSync(finalHtmlPath, backupPath);
-  }
-
-  fs.writeFileSync(finalHtmlPath, html, "utf-8");
-
   const hasRemoteImages = images.some((image) =>
     image.originalPath.startsWith("http://") || image.originalPath.startsWith("https://"),
   );
@@ -117,12 +158,39 @@ export async function convertMarkdown(
     : baseDir;
   const contentImages = await resolveContentImages(images, baseDir, tempDir, "markdown-to-html");
 
-  let finalContent = fs.readFileSync(finalHtmlPath, "utf-8");
+  let finalContent = sanitizeRenderedHtml(html);
   for (const image of contentImages) {
     const imgTag = `<img src="${image.originalPath}" data-local-path="${image.localPath}" style="display: block; width: 100%; margin: 1.5em auto;">`;
     finalContent = finalContent.replace(image.placeholder, imgTag);
   }
-  fs.writeFileSync(finalHtmlPath, finalContent, "utf-8");
+  finalContent = sanitizeRenderedHtml(finalContent);
+
+  const temporaryHtmlPath = `${finalHtmlPath}.tmp-${process.pid}-${Date.now()}`;
+  let backupPath: string | undefined;
+  fs.writeFileSync(temporaryHtmlPath, finalContent, { encoding: "utf-8", flag: "wx" });
+  try {
+    if (fs.existsSync(finalHtmlPath)) {
+      const backupBase = `${finalHtmlPath}.bak-${formatTimestamp()}`;
+      backupPath = backupBase;
+      for (let suffix = 2; fs.existsSync(backupPath); suffix += 1) {
+        backupPath = `${backupBase}-${suffix}`;
+      }
+      console.error(`[markdown-to-html] Backing up existing file to: ${backupPath}`);
+      fs.renameSync(finalHtmlPath, backupPath);
+    }
+
+    try {
+      fs.renameSync(temporaryHtmlPath, finalHtmlPath);
+    } catch (error) {
+      if (backupPath && !fs.existsSync(finalHtmlPath) && fs.existsSync(backupPath)) {
+        fs.renameSync(backupPath, finalHtmlPath);
+        backupPath = undefined;
+      }
+      throw error;
+    }
+  } finally {
+    fs.rmSync(temporaryHtmlPath, { force: true });
+  }
 
   console.error(`[markdown-to-html] HTML saved to: ${finalHtmlPath}`);
 

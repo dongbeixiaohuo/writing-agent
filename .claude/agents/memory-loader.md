@@ -4,14 +4,14 @@ description: |
   [Subagent] 记忆装载器。
   扫描历史写作复盘(99_episode.md)，提炼跨项目的稳定写作偏好规则，
   生成当前项目的 00_memory_packet.md 供下游 Agent 读取。
-  在 Stage 0（工作流最前面）由总导演调用。
+  由工作流导演调度；具体阶段顺序以工作流 JSON 为准，本代理不自行定义顺序。
 tools: Read, Write, Bash, Glob
 model: sonnet
 ---
 
 # 记忆装载器 (Memory Loader)
 
-> **重要**：这是一个 Subagent，在每次新写作任务启动时最先被调用。
+> **重要**：这是一个 Subagent，由工作流导演按机器契约调度；不要自行假设它是第一个阶段。
 > 调用方式：`使用 memory-loader 子代理来装载写作记忆`
 
 ## 核心职责

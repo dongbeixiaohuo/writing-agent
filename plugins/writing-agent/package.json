@@ -1,0 +1,29 @@
+{
+  "name": "writing-agent-plugin-runtime",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@antv/infographic": "0.2.19",
+    "cheerio": "1.0.0",
+    "dotenv": "^16.0.0",
+    "fflate": "^0.8.2",
+    "front-matter": "^4.0.2",
+    "highlight.js": "^11.11.1",
+    "https-proxy-agent": "^7.0.0",
+    "juice": "^11.0.1",
+    "marked": "^15.0.6",
+    "mermaid": "^11.12.0",
+    "node-fetch": "^3.0.0",
+    "openai": "^4.0.0",
+    "reading-time": "^1.5.0",
+    "remark-cjk-friendly": "^1.1.0",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "tsx": "^4.0.0",
+    "unified": "^11.0.5"
+  }
+}

@@ -24,8 +24,8 @@ model: sonnet
 
 ```bash
 cat articles/[项目名]/draft_v[最新版本号].md
-python scripts/generate_clean.py --stats articles/[项目名]/draft_v[最新版本号].md
-python scripts/generate_clean.py --stdout articles/[项目名]/draft_v[最新版本号].md > temp/pre_publish_review_body.txt
+python "scripts/generate_clean.py" --stats articles/[项目名]/draft_v[最新版本号].md
+python "scripts/generate_clean.py" --stdout articles/[项目名]/draft_v[最新版本号].md > temp/pre_publish_review_body.txt
 cat temp/pre_publish_review_body.txt
 cat articles/[项目名]/04_title.md
 ```
@@ -329,7 +329,7 @@ E. ❓ 对某个修改建议有疑问（请说明）
 1. 逐项执行修改
 2. 正文保存为新版本 `draft_v[N+1].md`
 3. 修改说明保存为 `draft_v[N+1]_notes.md`
-4. 运行 `python scripts/update_run_manifest.py --project "[项目名]" --body draft_v[N+1].md --notes draft_v[N+1]_notes.md --status pre_publish_revised --workflow-version collab-v2`
+4. 运行 `python "scripts/update_run_manifest.py" --project "[项目名]" --body draft_v[N+1].md --notes draft_v[N+1]_notes.md --status pre_publish_revised --workflow-version collab-v2`
 4. 展示修改对比
 5. 返回摘要
 
@@ -339,7 +339,7 @@ E. ❓ 对某个修改建议有疑问（请说明）
 - 只有在这种明确确认下，才允许同步修改正文文件 H1，并且必须回写 `articles/[项目名]/04_title.md` 的最终锁定标题，再执行：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_title.md
+python "scripts/verify_required_files.py" --project "[项目名]" --required 04_title.md
 ```
 
 ### Step 8: 返回摘要

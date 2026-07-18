@@ -19,6 +19,7 @@ from scripts.claude_runtime_paths import workspace_articles_dir
 
 
 ARTICLES_DIR = workspace_articles_dir()
+DEFAULT_WORKFLOW = Path(".claude/workflows/collab_v2.json")
 
 
 def title_file_is_locked(content: str) -> bool:
@@ -79,12 +80,34 @@ def verify_required_files(project_dir: Path, required_files: list[str]) -> bool:
     return not find_file_issues(project_dir, required_files)
 
 
+def required_files_for_stage(workflow_path: Path, stage_id: str, mode: str) -> list[str]:
+    contract = json.loads(workflow_path.read_text(encoding="utf-8"))
+    normalized_stage_id = str(stage_id)
+    stage = next(
+        (item for item in contract.get("stages", []) if str(item.get("id")) == normalized_stage_id),
+        None,
+    )
+    if stage is None:
+        raise ValueError(f"工作流中不存在 Stage {normalized_stage_id}")
+
+    required_files = list(stage.get("inputs", []))
+    mode_contract = contract.get("modes", {}).get(mode, {})
+    override = mode_contract.get("stage_overrides", {}).get(normalized_stage_id, {})
+    if "inputs" in override:
+        required_files = list(override["inputs"])
+    return required_files
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="校验项目目录中的阶段产物是否存在且非空")
     parser.add_argument("--workspace-root", help="工作区根目录，默认当前目录")
     parser.add_argument("--project", help="articles/ 下的项目目录名")
     parser.add_argument("--project-dir", help="项目绝对路径或相对路径")
-    parser.add_argument("--required", nargs="+", required=True, help="必需文件名列表")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--required", nargs="+", help="显式必需文件名列表")
+    source.add_argument("--stage", help="从工作流契约读取该 Stage 的 inputs")
+    parser.add_argument("--workflow", default=str(DEFAULT_WORKFLOW), help="工作流 JSON 路径")
+    parser.add_argument("--mode", default="B", help="工作流模式，默认 B")
     return parser
 
 
@@ -99,7 +122,17 @@ def resolve_project_dir(args: argparse.Namespace) -> Path:
 def main() -> int:
     args = build_parser().parse_args()
     project_dir = resolve_project_dir(args)
-    issues = find_file_issues(project_dir, args.required)
+    try:
+        required_files = args.required or required_files_for_stage(
+            Path(args.workflow).resolve(),
+            args.stage,
+            args.mode,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"FAIL: 无法读取阶段契约：{exc}", file=sys.stderr)
+        return 2
+
+    issues = find_file_issues(project_dir, required_files)
 
     if issues:
         print(json.dumps({"project_dir": str(project_dir), "issues": issues}, ensure_ascii=False, indent=2))
@@ -108,7 +141,13 @@ def main() -> int:
 
     print(
         json.dumps(
-            {"project_dir": str(project_dir), "required": args.required, "status": "ok"},
+            {
+                "project_dir": str(project_dir),
+                "required": required_files,
+                "stage": args.stage,
+                "mode": args.mode if args.stage else None,
+                "status": "ok",
+            },
             ensure_ascii=False,
             indent=2,
         )

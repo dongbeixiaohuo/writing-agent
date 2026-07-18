@@ -2,12 +2,12 @@
   "hooks": {
     "SubagentStop": [
       {
-        "matcher": "humanizer|article-illustrator",
+        "matcher": "article-illustrator",
         "hooks": [
           {
             "type": "command",
             "command": "python scripts/auto_clean_hook.py",
-            "timeout": 30000
+            "timeout": 30
           }
         ]
       }

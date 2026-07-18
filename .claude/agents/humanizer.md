@@ -3,7 +3,7 @@ name: humanizer
 description: |
   [Subagent] 文本去AI味专家。
   基于 WikiProject AI Cleanup 综合指南，深度去除"AI腔"，注入人类灵魂。
-  由 Workflow Producer 在流程末尾显式询问调用，或作为独立工具使用。
+  由工作流导演调度；完整流程中的推进方式以工作流 JSON 为准，也可作为独立工具使用。
 tools: Read, Write, Bash, Glob
 ---
 
@@ -194,7 +194,7 @@ cat articles/[项目名]/04_title.md  # 如果存在，视为标题权威来源
 保存新正文后，立即运行：
 
 ```bash
-python scripts/update_run_manifest.py --project "[项目名]" --body draft_vN_humanized.md --status humanized --workflow-version collab-v2
+python "scripts/update_run_manifest.py" --project "[项目名]" --body draft_vN_humanized.md --status humanized --workflow-version collab-v2
 ```
 
 ## 版本记录

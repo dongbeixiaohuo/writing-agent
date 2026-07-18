@@ -4,7 +4,11 @@ import json
 import tempfile
 import time
 import unittest
+import sys
 from pathlib import Path
+
+RUNTIME_ROOT = Path(__file__).resolve().parents[1] / "claude-runtime"
+sys.path.insert(0, str(RUNTIME_ROOT))
 
 from scripts.auto_clean_hook import find_latest_draft, resolve_clean_source, resolve_clean_source_from_manifest
 from scripts.update_run_manifest import update_run_manifest
@@ -55,6 +59,48 @@ class RunManifestTests(unittest.TestCase):
         self.assertEqual("draft_v3_humanized.html", manifest["latest_html_file"])
         self.assertEqual("draft_v3_humanized.md", manifest["html_source_file"])
         self.assertEqual("grace", manifest["html_theme"])
+
+    def test_update_run_manifest_preserves_fact_check_fields(self) -> None:
+        manifest_path = self.project_dir / "run_manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "fact_check_status": "passed",
+                    "fact_check_report_file": "fact_check_report.md",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        manifest = update_run_manifest(
+            project_dir=self.project_dir,
+            body_file="draft_v4.md",
+            status="reviewed",
+        )
+
+        self.assertEqual("passed", manifest["fact_check_status"])
+        self.assertEqual("fact_check_report.md", manifest["fact_check_report_file"])
+
+    def test_update_run_manifest_rejects_project_outside_articles(self) -> None:
+        outside_project = self.root / "outside-project"
+
+        with self.assertRaises(ValueError):
+            update_run_manifest(
+                project_dir=outside_project,
+                body_file="draft_v1.md",
+                status="drafted",
+            )
+
+        self.assertFalse((outside_project / "run_manifest.json").exists())
+
+    def test_update_run_manifest_rejects_paths_outside_project(self) -> None:
+        with self.assertRaises(ValueError):
+            update_run_manifest(
+                project_dir=self.project_dir,
+                body_file="../outside.md",
+                status="drafted",
+            )
 
     def test_hook_prefers_explicit_clean_source_from_manifest(self) -> None:
         write(self.project_dir / "draft_v2.md", "# 正文")

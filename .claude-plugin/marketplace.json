@@ -1,19 +1,14 @@
 {
   "name": "writing-agent-marketplace",
-  "interface": {
-    "displayName": "Writing Agent Marketplace"
+  "owner": {
+    "name": "dongbeixiaohuo"
   },
+  "description": "Writing Agent 的 Claude Code 插件市场",
   "plugins": [
     {
       "name": "writing-agent",
-      "source": {
-        "source": "local",
-        "path": "./plugins/writing-agent"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
+      "source": "./plugins/writing-agent",
+      "description": "可中断、可复盘的多阶段中文文章写作工作流",
       "category": "Productivity"
     }
   ]

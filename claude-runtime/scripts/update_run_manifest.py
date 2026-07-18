@@ -21,6 +21,34 @@ PROJECT_ROOT = resolve_workspace_root()
 ARTICLES_DIR = workspace_articles_dir(PROJECT_ROOT)
 
 
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_project_dir(project_dir: Path) -> Path:
+    resolved = project_dir.resolve()
+    if not any(parent.name.casefold() == "articles" for parent in resolved.parents):
+        raise ValueError(f"project_dir 必须位于 articles/ 下: {project_dir}")
+    return resolved
+
+
+def _validate_project_file(project_dir: Path, value: str | None, field: str) -> None:
+    if value is None:
+        return
+
+    candidate = Path(value)
+    if candidate.is_absolute():
+        raise ValueError(f"{field} 必须是项目内的相对路径: {value}")
+
+    resolved = (project_dir / candidate).resolve()
+    if resolved == project_dir or not _is_within(resolved, project_dir):
+        raise ValueError(f"{field} 必须位于项目目录内: {value}")
+
+
 def update_run_manifest(
     project_dir: Path,
     body_file: str,
@@ -32,16 +60,35 @@ def update_run_manifest(
     html_source_file: str | None = None,
     html_theme: str | None = None,
 ) -> dict:
+    project_dir = _validate_project_dir(project_dir)
+    for field, value in (
+        ("body_file", body_file),
+        ("notes_file", notes_file),
+        ("clean_source_file", clean_source_file),
+        ("html_file", html_file),
+        ("html_source_file", html_source_file),
+    ):
+        _validate_project_file(project_dir, value, field)
+
     project_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = project_dir / "run_manifest.json"
 
-    manifest = {
-        "workflow_version": workflow_version,
-        "latest_body_file": body_file,
-        "latest_notes_file": notes_file,
-        "clean_source_file": clean_source_file or body_file,
-        "status": status,
-    }
+    manifest: dict = {}
+    if manifest_path.exists():
+        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(existing, dict):
+            raise ValueError(f"run_manifest.json 顶层必须是对象: {manifest_path}")
+        manifest.update(existing)
+
+    manifest.update(
+        {
+            "workflow_version": workflow_version,
+            "latest_body_file": body_file,
+            "latest_notes_file": notes_file,
+            "clean_source_file": clean_source_file or body_file,
+            "status": status,
+        }
+    )
 
     if html_file:
         manifest["latest_html_file"] = html_file

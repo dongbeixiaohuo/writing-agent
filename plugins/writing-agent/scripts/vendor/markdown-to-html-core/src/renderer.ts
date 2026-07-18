@@ -25,6 +25,10 @@ import {
 import { macCodeSvg } from "./constants.js";
 import type { IOpts, ParseResult, RendererAPI } from "./types.js";
 
+const parseFrontMatter = frontMatter as unknown as (
+  source: string,
+) => { attributes: Record<string, unknown>; body: string };
+
 Object.entries(COMMON_LANGUAGES).forEach(([name, lang]) => {
   hljs.registerLanguage(name, lang);
 });
@@ -90,7 +94,7 @@ function transform(legend: string, text: string | null, title: string | null): s
 
 function parseFrontMatterAndContent(markdownText: string): ParseResult {
   try {
-    const parsed = frontMatter(markdownText);
+    const parsed = parseFrontMatter(markdownText);
     const yamlData = parsed.attributes;
     const markdownContent = parsed.body;
     const readingTimeResult = readingTime(markdownContent);

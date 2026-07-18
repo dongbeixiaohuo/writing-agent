@@ -1,0 +1,38 @@
+[
+  {
+    "id": "single-sample-candidates",
+    "kind": "edge",
+    "prompt": "根据这一篇文章帮我建立作者风格档案：https://example.com/a",
+    "expected": "先提取并建立证据账本；单篇样本只能输出候选特征，不能宣称稳定风格"
+  },
+  {
+    "id": "same-author-batch",
+    "kind": "positive",
+    "prompt": "这是同一作者的三篇文章，请建立可复用风格档案：[URL1, URL2, URL3]",
+    "expected": "串行提取、核对作者锚点、运行量化指纹；稳定规则必须有来自至少两篇样本的两条证据"
+  },
+  {
+    "id": "mixed-authors",
+    "kind": "edge",
+    "prompt": "把这几篇不同公众号文章合在一起建一个风格：[URL1, URL2, URL3]",
+    "expected": "在合并前识别作者锚点不一致并分组；无法可靠分组时暂停并确认是否建立混合风格"
+  },
+  {
+    "id": "incremental-single-target",
+    "kind": "positive",
+    "prompt": "用这篇新文章更新九边风格档案",
+    "expected": "只更新当前目标档案；Front Matter 先用 --check 预览，不批量重写整个风格库"
+  },
+  {
+    "id": "direct-writing-negative",
+    "kind": "negative",
+    "prompt": "按九边风格直接写一篇职场文章，不需要建立风格档案",
+    "expected": "不触发 style-modeler，交给 workflow-producer 负责成文"
+  },
+  {
+    "id": "blind-validation",
+    "kind": "edge",
+    "prompt": "验证刚生成的风格模型是否真的像作者",
+    "expected": "执行至少三组独立盲测，允许无法判断和置信度，聚合结果后决定通过或回炉"
+  }
+]

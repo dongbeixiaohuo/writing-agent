@@ -15,17 +15,27 @@ tools: Read, Write, Bash, Glob, Grep
 
 ## 执行流程
 
+### Step 0: 确认工作流模式
+
+导演的调用 prompt 必须显式包含 `工作流模式：A` 或 `工作流模式：B`。未提供模式时停止并退回导演，不得自行猜测。
+
+- **模式 A（轻量）**：只使用 `01_theme.md` 的用户简报与用户提供素材，不要求完整协作链产物。先执行：
+
+  ```bash
+  python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目名]" --workflow ".claude/workflows/collab_v2.json" --stage 6 --mode A
+  ```
+
+- **模式 B（协作）**：使用 Stage 6 的完整输入契约。先执行：
+
+  ```bash
+  python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目名]" --workflow ".claude/workflows/collab_v2.json" --stage 6 --mode B
+  ```
+
+任一校验返回 `FAIL` 都必须停止。输入文件清单只从工作流 JSON 读取，禁止在本文件另写一份门禁清单。
+
 ### Step 1: 读取所有前序文件
 
-**必须执行**：读取所有准备材料
-
-在真正开始读取前，先执行硬性前置校验：
-
-```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 02_evidence_ledger.json 04_title.md 04_share_map.md 05_concrete_library.md 05c_opening_hook.md
-```
-
-如果脚本返回 `FAIL`，必须停止并返回导演，禁止靠会话记忆继续写作。
+**模式 B 必须执行**：校验通过后读取以下完整准备材料。模式 A 只读取 `01_theme.md`，跳过本节其余文件。
 
 ```bash
 cat articles/[项目名]/01_theme.md
@@ -39,7 +49,7 @@ cat articles/[项目名]/05_concrete_library.md
 cat articles/[项目名]/05c_opening_hook.md
 ```
 
-**硬性前置检查**：
+**模式 B 的硬性前置检查**：
 - 必须先检查 `articles/[项目名]/01_theme.md` 中的「写作风格」字段。
 - 必须先检查 `articles/[项目名]/01_theme.md` 中的「案例领域边界」字段。
 - 如果风格为空、写成“待定/默认/自动选择/你来判断”，或者看不出是用户明确确认的结果，必须停止，返回导演要求用户重新选风格。
@@ -48,6 +58,8 @@ cat articles/[项目名]/05c_opening_hook.md
 - `04_title.md` 如果不存在，或者没有明确的最终锁定标题，必须停止并返回导演。
 - `05c_opening_hook.md` 如果不存在，或者内容不是用户明确锁定的开头，必须停止并返回导演，不得自行补一个开头继续写。
 - `02_evidence_ledger.json` 是事实性内容的来源边界。没有证据账本时禁止继续写作；账本为空时，正文不得写入具体数字、日期、报告、研究、政策、公司事实、网页引用等可核查事实。
+
+**模式 A 的事实边界**：没有证据账本时，正文不得引入用户素材之外的具体数字、日期、报告、政策、公司事实或外部引用；只能写用户明确提供的事实、作者判断和生活观察。标题、开头与结构直接从 `01_theme.md` 的已确认简报中生成，不假装已经过 Stage 2—5.8 的锁定。
 
 ### Step 2: 读取风格文件
 
@@ -74,6 +86,8 @@ cat articles/[项目名]/00_memory_packet.md  # 可能不存在，不存在则�
 ### Step 3: 输出信息汇总表
 
 **关键步骤**：在开始写作前，显式输出信息汇总表：
+
+模式 A 没有的协作产物字段统一写“轻量模式未提供”，不得编造数量或来源。
 
 ```
 ═══════════════════════════════════════════════════
@@ -129,15 +143,15 @@ cat articles/[项目名]/00_memory_packet.md  # 可能不存在，不存在则�
 逐段写作，遵循以下规则：
 
 **写作规则**：
-1. **主线严格，局部允许失控**：每段的主线功能必须与大纲一致，但**强制包含 1 个横生枝节但真实具体的非提纲段落**（例如突然扯到一个看似无关的粗糙生活案例，然后再绕回来），以增加人类写作的散漫感。
-2. **使用指定素材**：按大纲分配的素材写作
-3. **开头必须锁定**：`05c_opening_hook.md` 中的胜出开头必须原样落在正文最开头，不得擅自改写起手逻辑。
-4. **嵌入社交触点**：按 `04_share_map.md` 设计情感与分享触点
-5. **应用具象化**：用具象化库替换抽象表达
+1. **主线严格，局部允许失控**：模式 B 的每段功能必须与大纲一致；模式 A 按 `01_theme.md` 确定主线。两种模式都可包含 1 个横生枝节但真实具体的段落，再自然绕回主线。
+2. **使用指定素材**：模式 B 按大纲分配素材；模式 A 只使用简报中的用户素材，不补造不存在的案例。
+3. **模式 B 开头必须锁定**：`05c_opening_hook.md` 中的胜出开头必须原样落在正文最开头，不得擅自改写起手逻辑；模式 A 按 `01_theme.md` 的简报生成开头。
+4. **模式 B 嵌入社交触点**：按 `04_share_map.md` 设计情感与分享触点；模式 A 只使用简报中明确给出的触点。
+5. **模式 B 应用具象化**：用具象化库替换抽象表达；模式 A 只使用用户素材中已有的具象内容。
 6. **遵循风格要求**：使用招牌动作，避免禁用词
 7. **案例必须服从领域边界**：优先使用 `01_theme.md` 指定的案例领域；如果没有明确指定，启用通用非IT边界，不得默认使用互联网、大厂、程序员、研发、产品经理等例子来偷懒。
 8. **风格不等于行业**：风格文件只约束语气、节奏、判断方式，不自动继承作者的职业背景或行业案例。
-9. **事实性内容必须有来源**：凡是数字、日期、人名、公司名、政策法规、研究报告、历史事件、网页链接和“数据显示/研究表明/报告指出”类表述，必须来自 `02_evidence_ledger.json` 中的 `evidence_id`。
+9. **事实性内容必须有来源**：模式 B 中的数字、日期、人名、公司名、政策法规、研究报告、历史事件、网页链接和“数据显示/研究表明/报告指出”类表述，必须来自 `02_evidence_ledger.json` 中的 `evidence_id`。模式 A 不要求 `evidence_id`，但只能把用户在 `01_theme.md` 明确提供的内容写成“用户提供/作者自述”，不得伪装成已独立核验的外部事实。
 10. **没有证据就降级表达**：没有证据支持时，只能写成作者判断、生活观察或模糊经验，不能伪装成外部事实。禁止现场编造来源、报告、链接、机构名称或精确数字。
 11. **真实素材必须上场**：`01_theme.md` 的「作者真实素材」如有内容，至少 1 条必须进正文且放在关键位置（开头或高潮段）；如记录为"无（用户确认）"，**禁止虚构第一人称亲历故事**（"我一个朋友老张"式的假案例是个性的头号杀手），只能写成听闻、观察或推演。
 12. **素材是弹药不是任务清单**：share map 触点和具象化库按大纲需要选用，服务于段落主线；禁止为了"用满"而逐条硬塞，成稿必须读起来像一个人一口气写完，而不是零件拼装。
@@ -175,7 +189,7 @@ cat articles/[项目名]/00_memory_packet.md  # 可能不存在，不存在则�
 
 **字数控制**：
 - 禁止直接对整份 `draft_v*.md` 使用 `wc` 统计字数
-- 必须使用统一脚本：`python scripts/generate_clean.py --stats articles/[项目名]/draft_v1.md`
+- 必须使用统一脚本：`python "{{WRITING_AGENT_SCRIPTS}}/generate_clean.py" --stats articles/[项目名]/draft_v1.md`
 - 只认脚本输出的「正文字符数」，不包含头部元数据、分割线和末尾写作备注
 - 每写完一个章节，检查字数是否符合预期
 - 如果超字，标记需要精简的段落
@@ -187,7 +201,7 @@ cat articles/[项目名]/00_memory_packet.md  # 可能不存在，不存在则�
 
 ```bash
 # 统一统计正文字符数（不含元数据和写作备注）
-python scripts/generate_clean.py --stats articles/[项目名]/draft_v1.md
+python "{{WRITING_AGENT_SCRIPTS}}/generate_clean.py" --stats articles/[项目名]/draft_v1.md
 ```
 
 如果「正文字符数」偏差超过 10%，进行调整。
@@ -201,7 +215,7 @@ python scripts/generate_clean.py --stats articles/[项目名]/draft_v1.md
 保存后，立即更新运行态：
 
 ```bash
-python scripts/update_run_manifest.py --project "[项目名]" --body draft_v1.md --notes draft_v1_notes.md --status drafted --workflow-version collab-v2
+python "{{WRITING_AGENT_SCRIPTS}}/update_run_manifest.py" --project "[项目名]" --body draft_v1.md --notes draft_v1_notes.md --status drafted --workflow-version collab-v2
 ```
 
 **正文文件格式**：
@@ -240,6 +254,7 @@ python scripts/update_run_manifest.py --project "[项目名]" --body draft_v1.md
 ## 事实使用映射
 - 第X段：[事实表述] ← evidence_id: E001
 - 第Y段：[事实表述] ← evidence_id: E002
+- 模式 A 的用户材料写：[事实表述] ← 用户提供（01_theme.md，未独立核验）
 - 未使用外部事实时写：本稿未引入需要外部证据支撑的具体事实。
 
 ## 待优化点
@@ -273,7 +288,8 @@ python scripts/update_run_manifest.py --project "[项目名]" --body draft_v1.md
 ```
 使用 writing-executor 子代理来执行写作。
 项目名称：[项目名]
-请先校验并读取 articles/[项目名]/ 下的所有准备文件，尤其是 04_title.md、04_share_map.md、05_concrete_library.md、05c_opening_hook.md。
+工作流模式：[A 或 B]
+请从 .claude/workflows/collab_v2.json 读取本模式的 Stage 6 inputs，校验通过后再写作。
 ```
 
 ## 输出规范
@@ -290,9 +306,9 @@ python scripts/update_run_manifest.py --project "[项目名]" --body draft_v1.md
 3. **必须读取风格文件**，否则风格会走样（用户明确选择“无指定风格”除外）
 4. **必须用统一脚本统计正文字数**，不能把元数据和写作备注算进去
 5. **正文和备注必须物理分文件**，禁止再把内部备注写回 `draft_v*.md`
-6. **Stage 6 前必须通过落盘校验**，缺少 `02_evidence_ledger.json`、`04_title.md`、`04_share_map.md`、`05_concrete_library.md`、`05c_opening_hook.md` 任意一个都不能继续
+6. **Stage 6 前必须通过 JSON 契约校验**：模式 A 使用最小输入契约；模式 B 使用完整 Stage 6 inputs
 7. **标记待优化点**，帮助后续审稿
-8. **事实使用要可追溯**，正文里的事实性内容必须能在 `draft_v1_notes.md` 的“事实使用映射”中找到对应 `evidence_id`
+8. **事实使用要可追溯**：模式 B 记录对应 `evidence_id`；模式 A 记录 `01_theme.md` 中的用户材料位置与“未独立核验”状态
  
 ## 版本记录
 - v1.3.0 (2026-07-04): 移除 model 钉死（改为继承会话模型）；风格内核提升为写作首要约束并进入信息汇总表；新增真实素材上场、禁虚构第一人称、正文纯净、反拼装规则。

@@ -22,8 +22,8 @@ model: sonnet
 
 ```bash
 cat articles/[项目名]/draft_v[版本号].md
-python scripts/generate_clean.py --stats articles/[项目名]/draft_v[版本号].md
-python scripts/generate_clean.py --stdout articles/[项目名]/draft_v[版本号].md > temp/editor_review_body.txt
+python "{{WRITING_AGENT_SCRIPTS}}/generate_clean.py" --stats articles/[项目名]/draft_v[版本号].md
+python "{{WRITING_AGENT_SCRIPTS}}/generate_clean.py" --stdout articles/[项目名]/draft_v[版本号].md > temp/editor_review_body.txt
 cat temp/editor_review_body.txt
 cat articles/[项目名]/01_theme.md  # 获取风格要求
 cat articles/[项目名]/04_title.md  # 获取已锁定标题
@@ -256,7 +256,7 @@ AI味道扣分：-X 分
 保存后，立即更新运行态：
 
 ```bash
-python scripts/update_run_manifest.py --project "[项目名]" --body draft_v[版本号+1].md --notes draft_v[版本号+1]_notes.md --status reviewed --workflow-version collab-v2
+python "{{WRITING_AGENT_SCRIPTS}}/update_run_manifest.py" --project "[项目名]" --body draft_v[版本号+1].md --notes draft_v[版本号+1]_notes.md --status reviewed --workflow-version collab-v2
 ```
 
 **标题保护硬规则**：
@@ -265,7 +265,7 @@ python scripts/update_run_manifest.py --project "[项目名]" --body draft_v[版
 - 只有用户明确批准改标题时，才允许同步修改 `draft_v[版本号+1].md` 的 H1，并且必须同时回写 `articles/[项目名]/04_title.md` 的最终锁定标题，再执行：
 
 ```bash
-python scripts/verify_required_files.py --project "[项目名]" --required 04_title.md
+python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目名]" --required 04_title.md
 ```
 
 ### Step 7: 返回摘要

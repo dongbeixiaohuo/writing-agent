@@ -1,7 +1,19 @@
 {
   "name": "writing-agent",
-  "version": "0.8.1",
+  "version": "0.9.0",
+  "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "claude-runtime/",
+    "plugins/writing-agent/",
+    ".claude-plugin/",
+    "scripts/",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
+  ],
   "scripts": {
     "generate-image": "tsx scripts/generate_image.ts",
     "export:html": "tsx scripts/export_markdown_to_html.ts",
@@ -11,27 +23,31 @@
     "check:claude-runtime": "python scripts/check_claude_runtime_sync.py",
     "bootstrap:workspace": "python scripts/bootstrap_workspace.py",
     "test:py": "python -m unittest discover -s tests -p \"test_*.py\"",
-    "check:scripts": "python -m py_compile scripts/generate_clean.py scripts/auto_clean_hook.py scripts/split_draft_notes.py scripts/update_run_manifest.py scripts/validate_workflow.py scripts/claude_runtime_paths.py scripts/sync_claude_runtime.py scripts/check_claude_runtime_sync.py scripts/bootstrap_workspace.py"
+    "check:scripts": "python claude-runtime/scripts/check_python_syntax.py claude-runtime/scripts scripts",
+    "check:plugin": "claude plugin validate --strict plugins/writing-agent && claude plugin validate --strict .claude-plugin/marketplace.json",
+    "check": "npm run test:py && npm run check:scripts && npm run check:claude-runtime && npm run check:plugin"
   },
   "dependencies": {
+    "@antv/infographic": "0.2.19",
+    "cheerio": "1.0.0",
+    "dotenv": "^16.0.0",
     "fflate": "^0.8.2",
     "front-matter": "^4.0.2",
     "highlight.js": "^11.11.1",
+    "https-proxy-agent": "^7.0.0",
     "juice": "^11.0.1",
     "marked": "^15.0.6",
     "mermaid": "^11.12.0",
-    "openai": "^4.0.0",
-    "dotenv": "^16.0.0",
-    "https-proxy-agent": "^7.0.0",
     "node-fetch": "^3.0.0",
+    "openai": "^4.0.0",
     "reading-time": "^1.5.0",
     "remark-cjk-friendly": "^1.1.0",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
+    "tsx": "^4.0.0",
     "unified": "^11.0.5"
   },
   "devDependencies": {
-    "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }
 }

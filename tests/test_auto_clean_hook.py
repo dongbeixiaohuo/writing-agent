@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import json
+import io
+import importlib.util
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
-from scripts import auto_clean_hook as hook_module
+
+RUNTIME_HOOK = Path(__file__).parents[1] / "claude-runtime" / "scripts" / "auto_clean_hook.py"
+HOOK_SPEC = importlib.util.spec_from_file_location("runtime_auto_clean_hook", RUNTIME_HOOK)
+assert HOOK_SPEC is not None and HOOK_SPEC.loader is not None
+hook_module = importlib.util.module_from_spec(HOOK_SPEC)
+HOOK_SPEC.loader.exec_module(hook_module)
 
 
 def write(path: Path, content: str) -> None:
@@ -74,6 +84,145 @@ class AutoCleanHookTests(unittest.TestCase):
         picked = hook_module.resolve_clean_source({"workspace_root": str(isolated_root)})
 
         self.assertEqual((isolated_project / "draft_final.md").resolve(), picked.resolve())
+
+    def test_manifest_cannot_select_a_file_outside_its_project(self) -> None:
+        outside = self.articles_dir / "outside.md"
+        write(outside, "# 不应读取")
+        manifest = self.project_dir / "run_manifest.json"
+        write(
+            manifest,
+            json.dumps(
+                {
+                    "latest_body_file": "../outside.md",
+                    "clean_source_file": "../outside.md",
+                    "fact_check_status": "passed",
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        self.assertIsNone(hook_module.resolve_clean_source_from_manifest(manifest))
+
+    def test_event_file_path_cannot_escape_articles_directory(self) -> None:
+        outside = self.root / "outside.md"
+        write(outside, "# 不应读取")
+
+        picked = hook_module.resolve_clean_source(
+            {"workspace_root": str(self.root), "file_path": str(outside)}
+        )
+
+        self.assertIsNone(picked)
+
+    def _run_hook_with_fact_status(self, fact_check_status: str) -> Path:
+        body_path = self.project_dir / "draft_v3_humanized.md"
+        clean_path = self.project_dir / "draft_v3_humanized_clean.txt"
+        write(body_path, "# 最终正文")
+        write(
+            self.project_dir / "run_manifest.json",
+            json.dumps(
+                {
+                    "workflow_version": "collab-v2",
+                    "latest_body_file": body_path.name,
+                    "clean_source_file": body_path.name,
+                    "fact_check_status": fact_check_status,
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        generator = self.root / "fake_generate_clean.py"
+        write(
+            generator,
+            """from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+target = source.with_name(source.stem + '_clean.txt')
+target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
+""",
+        )
+
+        original_generator = hook_module.GENERATE_CLEAN
+        original_stdin = sys.stdin
+        try:
+            hook_module.GENERATE_CLEAN = generator
+            sys.stdin = io.StringIO(
+                json.dumps(
+                    {
+                        "workspace_root": str(self.root),
+                        "project_dir": self.project_dir.name,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            with redirect_stderr(io.StringIO()):
+                hook_module.main()
+        finally:
+            hook_module.GENERATE_CLEAN = original_generator
+            sys.stdin = original_stdin
+
+        return clean_path
+
+    def test_auto_clean_hook_skips_when_fact_check_is_blocked(self) -> None:
+        clean_path = self._run_hook_with_fact_status("blocked")
+
+        self.assertFalse(clean_path.exists())
+
+    def test_auto_clean_hook_generates_when_fact_check_passed(self) -> None:
+        clean_path = self._run_hook_with_fact_status("passed")
+
+        self.assertTrue(clean_path.exists())
+
+    def test_cli_project_argument_targets_only_requested_project(self) -> None:
+        target_body = self.project_dir / "draft_v3_humanized.md"
+        write(target_body, "# 目标项目正文")
+        write(
+            self.project_dir / "run_manifest.json",
+            json.dumps(
+                {
+                    "latest_body_file": target_body.name,
+                    "clean_source_file": target_body.name,
+                    "fact_check_status": "passed",
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        other_project = self.articles_dir / "较新但非目标项目"
+        other_body = other_project / "draft_v4_humanized.md"
+        write(other_body, "# 其他项目正文")
+        write(
+            other_project / "run_manifest.json",
+            json.dumps(
+                {
+                    "latest_body_file": other_body.name,
+                    "clean_source_file": other_body.name,
+                    "fact_check_status": "passed",
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(RUNTIME_HOOK),
+                "--workspace-root",
+                str(self.root),
+                "--project",
+                self.project_dir.name,
+            ],
+            input="",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue((self.project_dir / "draft_v3_humanized_clean.txt").exists())
+        self.assertFalse((other_project / "draft_v4_humanized_clean.txt").exists())
 
 
 if __name__ == "__main__":

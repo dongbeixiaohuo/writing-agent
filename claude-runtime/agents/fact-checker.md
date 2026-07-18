@@ -44,7 +44,7 @@ cat articles/[项目名]/02_evidence_ledger.json
 然后生成清洗正文作为核查基准：
 
 ```bash
-python scripts/generate_clean.py --stdout articles/[项目名]/[最终正文文件] > temp/fact_check_body.txt
+python "{{WRITING_AGENT_SCRIPTS}}/generate_clean.py" --stdout articles/[项目名]/[最终正文文件] > temp/fact_check_body.txt
 cat temp/fact_check_body.txt
 ```
 

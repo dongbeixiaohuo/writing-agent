@@ -17,7 +17,9 @@ import argparse
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_CONTAINER = SCRIPT_DIR.parent
+PROJECT_ROOT = SCRIPT_CONTAINER.parent if SCRIPT_CONTAINER.name == "claude-runtime" else SCRIPT_CONTAINER
 ARTICLES_DIR = PROJECT_ROOT / 'articles'
 NOTE_HEADINGS = ('## 写作备注', '## 修改记录')
 

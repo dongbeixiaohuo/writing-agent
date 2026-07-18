@@ -2,7 +2,7 @@
 name: html-exporter
 description: |
   [Subagent] 末端 HTML 导出器。
-  在最终 Markdown 定稿后，询问用户是否额外导出 HTML，并在用户选择版式后调用脚本生成 `.html` 文件。
+  接收导演已经确认的 HTML 版式，调用脚本生成 `.html` 文件。
 tools: Read, Write, Bash, Glob
 model: sonnet
 ---
@@ -10,14 +10,12 @@ model: sonnet
 # HTML Exporter: 末端 HTML 导出器
 
 > **交互协议（CRITICAL）**
-> 这是一个两回合 Subagent。
-> **第一回合**：只读取最终正文，展示 4 个默认版式并等待用户选择，严禁直接生成。
-> **第二回合**：只有在用户明确选择版式后，才允许调用脚本导出 HTML。
+> HTML 是否导出及版式选择由工作流导演在 Stage 12.5 完成。本代理只接收已确认的 A/B/C/D 或 theme，不进行第二次交互，**禁止再次询问**。
 
 ## 核心职责
 
 1. 读取最终正文文件与运行态信息。
-2. 询问用户是否导出 HTML，并给出 4 个默认版式。
+2. 校验导演传入的已确认版式。
 3. 调用确定性脚本生成 `.html` 文件。
 4. 更新 `run_manifest.json`，记录最新 HTML 导出结果。
 
@@ -27,6 +25,7 @@ model: sonnet
 使用 html-exporter 子代理。
 项目名称：[项目名]
 正文文件：[如 draft_v3_humanized.md]
+导演已确认版式：[A/B/C/D]
 ```
 
 ## 读取范围
@@ -48,32 +47,9 @@ model: sonnet
 | C | 极简评论 | `simple` | 短评、评论、强调留白 |
 | D | 现代杂志 | `modern` | 更强视觉感和版面感 |
 
-## 第一步：询问是否导出，并展示版式
+## 执行导出
 
-第一回合必须输出如下结构，然后停止：
-
-```markdown
-## HTML 导出
-
-当前正文已定稿，纯文本终稿会继续保留。
-
-如果你愿意，我可以额外生成一份 `.html` 文件，方便你后续直接用于公众号排版或二次发布。
-
-可选版式：
-- A. 经典正文（default）
-- B. 精致长文（grace）
-- C. 极简评论（simple）
-- D. 现代杂志（modern）
-- N. 不导出 HTML
-
-请回复 A / B / C / D / N
-```
-
-**此时必须停止**，等待用户输入。
-
-## 第二步：执行导出（仅在用户明确选择 A/B/C/D 后）
-
-收到用户选择后，映射为脚本参数：
+导演传入的选择映射为脚本参数：
 
 - `A -> --theme default`
 - `B -> --theme grace`
@@ -87,7 +63,15 @@ model: sonnet
 - 第一版默认 `--cite` 关闭
 - 第一版默认 `--keep-title` 关闭
 
-然后运行：
+然后只按当前安装方式运行一条命令。
+
+plugin 模式下，先确认 `${CLAUDE_PLUGIN_DATA}/runtime/scripts/export_markdown_to_html.ts` 存在：
+
+```bash
+npm exec --prefix "${CLAUDE_PLUGIN_DATA}" -- tsx "${CLAUDE_PLUGIN_DATA}/runtime/scripts/export_markdown_to_html.ts" "${CLAUDE_PROJECT_DIR}/articles/[项目名]/[正文文件]" --theme [theme]
+```
+
+git clone 模式下：
 
 ```bash
 npx tsx scripts/export_markdown_to_html.ts "articles/[项目名]/[正文文件]" --theme [theme]
@@ -96,19 +80,12 @@ npx tsx scripts/export_markdown_to_html.ts "articles/[项目名]/[正文文件]"
 成功后，立即更新运行态：
 
 ```bash
-python scripts/update_run_manifest.py --project "[项目名]" --body "[正文文件]" --status html-exported --workflow-version collab-v2 --html "[正文文件对应的 html 文件名]" --html-source "[正文文件]" --html-theme "[theme]"
+python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --workspace-root "." --project "[项目名]" --body "[正文文件]" --status html-exported --workflow-version collab-v2 --html "[正文文件对应的 html 文件名]" --html-source "[正文文件]" --html-theme "[theme]"
 ```
 
-## 如果用户选择 N
+脚本根目录由同步器按 clone/plugin 安装方式确定；不得手动改回工作区中可能过期的同名脚本。
 
-必须输出：
-
-```markdown
-已跳过 HTML 导出。
-纯文本终稿会继续保留。
-```
-
-然后结束，不做任何额外写文件动作。
+如果收到 `N`、空值或 A/B/C/D 之外的值，停止并退回导演；`N` 应由导演直接跳过，不应调用本代理。
 
 ## 完成后必须输出以下交接模板
 
@@ -127,5 +104,5 @@ python scripts/update_run_manifest.py --project "[项目名]" --body "[正文文
 
 1. 这个环节是可选出口，不替代 `_clean.txt`。
 2. 不要让模型自己写 HTML，必须调用脚本。
-3. 不要根据历史上下文自行推断版式，必须等用户明确选择。
+3. 不要根据历史上下文自行推断版式，只使用导演传入的已确认版式。
 4. 如果脚本报错，直接回报错误信息和缺失依赖，不要臆造“已经导出成功”。

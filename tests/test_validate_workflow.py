@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,8 +35,8 @@ class ValidateWorkflowTests(unittest.TestCase):
 
         write(self.root / ".claude/workflows/collab_v2.json", json.dumps(CONTRACT, ensure_ascii=False))
         write(self.root / "claude-runtime/workflows/collab_v2.json", json.dumps(CONTRACT, ensure_ascii=False))
-        write(self.root / ".claude/skills/工作流导演/SKILL.md", "# workflow\n03_outline.md\n05_concrete_library.md\n")
-        write(self.root / "claude-runtime/skills/工作流导演/SKILL.md", "# workflow\n03_outline.md\n05_concrete_library.md\n")
+        write(self.root / ".claude/skills/workflow-producer/SKILL.md", "# workflow\n03_outline.md\n05_concrete_library.md\n")
+        write(self.root / "claude-runtime/skills/workflow-producer/SKILL.md", "# workflow\n03_outline.md\n05_concrete_library.md\n")
         write(self.root / "README.md", "# readme\n")
         write(self.root / "articles/README.md", "# articles\n")
         write(self.root / "docs/WORKFLOW_QUICK_REFERENCE.md", "# quick reference\n")
@@ -102,6 +104,182 @@ class ValidateWorkflowTests(unittest.TestCase):
         report = validate_repo(self.root, "active", runtime_root=self.root / "claude-runtime")
 
         self.assertFalse(report["errors"])
+
+
+class WorkflowStageGateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.project_dir = self.root / "articles" / "测试项目"
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def _run_stage_check(self, contract: dict, mode: str) -> subprocess.CompletedProcess[str]:
+        workflow_path = self.root / "collab_v2.json"
+        workflow_path.write_text(json.dumps(contract, ensure_ascii=False), encoding="utf-8")
+        script_path = Path(__file__).parents[1] / "claude-runtime" / "scripts" / "verify_required_files.py"
+        return subprocess.run(
+            [
+                sys.executable,
+                str(script_path),
+                "--project-dir",
+                str(self.project_dir),
+                "--workflow",
+                str(workflow_path),
+                "--stage",
+                "6",
+                "--mode",
+                mode,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+    def test_stage_check_reads_all_mode_b_inputs_from_workflow_json(self) -> None:
+        contract = {
+            "stages": [
+                {
+                    "id": "6",
+                    "inputs": ["01_theme.md", "02_evidence_ledger.json", "03_outline.md"],
+                }
+            ]
+        }
+        for file_name in contract["stages"][0]["inputs"]:
+            write(self.project_dir / file_name, "ready")
+
+        result = self._run_stage_check(contract, "B")
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn('"03_outline.md"', result.stdout)
+
+    def test_stage_check_applies_mode_a_minimal_input_override(self) -> None:
+        contract = {
+            "modes": {
+                "A": {
+                    "stage_sequence": ["1", "6", "7"],
+                    "stage_overrides": {"6": {"inputs": ["01_theme.md"]}},
+                }
+            },
+            "stages": [
+                {
+                    "id": "6",
+                    "inputs": ["01_theme.md", "02_evidence_ledger.json", "03_outline.md"],
+                }
+            ],
+        }
+        write(self.project_dir / "01_theme.md", "ready")
+
+        result = self._run_stage_check(contract, "A")
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertNotIn("02_evidence_ledger.json", result.stdout)
+
+
+class WorkflowRuntimeContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        runtime = Path(__file__).parents[1] / "claude-runtime"
+        cls.runtime = runtime
+        cls.contract = json.loads((runtime / "workflows" / "collab_v2.json").read_text(encoding="utf-8"))
+        cls.director = (runtime / "skills" / "workflow-producer" / "SKILL.md").read_text(encoding="utf-8")
+        cls.executor = (runtime / "agents" / "writing-executor.md").read_text(encoding="utf-8")
+        cls.article_illustrator = (runtime / "agents" / "article-illustrator.md").read_text(encoding="utf-8")
+        cls.html_exporter = (runtime / "agents" / "html-exporter.md").read_text(encoding="utf-8")
+        cls.edit_learner = (runtime / "agents" / "edit-diff-learner.md").read_text(encoding="utf-8")
+        cls.memory_loader = (runtime / "agents" / "memory-loader.md").read_text(encoding="utf-8")
+        cls.humanizer = (runtime / "agents" / "humanizer.md").read_text(encoding="utf-8")
+
+    def test_director_trigger_scope_excludes_simple_edits_and_accepts_explicit_mode(self) -> None:
+        self.assertIn("需要多阶段产物的中文长文", self.director)
+        self.assertIn("用户已明确选择 A/B/C", self.director)
+        self.assertIn("简单润色、校对、翻译不触发", self.director)
+        self.assertNotIn("所有写作请求的唯一入口点", self.director)
+        self.assertNotIn("无论用户说什么，只要涉及写作", self.director)
+
+    def test_subagent_metadata_defers_order_to_director(self) -> None:
+        self.assertIn("由工作流导演调度", self.memory_loader)
+        self.assertIn("由工作流导演调度", self.humanizer)
+        self.assertNotIn("工作流最前面", self.memory_loader)
+        self.assertNotIn("显式询问调用", self.humanizer)
+
+    def test_mode_a_declares_minimal_stage_6_contract(self) -> None:
+        mode_a = self.contract["modes"]["A"]
+
+        self.assertEqual(["1", "6", "7"], mode_a["stage_sequence"])
+        self.assertEqual(["01_theme.md"], mode_a["stage_overrides"]["6"]["inputs"])
+        self.assertIn("--stage 6 --mode A", self.director)
+        self.assertIn("工作流模式：A", self.executor)
+
+    def test_mode_a_writing_rules_do_not_require_missing_collaboration_artifacts(self) -> None:
+        self.assertIn("模式 A 按 `01_theme.md` 确定主线", self.executor)
+        self.assertIn("模式 A 只使用简报中的用户素材", self.executor)
+        self.assertIn("模式 A 不要求 `evidence_id`", self.executor)
+
+    def test_mode_b_stage_6_gate_is_sourced_from_workflow_json(self) -> None:
+        stage_6 = next(stage for stage in self.contract["stages"] if stage["id"] == "6")
+        self.assertEqual(
+            [
+                "01_theme.md",
+                "01b_position.md",
+                "02_scar_tissue.md",
+                "02_evidence_ledger.json",
+                "03_outline.md",
+                "04_title.md",
+                "04_share_map.md",
+                "05_concrete_library.md",
+                "05c_opening_hook.md",
+            ],
+            stage_6["inputs"],
+        )
+        self.assertIn("--stage 6 --mode B", self.director)
+        self.assertIn("--stage 6 --mode B", self.executor)
+
+    def test_tail_automatic_transitions_are_machine_readable(self) -> None:
+        transitions = {
+            (item["from"], item["to"])
+            for item in self.contract["interaction_policy"]["automatic_transitions"]
+        }
+
+        self.assertEqual(
+            {
+                ("9", "10"),
+                ("10", "10.5"),
+                ("11", "12"),
+                ("12", "12.5"),
+                ("12.5", "13"),
+            },
+            transitions,
+        )
+        self.assertEqual("13", self.contract["interaction_policy"]["terminal_stage"])
+
+    def test_html_theme_is_selected_once_by_director(self) -> None:
+        self.assertIn("禁止再次询问", self.html_exporter)
+        self.assertNotIn("这是一个两回合 Subagent", self.html_exporter)
+        self.assertIn("导演已确认版式", self.html_exporter)
+
+    def test_node_tools_have_plugin_data_and_clone_execution_paths(self) -> None:
+        self.assertIn("${CLAUDE_PLUGIN_DATA}/runtime/scripts/generate_image.ts", self.article_illustrator)
+        self.assertIn("npx tsx scripts/generate_image.ts", self.article_illustrator)
+        self.assertIn("${CLAUDE_PLUGIN_DATA}/runtime/scripts/export_markdown_to_html.ts", self.html_exporter)
+        self.assertIn("npx tsx scripts/export_markdown_to_html.ts", self.html_exporter)
+
+    def test_stage_13_always_writes_episode_even_without_diff(self) -> None:
+        self.assertIn("Stage 13 始终执行", self.director)
+        self.assertIn("无可学习差异", self.edit_learner)
+        self.assertNotIn("需要至少经历过一轮修改才有意义", self.edit_learner)
+
+    def test_auto_clean_hook_cannot_run_on_humanizer_stop(self) -> None:
+        hooks = json.loads((self.runtime / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+        subagent_hook = hooks["hooks"]["SubagentStop"][0]
+
+        self.assertNotIn("humanizer", subagent_hook["matcher"])
+        self.assertEqual(30, subagent_hook["hooks"][0]["timeout"])
+        self.assertIn('auto_clean_hook.py" --project "[项目名]"', self.director)
 
 
 if __name__ == "__main__":
