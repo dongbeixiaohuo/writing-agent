@@ -1,0 +1,10 @@
+{
+  "workflow_version": "collab-v2",
+  "latest_body_file": "draft_v1_humanized.md",
+  "latest_notes_file": null,
+  "clean_source_file": "draft_v1_humanized.md",
+  "status": "humanized",
+  "latest_fact_claims_file": "fact_claims.json",
+  "latest_fact_check_report": "fact_check_report.md",
+  "fact_check_status": "passed"
+}

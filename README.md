@@ -40,7 +40,7 @@
 ## 快速入口
 
 - 下载桌面应用：[桌面预览版](#桌面预览版)
-- 先看完整样本：[老板的AI战略骗局 Demo](#完整-demo老板的ai战略骗局)
+- 先看完整样本：[工资的一半，是你受的气折算的 Demo](#完整-demo工资的一半是你受的气折算的)
 - 再看当前版本：[最新更新](#最新更新)
 - 先判断模型成本：[模型与 Coding Plan](#模型与-coding-plan)
 - 想直接部署：[完整版安装](#完整版安装)
@@ -52,66 +52,72 @@
 
 如果你只想先判断这个仓库值不值得收藏，不要先看安装，先看这个真实样本：
 
-[`demo/老板的AI战略骗局/`](demo/老板的AI战略骗局/)
+[`demo/工资的一半，是你受的气折算的/`](demo/工资的一半，是你受的气折算的/)
 
 这不是只放一篇成品，而是把整条写作链路都放出来了，包括：
 
-- 选题和约束：[01_theme.md](demo/老板的AI战略骗局/01_theme.md)
-- 观点定牙齿：[01b_position.md](demo/老板的AI战略骗局/01b_position.md)
-- 伤疤和代价：[02_scar_tissue.md](demo/老板的AI战略骗局/02_scar_tissue.md)
-- 结构和开头：[03_outline.md](demo/老板的AI战略骗局/03_outline.md)、[05c_opening_hook.md](demo/老板的AI战略骗局/05c_opening_hook.md)
-- 草稿迭代：[draft_v1.md](demo/老板的AI战略骗局/draft_v1.md)、[draft_v2.md](demo/老板的AI战略骗局/draft_v2.md)
-- 审稿和传播测试：[pre_publish_review.md](demo/老板的AI战略骗局/pre_publish_review.md)、[wechat_reader_test.md](demo/老板的AI战略骗局/wechat_reader_test.md)
-- 最终发布稿：[humanized_final_clean.txt](demo/老板的AI战略骗局/humanized_final_clean.txt)
-- 运行态记录：[run_manifest.json](demo/老板的AI战略骗局/run_manifest.json)
+- 选题和约束：[01_theme.md](demo/工资的一半，是你受的气折算的/01_theme.md)
+- 观点定牙齿：[01b_position.md](demo/工资的一半，是你受的气折算的/01b_position.md)
+- 伤疤和证据：[02_scar_tissue.md](demo/工资的一半，是你受的气折算的/02_scar_tissue.md)、[02_evidence_ledger.json](demo/工资的一半，是你受的气折算的/02_evidence_ledger.json)
+- 结构和开头：[03_outline.md](demo/工资的一半，是你受的气折算的/03_outline.md)、[05c_opening_hook.md](demo/工资的一半，是你受的气折算的/05c_opening_hook.md)
+- 草稿和去 AI 味：[draft_v1.md](demo/工资的一半，是你受的气折算的/draft_v1.md)、[draft_v1_humanized.md](demo/工资的一半，是你受的气折算的/draft_v1_humanized.md)
+- 审稿和传播测试：[pre_publish_review.md](demo/工资的一半，是你受的气折算的/pre_publish_review.md)、[wechat_reader_test.md](demo/工资的一半，是你受的气折算的/wechat_reader_test.md)
+- 事实核查：[fact_claims.json](demo/工资的一半，是你受的气折算的/fact_claims.json)、[fact_check_report.md](demo/工资的一半，是你受的气折算的/fact_check_report.md)
+- 纯文本候选稿：[draft_v1_humanized_clean.txt](demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt)
+- 运行态记录：[run_manifest.json](demo/工资的一半，是你受的气折算的/run_manifest.json)
 
 建议浏览顺序：
 
 ```text
 01_theme.md
 -> 01b_position.md
--> 02_scar_tissue.md
+-> 02_scar_tissue.md + 02_evidence_ledger.json
 -> 03_outline.md
 -> 05c_opening_hook.md
--> draft_v2.md
--> humanized_final.md
--> humanized_final_clean.txt
+-> draft_v1.md
+-> draft_v1_humanized.md
+-> fact_claims.json + fact_check_report.md
+-> draft_v1_humanized_clean.txt
 ```
 
 如果你看完这套 Demo 觉得“这不是一次性吐全文，而是一条可复盘的生产线”，那这个仓库的核心价值你已经看到了。
 
 ---
 
-## 完整 Demo：老板的AI战略骗局
+## 完整 Demo：工资的一半，是你受的气折算的
 
 下面不是虚构示例，是这个仓库里一篇真实跑完的文章项目。
 
-- Demo 目录：[`demo/老板的AI战略骗局/`](demo/老板的AI战略骗局/)
-- 主题：`老板的AI战略：每月2000块的"数字化转型"骗局`
-- 核心判断：`老板口中的"AI战略"本质是用最低成本购买员工的焦虑感和服从性，而非真正的数字化转型`
-- 完整过程文件都在这个目录里，包含选题、立场、伤疤、大纲、开头赛马、草稿、审稿、传播测试、终稿和复盘
+- Demo 目录：[`demo/工资的一半，是你受的气折算的/`](demo/工资的一半，是你受的气折算的/)
+- 文章标题：`工资的一半，是你受的气折算的`
+- 主题：`工资的一半是“技术溢价”，一半是“情绪折价”`
+- 核心判断：`你的工资不是你值多少，而是市场价减去组织税之后剩下的数`
+- 完整过程文件都在这个目录里，包含选题、立场、伤疤、证据账本、大纲、开头赛马、草稿、审稿、传播测试、事实核查和纯文本稿
 
-这套 Demo 需要传达三件事：
+这套 Demo 主要传达这些信息：
 
 - 这是一条完整生产线，不是只放终稿
 - 默认发布出口仍然是 `_clean.txt`，也可以在最后一步额外导出公众号排版 `.html`
-- 新项目会在调研阶段建立事实证据账本，并在最终交付前做事实核查
+- 这个样本真实包含调研阶段的事实证据账本，以及交付前的事实声明和核查报告
+- 核查报告保留了 2 条黄色修改建议、0 条红色问题，展示工作流如何暴露风险；正式发布前仍应处理黄色建议
 - 中间产物本身就能证明“可调度、可中断、可复盘”
 
 最关键的几个文件：
 
-- [01b_position.md](demo/老板的AI战略骗局/01b_position.md)：先把文章的“牙齿”定下来，避免后面越写越软
-- [02_scar_tissue.md](demo/老板的AI战略骗局/02_scar_tissue.md)：不是堆资料，而是打捞致命场景、隐秘代价、荒诞细节
-- [04_share_map.md](demo/老板的AI战略骗局/04_share_map.md)：不是只做共情，而是设计读者为什么愿意转发
-- [05c_opening_hook.md](demo/老板的AI战略骗局/05c_opening_hook.md)：先赛马开头，再锁定起手式
-- [pre_publish_review.md](demo/老板的AI战略骗局/pre_publish_review.md)：发布前追问和红队挑刺
-- [wechat_reader_test.md](demo/老板的AI战略骗局/wechat_reader_test.md)：模拟朋友圈、同行群、家族群的真实反应
-- [humanized_final_clean.txt](demo/老板的AI战略骗局/humanized_final_clean.txt)：最后给你一个可直接复制粘贴发布的纯文本终稿
+- [01b_position.md](demo/工资的一半，是你受的气折算的/01b_position.md)：先把文章的“牙齿”定下来，避免后面越写越软
+- [02_scar_tissue.md](demo/工资的一半，是你受的气折算的/02_scar_tissue.md)：不是堆资料，而是打捞致命场景、隐秘代价、荒诞细节
+- [02_evidence_ledger.json](demo/工资的一半，是你受的气折算的/02_evidence_ledger.json)：给数字、引文和历史材料建立可追踪的证据账本
+- [04_share_map.md](demo/工资的一半，是你受的气折算的/04_share_map.md)：不是只做共情，而是设计读者为什么愿意转发
+- [05c_opening_hook.md](demo/工资的一半，是你受的气折算的/05c_opening_hook.md)：先赛马开头，再锁定起手式
+- [pre_publish_review.md](demo/工资的一半，是你受的气折算的/pre_publish_review.md)：发布前追问和红队挑刺
+- [wechat_reader_test.md](demo/工资的一半，是你受的气折算的/wechat_reader_test.md)：模拟朋友圈、同行群、家族群的真实反应
+- [fact_check_report.md](demo/工资的一半，是你受的气折算的/fact_check_report.md)：把通过项、黄色建议和红色问题分级留痕
+- [draft_v1_humanized_clean.txt](demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt)：去 AI 味后的纯文本候选稿
 
 如果你只看最终效果，这篇 Demo 的发布出口就是：
 
 ```text
-demo/老板的AI战略骗局/humanized_final_clean.txt
+demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
 ```
 
 ---
@@ -192,9 +198,9 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 
 ### v0.7.6 深化生产骨架
 
-- `research-expert` 从泛泛调研改成“伤疤打捞”，核心产物是 [02_scar_tissue.md](demo/老板的AI战略骗局/02_scar_tissue.md)
-- `empathy-designer` 从共情点设计升级成“社交转发动机”，核心产物是 [04_share_map.md](demo/老板的AI战略骗局/04_share_map.md)
-- 新增 `opening-tournament`，在正式写稿前先赛马开头，核心产物是 [05c_opening_hook.md](demo/老板的AI战略骗局/05c_opening_hook.md)
+- `research-expert` 从泛泛调研改成“伤疤打捞”，核心产物是 [02_scar_tissue.md](demo/工资的一半，是你受的气折算的/02_scar_tissue.md)
+- `empathy-designer` 从共情点设计升级成“社交转发动机”，核心产物是 [04_share_map.md](demo/工资的一半，是你受的气折算的/04_share_map.md)
+- 新增 `opening-tournament`，在正式写稿前先赛马开头，核心产物是 [05c_opening_hook.md](demo/工资的一半，是你受的气折算的/05c_opening_hook.md)
 
 如果你只想知道仓库现在值不值得拉下来试，先看 `v0.9.0` 这几条就够了。更老的版本记录去 [CHANGELOG](CHANGELOG.md) 或 Releases 看，不应该堵在首页前面。
 
@@ -285,7 +291,7 @@ demo/老板的AI战略骗局/humanized_final_clean.txt
 2. clone 本仓库并执行 `npm ci`
 3. 配好你要用的模型 API 或 Claude 账号
 4. 一定在项目根目录启动 `claude`
-5. 先用 [`demo/老板的AI战略骗局/`](demo/老板的AI战略骗局/) 理解流程，再开始正式写作
+5. 先用 [`demo/工资的一半，是你受的气折算的/`](demo/工资的一半，是你受的气折算的/) 理解流程，再开始正式写作
 
 如果你已经准备直接跑完整版，继续看：
 
@@ -685,7 +691,7 @@ claude
 进入对话后，直接试一句：
 
 ```text
-先别写新文章，先解释 demo/老板的AI战略骗局 里每个阶段文件各自起什么作用。
+先别写新文章，先解释 demo/工资的一半，是你受的气折算的 里每个阶段文件各自起什么作用。
 ```
 
 这句话的好处是：
@@ -707,7 +713,7 @@ claude
 | Claude 环境自检 | `claude doctor` | 没有关键错误 |
 | 项目目录正确 | 在仓库根目录执行 `dir` / `ls` | 能看到 `.claude/`、`demo/`、`scripts/` |
 | Skills 可见 | 启动 `claude` 后询问有哪些 skills | 至少能识别项目级 skills |
-| Demo 可读 | 让它解释 `demo/老板的AI战略骗局/` | 能说明各阶段文件的作用 |
+| Demo 可读 | 让它解释 `demo/工资的一半，是你受的气折算的/` | 能说明各阶段文件的作用 |
 | 基础命令可跑 | 让它执行 `git status` 或 `dir` / `ls` | 能返回命令结果 |
 
 如果这些都过了，就说明基础环境是正常的。
@@ -782,8 +788,8 @@ npm run check
 
 ### 路线 A：先看 Demo，再安装
 
-1. 先看 [`demo/老板的AI战略骗局/`](demo/老板的AI战略骗局/)
-2. 看明白 `01_theme.md -> humanized_final_clean.txt` 这条链路
+1. 先看 [`demo/工资的一半，是你受的气折算的/`](demo/工资的一半，是你受的气折算的/)
+2. 看明白 `01_theme.md -> draft_v1_humanized_clean.txt` 这条链路
 3. 再决定你要走哪家模型和哪种费用方案
 4. 最后开始安装和配置
 
@@ -902,7 +908,7 @@ winget upgrade Anthropic.ClaudeCode
 
 ## 如果你只想记住最重要的 4 句话
 
-1. 先看 [`demo/老板的AI战略骗局/`](demo/老板的AI战略骗局/)，比先看安装说明更容易看懂项目价值。
+1. 先看 [`demo/工资的一半，是你受的气折算的/`](demo/工资的一半，是你受的气折算的/)，比先看安装说明更容易看懂项目价值。
 2. `DeepSeek-V3.2` 是默认推荐，不是因为它压过另外两家，而是因为它最适合低成本先把整套流程跑通。
 3. 完整版一定要在项目根目录启动 Claude Code，最后默认交付的是 `_clean.txt`，并可按需额外导出公众号排版 `.html`。
 4. 新版会在调研阶段生成 `02_evidence_ledger.json`，最终交付前生成 `fact_claims.json` 和 `fact_check_report.md`，用来拦截错误事实和失效引用。
