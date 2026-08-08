@@ -5,8 +5,10 @@ update_run_manifest.py - 更新项目运行态 manifest。
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -49,6 +51,36 @@ def _validate_project_file(project_dir: Path, value: str | None, field: str) -> 
         raise ValueError(f"{field} 必须位于项目目录内: {value}")
 
 
+def _project_file_path(project_dir: Path, value: str, field: str, *, must_exist: bool = False) -> Path:
+    _validate_project_file(project_dir, value, field)
+    resolved = (project_dir / value).resolve()
+    if must_exist and not resolved.is_file():
+        raise ValueError(f"{field} 对应的项目文件不存在: {value}")
+    return resolved
+
+
+def body_sha256(project_dir: Path, body_file: str) -> str:
+    body_path = _project_file_path(project_dir, body_file, "body_file", must_exist=True)
+    return hashlib.sha256(body_path.read_bytes()).hexdigest()
+
+
+def _fact_binding_matches(manifest: dict, project_dir: Path, body_file: str) -> bool:
+    checked_file = manifest.get("fact_checked_body_file")
+    checked_hash = manifest.get("fact_checked_body_sha256")
+    if not isinstance(checked_file, str) or not isinstance(checked_hash, str):
+        return False
+
+    try:
+        checked_path = _project_file_path(project_dir, checked_file, "fact_checked_body_file")
+        body_path = _project_file_path(project_dir, body_file, "body_file", must_exist=True)
+    except ValueError:
+        return False
+
+    if checked_path != body_path:
+        return False
+    return hashlib.sha256(body_path.read_bytes()).hexdigest() == checked_hash.lower()
+
+
 def update_run_manifest(
     project_dir: Path,
     body_file: str,
@@ -59,6 +91,10 @@ def update_run_manifest(
     html_file: str | None = None,
     html_source_file: str | None = None,
     html_theme: str | None = None,
+    fact_check_status: str | None = None,
+    fact_claims_file: str | None = None,
+    fact_check_report_file: str | None = None,
+    fact_checked_at: str | None = None,
 ) -> dict:
     project_dir = _validate_project_dir(project_dir)
     for field, value in (
@@ -67,8 +103,18 @@ def update_run_manifest(
         ("clean_source_file", clean_source_file),
         ("html_file", html_file),
         ("html_source_file", html_source_file),
+        ("fact_claims_file", fact_claims_file),
+        ("fact_check_report_file", fact_check_report_file),
     ):
         _validate_project_file(project_dir, value, field)
+
+    if fact_check_status is not None:
+        if fact_check_status not in {"passed", "blocked"}:
+            raise ValueError("fact_check_status 只能是 passed 或 blocked")
+        if not fact_claims_file or not fact_check_report_file:
+            raise ValueError("记录事实核查结果时必须提供 fact_claims_file 和 fact_check_report_file")
+        _project_file_path(project_dir, fact_claims_file, "fact_claims_file", must_exist=True)
+        _project_file_path(project_dir, fact_check_report_file, "fact_check_report_file", must_exist=True)
 
     project_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = project_dir / "run_manifest.json"
@@ -80,15 +126,23 @@ def update_run_manifest(
             raise ValueError(f"run_manifest.json 顶层必须是对象: {manifest_path}")
         manifest.update(existing)
 
-    manifest.update(
-        {
-            "workflow_version": workflow_version,
-            "latest_body_file": body_file,
-            "latest_notes_file": notes_file,
-            "clean_source_file": clean_source_file or body_file,
-            "status": status,
-        }
-    )
+    if (
+        fact_check_status is None
+        and manifest.get("fact_check_status") in {"passed", "blocked"}
+        and not _fact_binding_matches(manifest, project_dir, body_file)
+    ):
+        manifest["fact_check_status"] = "stale"
+        manifest["fact_check_stale_reason"] = "body_changed_or_unbound"
+
+    runtime_update = {
+        "workflow_version": workflow_version,
+        "latest_body_file": body_file,
+        "clean_source_file": clean_source_file or body_file,
+        "status": status,
+    }
+    if notes_file is not None or fact_check_status is None or "latest_notes_file" not in manifest:
+        runtime_update["latest_notes_file"] = notes_file
+    manifest.update(runtime_update)
 
     if html_file:
         manifest["latest_html_file"] = html_file
@@ -96,6 +150,19 @@ def update_run_manifest(
         manifest["html_source_file"] = html_source_file
     if html_theme:
         manifest["html_theme"] = html_theme
+
+    if fact_check_status is not None:
+        manifest.update(
+            {
+                "latest_fact_claims_file": fact_claims_file,
+                "latest_fact_check_report": fact_check_report_file,
+                "fact_check_status": fact_check_status,
+                "fact_checked_body_file": body_file,
+                "fact_checked_body_sha256": body_sha256(project_dir, body_file),
+                "fact_checked_at": fact_checked_at or datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+        )
+        manifest.pop("fact_check_stale_reason", None)
 
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -116,6 +183,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--html", help="最新导出的 HTML 文件名")
     parser.add_argument("--html-source", help="用于导出 HTML 的正文文件名")
     parser.add_argument("--html-theme", help="HTML 导出使用的版式主题")
+    parser.add_argument("--fact-check-status", choices=("passed", "blocked"), help="绑定到当前正文的事实核查结果")
+    parser.add_argument("--fact-claims", help="事实清单文件名")
+    parser.add_argument("--fact-report", help="事实核查报告文件名")
+    parser.add_argument("--fact-checked-at", help="事实核查时间，默认当前本地 ISO 时间")
     return parser
 
 
@@ -132,6 +203,10 @@ def main() -> int:
         html_file=args.html,
         html_source_file=args.html_source,
         html_theme=args.html_theme,
+        fact_check_status=args.fact_check_status,
+        fact_claims_file=args.fact_claims,
+        fact_check_report_file=args.fact_report,
+        fact_checked_at=args.fact_checked_at,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0

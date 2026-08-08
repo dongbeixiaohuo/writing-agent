@@ -62,6 +62,7 @@ description: |
 - 只要风格是空的、待定的、模糊的，或者来自模型自行推断，就禁止进入 Stage 1.5 及后续任何写作阶段。
 - “你来定”“你随便选”“按你判断”都不算确认，必须继续追问直到拿到明确选择。
 - 如果用户明确选择 `无指定风格`，才允许继续；这要被视为用户决策，不是系统默认。
+- `01_theme.md` 必须写入 `风格确认状态：用户已确认`；Stage 6 会用语义门禁读取它，而不是只检查文件非空。
 
 ## 第四条规则：v2 协议是唯一机器契约源
 
@@ -86,7 +87,7 @@ description: |
 2. 每次调用前，先读取 `.claude/workflows/collab_v2.json`，确认当前 Stage 对应的 agent、inputs、outputs。
 3. `prompt` 里只传当前阶段必需的上下文，不要把整条工作流历史一股脑塞进去。
 4. 轻量模式只走最短链路；协作模式严格按 `collab_v2.json` 的活跃 stages 推进；选题模式完成后再切回协作模式 Stage 1。
-5. 只要当前 Stage 在 `collab_v2.json` 里声明了具体 `outputs`，就必须在展示“✅ Stage 完成”之前，先验证这些文件已经真实存在且非空。禁止把“子代理口头说已保存”当作完成。
+5. 只要当前 Stage 在 `collab_v2.json` 里声明了具体 `outputs`，就必须在展示“✅ Stage 完成”之前运行产物校验。`01_theme.md`、`02_evidence_ledger.json`、`04_title.md`、`05c_opening_hook.md` 还必须通过语义门禁；只有尚待用户选择的标题候选池允许显式使用 `--presence-only`。禁止把“子代理口头说已保存”当作完成。
 
 ### 最小调用模板
 
@@ -181,7 +182,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/verify_required_files.py" --project "[项�
 ```
 
 - 如果返回 `PASS`：才允许进入 Stage 6。
-- 如果返回 `FAIL`：必须停止并明确指出缺的是哪个文件，退回对应前序 Stage 处理。
+- 如果返回 `FAIL`：必须停止并明确指出缺失、格式损坏或未确认的是哪个文件，退回对应前序 Stage 处理。
 
 校验器必须读取 JSON 中 Stage 6 的全部 `inputs`，不能在说明文档或命令中手写一份缩减清单。禁止在缺少任一契约输入时继续写初稿。
 
@@ -220,7 +221,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/verify_required_files.py" --project "[项�
 
 硬规则：
 - `fact-checker` 必须输出 `fact_claims.json` 和 `fact_check_report.md`。
-- 如果 `fact_check_status=passed`，才允许进入 Stage 11 的配图询问。
+- 只有 `fact_check_status=passed`、`fact_checked_body_file` 指向当前正文且 `fact_checked_body_sha256` 与当前文件一致，才允许进入 Stage 11 的配图询问。
 - 如果存在 `CONTRADICTED`、`BROKEN_LINK`、`NEEDS_USER_SOURCE` 或红色 `UNSUPPORTED`，必须停止。
 - 红色问题未处理前，禁止进入 Stage 11 / Stage 12，禁止生成 `_clean.txt`、HTML 或完整流程回顾。
 - 事实核查只处理最终正文，不检查 `_notes.md` 里的内部备注。
@@ -250,14 +251,15 @@ N - 否，纯文字即可
 
 ## Stage 12: 📤 终极收尾动作（生成排版纯净版）
 
-进入 Stage 12 前必须确认 Stage 10.5 已通过。若 `fact_check_status=blocked`，禁止生成 `_clean.txt`。
+进入 Stage 12 前必须确认 Stage 10.5 已通过。若 `fact_check_status` 不是 `passed`，或记录的正文文件 / SHA-256 与当前正文不一致，禁止生成 `_clean.txt`。
 
-**纯净版 `_clean.txt` 统一由 `auto_clean_hook.py` 生成。该脚本会再次检查 `run_manifest.json -> fact_check_status=passed`；未通过时必须静默拒绝落盘。**
+**纯净版 `_clean.txt` 统一由 `auto_clean_hook.py` 生成。该脚本会再次检查事实状态、正文文件名和 SHA-256 绑定；任一项不匹配时必须拒绝落盘。**
 优先来源：
 
-1. 项目目录下的 `run_manifest.json -> clean_source_file`
-2. Hook 事件里显式传入的正文文件路径
-3. 最后才回退到历史兼容的“最近修改终稿候选”逻辑
+1. `--project` / Hook 事件明确指定项目后，该项目 `run_manifest.json -> clean_source_file`
+2. Hook 事件里显式传入、且位于当前工作区 `articles/` 下的正文文件路径
+
+正常工作流禁止扫描所有项目并选择“最近修改”的正文。旧兼容回退仅能由人工排障时显式传入 `--legacy-fallback`，不得写入自动 Hook。
 
 选择 Y 时，`article-illustrator` 结束会触发 Hook；选择 N 或 Hook 未触发时，由导演调用同一门禁脚本：
 

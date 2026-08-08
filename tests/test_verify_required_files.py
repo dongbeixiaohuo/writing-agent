@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,24 @@ from scripts.verify_required_files import find_file_issues, verify_required_file
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def valid_evidence_ledger(*, duplicate: bool = False) -> str:
+    claim = {
+        "evidence_id": "E001",
+        "claim_type": "number",
+        "claim_text": "一项调查给出了可核查的数据。",
+        "source_title": "示例报告",
+        "source_url": "https://example.com/report",
+        "source_publisher": "示例机构",
+        "source_quote": "报告中的原始摘录。",
+        "accessed_at": "2026-08-08",
+        "reliability": "high",
+        "use_boundary": "只能用于说明示例范围。",
+        "verification_status": "collected",
+    }
+    claims = [claim, {**claim}] if duplicate else [claim]
+    return json.dumps({"claims": claims, "notes": "测试账本"}, ensure_ascii=False)
 
 
 class VerifyRequiredFilesTests(unittest.TestCase):
@@ -24,7 +43,10 @@ class VerifyRequiredFilesTests(unittest.TestCase):
     def test_verify_required_files_passes_when_all_files_exist_and_nonempty(self) -> None:
         write(self.project_dir / "04_share_map.md", "# share map")
         write(self.project_dir / "05_concrete_library.md", "# concrete library")
-        write(self.project_dir / "05c_opening_hook.md", "# opening hook")
+        write(
+            self.project_dir / "05c_opening_hook.md",
+            "# 开头钩子（已锁定）\n\n> 选择：A - 暴击型\n\n" + "这是经用户选择的真实开头内容。" * 8,
+        )
 
         issues = find_file_issues(
             self.project_dir,
@@ -87,9 +109,10 @@ class VerifyRequiredFilesTests(unittest.TestCase):
             self.project_dir / "04_title.md",
             """# 标题确认
 
-## 最终标题
-
-**「你的大脑\"默认设置\"是什么时候的？答案很残忍」**
+## 最终锁定
+- 选择状态：已锁定
+- 最终编号：A
+- 最终标题：「你的大脑\"默认设置\"是什么时候的？答案很残忍」
 """,
         )
 
@@ -97,6 +120,87 @@ class VerifyRequiredFilesTests(unittest.TestCase):
 
         self.assertEqual([], issues)
         self.assertTrue(verify_required_files(self.project_dir, ["04_title.md"]))
+
+    def test_title_text_without_an_explicit_lock_is_rejected(self) -> None:
+        write(
+            self.project_dir / "04_title.md",
+            "## 最终标题\n\n**「看起来像最终标题，但用户没有锁定」**\n",
+        )
+
+        self.assertEqual(
+            [{"file": "04_title.md", "reason": "unlocked_title"}],
+            find_file_issues(self.project_dir, ["04_title.md"]),
+        )
+
+    def test_locked_title_rejects_a_decorated_pending_placeholder(self) -> None:
+        write(
+            self.project_dir / "04_title.md",
+            "## 最终锁定\n- 选择状态：已锁定\n- 最终编号：A\n- 最终标题：待定（稍后补）\n",
+        )
+
+        self.assertEqual(
+            [{"file": "04_title.md", "reason": "unlocked_title"}],
+            find_file_issues(self.project_dir, ["04_title.md"]),
+        )
+
+    def test_presence_only_accepts_a_title_candidate_pool(self) -> None:
+        write(
+            self.project_dir / "04_title.md",
+            "# 标题候选\n\n## 最终锁定\n- 选择状态：待定\n- 最终标题：待定\n",
+        )
+
+        self.assertEqual(
+            [],
+            find_file_issues(self.project_dir, ["04_title.md"], presence_only=True),
+        )
+
+    def test_theme_requires_an_explicitly_confirmed_style(self) -> None:
+        write(
+            self.project_dir / "01_theme.md",
+            "| **写作风格** | 九边风 |\n\n## 备注\n由系统自动选择。\n",
+        )
+
+        self.assertEqual(
+            [{"file": "01_theme.md", "reason": "unconfirmed_style"}],
+            find_file_issues(self.project_dir, ["01_theme.md"]),
+        )
+
+    def test_theme_accepts_legacy_explicit_confirmation_wording(self) -> None:
+        write(
+            self.project_dir / "01_theme.md",
+            "| **写作风格** | 九边风 |\n\n- 用户已显式确认风格选择（九边风）。\n",
+        )
+
+        self.assertEqual([], find_file_issues(self.project_dir, ["01_theme.md"]))
+
+    def test_opening_requires_lock_choice_and_substantive_content(self) -> None:
+        write(self.project_dir / "05c_opening_hook.md", "# opening hook\n\n随便一段。\n")
+
+        self.assertEqual(
+            [{"file": "05c_opening_hook.md", "reason": "unlocked_opening"}],
+            find_file_issues(self.project_dir, ["05c_opening_hook.md"]),
+        )
+
+    def test_evidence_ledger_must_be_valid_json(self) -> None:
+        write(self.project_dir / "02_evidence_ledger.json", '{"claims": [}')
+
+        self.assertEqual(
+            [{"file": "02_evidence_ledger.json", "reason": "invalid_json"}],
+            find_file_issues(self.project_dir, ["02_evidence_ledger.json"]),
+        )
+
+    def test_evidence_ledger_rejects_duplicate_evidence_ids(self) -> None:
+        write(self.project_dir / "02_evidence_ledger.json", valid_evidence_ledger(duplicate=True))
+
+        self.assertEqual(
+            [{"file": "02_evidence_ledger.json", "reason": "duplicate_evidence_id"}],
+            find_file_issues(self.project_dir, ["02_evidence_ledger.json"]),
+        )
+
+    def test_evidence_ledger_accepts_complete_claims(self) -> None:
+        write(self.project_dir / "02_evidence_ledger.json", valid_evidence_ledger())
+
+        self.assertEqual([], find_file_issues(self.project_dir, ["02_evidence_ledger.json"]))
 
 
 

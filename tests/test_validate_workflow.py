@@ -28,6 +28,20 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def write_valid_stage_artifact(project_dir: Path, file_name: str) -> None:
+    if file_name == "01_theme.md":
+        content = "| **写作风格** | 九边风 |\n\n> 风格确认状态：用户已确认\n"
+    elif file_name == "02_evidence_ledger.json":
+        content = json.dumps({"claims": [], "notes": "本阶段没有外部事实主张。"}, ensure_ascii=False)
+    elif file_name == "04_title.md":
+        content = "## 最终锁定\n- 选择状态：已锁定\n- 最终编号：A\n- 最终标题：「测试标题」\n"
+    elif file_name == "05c_opening_hook.md":
+        content = "# 开头钩子（已锁定）\n\n> 选择：A - 暴击型\n\n" + "这是用户确认后的开头正文。" * 10
+    else:
+        content = "ready"
+    write(project_dir / file_name, content)
+
+
 class ValidateWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -150,7 +164,7 @@ class WorkflowStageGateTests(unittest.TestCase):
             ]
         }
         for file_name in contract["stages"][0]["inputs"]:
-            write(self.project_dir / file_name, "ready")
+            write_valid_stage_artifact(self.project_dir, file_name)
 
         result = self._run_stage_check(contract, "B")
 
@@ -172,12 +186,30 @@ class WorkflowStageGateTests(unittest.TestCase):
                 }
             ],
         }
-        write(self.project_dir / "01_theme.md", "ready")
+        write_valid_stage_artifact(self.project_dir, "01_theme.md")
 
         result = self._run_stage_check(contract, "A")
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertNotIn("02_evidence_ledger.json", result.stdout)
+
+    def test_stage_check_rejects_placeholder_opening_and_invalid_evidence_ledger(self) -> None:
+        contract = {
+            "stages": [
+                {
+                    "id": "6",
+                    "inputs": ["02_evidence_ledger.json", "05c_opening_hook.md"],
+                }
+            ]
+        }
+        write(self.project_dir / "02_evidence_ledger.json", "ready")
+        write(self.project_dir / "05c_opening_hook.md", "ready")
+
+        result = self._run_stage_check(contract, "B")
+
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("invalid_json", result.stdout)
+        self.assertIn("unlocked_opening", result.stdout)
 
 
 class WorkflowRuntimeContractTests(unittest.TestCase):
@@ -193,6 +225,9 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
         cls.edit_learner = (runtime / "agents" / "edit-diff-learner.md").read_text(encoding="utf-8")
         cls.memory_loader = (runtime / "agents" / "memory-loader.md").read_text(encoding="utf-8")
         cls.humanizer = (runtime / "agents" / "humanizer.md").read_text(encoding="utf-8")
+        cls.fact_checker = (runtime / "agents" / "fact-checker.md").read_text(encoding="utf-8")
+        cls.title_designer = (runtime / "agents" / "title-designer.md").read_text(encoding="utf-8")
+        cls.opening_tournament = (runtime / "agents" / "opening-tournament.md").read_text(encoding="utf-8")
 
     def test_director_trigger_scope_excludes_simple_edits_and_accepts_explicit_mode(self) -> None:
         self.assertIn("需要多阶段产物的中文长文", self.director)
@@ -280,6 +315,25 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
         self.assertNotIn("humanizer", subagent_hook["matcher"])
         self.assertEqual(30, subagent_hook["hooks"][0]["timeout"])
         self.assertIn('auto_clean_hook.py" --project "[项目名]"', self.director)
+
+    def test_humanizer_preserves_the_verified_truth_boundary(self) -> None:
+        self.assertIn("01_theme.md", self.humanizer)
+        self.assertIn("02_evidence_ledger.json", self.humanizer)
+        self.assertIn("无（用户确认）", self.humanizer)
+        self.assertIn("禁止新增第一人称亲历", self.humanizer)
+        self.assertIn("禁止补写", self.humanizer)
+
+    def test_fact_checker_records_a_hash_bound_manifest_result(self) -> None:
+        self.assertIn("update_run_manifest.py", self.fact_checker)
+        self.assertIn("--fact-check-status", self.fact_checker)
+        self.assertIn("fact_checked_body_sha256", self.fact_checker)
+
+    def test_candidate_title_gate_is_presence_only_but_final_gate_is_semantic(self) -> None:
+        self.assertIn("--presence-only", self.title_designer)
+        self.assertGreaterEqual(self.title_designer.count("--required 04_title.md"), 2)
+
+    def test_opening_template_records_the_selected_option(self) -> None:
+        self.assertIn("赛马获胜方案：[A/B/C/自定义]", self.opening_tournament)
 
 
 if __name__ == "__main__":

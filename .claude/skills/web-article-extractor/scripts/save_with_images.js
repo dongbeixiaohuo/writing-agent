@@ -5,94 +5,17 @@
 
 import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
-import dns from "node:dns/promises";
 import http from "node:http";
 import https from "node:https";
-import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { resolveSafeAddress, safeLookup } from "./remote_url_policy.js";
+
+export { isSafeRemoteUrl } from "./remote_url_policy.js";
 
 const DEFAULT_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 3;
-
-function isPrivateIpv4(address) {
-  const octets = address.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return true;
-  }
-  const [a, b] = octets;
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && [0, 168].includes(b)) ||
-    (a === 198 && [18, 19, 51].includes(b)) ||
-    (a === 203 && b === 0) ||
-    a >= 224
-  );
-}
-
-function isPrivateIp(address) {
-  if (net.isIP(address) === 4) return isPrivateIpv4(address);
-  if (net.isIP(address) !== 6) return true;
-
-  const value = address.toLowerCase().split("%")[0];
-  if (value.startsWith("::ffff:")) {
-    return isPrivateIp(value.slice("::ffff:".length));
-  }
-  return (
-    value === "::" ||
-    value === "::1" ||
-    value.startsWith("fc") ||
-    value.startsWith("fd") ||
-    /^fe[89ab]/.test(value) ||
-    value.startsWith("2001:db8:")
-  );
-}
-
-export function isSafeRemoteUrl(value) {
-  try {
-    const parsed = new URL(value);
-    if (!["http:", "https:"].includes(parsed.protocol)) return false;
-    if (parsed.username || parsed.password) return false;
-    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    if (
-      hostname === "localhost" ||
-      hostname.endsWith(".localhost") ||
-      hostname.endsWith(".local") ||
-      hostname.endsWith(".internal")
-    ) {
-      return false;
-    }
-    return net.isIP(hostname) === 0 || !isPrivateIp(hostname);
-  } catch {
-    return false;
-  }
-}
-
-async function resolveSafeAddress(parsed) {
-  if (!isSafeRemoteUrl(parsed.href)) {
-    throw new Error("Blocked unsafe image URL");
-  }
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
-  if (net.isIP(hostname)) {
-    return { address: hostname, family: net.isIP(hostname) };
-  }
-
-  const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some(({ address }) => isPrivateIp(address))) {
-    throw new Error("Blocked image host resolving to a private or reserved address");
-  }
-  return addresses[0];
-}
-
-function safeLookup(address, family) {
-  return (_hostname, _options, callback) => callback(null, address, family);
-}
 
 async function openImageResponse(value, redirectsRemaining) {
   const parsed = new URL(value);

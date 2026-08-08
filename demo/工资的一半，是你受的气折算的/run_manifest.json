@@ -1,10 +1,13 @@
 {
   "workflow_version": "collab-v2",
   "latest_body_file": "draft_v1_humanized.md",
-  "latest_notes_file": null,
+  "latest_notes_file": "draft_v1_notes.md",
   "clean_source_file": "draft_v1_humanized.md",
-  "status": "humanized",
+  "status": "fact-checked",
   "latest_fact_claims_file": "fact_claims.json",
   "latest_fact_check_report": "fact_check_report.md",
-  "fact_check_status": "passed"
+  "fact_check_status": "passed",
+  "fact_checked_body_file": "draft_v1_humanized.md",
+  "fact_checked_body_sha256": "f1f8d9a63bd0c756cb6ae457382036963a48eee7d3d01b2e4d0bac722e54882d",
+  "fact_checked_at": "2026-07-18T22:00:00+08:00"
 }

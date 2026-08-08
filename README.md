@@ -1,4 +1,4 @@
-# 写稿Agent v0.9.0
+# 写稿Agent v0.9.1
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Desktop App](https://img.shields.io/badge/Desktop%20App-Windows%20Preview-2f6f4f)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)
@@ -64,7 +64,7 @@
 - 审稿和传播测试：[pre_publish_review.md](demo/工资的一半，是你受的气折算的/pre_publish_review.md)、[wechat_reader_test.md](demo/工资的一半，是你受的气折算的/wechat_reader_test.md)
 - 事实核查：[fact_claims.json](demo/工资的一半，是你受的气折算的/fact_claims.json)、[fact_check_report.md](demo/工资的一半，是你受的气折算的/fact_check_report.md)
 - 纯文本候选稿：[draft_v1_humanized_clean.txt](demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt)
-- 运行态记录：[run_manifest.json](demo/工资的一半，是你受的气折算的/run_manifest.json)
+- 运行态记录：[run_manifest.json](demo/工资的一半，是你受的气折算的/run_manifest.json)（事实结论绑定到正文 SHA-256）
 
 建议浏览顺序：
 
@@ -125,6 +125,19 @@ demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
 ## 最新更新
 
 首页前部只保留最近主线版本，历史版本不再堆在前面。
+
+### v0.9.1 写作可信度与交付门禁补丁
+
+这一版重点解决“文件看起来齐全，但可能不是用户确认的那一版”以及“去 AI 味时为了生动而补出假经历”两类风险：
+
+- **事实结论绑定正文**：`fact_check_status` 同时记录被核查正文的文件名和 SHA-256；正文哪怕只改一个字，旧的 `passed` 都会自动变成 `stale`，不能继续生成 `_clean.txt`
+- **Humanizer 不再造经历**：去 AI 味前必须读取 `01_theme.md` 和 `02_evidence_ledger.json`；只能强化已有真实素材，禁止新增第一人称亲历、金额、日期、人物、对话和无来源细节
+- **Stage 6 改为语义门禁**：主题必须有用户确认的风格，证据账本必须是合法且字段完整的 JSON，标题和开头必须记录用户已锁定的选择；单纯创建非空占位文件不再算完成
+- **自动清稿严格限定项目**：正常流程只接受 `--project` 或 Hook 明确传入的正文，不再跨 `articles/` 猜“最近修改的终稿”，避免并行项目串稿
+- **网页主地址先过安全预检**：不仅图片 URL，用户给出的正文页面及每次跳转也会检查协议、凭据、DNS 和私网/保留地址；导航后还会复核 `window.location.href`
+- **依赖与 CI 门禁更新**：生产依赖中的 high/moderate 漏洞已通过锁文件升级消除；CI 新增 high 级依赖审计与真实隔离插件安装，`npm run check` 也纳入工作流和文档契约校验
+
+升级后，旧 `run_manifest.json` 中只有 `fact_check_status=passed`、却没有正文哈希绑定的项目会被视为 `stale`，需要重新执行 Stage 10.5。最低 Node.js 版本同步调整为 `18.17.0`。完整说明见 [v0.9.1 Release Notes](.github/releases/v0.9.1.md)。
 
 ### v0.9.0 运行时、安全与插件交付重构
 
@@ -202,7 +215,7 @@ demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
 - `empathy-designer` 从共情点设计升级成“社交转发动机”，核心产物是 [04_share_map.md](demo/工资的一半，是你受的气折算的/04_share_map.md)
 - 新增 `opening-tournament`，在正式写稿前先赛马开头，核心产物是 [05c_opening_hook.md](demo/工资的一半，是你受的气折算的/05c_opening_hook.md)
 
-如果你只想知道仓库现在值不值得拉下来试，先看 `v0.9.0` 这几条就够了。更老的版本记录去 [CHANGELOG](CHANGELOG.md) 或 Releases 看，不应该堵在首页前面。
+如果你只想知道仓库现在值不值得拉下来试，先看 `v0.9.1` 和 `v0.9.0` 这两节就够了。更老的版本记录去 [CHANGELOG](CHANGELOG.md) 或 Releases 看，不应该堵在首页前面。
 
 ---
 
@@ -287,7 +300,7 @@ demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
 
 最短路径：
 
-1. 先准备 `Node.js 18+`、`Python 3.11+` 和 `Claude Code`
+1. 先准备 `Node.js 18.17+`、`Python 3.11+` 和 `Claude Code`
 2. clone 本仓库并执行 `npm ci`
 3. 配好你要用的模型 API 或 Claude 账号
 4. 一定在项目根目录启动 `claude`
@@ -392,7 +405,7 @@ npm --version
 python --version
 ```
 
-最低版本为 `Node.js 18+`、`Python 3.11+`。Python 脚本只使用标准库；Node 依赖以根目录和插件目录各自的 `package-lock.json` 为准，不依赖用户手工猜包名。
+最低版本为 `Node.js 18.17+`、`Python 3.11+`。Python 脚本只使用标准库；Node 依赖以根目录和插件目录各自的 `package-lock.json` 为准，不依赖用户手工猜包名。
 
 ---
 
@@ -432,7 +445,7 @@ Claude Code 支持 macOS、Linux、Windows。你该选哪条路，取决于你�
 
 这点必须说清楚。
 
-Anthropic 当前文档仍把 `Node.js 18+` 作为 Claude Code 的系统要求。对这个仓库来说，提前准备好 Node.js 也仍然是最稳的做法，原因有两个：
+本仓库的锁定依赖要求 `Node.js 18.17+`。提前准备好 Node.js 的原因有两个：
 
 - 如果你后面想走 `npm` 路线安装、升级或调试 Claude Code，Node.js 是硬前置
 - 这个仓库本身带了 `package.json` 和一些基于 Node 的脚本、工具链，后面你大概率还是会用到 `node` / `npm`
@@ -440,7 +453,7 @@ Anthropic 当前文档仍把 `Node.js 18+` 作为 Claude Code 的系统要求。
 
 所以最稳的建议是：
 
-- 先装好 `Node.js 18+`
+- 先装好 `Node.js 18.17+`
 - 再装好 `Python 3.11+`
 - 再装 Claude Code
 - 最后 clone 仓库、执行 `npm ci` 并启动项目

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import io
+import hashlib
 import importlib.util
 import subprocess
 import sys
@@ -68,13 +69,13 @@ class AutoCleanHookTests(unittest.TestCase):
         original_articles_dir = hook_module.ARTICLES_DIR
         try:
             hook_module.ARTICLES_DIR = self.articles_dir
-            picked = hook_module.resolve_clean_source({})
+            picked = hook_module.resolve_clean_source({}, allow_legacy_fallback=True)
         finally:
             hook_module.ARTICLES_DIR = original_articles_dir
 
         self.assertEqual((self.project_dir / "draft_v3.md").resolve(), picked.resolve())
 
-    def test_workspace_root_event_scopes_article_lookup(self) -> None:
+    def test_workspace_root_event_does_not_select_an_implicit_project(self) -> None:
         isolated_root = self.root / "workspace-a"
         isolated_articles = isolated_root / "articles"
         isolated_project = isolated_articles / "隔离项目"
@@ -83,7 +84,19 @@ class AutoCleanHookTests(unittest.TestCase):
 
         picked = hook_module.resolve_clean_source({"workspace_root": str(isolated_root)})
 
-        self.assertEqual((isolated_project / "draft_final.md").resolve(), picked.resolve())
+        self.assertIsNone(picked)
+
+    def test_legacy_fallback_must_be_explicitly_enabled(self) -> None:
+        write(self.project_dir / "draft_final.md", "# 历史兼容正文")
+
+        original_articles_dir = hook_module.ARTICLES_DIR
+        try:
+            hook_module.ARTICLES_DIR = self.articles_dir
+            picked = hook_module.resolve_clean_source({}, allow_legacy_fallback=True)
+        finally:
+            hook_module.ARTICLES_DIR = original_articles_dir
+
+        self.assertEqual((self.project_dir / "draft_final.md").resolve(), picked.resolve())
 
     def test_manifest_cannot_select_a_file_outside_its_project(self) -> None:
         outside = self.articles_dir / "outside.md"
@@ -113,7 +126,7 @@ class AutoCleanHookTests(unittest.TestCase):
 
         self.assertIsNone(picked)
 
-    def _run_hook_with_fact_status(self, fact_check_status: str) -> Path:
+    def _run_hook_with_fact_status(self, fact_check_status: str, *, valid_hash: bool = True) -> Path:
         body_path = self.project_dir / "draft_v3_humanized.md"
         clean_path = self.project_dir / "draft_v3_humanized_clean.txt"
         write(body_path, "# 最终正文")
@@ -125,6 +138,12 @@ class AutoCleanHookTests(unittest.TestCase):
                     "latest_body_file": body_path.name,
                     "clean_source_file": body_path.name,
                     "fact_check_status": fact_check_status,
+                    "fact_checked_body_file": body_path.name,
+                    "fact_checked_body_sha256": (
+                        hashlib.sha256(body_path.read_bytes()).hexdigest()
+                        if valid_hash
+                        else "0" * 64
+                    ),
                 },
                 ensure_ascii=False,
             ),
@@ -173,6 +192,11 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
 
         self.assertTrue(clean_path.exists())
 
+    def test_auto_clean_hook_rejects_a_stale_fact_check_hash(self) -> None:
+        clean_path = self._run_hook_with_fact_status("passed", valid_hash=False)
+
+        self.assertFalse(clean_path.exists())
+
     def test_cli_project_argument_targets_only_requested_project(self) -> None:
         target_body = self.project_dir / "draft_v3_humanized.md"
         write(target_body, "# 目标项目正文")
@@ -183,6 +207,8 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
                     "latest_body_file": target_body.name,
                     "clean_source_file": target_body.name,
                     "fact_check_status": "passed",
+                    "fact_checked_body_file": target_body.name,
+                    "fact_checked_body_sha256": hashlib.sha256(target_body.read_bytes()).hexdigest(),
                 },
                 ensure_ascii=False,
             ),
@@ -198,6 +224,8 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
                     "latest_body_file": other_body.name,
                     "clean_source_file": other_body.name,
                     "fact_check_status": "passed",
+                    "fact_checked_body_file": other_body.name,
+                    "fact_checked_body_sha256": hashlib.sha256(other_body.read_bytes()).hexdigest(),
                 },
                 ensure_ascii=False,
             ),

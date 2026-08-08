@@ -6,7 +6,7 @@
 
 ### 报告 Bug
 
-如果你发现了 Bug，请在 [GitHub Issues](https://github.com/dongbeixiaohuo/写稿Agent/issues) 提交，包含：
+如果你发现了 Bug，请在 [GitHub Issues](https://github.com/dongbeixiaohuo/writing-agent/issues) 提交，包含：
 
 1. **Bug 描述**：清晰描述问题
 2. **复现步骤**：如何触发这个 Bug
@@ -19,7 +19,7 @@
 
 ### 提交新功能建议
 
-在 [GitHub Discussions](https://github.com/dongbeixiaohuo/写稿Agent/discussions) 讨论你的想法，包含：
+在 [GitHub Discussions](https://github.com/dongbeixiaohuo/writing-agent/discussions) 讨论你的想法，包含：
 
 1. **功能描述**：你想要什么功能
 2. **使用场景**：为什么需要这个功能
@@ -43,10 +43,12 @@
    - 遵循现有代码风格
    - 更新相关文档
    - 如果修改 Skill，更新版本号
+   - 只修改 `claude-runtime/` 唯一源，再执行 `npm run sync:claude-runtime`，不要分别手改 `.claude/` 和插件镜像
 
 4. **测试**
-   - 在 Claude Code 中测试你的修改
-   - 确保不破坏现有功能
+   - 执行 `npm ci`
+   - 执行 `npm run check`
+   - 涉及插件安装时，再执行联网隔离安装测试
 
 5. **提交**
    ```bash
@@ -85,7 +87,7 @@ docs: 更新 FAQ 文档
 
 1. **目录结构**
    ```
-   .claude/skills/你的Skill名/
+   claude-runtime/skills/你的Skill名/
    ├── SKILL.md          # Skill 定义文件
    └── README.md         # （可选）详细说明
    ```
@@ -145,4 +147,4 @@ docs: 更新 FAQ 文档
 
 ---
 
-**有问题？** 在 [Discussions](https://github.com/dongbeixiaohuo/写稿Agent/discussions) 提问。
+**有问题？** 在 [Discussions](https://github.com/dongbeixiaohuo/writing-agent/discussions) 提问。

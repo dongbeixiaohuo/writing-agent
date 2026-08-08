@@ -179,7 +179,7 @@ def build_plugin_package(project_root: Path) -> dict:
         "version": _load_package_version(project_root),
         "private": True,
         "type": "module",
-        "engines": {"node": ">=18"},
+        "engines": dict(root_package.get("engines", {"node": ">=18.17.0"})),
         "dependencies": dependencies,
     }
 

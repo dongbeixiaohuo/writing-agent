@@ -348,7 +348,18 @@ class PackageMetadataTests(unittest.TestCase):
 
         self.assertIn("check", package["scripts"])
         self.assertIn("check:plugin", package["scripts"])
-        self.assertEqual(">=18", package["engines"]["node"])
+        self.assertIn("validate:workflow", package["scripts"]["check"])
+        self.assertIn("check:docs", package["scripts"]["check"])
+        self.assertIn("python -B", package["scripts"]["test:py"])
+        self.assertEqual(">=18.17.0", package["engines"]["node"])
+
+    def test_ci_runs_security_and_isolated_plugin_install_gates(self) -> None:
+        workflow = (self.repository_root / ".github" / "workflows" / "packaging.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("npm audit --omit=dev --audit-level=high", workflow)
+        self.assertIn("RUN_PLUGIN_INSTALL_TEST", workflow)
 
     def test_package_and_lock_versions_match(self) -> None:
         package = json.loads((self.repository_root / "package.json").read_text(encoding="utf-8"))

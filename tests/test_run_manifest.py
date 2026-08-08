@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import time
 import unittest
@@ -60,18 +61,24 @@ class RunManifestTests(unittest.TestCase):
         self.assertEqual("draft_v3_humanized.md", manifest["html_source_file"])
         self.assertEqual("grace", manifest["html_theme"])
 
-    def test_update_run_manifest_preserves_fact_check_fields(self) -> None:
+    def test_update_run_manifest_invalidates_fact_check_for_a_changed_body(self) -> None:
+        old_body = self.project_dir / "draft_v3.md"
+        write(old_body, "# 旧正文")
         manifest_path = self.project_dir / "run_manifest.json"
         manifest_path.write_text(
             json.dumps(
                 {
                     "fact_check_status": "passed",
-                    "fact_check_report_file": "fact_check_report.md",
+                    "latest_fact_check_report": "fact_check_report.md",
+                    "fact_checked_body_file": old_body.name,
+                    "fact_checked_body_sha256": hashlib.sha256(old_body.read_bytes()).hexdigest(),
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
+
+        write(self.project_dir / "draft_v4.md", "# 已修改正文")
 
         manifest = update_run_manifest(
             project_dir=self.project_dir,
@@ -79,8 +86,70 @@ class RunManifestTests(unittest.TestCase):
             status="reviewed",
         )
 
+        self.assertEqual("stale", manifest["fact_check_status"])
+        self.assertEqual("fact_check_report.md", manifest["latest_fact_check_report"])
+
+    def test_update_run_manifest_treats_legacy_unbound_pass_as_stale(self) -> None:
+        write(self.project_dir / "draft_v3.md", "# 正文")
+        (self.project_dir / "run_manifest.json").write_text(
+            json.dumps({"fact_check_status": "passed"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        manifest = update_run_manifest(
+            project_dir=self.project_dir,
+            body_file="draft_v3.md",
+            status="reviewed",
+        )
+
+        self.assertEqual("stale", manifest["fact_check_status"])
+
+    def test_update_run_manifest_records_fact_check_body_hash(self) -> None:
+        body = self.project_dir / "draft_v3_humanized.md"
+        write(body, "# 已核查正文\n\n内容")
+        write(self.project_dir / "fact_claims.json", "{}")
+        write(self.project_dir / "fact_check_report.md", "# 报告")
+
+        manifest = update_run_manifest(
+            project_dir=self.project_dir,
+            body_file=body.name,
+            status="fact-checked",
+            fact_check_status="passed",
+            fact_claims_file="fact_claims.json",
+            fact_check_report_file="fact_check_report.md",
+            fact_checked_at="2026-08-08T12:00:00+08:00",
+        )
+
         self.assertEqual("passed", manifest["fact_check_status"])
-        self.assertEqual("fact_check_report.md", manifest["fact_check_report_file"])
+        self.assertEqual(body.name, manifest["fact_checked_body_file"])
+        self.assertEqual(hashlib.sha256(body.read_bytes()).hexdigest(), manifest["fact_checked_body_sha256"])
+        self.assertEqual("fact_claims.json", manifest["latest_fact_claims_file"])
+        self.assertEqual("fact_check_report.md", manifest["latest_fact_check_report"])
+        self.assertEqual("2026-08-08T12:00:00+08:00", manifest["fact_checked_at"])
+
+    def test_fact_check_update_preserves_existing_notes_file(self) -> None:
+        body = self.project_dir / "draft_v3_humanized.md"
+        write(body, "# 已核查正文")
+        write(self.project_dir / "draft_v3_notes.md", "# 备注")
+        write(self.project_dir / "fact_claims.json", "{}")
+        write(self.project_dir / "fact_check_report.md", "# 报告")
+        update_run_manifest(
+            project_dir=self.project_dir,
+            body_file=body.name,
+            notes_file="draft_v3_notes.md",
+            status="humanized",
+        )
+
+        manifest = update_run_manifest(
+            project_dir=self.project_dir,
+            body_file=body.name,
+            status="fact-checked",
+            fact_check_status="passed",
+            fact_claims_file="fact_claims.json",
+            fact_check_report_file="fact_check_report.md",
+        )
+
+        self.assertEqual("draft_v3_notes.md", manifest["latest_notes_file"])
 
     def test_update_run_manifest_rejects_project_outside_articles(self) -> None:
         outside_project = self.root / "outside-project"
@@ -147,7 +216,7 @@ class RunManifestTests(unittest.TestCase):
         original_articles_dir = hook_module.ARTICLES_DIR
         try:
             hook_module.ARTICLES_DIR = self.articles_dir
-            resolved = resolve_clean_source({})
+            resolved = resolve_clean_source({}, allow_legacy_fallback=True)
         finally:
             hook_module.ARTICLES_DIR = original_articles_dir
 

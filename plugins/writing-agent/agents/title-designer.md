@@ -301,10 +301,10 @@ cat articles/[项目名]/00_memory_packet.md  # 可能不存在，如果不存�
 保存后，**必须立刻执行**：
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/scripts/verify_required_files.py" --project "[项目名]" --required 04_title.md
+python "${CLAUDE_PLUGIN_ROOT}/scripts/verify_required_files.py" --project "[项目名]" --required 04_title.md --presence-only
 ```
 
-只有脚本返回 `PASS`，才允许宣称 Stage 5.5 第一轮完成并等待用户选择。
+第一轮只校验候选池已真实落盘；此时标题本来就尚未锁定。只有脚本返回 `PASS`，才允许宣称 Stage 5.5 第一轮完成并等待用户选择。
 如果脚本返回 `FAIL`，必须停止并明确报告“04_title.md 未真正落盘”。
 
 ### Step 7: 等待用户选择
@@ -378,6 +378,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/verify_required_files.py" --project "[项�
 ---
 
 ## 版本记录
+- v2.2.0 (2026-08-08): 候选池使用 presence-only 落盘校验，最终选择仍执行“已锁定标题”语义门禁。
 - v2.1.0 (2026-04-12): 标题阶段改为 8 个候选标题全展示；要求先落盘 `04_title.md` 再等待用户选择；用户锁定后必须回写同一文件，杜绝标题只存在于会话状态里。
 - v2.0.0 (2026-01-28): 重大升级
   - 新增：15种爆款标题公式（分6大类）

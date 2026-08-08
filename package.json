@@ -1,10 +1,10 @@
 {
   "name": "writing-agent",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=18.17.0"
   },
   "files": [
     "claude-runtime/",
@@ -17,15 +17,16 @@
   "scripts": {
     "generate-image": "tsx scripts/generate_image.ts",
     "export:html": "tsx scripts/export_markdown_to_html.ts",
-    "validate:workflow": "python scripts/validate_workflow.py",
-    "check:docs": "python scripts/validate_workflow.py --targets docs",
-    "sync:claude-runtime": "python scripts/sync_claude_runtime.py",
-    "check:claude-runtime": "python scripts/check_claude_runtime_sync.py",
-    "bootstrap:workspace": "python scripts/bootstrap_workspace.py",
-    "test:py": "python -m unittest discover -s tests -p \"test_*.py\"",
-    "check:scripts": "python claude-runtime/scripts/check_python_syntax.py claude-runtime/scripts scripts",
+    "validate:workflow": "python -B scripts/validate_workflow.py",
+    "check:docs": "python -B scripts/validate_workflow.py --targets docs",
+    "sync:claude-runtime": "python -B scripts/sync_claude_runtime.py",
+    "check:claude-runtime": "python -B scripts/check_claude_runtime_sync.py",
+    "bootstrap:workspace": "python -B scripts/bootstrap_workspace.py",
+    "test:py": "python -B -m unittest discover -s tests -p \"test_*.py\"",
+    "check:scripts": "python -B claude-runtime/scripts/check_python_syntax.py claude-runtime/scripts scripts",
     "check:plugin": "claude plugin validate --strict plugins/writing-agent && claude plugin validate --strict .claude-plugin/marketplace.json",
-    "check": "npm run test:py && npm run check:scripts && npm run check:claude-runtime && npm run check:plugin"
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "check": "npm run test:py && npm run check:scripts && npm run validate:workflow && npm run check:docs && npm run check:claude-runtime && npm run check:plugin"
   },
   "dependencies": {
     "@antv/infographic": "0.2.19",
@@ -37,7 +38,7 @@
     "https-proxy-agent": "^7.0.0",
     "juice": "^11.0.1",
     "marked": "^15.0.6",
-    "mermaid": "^11.12.0",
+    "mermaid": "^11.16.1",
     "node-fetch": "^3.0.0",
     "openai": "^4.0.0",
     "reading-time": "^1.5.0",

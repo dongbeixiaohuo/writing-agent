@@ -23,3 +23,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm install --global @anthropic-ai/claude-code
       - run: npm run check
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Verify isolated plugin installation
+        run: python -m unittest tests.test_plugin_isolated_install
+        env:
+          RUN_PLUGIN_INSTALL_TEST: "1"

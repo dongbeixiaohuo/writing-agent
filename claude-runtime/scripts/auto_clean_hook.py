@@ -1,13 +1,14 @@
 """
 auto_clean_hook.py - 自动生成纯净版的 Hook 脚本
 触发时机：由 Claude Code Hook 在 Subagent 结束时自动调用
-功能：优先根据显式正文来源生成 _clean.txt，最后才回退到历史兼容逻辑
+功能：根据显式项目或正文来源生成 _clean.txt；旧的全局回退必须人工开启
 """
 
 import os
 import sys
 import json
 import argparse
+import hashlib
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -118,7 +119,7 @@ def resolve_clean_source_from_manifest(manifest_path: Path):
     return None
 
 
-def resolve_clean_source(event_data: dict):
+def resolve_clean_source(event_data: dict, *, allow_legacy_fallback: bool = False):
     workspace_root_value = event_data.get("workspace_root")
     workspace_root = resolve_workspace_root(workspace_root_value) if workspace_root_value else None
     articles_dir = workspace_articles_dir(workspace_root) if workspace_root else ARTICLES_DIR
@@ -148,13 +149,16 @@ def resolve_clean_source(event_data: dict):
                 if resolved is not None:
                     return resolved
 
-    latest_manifest = find_latest_manifest(articles_dir)
-    if latest_manifest is not None:
-        resolved = resolve_clean_source_from_manifest(latest_manifest)
-        if resolved is not None:
-            return resolved
+    if allow_legacy_fallback:
+        latest_manifest = find_latest_manifest(articles_dir)
+        if latest_manifest is not None:
+            resolved = resolve_clean_source_from_manifest(latest_manifest)
+            if resolved is not None:
+                return resolved
 
-    return find_latest_draft(articles_dir)
+        return find_latest_draft(articles_dir)
+
+    return None
 
 
 def has_clean_version(draft_path: Path) -> bool:
@@ -167,16 +171,32 @@ def has_clean_version(draft_path: Path) -> bool:
 
 
 def fact_check_passed(draft_path: Path) -> bool:
-    """只有正文所在项目的 manifest 明确放行时才允许生成纯净版。"""
+    """只有绑定到当前正文内容哈希的事实核查结果才允许生成纯净版。"""
     manifest_path = draft_path.parent / MANIFEST_NAME
     try:
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     except (OSError, json.JSONDecodeError):
         return False
-    return manifest.get('fact_check_status') == 'passed'
+    if manifest.get('fact_check_status') != 'passed':
+        return False
+
+    checked_file = manifest.get('fact_checked_body_file')
+    checked_hash = manifest.get('fact_checked_body_sha256')
+    if not isinstance(checked_file, str) or not isinstance(checked_hash, str):
+        return False
+
+    checked_path = Path(checked_file)
+    if checked_path.is_absolute():
+        return False
+    checked_path = (draft_path.parent / checked_path).resolve()
+    if checked_path != draft_path.resolve():
+        return False
+
+    actual_hash = hashlib.sha256(draft_path.read_bytes()).hexdigest()
+    return actual_hash == checked_hash.lower()
 
 
-def main(event_data_override: dict | None = None) -> int:
+def main(event_data_override: dict | None = None, *, allow_legacy_fallback: bool = False) -> int:
     # 读取 hook 传入的事件信息（如果有的话）
     if event_data_override is not None:
         event_data = event_data_override
@@ -187,14 +207,14 @@ def main(event_data_override: dict | None = None) -> int:
             event_data = {}
 
     # 优先根据显式路径 / run_manifest.json 找到正文来源
-    latest_draft = resolve_clean_source(event_data)
+    latest_draft = resolve_clean_source(event_data, allow_legacy_fallback=allow_legacy_fallback)
 
     if latest_draft is None:
         # 没有找到定稿文件，静默退出
         return 0
 
     if not fact_check_passed(latest_draft):
-        print("跳过生成：run_manifest.json 未记录 fact_check_status=passed", file=sys.stderr)
+        print("跳过生成：事实核查未通过，或结果未绑定当前正文哈希", file=sys.stderr)
         return 0
 
     if has_clean_version(latest_draft):
@@ -226,6 +246,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="在事实核查通过后生成项目纯净版")
     parser.add_argument("--workspace-root", help="工作区根目录，默认当前目录")
     parser.add_argument("--project", help="articles/ 下的目标项目名")
+    parser.add_argument(
+        "--legacy-fallback",
+        action="store_true",
+        help="显式启用跨 articles/ 查找最近正文的旧兼容行为（默认禁用）",
+    )
     return parser
 
 
@@ -238,4 +263,4 @@ if __name__ == '__main__':
             event_data['workspace_root'] = args.workspace_root
         if args.project:
             event_data['project_dir'] = args.project
-    raise SystemExit(main(event_data))
+    raise SystemExit(main(event_data, allow_legacy_fallback=args.legacy_fallback))

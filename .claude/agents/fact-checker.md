@@ -167,27 +167,21 @@ cat articles/[项目名]/[最终正文文件去掉.md后加_notes.md]
 
 ## Step 5: 更新运行态
 
-如果没有红色问题，可以手动更新 `articles/[项目名]/run_manifest.json`，保留原有字段，并补充：
+禁止手动编辑 `run_manifest.json`。必须用脚本把核查结论绑定到刚刚实际核查的正文文件及其 SHA-256；正文之后只要发生改动，旧结论会自动变为 `stale`。
 
-```json
-{
-  "latest_fact_claims_file": "fact_claims.json",
-  "latest_fact_check_report": "fact_check_report.md",
-  "fact_check_status": "passed"
-}
+如果没有红色问题，执行：
+
+```bash
+python "scripts/update_run_manifest.py" --project "[项目名]" --body "[最终正文文件]" --status fact-checked --workflow-version collab-v2 --fact-check-status passed --fact-claims fact_claims.json --fact-report fact_check_report.md
 ```
 
-如果有红色问题，补充：
+如果有红色问题，执行：
 
-```json
-{
-  "latest_fact_claims_file": "fact_claims.json",
-  "latest_fact_check_report": "fact_check_report.md",
-  "fact_check_status": "blocked"
-}
+```bash
+python "scripts/update_run_manifest.py" --project "[项目名]" --body "[最终正文文件]" --status fact-check-blocked --workflow-version collab-v2 --fact-check-status blocked --fact-claims fact_claims.json --fact-report fact_check_report.md
 ```
 
-禁止为了更新运行态而覆盖 `latest_body_file`、`latest_notes_file`、`clean_source_file` 等既有字段。
+脚本成功后必须读回确认 `fact_checked_body_file` 与本轮正文一致，且 `fact_checked_body_sha256` 为 64 位十六进制值。脚本会保留 `latest_notes_file` 等既有字段，并把 `latest_body_file` / `clean_source_file` 明确指向本轮已核查正文。
 
 ---
 
@@ -208,7 +202,7 @@ cat articles/[项目名]/[最终正文文件去掉.md后加_notes.md]
 - fact_claims.json
 - fact_check_report.md
 
-【运行态】：已记录 fact_check_status=passed
+【运行态】：已记录 fact_check_status=passed，并绑定 fact_checked_body_sha256
 下一步：进入 Stage 11 配图询问
 ```
 
@@ -244,4 +238,5 @@ D. 我确认保留，但改成主观判断表达
 
 ## 版本记录
 
+- v1.1.0 (2026-08-08): 事实核查结果改由脚本写入，并绑定被核查正文的文件名与 SHA-256；正文变化后旧结论自动失效。
 - v1.0.0 (2026-06-16): 新增最终提交前事实核查闸门，反查 `02_evidence_ledger.json` 并输出 `fact_claims.json` / `fact_check_report.md`。

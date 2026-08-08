@@ -5,6 +5,35 @@ All notable changes to 写稿Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-08-08
+
+> 面向写作可信度的补丁版本：让“用户确认过什么、核查的是哪份正文、最终清理的是哪个项目”都能由机器复核，而不是依赖非空文件或会话记忆。
+
+### Added
+- 🧾 **语义产物门禁**：`verify_required_files.py` 现在校验用户已确认的写作风格、合法且字段完整的证据账本、已锁定标题和已锁定开头；标题候选池可显式使用 `--presence-only` 完成第一轮落盘校验。
+- 🔗 **网页主 URL 安全预检**：`web-article-extractor` 新增页面 URL、DNS 与重定向链预检，并在浏览器导航后再次复核 `window.location.href`。
+- 🧪 **交付链 CI 门禁**：Windows/Linux CI 强制执行 high 级生产依赖审计和真实隔离插件安装测试；聚合检查同时覆盖工作流与文档契约。
+
+### Changed
+- ✍️ **Humanizer 服从真实素材边界**：去 AI 味前读取 `01_theme.md`、`02_evidence_ledger.json` 和同版本 notes；只允许强化已有真实表达，禁止新增第一人称亲历、人物、时间、地点、金额、对话、结果、引语和数据。
+- 🎯 **用户选择可机器复核**：`01_theme.md` 记录风格确认状态，`05c_opening_hook.md` 记录 A/B/C/自定义选择；标题候选与最终锁定分别使用落盘门禁和语义门禁。
+- 📦 **运行时与依赖基线**：版本升级到 `0.9.1`，最低 Node.js 调整为 `18.17.0`；锁文件升级 Mermaid、DOMPurify、Undici、form-data、js-yaml、nanoid、PostCSS 等依赖，消除生产依赖中的 high/moderate 审计项。
+
+### Fixed
+- 🔒 **事实放行绑定正文版本**：事实核查通过/阻断结果记录 `fact_checked_body_file`、`fact_checked_body_sha256` 和时间；正文文件或内容变化后旧状态自动标记为 `stale`。
+- 🧹 **禁止跨项目自动选稿**：`auto_clean_hook.py` 默认只处理显式项目或正文路径；跨 `articles/` 的“最近项目”兼容行为改为人工显式 `--legacy-fallback`，正常 Hook 不再启用。
+- 🧠 **去 AI 味不再以虚构换真实感**：移除“强制加入第一人称反应”和无来源具体细节示例，解决其与上游“禁止编造”契约冲突的问题。
+- 📚 修复完整示例源目录中无法解析的 `02_evidence_ledger.json`，并为 Demo 的事实核查状态补齐正文哈希绑定。
+
+### Security
+- 🌐 页面导航与图片下载共用远程 URL 安全策略，拒绝非 HTTP(S)、带凭据 URL、本机/私网/保留地址、危险 DNS 解析和跳转到私网的重定向。
+- 🛡️ 旧的、没有正文哈希绑定的 `fact_check_status=passed` 不再被视为有效放行凭证。
+
+### Migration
+- 旧项目首次生成最终纯净版前，需要重新执行 Stage 10.5，以补齐正文文件和 SHA-256 绑定。
+- 自定义调用 `auto_clean_hook.py` 时应传 `--project "[项目名]"`；不要依赖全局最近文件选择。
+- 升级后执行 `npm ci`，并确认本机 Node.js 版本不低于 `18.17.0`。
+
 ## [0.9.0] - 2026-07-18
 
 > 面向可迁移性、安全边界和可验证交付的一次运行时重构。此版本将 clone、plugin 和唯一源运行时统一到同一套契约，并补齐真实隔离安装、严格插件校验和安全回归测试。
