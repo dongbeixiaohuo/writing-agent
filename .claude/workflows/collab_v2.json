@@ -28,6 +28,41 @@
     "B": {
       "description": "协作模式：使用完整 stages 契约",
       "stage_sequence_source": "stages"
+    },
+    "C": {
+      "description": "选题模式：生成候选、验证选题，然后交接协作模式",
+      "stage_sequence": [
+        "0a",
+        "0b",
+        "1"
+      ],
+      "stages": [
+        {
+          "id": "0a",
+          "agent": "topic-generator",
+          "inputs": [
+            "articles/_topic_pool/"
+          ],
+          "outputs": [
+            "articles/_topic_pool/[YYYY-MM-DD-HHmm]-topic-candidates.md"
+          ]
+        },
+        {
+          "id": "0b",
+          "agent": "topic-research",
+          "inputs": [
+            "[topic_candidates_file]"
+          ],
+          "outputs": [
+            "articles/_topic_pool/[YYYY-MM-DD-HHmm]-topic-validation.md"
+          ]
+        }
+      ],
+      "handoff": {
+        "after_stage": "0b",
+        "to_mode": "B",
+        "to_stage": "1"
+      }
     }
   },
   "interaction_policy": {
@@ -61,6 +96,19 @@
     ],
     "terminal_stage": "13"
   },
+  "post_publish_stages": [
+    {
+      "id": "14",
+      "agent": "performance-review",
+      "trigger": "user_explicit",
+      "inputs": [
+        "publication_metrics.jsonl"
+      ],
+      "outputs": [
+        "performance_reviews/[YYYY-MM-DD-HHmm]-[record_id].md"
+      ]
+    }
+  ],
   "stages": [
     {
       "id": "1",
@@ -106,6 +154,7 @@
       "agent": "outline-architect",
       "inputs": [
         "01_theme.md",
+        "00_memory_packet.md",
         "01b_position.md",
         "02_scar_tissue.md"
       ],
@@ -117,6 +166,7 @@
       "id": "4",
       "agent": "empathy-designer",
       "inputs": [
+        "01_theme.md",
         "03_outline.md",
         "01b_position.md",
         "02_scar_tissue.md"
@@ -140,8 +190,11 @@
       "id": "5.5",
       "agent": "title-designer",
       "inputs": [
-        "03_outline.md",
-        "01_theme.md"
+        "01_theme.md",
+        "00_memory_packet.md",
+        "01b_position.md",
+        "02_evidence_ledger.json",
+        "03_outline.md"
       ],
       "outputs": [
         "04_title.md"
@@ -151,8 +204,12 @@
       "id": "5.8",
       "agent": "opening-tournament",
       "inputs": [
+        "01_theme.md",
         "01b_position.md",
         "02_scar_tissue.md",
+        "02_evidence_ledger.json",
+        "03_outline.md",
+        "04_title.md",
         "04_share_map.md",
         "05_concrete_library.md"
       ],
@@ -165,6 +222,7 @@
       "agent": "writing-executor",
       "inputs": [
         "01_theme.md",
+        "00_memory_packet.md",
         "01b_position.md",
         "02_scar_tissue.md",
         "02_evidence_ledger.json",
@@ -197,6 +255,11 @@
     {
       "id": "9",
       "agent": "wechat-reader-test",
+      "inputs": [
+        "01_theme.md",
+        "04_title.md",
+        "[latest_body_file]"
+      ],
       "outputs": [
         "wechat_reader_test.md"
       ]
@@ -204,6 +267,13 @@
     {
       "id": "10",
       "agent": "humanizer",
+      "inputs": [
+        "01_theme.md",
+        "00_memory_packet.md",
+        "02_evidence_ledger.json",
+        "04_title.md",
+        "[latest_body_file]"
+      ],
       "outputs": [
         "draft_vN_humanized.md"
       ]
@@ -213,6 +283,7 @@
       "agent": "fact-checker",
       "inputs": [
         "02_evidence_ledger.json",
+        "04_title.md",
         "[latest_body_file]"
       ],
       "outputs": [

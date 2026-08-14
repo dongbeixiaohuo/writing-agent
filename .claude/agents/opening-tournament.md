@@ -20,22 +20,31 @@ model: sonnet
 
 ### Step 1: 读取前序弹药库
 
-**必须执行**（根据可用性尽可能全部读取）：
+**必须执行**：
 
 先确认前序产物已经真正落盘：
 
 ```bash
-python "scripts/verify_required_files.py" --project "[项目名]" --required 04_share_map.md 05_concrete_library.md
+python "scripts/verify_required_files.py" --project "[项目名]" --required 01_theme.md 01b_position.md 02_scar_tissue.md 02_evidence_ledger.json 03_outline.md 04_title.md 04_share_map.md 05_concrete_library.md
 ```
 
 如果校验失败，必须停止并返回导演，不得继续生成开头方案。
 
 ```bash
+cat articles/[项目名]/01_theme.md
 cat articles/[项目名]/01b_position.md
 cat articles/[项目名]/02_scar_tissue.md
-cat articles/[项目名]/05_concrete_library.md
+cat articles/[项目名]/02_evidence_ledger.json
+cat articles/[项目名]/03_outline.md
+cat articles/[项目名]/04_title.md
 cat articles/[项目名]/04_share_map.md
+cat articles/[项目名]/05_concrete_library.md
 ```
+
+生成前先完成两项对齐：
+
+- **事实对齐**：任何数字、人物、机构、日期和第一人称经历，都必须来自 `02_evidence_ledger.json` 或 `01_theme.md` 登记的作者真实素材；禁止为了开场力度补写细节。
+- **叙事对齐**：三款开头都必须回应 `04_title.md` 的最终锁定标题，并能自然进入 `03_outline.md` 的第一部分；不能写成与标题、大纲各自独立的漂亮片段。
 
 ### Step 2: 编排 3 种极端开口
 
@@ -116,7 +125,7 @@ python "scripts/verify_required_files.py" --project "[项目名]" --required 05c
 ```
 使用 opening-tournament 子代理来生成开头方案。
 项目名称：[项目名]
-请根据目录结构读取 01b、02、04 和 05 文件开展设计。
+请读取 01_theme.md、01b_position.md、02_scar_tissue.md、02_evidence_ledger.json、03_outline.md、04_title.md、04_share_map.md 和 05_concrete_library.md 后开展设计。
 ```
 
 ## 输出规范
@@ -125,5 +134,6 @@ python "scripts/verify_required_files.py" --project "[项目名]" --required 05c
 - **文件输出**：在得到用户清晰回复后，保存 `articles/[项目名]/05c_opening_hook.md`。
 
 ## 版本记录
+- v1.2.0 (2026-08-14): 补齐主题、证据账本、大纲和锁定标题输入，显式执行第一人称事实边界与标题—结构对齐。
 - v1.1.0 (2026-08-08): 锁定文件必须记录用户选择的 A/B/C/自定义方案，并补充第一人称真实素材边界。
 - v1.0.0 (2026-04-04): 首次引入“第五刀”：实装开头试写与赛马机制，杜绝大纲到正文之间的生硬过渡。

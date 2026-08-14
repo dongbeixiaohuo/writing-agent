@@ -131,11 +131,9 @@ python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目�
 
 ## 选题模式（C）流程
 
-- 只做三件事：
-  - 询问领域和目标读者
-  - 调 `topic-generator` 产出候选选题
-  - 调 `topic-research` 做选题验证
-- 验证通过后，立即切入协作模式 Stage 1，不要另起一套自定义流程。
+- 选题模式的阶段、输入输出和交接规则必须从 `collab_v2.json -> modes.C.stages` 与 `modes.C.handoff` 读取，禁止只靠本文件的文字描述自行编排。
+- Stage 0a 前先询问领域和目标读者；候选与验证报告都必须写入 `articles/_topic_pool/`，供查重和后续复盘。
+- Stage 0b 验证通过后，按 `modes.C.handoff` 立即切入协作模式 Stage 1，不要另起一套自定义流程。
 
 ---
 
@@ -197,6 +195,14 @@ Stage 9 测试得到用户确认放行后，将**自动跨入 Stage 10**。你�
 正在处理...
 ```
 
+调用 Humanizer 前先按机器契约验证其输入（其中 `[latest_body_file]` 由 `run_manifest.json` 解析）：
+
+```bash
+python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目名]" --workflow ".claude/workflows/collab_v2.json" --stage 10 --mode B
+```
+
+验证失败必须停止，不能让 Humanizer 在缺少记忆包、事实边界或明确正文版本时运行。
+
 然后立即调用 humanizer 子代理，此处无需等待确认。
 
 Humanizer 返回后，下一步必须进入 Stage 10.5 的事实核查。禁止在 Humanizer 完成后直接询问配图、生成 `_clean.txt` 或宣布流程完成。
@@ -208,7 +214,7 @@ Stage 10 完成后，必须自动调用 `fact-checker`，不需要额外询问�
 调用前先确认：
 
 ```bash
-python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目名]" --required 02_evidence_ledger.json
+python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目名]" --workflow ".claude/workflows/collab_v2.json" --stage 10.5 --mode B
 ```
 
 调用方式：
@@ -216,15 +222,15 @@ python "{{WRITING_AGENT_SCRIPTS}}/verify_required_files.py" --project "[项目�
 ```text
 使用 fact-checker 子代理来核查最终稿事实。
 项目名称：[项目名]
-请读取 run_manifest.json、02_evidence_ledger.json 和最新正文文件。
+请读取 run_manifest.json、02_evidence_ledger.json、04_title.md 和最新正文文件。
 ```
 
 硬规则：
 - `fact-checker` 必须输出 `fact_claims.json` 和 `fact_check_report.md`。
-- 只有 `fact_check_status=passed`、`fact_checked_body_file` 指向当前正文且 `fact_checked_body_sha256` 与当前文件一致，才允许进入 Stage 11 的配图询问。
+- 只有 `fact_check_status=passed`，且正文文件/哈希和 `04_title.md` 文件/哈希都与本轮核查记录一致，才允许进入 Stage 11 的配图询问。
 - 如果存在 `CONTRADICTED`、`BROKEN_LINK`、`NEEDS_USER_SOURCE` 或红色 `UNSUPPORTED`，必须停止。
 - 红色问题未处理前，禁止进入 Stage 11 / Stage 12，禁止生成 `_clean.txt`、HTML 或完整流程回顾。
-- 事实核查只处理最终正文，不检查 `_notes.md` 里的内部备注。
+- 事实核查处理最终锁定标题和最终正文，不检查候选标题或 `_notes.md` 里的内部备注。
 
 ## Stage 11: 🎨 配图工坊 (Article Illustrator)
 
@@ -251,9 +257,9 @@ N - 否，纯文字即可
 
 ## Stage 12: 📤 终极收尾动作（生成排版纯净版）
 
-进入 Stage 12 前必须确认 Stage 10.5 已通过。若 `fact_check_status` 不是 `passed`，或记录的正文文件 / SHA-256 与当前正文不一致，禁止生成 `_clean.txt`。
+进入 Stage 12 前必须确认 Stage 10.5 已通过。若 `fact_check_status` 不是 `passed`，或记录的正文、锁定标题任一文件 / SHA-256 与当前内容不一致，禁止生成 `_clean.txt`。
 
-**纯净版 `_clean.txt` 统一由 `auto_clean_hook.py` 生成。该脚本会再次检查事实状态、正文文件名和 SHA-256 绑定；任一项不匹配时必须拒绝落盘。**
+**纯净版 `_clean.txt` 统一由 `auto_clean_hook.py` 生成。该脚本会再次检查事实状态，以及正文和锁定标题的文件名、SHA-256 绑定；任一项不匹配时必须拒绝落盘。**
 优先来源：
 
 1. `--project` / Hook 事件明确指定项目后，该项目 `run_manifest.json -> clean_source_file`
@@ -322,6 +328,15 @@ Stage 12 和可选的 Stage 12.5 完成后，**自动调用 edit-diff-learner**�
 🧠 复盘报告：articles/[项目名]/99_episode.md
 ```
 
+## 可选 Stage 14：发布后表现复盘
+
+正常工作流的终点仍是 Stage 13。只有用户明确提出“记录发布数据”“复盘上一篇数据”等请求时，才读取 `collab_v2.json -> post_publish_stages` 并调用 `performance-review`。
+
+- 原始数据必须通过 `record_publish_metrics.py` 追加到 `publication_metrics.jsonl`，不得写入或覆盖 `run_manifest.json`。
+- 必须记录发布平台、观察窗口、流量来源，以及实际发布标题/正文/封面版本。
+- 单篇数据只允许产生观察和待验证假设；禁止直接回写稳定记忆或声称某个标题、开头造成了结果。
+- Stage 14 是独立的发布后入口，不加入 B 模式自动阶段序列，也不改变 `terminal_stage=13`。
+
 ---
 
 ## 核心规则总结
@@ -360,5 +375,6 @@ Stage 12 和可选的 Stage 12.5 完成后，**自动调用 edit-diff-learner**�
 | `article-illustrator` | 配图工坊 | Stage 11 |
 | `html-exporter` | HTML导出 | Stage 12.5 |
 | `edit-diff-learner` | 写作复盘 | Stage 13 |
+| `performance-review` | 发布后真实数据复盘 | 可选 Stage 14（仅用户明确触发） |
 
 具体阶段顺序、输入输出文件名以 `.claude/workflows/collab_v2.json` 为准。

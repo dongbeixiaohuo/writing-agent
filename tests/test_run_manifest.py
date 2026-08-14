@@ -106,13 +106,16 @@ class RunManifestTests(unittest.TestCase):
 
     def test_update_run_manifest_records_fact_check_body_hash(self) -> None:
         body = self.project_dir / "draft_v3_humanized.md"
+        title = self.project_dir / "04_title.md"
         write(body, "# 已核查正文\n\n内容")
+        write(title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「已核查标题」\n")
         write(self.project_dir / "fact_claims.json", "{}")
         write(self.project_dir / "fact_check_report.md", "# 报告")
 
         manifest = update_run_manifest(
             project_dir=self.project_dir,
             body_file=body.name,
+            title_file=title.name,
             status="fact-checked",
             fact_check_status="passed",
             fact_claims_file="fact_claims.json",
@@ -123,13 +126,17 @@ class RunManifestTests(unittest.TestCase):
         self.assertEqual("passed", manifest["fact_check_status"])
         self.assertEqual(body.name, manifest["fact_checked_body_file"])
         self.assertEqual(hashlib.sha256(body.read_bytes()).hexdigest(), manifest["fact_checked_body_sha256"])
+        self.assertEqual(title.name, manifest["fact_checked_title_file"])
+        self.assertEqual(hashlib.sha256(title.read_bytes()).hexdigest(), manifest["fact_checked_title_sha256"])
         self.assertEqual("fact_claims.json", manifest["latest_fact_claims_file"])
         self.assertEqual("fact_check_report.md", manifest["latest_fact_check_report"])
         self.assertEqual("2026-08-08T12:00:00+08:00", manifest["fact_checked_at"])
 
     def test_fact_check_update_preserves_existing_notes_file(self) -> None:
         body = self.project_dir / "draft_v3_humanized.md"
+        title = self.project_dir / "04_title.md"
         write(body, "# 已核查正文")
+        write(title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「标题」\n")
         write(self.project_dir / "draft_v3_notes.md", "# 备注")
         write(self.project_dir / "fact_claims.json", "{}")
         write(self.project_dir / "fact_check_report.md", "# 报告")
@@ -143,6 +150,7 @@ class RunManifestTests(unittest.TestCase):
         manifest = update_run_manifest(
             project_dir=self.project_dir,
             body_file=body.name,
+            title_file=title.name,
             status="fact-checked",
             fact_check_status="passed",
             fact_claims_file="fact_claims.json",
@@ -150,6 +158,33 @@ class RunManifestTests(unittest.TestCase):
         )
 
         self.assertEqual("draft_v3_notes.md", manifest["latest_notes_file"])
+
+    def test_update_run_manifest_invalidates_fact_check_when_locked_title_changes(self) -> None:
+        body = self.project_dir / "draft_v3_humanized.md"
+        title = self.project_dir / "04_title.md"
+        write(body, "# 已核查标题\n\n正文")
+        write(title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「旧标题」\n")
+        write(self.project_dir / "fact_claims.json", "{}")
+        write(self.project_dir / "fact_check_report.md", "# 报告")
+        update_run_manifest(
+            project_dir=self.project_dir,
+            body_file=body.name,
+            title_file=title.name,
+            status="fact-checked",
+            fact_check_status="passed",
+            fact_claims_file="fact_claims.json",
+            fact_check_report_file="fact_check_report.md",
+        )
+
+        write(title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「新标题」\n")
+        manifest = update_run_manifest(
+            project_dir=self.project_dir,
+            body_file=body.name,
+            status="reviewed",
+        )
+
+        self.assertEqual("stale", manifest["fact_check_status"])
+        self.assertEqual("body_or_title_changed_or_unbound", manifest["fact_check_stale_reason"])
 
     def test_update_run_manifest_rejects_project_outside_articles(self) -> None:
         outside_project = self.root / "outside-project"

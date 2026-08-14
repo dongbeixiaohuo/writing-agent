@@ -33,6 +33,7 @@ model: sonnet
 ```bash
 cat articles/[项目名]/run_manifest.json
 cat articles/[项目名]/02_evidence_ledger.json
+cat articles/[项目名]/04_title.md
 ```
 
 从 `run_manifest.json` 中优先选择：
@@ -55,7 +56,7 @@ cat articles/[项目名]/[最终正文文件去掉.md后加_notes.md]
 ```
 
 **口径规则**：
-- 只核查 `temp/fact_check_body.txt` 中的正文。
+- 同时核查 `04_title.md` 的最终锁定标题、最终分发文案与 `temp/fact_check_body.txt` 中的正文；候选标题和未选择的分发文案不纳入放行结论。
 - `_notes.md` 只能用于追溯事实来源，不能当正文事实。
 - `02_evidence_ledger.json` 是第一优先级证据源。
 - 如果账本缺失、JSON 无法解析或 claims 为空，但正文包含高风险事实，必须标红。
@@ -83,13 +84,14 @@ cat articles/[项目名]/[最终正文文件去掉.md后加_notes.md]
 {
   "project": "[项目名]",
   "body_file": "[最终正文文件]",
+  "title_file": "04_title.md",
   "created_at": "[YYYY-MM-DD HH:MM]",
   "claims": [
     {
       "claim_id": "C001",
       "claim_text": "[正文中的事实性表述]",
       "claim_type": "number|date|person|company|policy|report|event|link|strong_assertion|other",
-      "location": "[段落或小标题位置]",
+      "location": "title|distribution_copy|[正文段落或小标题位置]",
       "matched_evidence_id": "E001|null",
       "status": "SUPPORTED|UNSUPPORTED|CONTRADICTED|BROKEN_LINK|NEEDS_USER_SOURCE",
       "risk": "red|yellow|green",
@@ -172,16 +174,16 @@ cat articles/[项目名]/[最终正文文件去掉.md后加_notes.md]
 如果没有红色问题，执行：
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目名]" --body "[最终正文文件]" --status fact-checked --workflow-version collab-v2 --fact-check-status passed --fact-claims fact_claims.json --fact-report fact_check_report.md
+python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目名]" --body "[最终正文文件]" --title 04_title.md --status fact-checked --workflow-version collab-v2 --fact-check-status passed --fact-claims fact_claims.json --fact-report fact_check_report.md
 ```
 
 如果有红色问题，执行：
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目名]" --body "[最终正文文件]" --status fact-check-blocked --workflow-version collab-v2 --fact-check-status blocked --fact-claims fact_claims.json --fact-report fact_check_report.md
+python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目名]" --body "[最终正文文件]" --title 04_title.md --status fact-check-blocked --workflow-version collab-v2 --fact-check-status blocked --fact-claims fact_claims.json --fact-report fact_check_report.md
 ```
 
-脚本成功后必须读回确认 `fact_checked_body_file` 与本轮正文一致，且 `fact_checked_body_sha256` 为 64 位十六进制值。脚本会保留 `latest_notes_file` 等既有字段，并把 `latest_body_file` / `clean_source_file` 明确指向本轮已核查正文。
+脚本成功后必须读回确认 `fact_checked_body_file` 与本轮正文一致，且 `fact_checked_body_sha256`、`fact_checked_title_sha256` 都是 64 位十六进制值。脚本会保留 `latest_notes_file` 等既有字段，并把 `latest_body_file` / `clean_source_file` 明确指向本轮已核查正文。正文或 `04_title.md` 任一内容变化，旧结论都必须失效。
 
 ---
 
@@ -202,7 +204,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目
 - fact_claims.json
 - fact_check_report.md
 
-【运行态】：已记录 fact_check_status=passed，并绑定 fact_checked_body_sha256
+【运行态】：已记录 fact_check_status=passed，并绑定正文与锁定标题 SHA-256
 下一步：进入 Stage 11 配图询问
 ```
 
@@ -234,9 +236,10 @@ D. 我确认保留，但改成主观判断表达
 2. 不要把“搜不到”直接等同于“错误”，应区分 `UNSUPPORTED` 和 `CONTRADICTED`。
 3. 不要复述大段网页内容，只摘取足够支撑核查结论的短依据。
 4. 不要把写作观点、类比、情绪判断当成事实错误。
-5. 事实核查只对最终正文负责，不追究早期草稿中的废弃内容。
+5. 事实核查只对最终锁定标题和最终正文负责，不追究候选标题与早期草稿中的废弃内容。
 
 ## 版本记录
 
+- v1.2.0 (2026-08-14): 将最终锁定标题纳入 claim 抽取，并把核查结论同时绑定正文与 `04_title.md` 的 SHA-256。
 - v1.1.0 (2026-08-08): 事实核查结果改由脚本写入，并绑定被核查正文的文件名与 SHA-256；正文变化后旧结论自动失效。
 - v1.0.0 (2026-06-16): 新增最终提交前事实核查闸门，反查 `02_evidence_ledger.json` 并输出 `fact_claims.json` / `fact_check_report.md`。

@@ -1,6 +1,6 @@
 {
   "name": "writing-agent",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "displayName": "Writing Agent",
   "description": "可中断、可复盘的多阶段中文文章写作工作流",
   "author": {

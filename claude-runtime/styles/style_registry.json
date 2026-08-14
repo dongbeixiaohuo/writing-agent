@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "statuses": {
+    "verified": "已有跨样本证据账本，可按档案中的稳定特征使用",
+    "legacy_unverified": "历史档案尚未完成跨样本证据验证，只能降级为低置信度方向参考"
+  },
+  "styles": [
+    {
+      "name": "记忆大师风格",
+      "file": "记忆大师风格.md",
+      "verification_status": "legacy_unverified",
+      "evidence_file": null
+    },
+    {
+      "name": "老总在人间",
+      "file": "老总在人间.md",
+      "verification_status": "legacy_unverified",
+      "evidence_file": null
+    },
+    {
+      "name": "六六的风格",
+      "file": "六六的风格.md",
+      "verification_status": "verified",
+      "evidence_file": "_evidence/六六的风格_evidence.md"
+    },
+    {
+      "name": "墨水怪风",
+      "file": "墨水怪风.md",
+      "verification_status": "legacy_unverified",
+      "evidence_file": null
+    },
+    {
+      "name": "耍大刀风格",
+      "file": "耍大刀风格.md",
+      "verification_status": "verified",
+      "evidence_file": "_evidence/耍大刀风格_evidence.md"
+    },
+    {
+      "name": "jiubian",
+      "file": "jiubian.md",
+      "verification_status": "legacy_unverified",
+      "evidence_file": null
+    },
+    {
+      "name": "sanbiaobiao",
+      "file": "sanbiaobiao.md",
+      "verification_status": "legacy_unverified",
+      "evidence_file": null
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-# 写稿Agent v0.9.1
+# 写稿Agent v0.10.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Desktop App](https://img.shields.io/badge/Desktop%20App-Windows%20Preview-2f6f4f)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)
@@ -64,7 +64,7 @@
 - 审稿和传播测试：[pre_publish_review.md](demo/工资的一半，是你受的气折算的/pre_publish_review.md)、[wechat_reader_test.md](demo/工资的一半，是你受的气折算的/wechat_reader_test.md)
 - 事实核查：[fact_claims.json](demo/工资的一半，是你受的气折算的/fact_claims.json)、[fact_check_report.md](demo/工资的一半，是你受的气折算的/fact_check_report.md)
 - 纯文本候选稿：[draft_v1_humanized_clean.txt](demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt)
-- 运行态记录：[run_manifest.json](demo/工资的一半，是你受的气折算的/run_manifest.json)（事实结论绑定到正文 SHA-256）
+- 运行态记录：[run_manifest.json](demo/工资的一半，是你受的气折算的/run_manifest.json)（事实结论同时绑定正文与锁定标题 SHA-256）
 
 建议浏览顺序：
 
@@ -100,6 +100,7 @@
 - 默认发布出口仍然是 `_clean.txt`，也可以在最后一步额外导出公众号排版 `.html`
 - 这个样本真实包含调研阶段的事实证据账本，以及交付前的事实声明和核查报告
 - 核查报告保留了 2 条黄色修改建议、0 条红色问题，展示工作流如何暴露风险；正式发布前仍应处理黄色建议
+- 该历史样本使用的“记忆大师风格”目前标记为 `legacy_unverified`；可以参考方向，但不代表已完成跨样本风格验证
 - 中间产物本身就能证明“可调度、可中断、可复盘”
 
 最关键的几个文件：
@@ -110,7 +111,7 @@
 - [04_share_map.md](demo/工资的一半，是你受的气折算的/04_share_map.md)：不是只做共情，而是设计读者为什么愿意转发
 - [05c_opening_hook.md](demo/工资的一半，是你受的气折算的/05c_opening_hook.md)：先赛马开头，再锁定起手式
 - [pre_publish_review.md](demo/工资的一半，是你受的气折算的/pre_publish_review.md)：发布前追问和红队挑刺
-- [wechat_reader_test.md](demo/工资的一半，是你受的气折算的/wechat_reader_test.md)：模拟朋友圈、同行群、家族群的真实反应
+- [wechat_reader_test.md](demo/工资的一半，是你受的气折算的/wechat_reader_test.md)：该历史样本记录公众号私域场景；v0.10.0 新项目会按公众号、头条或知乎切换测试矩阵
 - [fact_check_report.md](demo/工资的一半，是你受的气折算的/fact_check_report.md)：把通过项、黄色建议和红色问题分级留痕
 - [draft_v1_humanized_clean.txt](demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt)：去 AI 味后的纯文本候选稿
 
@@ -125,6 +126,21 @@ demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
 ## 最新更新
 
 首页前部只保留最近主线版本，历史版本不再堆在前面。
+
+### v0.10.0 平台增长闭环与双版本事实门禁
+
+这一版把流程从“正文写得可信”继续推进到“标题也可信、平台用得上、发布后能复盘”：
+
+- **事实放行同时绑定标题与正文**：Stage 10.5 显式核查锁定标题、最终分发文案和正文；`run_manifest.json` 同时记录两份 SHA-256，任何一边改动都会让旧结果变成 `stale`
+- **标题接入证据与立场**：`title-designer` 正式读取 `01b_position.md` 和 `02_evidence_ledger.json`，区分结构数字与事实数字，禁止凭空制造金额、比例、年龄或年份
+- **平台字段真正参与交付**：标题阶段同步给出 3 条公众号摘要、头条信息流导语或知乎回答导语；Stage 9 根据平台切换定性矩阵，不再拿微信群聊逻辑测试所有文章，也不伪造 CTR/完读率预测
+- **模式 C 与记忆包进入机器契约**：选题生成、验证、交接 Stage 1 都写进 `collab_v2.json`；下游真实消费者显式依赖 `00_memory_packet.md`，动态正文占位符从 `run_manifest.json` 安全解析
+- **风格档案有验证状态**：新增 `style_registry.json`；六六、耍大刀标记为已验证，其余 5 份历史档案降级为低置信度方向参考，不再冒充跨样本稳定风格
+- **风格建模与登记状态闭环**：`style-modeler` 会先解析开发仓库或插件工作区的可写风格根目录；新档案由原子注册工具登记为 `legacy_unverified`，只有证据账本、陌生主题验证和独立盲测全部通过后，才能显式升级为 `verified`
+- **发布后数据闭环**：可选 Stage 14 用 `publication_metrics.jsonl` 追加记录曝光、打开、完成阅读、分享等指标，并绑定标题/正文/封面版本、观察窗口和流量来源；单篇只产出假设，跨项目可比后才进入记忆候选
+- **互动不靠骗评**：Share Map 和大纲新增真实讨论入口，明确禁止虚假二选一、强迫站队和“扣 1”式伪互动
+
+升级后，v0.9.1 及更早项目即使已有正文哈希，只要缺少 `fact_checked_title_file` / `fact_checked_title_sha256`，也会被视为旧式未完整绑定状态，需要针对当前锁定标题与正文重新执行 Stage 10.5。完整说明见 [v0.10.0 Release Notes](.github/releases/v0.10.0.md)。
 
 ### v0.9.1 写作可信度与交付门禁补丁
 
@@ -215,7 +231,7 @@ demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
 - `empathy-designer` 从共情点设计升级成“社交转发动机”，核心产物是 [04_share_map.md](demo/工资的一半，是你受的气折算的/04_share_map.md)
 - 新增 `opening-tournament`，在正式写稿前先赛马开头，核心产物是 [05c_opening_hook.md](demo/工资的一半，是你受的气折算的/05c_opening_hook.md)
 
-如果你只想知道仓库现在值不值得拉下来试，先看 `v0.9.1` 和 `v0.9.0` 这两节就够了。更老的版本记录去 [CHANGELOG](CHANGELOG.md) 或 Releases 看，不应该堵在首页前面。
+如果你只想知道仓库现在值不值得拉下来试，先看 `v0.10.0` 和 `v0.9.1` 这两节就够了。更老的版本记录去 [CHANGELOG](CHANGELOG.md) 或 Releases 看，不应该堵在首页前面。
 
 ---
 

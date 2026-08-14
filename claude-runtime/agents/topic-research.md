@@ -140,7 +140,17 @@ model: sonnet
 ```
 使用 topic-research 子代理来调研选题。
 选题：[用户选择的选题]
+候选文件：articles/_topic_pool/[YYYY-MM-DD-HHmm]-topic-candidates.md
 ```
 
+## 输出规范
+
+必须把完整验证结论写入：
+
+`articles/_topic_pool/[YYYY-MM-DD-HHmm]-topic-validation.md`
+
+文件需记录候选文件路径、被选题目、检索时间、证据链接、评分与结论。对“讨论量”“点赞数”等无法可靠读到的数字，不得用 `XX` 冒充实测值；应写“未取得可核查数据”并只做定性判断。验证报告落盘后，才能按机器契约交接模式 B 的 Stage 1。
+
 ## 版本记录
+- v1.1.0 (2026-08-14): 持久化选题验证报告并记录来源，禁止把占位讨论量当作实测指标。
 - v1.0.0 (2026-01-25): 从 Skill 迁移为 Subagent。

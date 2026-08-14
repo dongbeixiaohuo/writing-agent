@@ -126,10 +126,31 @@ class AutoCleanHookTests(unittest.TestCase):
 
         self.assertIsNone(picked)
 
-    def _run_hook_with_fact_status(self, fact_check_status: str, *, valid_hash: bool = True) -> Path:
+    def _run_hook_with_fact_status(
+        self,
+        fact_check_status: str,
+        *,
+        valid_hash: bool = True,
+        valid_title_hash: bool = True,
+        include_title_binding: bool = True,
+    ) -> Path:
         body_path = self.project_dir / "draft_v3_humanized.md"
+        title_path = self.project_dir / "04_title.md"
         clean_path = self.project_dir / "draft_v3_humanized_clean.txt"
         write(body_path, "# 最终正文")
+        write(title_path, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「最终标题」\n")
+        title_binding = (
+            {
+                "fact_checked_title_file": title_path.name,
+                "fact_checked_title_sha256": (
+                    hashlib.sha256(title_path.read_bytes()).hexdigest()
+                    if valid_title_hash
+                    else "0" * 64
+                ),
+            }
+            if include_title_binding
+            else {}
+        )
         write(
             self.project_dir / "run_manifest.json",
             json.dumps(
@@ -144,6 +165,7 @@ class AutoCleanHookTests(unittest.TestCase):
                         if valid_hash
                         else "0" * 64
                     ),
+                    **title_binding,
                 },
                 ensure_ascii=False,
             ),
@@ -197,9 +219,21 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
 
         self.assertFalse(clean_path.exists())
 
+    def test_auto_clean_hook_rejects_a_stale_locked_title_hash(self) -> None:
+        clean_path = self._run_hook_with_fact_status("passed", valid_title_hash=False)
+
+        self.assertFalse(clean_path.exists())
+
+    def test_auto_clean_hook_rejects_fact_check_without_title_binding(self) -> None:
+        clean_path = self._run_hook_with_fact_status("passed", include_title_binding=False)
+
+        self.assertFalse(clean_path.exists())
+
     def test_cli_project_argument_targets_only_requested_project(self) -> None:
         target_body = self.project_dir / "draft_v3_humanized.md"
+        target_title = self.project_dir / "04_title.md"
         write(target_body, "# 目标项目正文")
+        write(target_title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「目标标题」\n")
         write(
             self.project_dir / "run_manifest.json",
             json.dumps(
@@ -209,6 +243,8 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
                     "fact_check_status": "passed",
                     "fact_checked_body_file": target_body.name,
                     "fact_checked_body_sha256": hashlib.sha256(target_body.read_bytes()).hexdigest(),
+                    "fact_checked_title_file": target_title.name,
+                    "fact_checked_title_sha256": hashlib.sha256(target_title.read_bytes()).hexdigest(),
                 },
                 ensure_ascii=False,
             ),
@@ -216,7 +252,9 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
 
         other_project = self.articles_dir / "较新但非目标项目"
         other_body = other_project / "draft_v4_humanized.md"
+        other_title = other_project / "04_title.md"
         write(other_body, "# 其他项目正文")
+        write(other_title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「其他标题」\n")
         write(
             other_project / "run_manifest.json",
             json.dumps(
@@ -226,6 +264,8 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
                     "fact_check_status": "passed",
                     "fact_checked_body_file": other_body.name,
                     "fact_checked_body_sha256": hashlib.sha256(other_body.read_bytes()).hexdigest(),
+                    "fact_checked_title_file": other_title.name,
+                    "fact_checked_title_sha256": hashlib.sha256(other_title.read_bytes()).hexdigest(),
                 },
                 ensure_ascii=False,
             ),

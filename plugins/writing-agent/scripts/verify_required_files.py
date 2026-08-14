@@ -80,6 +80,28 @@ def title_file_is_locked(content: str) -> bool:
     return selection_locked and final_title_found
 
 
+def distribution_copy_is_locked_if_declared(content: str) -> bool:
+    if "平台分发文案候选" not in content:
+        return True
+
+    selection_value = ""
+    final_value = ""
+    for raw_line in content.splitlines():
+        normalized = raw_line.strip().replace("**", "")
+        if "分发文案选择" in normalized and ("：" in normalized or ":" in normalized):
+            selection_value = re.split(r"[:：]", normalized, maxsplit=1)[1].strip()
+        if "最终分发文案" in normalized and ("：" in normalized or ":" in normalized):
+            final_value = re.split(r"[:：]", normalized, maxsplit=1)[1].strip()
+
+    pending_markers = ("待定", "[候选", "[公众号", "[最终")
+    return bool(
+        selection_value
+        and final_value
+        and not any(marker in selection_value for marker in pending_markers)
+        and not any(marker in final_value for marker in pending_markers)
+    )
+
+
 def opening_file_is_locked(content: str) -> bool:
     locked = "已锁定" in content or "锁定起手钩子" in content
     selected = re.search(
@@ -160,8 +182,11 @@ def semantic_file_issue(file_name: str, content: str) -> str | None:
         return "unconfirmed_style"
     if file_name == "02_evidence_ledger.json":
         return evidence_ledger_issue(content)
-    if file_name == "04_title.md" and not title_file_is_locked(content):
-        return "unlocked_title"
+    if file_name == "04_title.md":
+        if not title_file_is_locked(content):
+            return "unlocked_title"
+        if not distribution_copy_is_locked_if_declared(content):
+            return "unlocked_distribution_copy"
     if file_name == "05c_opening_hook.md" and not opening_file_is_locked(content):
         return "unlocked_opening"
     return None
@@ -211,7 +236,55 @@ def verify_required_files(
     return not find_file_issues(project_dir, required_files, presence_only=presence_only)
 
 
-def required_files_for_stage(workflow_path: Path, stage_id: str, mode: str) -> list[str]:
+def _resolve_dynamic_inputs(project_dir: Path, required_files: list[str]) -> list[str]:
+    placeholders = [item for item in required_files if item.startswith("[") and item.endswith("]")]
+    if not placeholders:
+        return required_files
+
+    manifest_path = project_dir / "run_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"动态输入需要 run_manifest.json: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError("run_manifest.json 不是有效 JSON") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("run_manifest.json 顶层必须是对象")
+
+    resolved_inputs: list[str] = []
+    project_root = project_dir.resolve()
+    for item in required_files:
+        if not (item.startswith("[") and item.endswith("]")):
+            resolved_inputs.append(item)
+            continue
+
+        manifest_key = item[1:-1]
+        if manifest_key != "latest_body_file":
+            raise ValueError(f"不支持的动态输入占位符: {item}")
+        value = manifest.get(manifest_key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"run_manifest.json 缺少有效字段 {manifest_key}")
+
+        candidate = Path(value)
+        if candidate.is_absolute():
+            raise ValueError(f"动态输入必须是项目内相对路径: {value}")
+        resolved = (project_root / candidate).resolve()
+        try:
+            resolved.relative_to(project_root)
+        except ValueError as exc:
+            raise ValueError(f"动态输入越出项目目录: {value}") from exc
+        resolved_inputs.append(candidate.as_posix())
+
+    return resolved_inputs
+
+
+def required_files_for_stage(
+    workflow_path: Path,
+    stage_id: str,
+    mode: str,
+    *,
+    project_dir: Path | None = None,
+) -> list[str]:
     contract = json.loads(workflow_path.read_text(encoding="utf-8"))
     normalized_stage_id = str(stage_id)
     stage = next(
@@ -226,6 +299,10 @@ def required_files_for_stage(workflow_path: Path, stage_id: str, mode: str) -> l
     override = mode_contract.get("stage_overrides", {}).get(normalized_stage_id, {})
     if "inputs" in override:
         required_files = list(override["inputs"])
+    if any(item.startswith("[") and item.endswith("]") for item in required_files):
+        if project_dir is None:
+            raise ValueError("解析动态阶段输入时必须提供 project_dir")
+        required_files = _resolve_dynamic_inputs(project_dir, required_files)
     return required_files
 
 
@@ -263,6 +340,7 @@ def main() -> int:
             Path(args.workflow).resolve(),
             args.stage,
             args.mode,
+            project_dir=project_dir,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"FAIL: 无法读取阶段契约：{exc}", file=sys.stderr)

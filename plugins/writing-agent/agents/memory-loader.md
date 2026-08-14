@@ -16,7 +16,7 @@ model: sonnet
 
 ## 核心职责
 
-扫描所有历史项目的复盘报告（`99_episode.md`），提炼出可复用的写作偏好规则，打包生成一份精简的 `00_memory_packet.md`，供本次写作任务的下游 Agent 读取。
+扫描所有历史项目的改稿复盘（`99_episode.md`）和发布表现复盘（`performance_reviews/*.md`），提炼出可复用的写作偏好规则，打包生成一份精简的 `00_memory_packet.md`，供本次写作任务的下游 Agent 读取。
 
 **你不是在写报告，而是在组装一份"写作注意事项速查卡"。**
 
@@ -28,9 +28,10 @@ model: sonnet
 
 ```bash
 find articles/ -name "99_episode.md" -type f 2>/dev/null || dir /s /b articles\99_episode.md 2>nul
+find articles/ -path "*/performance_reviews/*.md" -type f 2>/dev/null || dir /s /b articles\performance_reviews\*.md 2>nul
 ```
 
-如果没有找到任何 `99_episode.md` 文件，说明系统还没有写作经验积累。此时：
+如果两类复盘都没有找到，说明系统还没有写作经验积累。此时：
 - 输出 `00_memory_packet.md`，内容只写一行："暂无历史经验，首次运行。"
 - 直接结束。
 
@@ -49,6 +50,7 @@ find articles/ -name "99_episode.md" -type f 2>/dev/null || dir /s /b articles\9
 1. **高频规则识别**：如果同一类规则（含义相近，不要求措辞完全一致）在 2 篇及以上的复盘中出现，标记为 `🔒 稳定规则`。
 2. **近期规则保留**：最近 2 篇复盘中的独有规则，即使只出现 1 次，也作为 `💡 近期教训` 保留。
 3. **去噪过滤**：只出现过 1 次且不在最近 2 篇中的规则，丢弃（可能是偶发偏好）。
+4. **表现数据边界**：`performance_reviews` 中的“待验证假设”不得进入稳定规则；只有至少 2 个独立项目、口径可比且方向一致的“跨样本规则候选”才参与聚合。阅读量等绝对值不得跨平台直接比较。
 
 ### Step 4: 输出记忆包
 
@@ -116,4 +118,5 @@ find articles/ -name "99_episode.md" -type f 2>/dev/null || dir /s /b articles\9
 4. **没有经验就说没有**：不要在没有数据的情况下编造规则。
 
 ## 版本记录
+- v1.1.0 (2026-08-14): 接入发布表现复盘，只聚合跨项目、口径可比的规则候选，隔离单篇因果猜测。
 - v1.0.0 (2026-03-14): 初版，实现历史复盘扫描与记忆包编译。

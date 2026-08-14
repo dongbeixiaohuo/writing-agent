@@ -5,6 +5,38 @@ All notable changes to 写稿Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-14
+
+> 面向“点击前设计 + 发布后学习”的功能版本：堵住标题事实边界，按平台设计分发与读者测试，并用版本绑定的真实指标建立可选复盘闭环。
+
+### Added
+
+- 📈 **可选发布后 Stage 14**：新增 `performance-review` 与 `record_publish_metrics.py`；以 append-only `publication_metrics.jsonl` 记录平台、观察窗口、流量来源、曝光/打开/完成阅读/分享等指标，并绑定标题、正文和封面版本。
+- 🧭 **平台分发文案**：`title-designer` 在 8 个标题之外同步生成 3 条公众号摘要、今日头条信息流导语或知乎回答导语，与标题一起由用户锁定。
+- 🗂️ **风格验证登记表**：新增 `styles/style_registry.json`，机器校验 7 份档案是否完整登记；2 份有跨样本证据的档案标记为 `verified`，其余 5 份标记为 `legacy_unverified` 并降级使用。
+- 🧾 **风格登记原子工具**：新增 `manage_style_registry.py`，支持幂等登记、显式验证升级和开发仓库/插件工作区风格根目录解析；禁止无证据或未确认盲测通过时写入 `verified`。
+- 💬 **真实讨论入口**：Share Map 与大纲正式支持收集读者经验和反例的讨论问题，同时禁止骗评、虚假二选一与强迫站队。
+
+### Changed
+
+- 🔐 **事实门禁升级为标题 + 正文双绑定**：`fact-checker` 显式抽取最终锁定标题和分发文案中的事实 claim；`run_manifest.json` 新增 `fact_checked_title_file`、`fact_checked_title_sha256`，任一内容变化都会使旧状态失效。
+- 🎯 **标题接入立场和证据**：Stage 5.5 正式读取 `01b_position.md` 与 `02_evidence_ledger.json`，区分结构数字与事实数字；账本和作者真实素材之外的精确数字禁止进入标题。
+- 📱 **Stage 9 平台化**：保留 `wechat-reader-test` ID 和文件名兼容旧流程，但内部改为公众号、今日头条、知乎三套定性矩阵；禁止伪造 CTR、完读率和推荐量预测。
+- 🧩 **模式 C 机器化**：选题生成、选题验证及向 B 模式 Stage 1 的交接进入 `collab_v2.json`；候选会先查重 `articles/_topic_pool/` 并持久化对标账号。
+- 🧠 **记忆输入正式入约**：Stage 3、5.5、6、10 显式依赖 `00_memory_packet.md`；无历史经验时读取 Stage 0 的占位结论，而不是静默跳过。
+
+### Fixed
+
+- 🧷 **动态正文占位符**：`verify_required_files.py` 从项目 `run_manifest.json` 安全解析 `[latest_body_file]`，拒绝绝对路径和越目录路径，不再把占位符当字面文件名。
+- 🎬 **开场输入缺口**：Stage 5.8 补齐 `01_theme.md`、证据账本、大纲和锁定标题，使第一人称素材边界与标题—结构对齐都可执行。
+- ✅ **扩展契约校验**：`validate_workflow.py` 同时检查模式内阶段、发布后阶段和风格登记表，避免新增 agent 只存在于说明文档。
+- 🧩 **风格建模登记断点**：`style-modeler` 现在在创建档案后同步维护 `style_registry.json`；开发仓库写唯一源 `claude-runtime/styles` 后再同步镜像，普通插件工作区写 `.claude/styles`，不再出现新档案未登记或补证据后永久降级的问题。
+
+### Migration
+
+- v0.9.1 及更早项目若缺少标题文件与标题 SHA-256 绑定，会被视为旧式未完整核查状态；请对当前 `04_title.md` 和最终正文重新执行 Stage 10.5。
+- 正常写作流程仍在 Stage 13 结束；Stage 14 仅在用户明确要求记录或复盘发布数据时运行，不会自动追加一次发布流程。
+
 ## [0.9.1] - 2026-08-08
 
 > 面向写作可信度的补丁版本：让“用户确认过什么、核查的是哪份正文、最终清理的是哪个项目”都能由机器复核，而不是依赖非空文件或会话记忆。

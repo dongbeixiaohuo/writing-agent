@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.verify_required_files import find_file_issues, verify_required_files
+from scripts.verify_required_files import find_file_issues, required_files_for_stage, verify_required_files
 
 
 def write(path: Path, content: str) -> None:
@@ -154,6 +154,51 @@ class VerifyRequiredFilesTests(unittest.TestCase):
             find_file_issues(self.project_dir, ["04_title.md"], presence_only=True),
         )
 
+    def test_new_title_template_requires_distribution_copy_selection(self) -> None:
+        write(
+            self.project_dir / "04_title.md",
+            """# 标题候选
+
+## 平台分发文案候选（3 条）
+- S1：候选一
+- S2：候选二
+- S3：候选三
+
+## 最终锁定
+- 选择状态：已锁定
+- 最终编号：A
+- 最终标题：「测试标题」
+- 分发文案选择：待定
+- 最终分发文案：待定
+""",
+        )
+
+        self.assertEqual(
+            [{"file": "04_title.md", "reason": "unlocked_distribution_copy"}],
+            find_file_issues(self.project_dir, ["04_title.md"]),
+        )
+
+    def test_new_title_template_accepts_locked_distribution_copy(self) -> None:
+        write(
+            self.project_dir / "04_title.md",
+            """# 标题候选
+
+## 平台分发文案候选（3 条）
+- S1：候选一
+- S2：候选二
+- S3：候选三
+
+## 最终锁定
+- 选择状态：已锁定
+- 最终编号：A
+- 最终标题：「测试标题」
+- 分发文案选择：S1
+- 最终分发文案：候选一
+""",
+        )
+
+        self.assertEqual([], find_file_issues(self.project_dir, ["04_title.md"]))
+
     def test_theme_requires_an_explicitly_confirmed_style(self) -> None:
         write(
             self.project_dir / "01_theme.md",
@@ -201,6 +246,59 @@ class VerifyRequiredFilesTests(unittest.TestCase):
         write(self.project_dir / "02_evidence_ledger.json", valid_evidence_ledger())
 
         self.assertEqual([], find_file_issues(self.project_dir, ["02_evidence_ledger.json"]))
+
+    def test_stage_inputs_resolve_latest_body_file_from_manifest(self) -> None:
+        workflow_path = Path(self.tempdir.name) / "collab_v2.json"
+        write(
+            workflow_path,
+            json.dumps(
+                {
+                    "stages": [
+                        {
+                            "id": "10.5",
+                            "inputs": ["02_evidence_ledger.json", "[latest_body_file]"],
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        )
+        write(self.project_dir / "draft_v3_humanized.md", "# 正文")
+        write(
+            self.project_dir / "run_manifest.json",
+            json.dumps({"latest_body_file": "draft_v3_humanized.md"}, ensure_ascii=False),
+        )
+
+        required = required_files_for_stage(
+            workflow_path,
+            "10.5",
+            "B",
+            project_dir=self.project_dir,
+        )
+
+        self.assertEqual(["02_evidence_ledger.json", "draft_v3_humanized.md"], required)
+
+    def test_stage_inputs_reject_unsafe_dynamic_manifest_path(self) -> None:
+        workflow_path = Path(self.tempdir.name) / "collab_v2.json"
+        write(
+            workflow_path,
+            json.dumps(
+                {"stages": [{"id": "10.5", "inputs": ["[latest_body_file]"]}]},
+                ensure_ascii=False,
+            ),
+        )
+        write(
+            self.project_dir / "run_manifest.json",
+            json.dumps({"latest_body_file": "../outside.md"}, ensure_ascii=False),
+        )
+
+        with self.assertRaises(ValueError):
+            required_files_for_stage(
+                workflow_path,
+                "10.5",
+                "B",
+                project_dir=self.project_dir,
+            )
 
 
 

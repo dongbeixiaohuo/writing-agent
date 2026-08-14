@@ -171,7 +171,7 @@ def has_clean_version(draft_path: Path) -> bool:
 
 
 def fact_check_passed(draft_path: Path) -> bool:
-    """只有绑定到当前正文内容哈希的事实核查结果才允许生成纯净版。"""
+    """只有绑定到当前正文和锁定标题哈希的事实核查结果才允许生成纯净版。"""
     manifest_path = draft_path.parent / MANIFEST_NAME
     try:
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -182,7 +182,12 @@ def fact_check_passed(draft_path: Path) -> bool:
 
     checked_file = manifest.get('fact_checked_body_file')
     checked_hash = manifest.get('fact_checked_body_sha256')
-    if not isinstance(checked_file, str) or not isinstance(checked_hash, str):
+    checked_title_file = manifest.get('fact_checked_title_file')
+    checked_title_hash = manifest.get('fact_checked_title_sha256')
+    if not all(
+        isinstance(value, str)
+        for value in (checked_file, checked_hash, checked_title_file, checked_title_hash)
+    ):
         return False
 
     checked_path = Path(checked_file)
@@ -192,8 +197,21 @@ def fact_check_passed(draft_path: Path) -> bool:
     if checked_path != draft_path.resolve():
         return False
 
+    title_path = Path(checked_title_file)
+    if title_path.is_absolute():
+        return False
+    project_dir = draft_path.parent.resolve()
+    title_path = (project_dir / title_path).resolve()
+    try:
+        title_path.relative_to(project_dir)
+    except ValueError:
+        return False
+    if not title_path.is_file():
+        return False
+
     actual_hash = hashlib.sha256(draft_path.read_bytes()).hexdigest()
-    return actual_hash == checked_hash.lower()
+    actual_title_hash = hashlib.sha256(title_path.read_bytes()).hexdigest()
+    return actual_hash == checked_hash.lower() and actual_title_hash == checked_title_hash.lower()
 
 
 def main(event_data_override: dict | None = None, *, allow_legacy_fallback: bool = False) -> int:
@@ -214,7 +232,7 @@ def main(event_data_override: dict | None = None, *, allow_legacy_fallback: bool
         return 0
 
     if not fact_check_passed(latest_draft):
-        print("跳过生成：事实核查未通过，或结果未绑定当前正文哈希", file=sys.stderr)
+        print("跳过生成：事实核查未通过，或结果未绑定当前正文与锁定标题哈希", file=sys.stderr)
         return 0
 
     if has_clean_version(latest_draft):

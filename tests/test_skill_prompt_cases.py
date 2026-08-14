@@ -34,6 +34,21 @@ class SkillPromptCaseTests(unittest.TestCase):
                 msg=f"{skill_name} 必须同时覆盖正向、负触发和边界场景",
             )
 
+    def test_style_modeler_eval_covers_registry_state_transition(self) -> None:
+        path = SKILLS_ROOT / "style-modeler" / "test-prompts.json"
+        cases = json.loads(path.read_text(encoding="utf-8"))
+        registry_case = next(
+            (case for case in cases if case.get("id") == "registry-lifecycle"),
+            None,
+        )
+
+        self.assertIsNotNone(registry_case)
+        expected = registry_case["expected"]
+        self.assertIn("legacy_unverified", expected)
+        self.assertIn("verified", expected)
+        self.assertIn("证据", expected)
+        self.assertIn("盲测", expected)
+
 
 if __name__ == "__main__":
     unittest.main()

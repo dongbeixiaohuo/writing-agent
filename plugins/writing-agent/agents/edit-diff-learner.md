@@ -136,6 +136,15 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/generate_clean.py" --stats articles/[项�
 
 1. [亮点描述]
 2. [亮点描述]
+
+---
+
+## 📈 发布后表现（可选回填）
+
+- 当前状态：尚未记录 / 已记录
+- 原始指标：publication_metrics.jsonl
+- 表现复盘：performance_reviews/[文件名].md
+- 说明：Stage 13 不猜测点击表现；发布后由用户明确触发可选 Stage 14。
 ```
 
 ### Step 5: 返回摘要
@@ -176,5 +185,6 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/generate_clean.py" --stats articles/[项�
 7. **禁止自评总分**：复盘报告不打"总体评分：X/10"，不写"成功应用了XX风格"式的自夸总结。同一个模型给自己产出打的高分没有信息量，还会掩盖真实问题。复盘的产出只有可复用规则和要避免的问题。
 
 ## 版本记录
+- v1.2.0 (2026-08-14): 在复盘模板中预留发布后表现入口，真实指标由可选 Stage 14 独立记录。
 - v1.1.0 (2026-07-04): 禁止复盘自评总分与自夸式总结，复盘只输出规则和问题。
 - v1.0.0 (2026-03-14): 初版，实现"初稿 vs 定稿"的结构化复盘。

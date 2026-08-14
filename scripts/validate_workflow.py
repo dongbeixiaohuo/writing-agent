@@ -82,10 +82,18 @@ def scan_file_for_tokens(path: Path, tokens: list[str], severity: str, prefix: s
     return issues
 
 
+def iter_stage_definitions(contract: dict):
+    yield from contract.get("stages", [])
+    for mode in contract.get("modes", {}).values():
+        if isinstance(mode, dict):
+            yield from mode.get("stages", [])
+    yield from contract.get("post_publish_stages", [])
+
+
 def validate_stage_outputs(runtime_root: Path, contract: dict) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
-    for stage in contract.get("stages", []):
+    for stage in iter_stage_definitions(contract):
         agent = stage.get("agent")
         if not agent or agent in {"auto-clean-hook"}:
             continue
@@ -119,6 +127,76 @@ def validate_stage_outputs(runtime_root: Path, contract: dict) -> list[Validatio
     return issues
 
 
+def validate_style_registry(runtime_root: Path) -> list[ValidationIssue]:
+    registry_path = runtime_root / "styles" / "style_registry.json"
+    if not registry_path.exists():
+        return []
+
+    def issue(message: str) -> ValidationIssue:
+        return ValidationIssue(
+            severity="error",
+            path=str(registry_path),
+            line=1,
+            message=message,
+        )
+
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [issue("风格状态登记表不是有效 JSON")]
+
+    entries = registry.get("styles") if isinstance(registry, dict) else None
+    if not isinstance(entries, list):
+        return [issue("风格状态登记表缺少 styles 数组")]
+
+    profile_files = {path.name for path in (runtime_root / "styles").glob("*.md")}
+    registered_files: set[str] = set()
+    issues: list[ValidationIssue] = []
+    allowed_statuses = {"verified", "legacy_unverified"}
+    styles_root = (runtime_root / "styles").resolve()
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            issues.append(issue("styles 条目必须是对象"))
+            continue
+        file_name = entry.get("file")
+        status = entry.get("verification_status")
+        if not isinstance(file_name, str) or not file_name.endswith(".md"):
+            issues.append(issue("styles 条目必须声明 .md 文件名"))
+            continue
+        if file_name in registered_files:
+            issues.append(issue(f"风格文件重复登记: {file_name}"))
+        registered_files.add(file_name)
+        if status not in allowed_statuses:
+            issues.append(issue(f"风格验证状态非法: {file_name}"))
+
+        if status == "verified":
+            evidence_file = entry.get("evidence_file")
+            if not isinstance(evidence_file, str) or not evidence_file.strip():
+                issues.append(issue(f"已验证风格缺少 evidence_file: {file_name}"))
+                continue
+            evidence_path = (styles_root / evidence_file).resolve()
+            try:
+                evidence_path.relative_to(styles_root)
+            except ValueError:
+                issues.append(issue(f"风格证据文件越出 styles 目录: {file_name}"))
+                continue
+            if not evidence_path.is_file():
+                issues.append(issue(f"风格证据文件不存在: {evidence_file}"))
+
+    if registered_files != profile_files:
+        missing = sorted(profile_files - registered_files)
+        extra = sorted(registered_files - profile_files)
+        details = []
+        if missing:
+            details.append(f"未登记: {', '.join(missing)}")
+        if extra:
+            details.append(f"无对应档案: {', '.join(extra)}")
+        issues.append(issue("风格登记表与档案不一致；" + "；".join(details)))
+
+    return issues
+
+
 def validate_repo(
     root: Path = PROJECT_ROOT,
     targets: str = "active",
@@ -142,6 +220,7 @@ def validate_repo(
                 )
             )
         errors.extend(validate_stage_outputs(runtime_root, contract))
+        errors.extend(validate_style_registry(runtime_root))
 
     if targets in {"docs", "all"}:
         for path in doc_files(root):

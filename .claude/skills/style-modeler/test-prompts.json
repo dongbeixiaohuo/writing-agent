@@ -34,5 +34,11 @@
     "kind": "edge",
     "prompt": "验证刚生成的风格模型是否真的像作者",
     "expected": "执行至少三组独立盲测，允许无法判断和置信度，聚合结果后决定通过或回炉"
+  },
+  {
+    "id": "registry-lifecycle",
+    "kind": "positive",
+    "prompt": "把这个新风格加入风格库；如果证据和验证都通过就正式启用",
+    "expected": "先把新档案登记为 legacy_unverified；只有证据账本满足跨样本门槛且独立盲测通过后，才能显式升级为 verified 并记录 evidence_file"
   }
 ]

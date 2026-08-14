@@ -131,6 +131,26 @@ class StyleSkillContractTests(unittest.TestCase):
         self.assertIn("无法判断", self.skill)
         self.assertIn("置信度", self.skill)
 
+    def test_style_registry_lifecycle_is_explicit_and_uses_the_manager(self):
+        self.assertIn(
+            '${CLAUDE_SKILL_DIR}/scripts/manage_style_registry.py',
+            self.skill,
+        )
+        self.assertNotIn(
+            '{{WRITING_AGENT_SCRIPTS}}/manage_style_registry.py',
+            self.skill,
+        )
+        self.assertIn("manage_style_registry.py\" resolve-root", self.skill)
+        self.assertIn("manage_style_registry.py\" register", self.skill)
+        self.assertIn("manage_style_registry.py\" verify", self.skill)
+        self.assertIn("legacy_unverified", self.skill)
+        self.assertIn("--blind-test-passed", self.skill)
+        self.assertIn("登记状态", self.skill)
+        self.assertIn(
+            "无论最终保持 `legacy_unverified` 还是升级为 `verified`",
+            self.skill,
+        )
+
     def test_output_template_is_progressively_disclosed(self):
         self.assertIn("references/style-output-template.md", self.skill)
         self.assertLess(len(self.skill.splitlines()), 250)

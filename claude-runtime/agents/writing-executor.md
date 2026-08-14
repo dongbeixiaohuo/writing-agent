@@ -39,6 +39,7 @@ tools: Read, Write, Bash, Glob, Grep
 
 ```bash
 cat articles/[项目名]/01_theme.md
+cat articles/[项目名]/00_memory_packet.md
 cat articles/[项目名]/01b_position.md
 cat articles/[项目名]/02_scar_tissue.md
 cat articles/[项目名]/02_evidence_ledger.json
@@ -66,6 +67,7 @@ cat articles/[项目名]/05c_opening_hook.md
 如果指定了风格，**必须**读取风格文件：
 
 ```bash
+cat .claude/styles/style_registry.json
 cat .claude/styles/[风格名].md
 ```
 
@@ -73,15 +75,11 @@ cat .claude/styles/[风格名].md
 
 如果 `01_theme.md` 中记录的是“无指定风格（用户确认）”，则跳过风格文件读取，但必须在返回摘要中明确写出这是用户主动放弃风格约束，不是系统默认。
 
-### Step 2.5: 读取写作偏好记忆（如存在）
+如果登记状态是 `legacy_unverified`，必须降级使用：只能把档案当低置信度的方向参考，不得宣称已精确建模，不得把档案中的量化指纹、归因判断或单篇特征当作稳定事实。`verified` 风格才可按证据账本确认过的稳定特征执行。
 
-检查是否存在历史经验包，如果有则作为额外的写作约束：
+### Step 2.5: 应用写作偏好记忆
 
-```bash
-cat articles/[项目名]/00_memory_packet.md  # 可能不存在，不存在则跳过
-```
-
-如果文件存在，将其中的 `🔒 稳定规则` 和 `💡 近期教训` 作为本次写作的**硬性约束**，与风格文件同等重要。
+模式 B 必须读取 Stage 0 生成的 `00_memory_packet.md`，并将其中的 `🔒 稳定规则` 和 `💡 近期教训` 作为本次写作的**硬性约束**。文件缺失时退回 Stage 0；无历史经验时使用文件内的占位结论，不自行补规则。模式 A 不要求该文件。
 
 ### Step 3: 输出信息汇总表
 

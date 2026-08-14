@@ -7,6 +7,20 @@ description: 从同一作者或公众号的文章样本中建立、验证或增�
 
 只根据用户提供或明确允许获取的样本建模。把作者身份用于样本分组和风格库检索，不把外部履历、既有印象或样本之外的观点写进风格档案。
 
+## 0. 解析可写风格根目录
+
+开始前必须执行：
+
+```bash
+python "${CLAUDE_SKILL_DIR}/scripts/manage_style_registry.py" resolve-root --workspace-root "."
+```
+
+把命令唯一输出记录为 `[风格根目录]`，后续档案、证据和登记表全部使用这个根目录：
+
+- 在本仓库开发环境中返回 `claude-runtime/styles`，它是唯一源；完成后再运行同步脚本更新消费端镜像。
+- 在插件安装到普通工作区时返回 `.claude/styles`，不得写入插件缓存。
+- 禁止跳过解析后直接假定 `.claude/styles`，否则会造成运行时镜像漂移。
+
 ## 1. 收集样本并确认作者锚点
 
 1. 接收本地文档或 URL。URL 先调用 `web-article-extractor`，将正文保存到 `docs/YYYY-MM-DD-文章标题.md`。
@@ -16,11 +30,11 @@ description: 从同一作者或公众号的文章样本中建立、验证或增�
    - 作者锚点一致：继续建模。
    - 作者锚点不一致：按作者分组；无法可靠分组时停下，请用户确认是否真的要建立“混合风格”。
    - 作者未知：保留来源标识，不猜测作者。
-5. 检索 `.claude/styles/`：新作者新建档案；已存在的作者读取旧档案和旧证据账本，执行增量验证。
+5. 检索 `[风格根目录]/`：新作者新建档案；已存在的作者读取旧档案和旧证据账本，执行增量验证。
 
 ## 2. 先建立证据账本
 
-在任何风格归纳前，将证据保存到 `.claude/styles/_evidence/[风格名]_evidence.md`。每条记录包含：
+在任何风格归纳前，将证据保存到 `[风格根目录]/_evidence/[风格名]_evidence.md`。每条记录包含：
 
 | 字段 | 要求 |
 |---|---|
@@ -91,7 +105,7 @@ python "${CLAUDE_SKILL_DIR}/scripts/style_fingerprint.py" docs/[样本1].md docs
 
 ## 6. 生成或更新风格档案
 
-输出到 `.claude/styles/[风格名].md`。文件必须包含 YAML Front Matter：
+输出到 `[风格根目录]/[风格名].md`。文件必须包含 YAML Front Matter：
 
 ```yaml
 ---
@@ -106,10 +120,34 @@ last_updated: 2026-07-18
 更新单个历史文件时，只处理当前目标，不批量改写整个风格库。先预览：
 
 ```bash
-python "${CLAUDE_SKILL_DIR}/scripts/normalize_style_frontmatter.py" ".claude/styles/[目标文件].md" --check --refresh-existing
+python "${CLAUDE_SKILL_DIR}/scripts/normalize_style_frontmatter.py" "[风格根目录]/[目标文件].md" --check --refresh-existing
 ```
 
-确认预览范围正确后，去掉 `--check` 执行。脚本使用临时文件原子替换；不要对整个 `.claude/styles` 目录静默执行 `--refresh-existing`。
+确认预览范围正确后，去掉 `--check` 执行。脚本使用临时文件原子替换；不要对整个 `[风格根目录]` 静默执行 `--refresh-existing`。
+
+### 6.1 登记状态生命周期
+
+每次新建档案后必须先登记；已有档案重复执行是幂等的，不会把已验证状态静默降级：
+
+```bash
+python "${CLAUDE_SKILL_DIR}/scripts/manage_style_registry.py" register --style-root "[风格根目录]" --profile "[风格名].md"
+```
+
+新登记状态只能是 `legacy_unverified`。单篇样本、证据不足、陌生主题验证失败或盲测未通过时，到此停止，不得升级。
+
+只有证据账本已落盘、跨样本门槛满足、陌生主题验证通过，且至少 3 组独立盲测按本 Skill 的规则汇总通过后，才能显式升级：
+
+```bash
+python "${CLAUDE_SKILL_DIR}/scripts/manage_style_registry.py" verify --style-root "[风格根目录]" --profile "[风格名].md" --evidence "_evidence/[风格名]_evidence.md" --blind-test-passed
+```
+
+`--blind-test-passed` 是人工语义门禁声明，禁止为了让命令通过而提前添加。登记脚本只校验文件、路径和显式声明，不替代跨样本与盲测判断。
+
+无论最终保持 `legacy_unverified` 还是升级为 `verified`，如果 `[风格根目录]` 是 `claude-runtime/styles`，都必须在返回或停机前执行：
+
+```bash
+python -B "scripts/sync_claude_runtime.py"
+```
 
 ## 完成条件
 
@@ -119,3 +157,4 @@ python "${CLAUDE_SKILL_DIR}/scripts/normalize_style_frontmatter.py" ".claude/sty
 - 15 个维度、风格内核、区分开关和适用边界完整。
 - 至少 3 组独立盲测已汇总，失败项已反向修正。
 - 风格档案 Front Matter、证据路径和更新时间正确。
+- 风格档案、证据账本与 `style_registry.json` 登记状态一致；未通过验证时保持 `legacy_unverified`。
