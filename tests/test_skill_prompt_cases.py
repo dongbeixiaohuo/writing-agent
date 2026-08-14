@@ -49,6 +49,18 @@ class SkillPromptCaseTests(unittest.TestCase):
         self.assertIn("证据", expected)
         self.assertIn("盲测", expected)
 
+    def test_workflow_eval_covers_illustration_fact_gate_and_title_reopen(self) -> None:
+        path = SKILLS_ROOT / "workflow-producer" / "test-prompts.json"
+        cases = json.loads(path.read_text(encoding="utf-8"))
+        by_id = {case.get("id"): case for case in cases}
+
+        self.assertIn("illustration-before-fact-gate", by_id)
+        self.assertIn("title-reopen-gate", by_id)
+        self.assertIn("配图", by_id["illustration-before-fact-gate"]["expected"])
+        self.assertIn("事实核查", by_id["illustration-before-fact-gate"]["expected"])
+        self.assertIn("用户", by_id["title-reopen-gate"]["expected"])
+        self.assertIn("Stage 5.5", by_id["title-reopen-gate"]["expected"])
+
 
 if __name__ == "__main__":
     unittest.main()

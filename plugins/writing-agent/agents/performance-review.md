@@ -30,7 +30,7 @@ model: sonnet
 python "${CLAUDE_PLUGIN_ROOT}/scripts/record_publish_metrics.py" --project "[项目名]" --body "[实际发布正文文件]" --title 04_title.md --input "[指标输入.json]"
 ```
 
-脚本将数据追加到 `articles/[项目名]/publication_metrics.jsonl`。该文件是 **append-only** 账本：禁止手工改旧行、覆盖原文件或把数据写进可变的 `run_manifest.json`。
+脚本将数据追加到 `articles/[项目名]/publication_metrics.jsonl`。该文件是 **append-only** 账本：禁止手工改旧行、覆盖原文件或把数据写进可变的 `run_manifest.json`。脚本还会从锁定产物自动快照 `creative_metadata`，包括标题公式、开头方案、主导社交货币、写作风格和对应源文件哈希；旧项目缺少某项时写 `null`，不能猜。
 
 输入至少包含：
 
@@ -60,7 +60,9 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/record_publish_metrics.py" --project "[项
 
 ## Step 2: 校验可比性
 
-读取 `publication_metrics.jsonl`，对目标记录逐项检查：
+先读取当前项目记录，再扫描**所有历史项目**的 `articles/*/publication_metrics.jsonl`。只比较包含兼容 `creative_metadata.schema_version` 的记录；旧记录仍可做单篇观察，但不能被强行归类。
+
+对目标记录逐项检查：
 
 - 平台是否相同。
 - `observation_window` 是否相近。
@@ -68,6 +70,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/record_publish_metrics.py" --project "[项
 - 曝光口径、打开口径、完成阅读口径是否一致。
 - 正文、标题哈希是否仍能对应实际归档文件。
 - 封面、发布时间、账号规模是否存在明显混杂变量。
+- 标题公式、开头方案、主导社交货币和风格标签是否有明确快照，而不是从已被后续修改的文件倒推。
 
 不满足可比性时可以描述各自结果，但禁止做强弱因果比较。
 
@@ -83,8 +86,11 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/record_publish_metrics.py" --project "[项
 
 - 先按平台、窗口、来源分组，再比较比率与绝对量。
 - 区分标题/封面相关指标（曝光→打开）和正文相关指标（打开→完成、分享、收藏）。
+- 在可比组内再按 `creative_metadata` 的标题公式、开头方案、主导社交货币和风格分组；任何组至少包含 2 篇独立文章才描述重复现象。
 - 至少两篇独立文章出现同方向现象，才可写“规则候选”；反例必须同时记录。
 - 规则候选不能直接升级为稳定记忆，需由后续 memory-loader 按跨项目重复证据聚合。
+
+即使变量标签一致，也只能说“在当前可比记录中相关”。**相关性不是因果**：标题、封面、发布时间、账号规模和选题热度没有被随机控制时，禁止写“某公式导致提升”。
 
 ## Step 4: 输出复盘报告
 
@@ -98,6 +104,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/record_publish_metrics.py" --project "[项
 > 观察窗口：[observation_window]
 > 标题哈希：[title_sha256]
 > 正文哈希：[body_sha256]
+> 创意变量：[标题公式 / 开头方案 / 主导社交货币 / 风格]
 > 可比性：[可比较 / 仅可单篇观察]
 
 ## 已观察事实
@@ -126,4 +133,5 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/record_publish_metrics.py" --project "[项
 
 ## 版本记录
 
+- v1.1.0 (2026-08-14): 接入 creative_metadata，并扫描所有历史项目的指标账本做可比组聚合；明确相关性不等于因果。
 - v1.0.0 (2026-08-14): 新增版本绑定的发布指标记录、可比性检查、因果边界和跨样本记忆候选。

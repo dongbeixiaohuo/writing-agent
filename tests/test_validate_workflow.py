@@ -418,8 +418,9 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
         self.assertEqual(
             {
                 ("9", "10"),
-                ("10", "10.5"),
-                ("11", "12"),
+                ("10", "11"),
+                ("11", "10.5"),
+                ("10.5", "12"),
                 ("12", "12.5"),
                 ("12.5", "13"),
             },
@@ -443,12 +444,10 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
         self.assertIn("无可学习差异", self.edit_learner)
         self.assertNotIn("需要至少经历过一轮修改才有意义", self.edit_learner)
 
-    def test_auto_clean_hook_cannot_run_on_humanizer_stop(self) -> None:
+    def test_auto_clean_runs_only_from_explicit_stage_12_after_fact_gate(self) -> None:
         hooks = json.loads((self.runtime / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-        subagent_hook = hooks["hooks"]["SubagentStop"][0]
 
-        self.assertNotIn("humanizer", subagent_hook["matcher"])
-        self.assertEqual(30, subagent_hook["hooks"][0]["timeout"])
+        self.assertNotIn("SubagentStop", hooks["hooks"])
         self.assertIn('auto_clean_hook.py" --project "[项目名]"', self.director)
 
     def test_humanizer_preserves_the_verified_truth_boundary(self) -> None:

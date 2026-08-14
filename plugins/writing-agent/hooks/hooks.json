@@ -1,17 +1,5 @@
 {
   "hooks": {
-    "SubagentStop": [
-      {
-        "matcher": "article-illustrator",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/auto_clean_hook.py\" --workspace-root \"${CLAUDE_PROJECT_DIR}\"",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "hooks": [

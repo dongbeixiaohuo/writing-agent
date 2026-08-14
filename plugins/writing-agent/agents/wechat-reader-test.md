@@ -15,7 +15,7 @@ model: sonnet
 
 ## 核心职责
 
-在发布前模拟“读者为什么继续、为什么退出、为什么分享/收藏/讨论”。这里使用的是**定性代理指标**，只能定位文本风险，不能代替真实发布数据。
+聚焦**平台行为**：在发布前模拟“读者为什么继续、为什么退出、为什么分享/收藏/讨论”。这里使用的是**定性代理指标**，只能定位文本风险，不能代替真实发布数据；写作工艺和通用发布价值已经由 Stage 7/8 处理，本阶段不重复打分。
 
 硬规则：
 
@@ -111,6 +111,7 @@ cat temp/reader_test_body.txt
 A. 按必改项修正文稿
 B. 调整测试平台或视角后重测
 C. 当前强度合格，进入 Stage 10 Humanizer
+D. 标题承诺有误，返回 Stage 5.5 重新设计并锁定标题
 ```
 
 如果用户选择 A 并授权修改，保存为新的 `draft_vN.md` 与 `draft_vN_notes.md`，然后执行：
@@ -118,6 +119,15 @@ C. 当前强度合格，进入 Stage 10 Humanizer
 ```bash
 python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目名]" --body draft_vN.md --notes draft_vN_notes.md --status reader_test_revised --workflow-version collab-v2
 ```
+
+如果用户选择 D：
+
+1. 返回 Stage 5.5，重新调用 `title-designer`；必须把 `latest_body_file` 作为现有正文参考，避免新标题承诺正文没有的内容。
+2. 只生成候选，不得自动替用户选标题。必须等用户明确锁定具体标题和分发文案。
+3. 用户明确锁定后，同时更新 `04_title.md` 与当前正文 H1，再调用 `update_run_manifest.py` 记录 `status=title_reopened`。标题之外的正文不得顺手改写。
+4. 重新执行 Stage 9；旧的 reader test 报告不能继续放行。
+
+标题重新打开不等于解除事实边界。新标题中的数字、人物、机构、日期和具体事件仍必须来自 `02_evidence_ledger.json` 或 `01_theme.md` 的作者真实素材。
 
 ## 输入规范
 
@@ -129,5 +139,6 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目
 
 ## 版本记录
 
+- v2.1.0 (2026-08-14): 增加用户确认后的 Stage 5.5 标题回开路径；新标题锁定并同步正文 H1 后必须重新执行 Stage 9。
 - v2.0.0 (2026-08-14): 从微信单场景扩展为公众号、今日头条、知乎三套平台矩阵；只使用证据化定性代理指标，禁止伪造流量预测。
 - v1.0.0: 微信私域三场景压力测试。

@@ -5,6 +5,27 @@ All notable changes to 写稿Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- 🧬 **创意变量快照**：`record_publish_metrics.py` 自动从锁定产物记录标题公式、开头方案、主导社交货币、风格、发布平台及来源文件 SHA-256；`performance-review` 可扫描跨项目指标账本做同口径比较。
+- 🎭 **条件式趣味张力**：Share Map 增加“趣味谈资”，Editor 增加幽默、荒诞反差、认知意外与新鲜细节检查；严肃主题不强制搞笑，任何趣味细节都受真实素材和证据边界约束。
+- 🔎 **调研尝试留痕**：证据账本新增 `research_requirement` 与 `research_attempts`；计划使用外部事实时必须记录真实检索及 `found/not_found/blocked` 结果，不以机械搜索次数充数。
+
+### Changed
+
+- 🎨 **配图先于最终事实门禁**：尾部顺序改为 Humanizer → 可选配图 → Fact Checker → Auto Clean。配图版写入新正文并更新 `latest_body_file`，最终事实核查绑定配图后的 Markdown，避免插图使已通过哈希失效。
+- 🧭 **评审职责分家**：Editor 只管写作工艺与风格保真；Pre-publish 只管读者价值、逻辑和发布风险；Reader Test 只管平台行为；Humanizer 只负责表达改写。Stage 7/8 正式接入主题、记忆、锁定标题和动态正文。
+- 🎯 **标题可安全回开**：Stage 9 发现承诺错位时，可由用户选择返回 Stage 5.5；新标题必须重新锁定、同步正文 H1 并重跑 Stage 9。标题候选增加策略语义去重。
+- 🖼️ **平台化配图**：Article Illustrator 读取发布平台和动态正文，移除无效 `GenerateImage` 声明、模板化企业插画默认词和固定 16:9；比例需在策划阶段说明依据并由用户确认。
+
+### Fixed
+
+- 🧍 **评审不再逼造第一人称**：移除“没有第一人称即扣分”等规则；作者声音来自判断和措辞，没有真实素材时禁止补造亲历。
+- 💬 **金句语义统一**：统一为“删除空心口号，保留带场景、代价或立场的判断句”，并清理重复破折号规则、评审步骤编号和通用 Agent 中的具体风格别名。
+- 🔒 **清稿触发时机**：移除配图 SubagentStop 的提前清稿 Hook；Stage 12 只在最终事实核查通过后，以显式项目参数调用自动清稿门禁。
+
 ## [0.10.0] - 2026-08-14
 
 > 面向“点击前设计 + 发布后学习”的功能版本：堵住标题事实边界，按平台设计分发与读者测试，并用版本绑定的真实指标建立可选复盘闭环。

@@ -157,7 +157,7 @@ python "scripts/verify_required_files.py" --project "[项目名]" --workflow ".c
 **🚨 强制中断指令（至关重要）**：
 输出这个界面后，你**必须立刻停止回答（Yield/Stop）**，绝对禁止在同一轮对话中连带调用下一个 Subagent。你必须等待用户回复（如：“继续”、“同意”、“需要修改”）之后，才能往下执行。这是确保交互式写作的核心设定。
 
-唯一例外以 `collab_v2.json -> interaction_policy.automatic_transitions` 为准：用户批准 Stage 9 后自动执行 10 → 10.5；Stage 11 的 Y/N 已处理后自动进入 12；Stage 12 产物验证通过后展示 Stage 12.5 选择；Stage 12.5 的选择及可选导出处理完成后自动进入 13。例外链中禁止插入通用“继续”确认，也不得跳过链上声明的用户选择。
+唯一例外以 `collab_v2.json -> interaction_policy.automatic_transitions` 为准：用户批准 Stage 9 后自动进入 10；Humanizer 完成后进入 Stage 11 配图选择；Stage 11 的 Y/N 和可选配图处理完成后进入 10.5；事实核查通过后进入 12；Stage 12 产物验证通过后展示 Stage 12.5 选择；Stage 12.5 的选择及可选导出处理完成后自动进入 13。例外链中禁止插入通用“继续”确认，也不得跳过链上声明的用户选择。
 
 **特别注意以下必须彻底停机的确认卡点，绝不能跳过**：
 - **Stage 1 完成后**：必须向用户展示已确认的写作风格，并等待用户明确确认后，才能进入 Stage 1.5。风格未确认时禁止推进。
@@ -165,9 +165,9 @@ python "scripts/verify_required_files.py" --project "[项目名]" --workflow ".c
 - **Stage 5.5 完成后**：必须向用户展示 **A-H 全部 8 个候选标题** 和前 3 推荐排序；`04_title.md` 必须已真实落盘，等待用户选择。
 - **Stage 5.8 完成后**：抛出 3 款极道开头（暴击/撕裂/冷眼），必须明确等待用户确认选用哪款（A/B/C）。
 - **Stage 7 完成后**：主编给出评审意见后，必须明确等待用户确认：“是否同意按此建议修改草稿（产出 v2），还是直接过？”
-- **Stage 9 完成后**：给用户提供 A/B/C 三个选项，明确等待用户选择。
-- **Stage 10.5 完成前**：事实核查必须输出 `fact_claims.json` 和 `fact_check_report.md`。如果存在红色问题，禁止进入 Stage 11 / Stage 12，必须等待用户处理事实风险。
-- **Stage 11 完成前**：文本定稿后必须询问是否配图（Y/N），不能直接跳到纯文本交付或流程回顾。
+- **Stage 9 完成后**：给用户提供 A/B/C/D 四个选项；D 是返回 Stage 5.5 重新锁定标题，必须重新执行 Stage 9。
+- **Stage 11 完成前**：Humanizer 完成后必须询问是否配图（Y/N）；选择 Y 时还要等待用户确认配图策划，不能直接生成。
+- **Stage 10.5 完成前**：配图选择处理完成后，事实核查必须输出 `fact_claims.json` 和 `fact_check_report.md`。如果存在红色问题，禁止进入 Stage 12，必须等待用户处理事实风险。
 - **Stage 12.5 完成前**：必须明确等待用户选择是否导出 HTML，以及使用哪一套默认版式（A/B/C/D/N）。
 - **Stage 13 完成前**：禁止输出“完整流程回顾”“全部流程完成”之类总结。Stage 13 始终执行；即使没有版本差异，也要由 `edit-diff-learner` 落盘跳过原因。
 
@@ -205,36 +205,11 @@ python "scripts/verify_required_files.py" --project "[项目名]" --workflow ".c
 
 然后立即调用 humanizer 子代理，此处无需等待确认。
 
-Humanizer 返回后，下一步必须进入 Stage 10.5 的事实核查。禁止在 Humanizer 完成后直接询问配图、生成 `_clean.txt` 或宣布流程完成。
-
-## Stage 10.5: 🔎 事实核查闸门（Fact Checker）
-
-Stage 10 完成后，必须自动调用 `fact-checker`，不需要额外询问用户。
-
-调用前先确认：
-
-```bash
-python "scripts/verify_required_files.py" --project "[项目名]" --workflow ".claude/workflows/collab_v2.json" --stage 10.5 --mode B
-```
-
-调用方式：
-
-```text
-使用 fact-checker 子代理来核查最终稿事实。
-项目名称：[项目名]
-请读取 run_manifest.json、02_evidence_ledger.json、04_title.md 和最新正文文件。
-```
-
-硬规则：
-- `fact-checker` 必须输出 `fact_claims.json` 和 `fact_check_report.md`。
-- 只有 `fact_check_status=passed`，且正文文件/哈希和 `04_title.md` 文件/哈希都与本轮核查记录一致，才允许进入 Stage 11 的配图询问。
-- 如果存在 `CONTRADICTED`、`BROKEN_LINK`、`NEEDS_USER_SOURCE` 或红色 `UNSUPPORTED`，必须停止。
-- 红色问题未处理前，禁止进入 Stage 11 / Stage 12，禁止生成 `_clean.txt`、HTML 或完整流程回顾。
-- 事实核查处理最终锁定标题和最终正文，不检查候选标题或 `_notes.md` 里的内部备注。
+Humanizer 返回后，下一步必须进入 Stage 11 的配图选择。禁止直接生成 `_clean.txt`、跳过最终事实核查或宣布流程完成。
 
 ## Stage 11: 🎨 配图工坊 (Article Illustrator)
 
-在文本最终定稿且 Stage 10.5 事实核查通过后，**必须**询问用户：
+Humanizer 完成后、最终事实核查之前，**必须**询问用户：
 
 ```
 📝 文本已定稿。
@@ -252,8 +227,35 @@ N - 否，纯文字即可
 然后**再次中断（Yield）**，等待用户回复 Y/N。
 
 - 如果用户回复 `Y`：调用 `article-illustrator` 子代理，并按其两回合协议先输出配图策划方案。
-- 如果用户回复 `N`：明确记录“跳过配图”，继续 Stage 12。
-- 无论是否配图，Y/N 选择处理完成后都自动继续 Stage 12，不能在这里结束流程，也不再询问“是否继续”。
+- 如果用户回复 `N`：明确记录“跳过配图”，保持现有 `latest_body_file`。
+- 选择 Y 时，配图必须写入新的 `draft_vN_illustrated.md` 并更新 `run_manifest.json`；禁止覆盖 Humanizer 原稿。
+- 无论是否配图，选择处理完成后都自动进入 Stage 10.5。配图完成后必须以 `latest_body_file` 指向的最终 Markdown 做事实核查，不能沿用配图前正文的哈希。
+
+## Stage 10.5: 🔎 最终事实核查闸门（Fact Checker）
+
+Stage 11 处理完成后，必须自动调用 `fact-checker`，不需要额外询问用户。
+
+调用前先确认：
+
+```bash
+python "scripts/verify_required_files.py" --project "[项目名]" --workflow ".claude/workflows/collab_v2.json" --stage 10.5 --mode B
+```
+
+调用方式：
+
+```text
+使用 fact-checker 子代理来核查最终稿事实。
+项目名称：[项目名]
+请读取 run_manifest.json、02_evidence_ledger.json、04_title.md 和 latest_body_file。
+如果已配图，核查对象必须是配图完成后的正文版本。
+```
+
+硬规则：
+- `fact-checker` 必须输出 `fact_claims.json` 和 `fact_check_report.md`。
+- 只有 `fact_check_status=passed`，且正文文件/哈希和 `04_title.md` 文件/哈希都与本轮核查记录一致，才允许进入 Stage 12。
+- 如果存在 `CONTRADICTED`、`BROKEN_LINK`、`NEEDS_USER_SOURCE` 或红色 `UNSUPPORTED`，必须停止。
+- 红色问题未处理前，禁止进入 Stage 12，禁止生成 `_clean.txt`、HTML 或完整流程回顾。
+- 事实核查处理最终锁定标题和最终正文，不检查候选标题或 `_notes.md` 里的内部备注。
 
 ## Stage 12: 📤 终极收尾动作（生成排版纯净版）
 
@@ -267,7 +269,7 @@ N - 否，纯文字即可
 
 正常工作流禁止扫描所有项目并选择“最近修改”的正文。旧兼容回退仅能由人工排障时显式传入 `--legacy-fallback`，不得写入自动 Hook。
 
-选择 Y 时，`article-illustrator` 结束会触发 Hook；选择 N 或 Hook 未触发时，由导演调用同一门禁脚本：
+Stage 10.5 通过后，由导演显式调用门禁脚本：
 
 ```bash
 python "scripts/auto_clean_hook.py" --project "[项目名]"

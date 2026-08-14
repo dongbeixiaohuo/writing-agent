@@ -10,4 +10,4 @@
 4. 用户提供网页并要求提取正文时，使用 `web-article-extractor`。
 5. 简单润色、校对、翻译、短句改写或解释现有内容，不进入多阶段工作流，直接完成用户请求。
 
-进入工作流后，以 `.claude/workflows/collab_v2.json` 为机器契约源。必须真实调用对应 Subagent、执行阶段产物的存在性与语义门禁，并遵守用户确认节点；不得用口头声称代替文件和验证结果。事实核查结果必须同时绑定当前正文与锁定标题的文件和 SHA-256，自动清稿必须明确传入项目，Humanizer 不得新增用户素材和证据账本之外的经历或事实。发布平台必须驱动标题分发文案与 Stage 9 测试矩阵；发布后表现只在用户明确触发 Stage 14 时写入 append-only 指标账本。style-modeler 创建或更新档案时必须通过自带登记工具维护 `style_registry.json`，未完成跨样本证据和独立盲测不得升级为 `verified`。
+进入工作流后，以 `.claude/workflows/collab_v2.json` 为机器契约源。必须真实调用对应 Subagent、执行阶段产物的存在性与语义门禁，并遵守用户确认节点；不得用口头声称代替文件和验证结果。尾部顺序固定为 Humanizer → 可选 Article Illustrator → Fact Checker → Auto Clean：配图必须先写新正文并更新 `latest_body_file`，事实核查再同时绑定最终正文与锁定标题的文件和 SHA-256；核查通过后禁止继续改正文。自动清稿必须明确传入项目，Humanizer 和各评审不得新增用户素材与证据账本之外的经历或事实。Stage 7 只评写作工艺与风格，Stage 8 只评读者价值与发布风险，Stage 9 只评平台行为。发布平台必须驱动标题分发文案、Stage 9 测试矩阵和配图策划；发布后表现只在用户明确触发 Stage 14 时写入 append-only 指标账本，并自动快照标题公式、开头方案、社交货币和风格。style-modeler 创建或更新档案时必须通过自带登记工具维护 `style_registry.json`，未完成跨样本证据和独立盲测不得升级为 `verified`。

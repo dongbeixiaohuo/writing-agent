@@ -47,7 +47,20 @@ class PublishMetricsTests(unittest.TestCase):
         self.body = self.project_dir / "draft_v3_humanized.md"
         self.title = self.project_dir / "04_title.md"
         write(self.body, "# 已发布正文\n\n内容")
-        write(self.title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「标题」\n")
+        write(
+            self.title,
+            """## 候选标题池
+
+### G
+- 标题：工资的一半，是你受的气折算的
+- 公式：公式9（扎心直击型）
+
+## 最终锁定
+- 选择状态：已锁定
+- 最终编号：G
+- 最终标题：「工资的一半，是你受的气折算的」
+""",
+        )
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
@@ -77,6 +90,62 @@ class PublishMetricsTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(self.title.read_bytes()).hexdigest(), first["artifacts"]["title_sha256"])
         self.assertEqual(0.2, first["derived_metrics"]["open_rate"])
         self.assertEqual(0.4, first["derived_metrics"]["completion_rate"])
+
+    def test_snapshots_creative_metadata_from_locked_artifacts(self) -> None:
+        write(
+            self.project_dir / "05c_opening_hook.md",
+            "# 开头钩子（已锁定）\n\n> 选择：A - 暴击型（场景直击）\n",
+        )
+        write(
+            self.project_dir / "04_share_map.md",
+            "> 主导社交货币：展示清醒独立 + 安全地暗讽\n",
+        )
+        write(
+            self.project_dir / "01_theme.md",
+            """| 要素 | 内容 |
+|---|---|
+| **写作风格** | 记忆大师风格（碧树西风风） |
+| **风格证据状态** | legacy_unverified |
+| **发布平台** | 公众号 |
+""",
+        )
+
+        record = record_publish_metrics(
+            self.project_dir,
+            self.body.name,
+            self.title.name,
+            payload(),
+            recorded_at="2026-08-12T10:05:00+08:00",
+        )
+
+        creative = record["creative_metadata"]
+        self.assertEqual("G", creative["title"]["selected_candidate"])
+        self.assertEqual("公式9（扎心直击型）", creative["title"]["formula"])
+        self.assertEqual("A", creative["opening"]["selected_variant"])
+        self.assertEqual("展示清醒独立 + 安全地暗讽", creative["share"]["primary_motive"])
+        self.assertEqual("记忆大师风格（碧树西风风）", creative["style"]["name"])
+        self.assertEqual("legacy_unverified", creative["style"]["verification_status"])
+        self.assertEqual("公众号", creative["platform"])
+        self.assertEqual(
+            hashlib.sha256((self.project_dir / "05c_opening_hook.md").read_bytes()).hexdigest(),
+            creative["sources"]["opening"]["sha256"],
+        )
+
+    def test_creative_metadata_is_null_safe_for_legacy_projects(self) -> None:
+        record = record_publish_metrics(
+            self.project_dir,
+            self.body.name,
+            self.title.name,
+            payload(),
+            recorded_at="2026-08-12T10:05:00+08:00",
+        )
+
+        creative = record["creative_metadata"]
+        self.assertEqual("G", creative["title"]["selected_candidate"])
+        self.assertIsNone(creative["opening"]["selected_variant"])
+        self.assertIsNone(creative["share"]["primary_motive"])
+        self.assertIsNone(creative["style"]["name"])
+        self.assertNotIn("opening", creative["sources"])
 
     def test_rejects_impossible_or_negative_metrics(self) -> None:
         with self.assertRaises(ValueError):

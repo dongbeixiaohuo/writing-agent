@@ -23,6 +23,7 @@ articles/
 │   ├── draft_v1_notes.md        # Stage 6: 初稿内部备注
 │   ├── draft_v2.md              # Stage 7: 修订稿
 │   ├── draft_v2_notes.md        # Stage 7: 修订稿内部备注
+│   ├── draft_vN_illustrated.md  # Stage 11: 可选配图版正文（最终事实核查之前）
 │   ├── run_manifest.json        # 当前正文来源与流程状态
 │   ├── fact_claims.json         # Stage 10.5: 锁定标题、分发文案与正文事实声明
 │   ├── fact_check_report.md     # Stage 10.5: 事实核查报告
@@ -51,7 +52,7 @@ articles/
 | `02_evidence_ledger.json` | Stage 2 | 可外部核查事实的结构化证据账本 |
 | `03_outline.md` | Stage 3 | 大纲、段落功能标注、字数预估 |
 | `04_title.md` | Stage 5.5 | 8 个候选标题、3 条平台分发文案及最终锁定结果 |
-| `04_share_map.md` | Stage 4 | 分享触点、共鸣点、真实讨论入口 |
+| `04_share_map.md` | Stage 4 | 分享触点、共鸣点、真实讨论入口与条件式趣味张力 |
 | `05_concrete_library.md` | Stage 5 | 类比库、画面库、行动库 |
 | `05c_opening_hook.md` | Stage 5.8 | 用户锁定的开头钩子 |
 
@@ -64,6 +65,7 @@ articles/
 | `draft_v2.md` | 修订稿（Stage 7） |
 | `draft_v2_notes.md` | 修订稿内部备注（修改记录、自检、遗留问题） |
 | `draft_v3.md` | 再修订（如有） |
+| `draft_vN_illustrated.md` | 可选配图版；保存为新文件并更新运行态，随后执行 Stage 10.5 |
 | `run_manifest.json` | 当前正文来源、备注、clean 来源，以及事实核查绑定的正文/标题文件和 SHA-256 |
 | `draft_最终稿.md` | 用户确认的最终版本 |
 
@@ -73,7 +75,7 @@ articles/
 |-------|------|
 | `changelog.md` | 记录每次修改的变更内容 |
 | `sources.md` | 引用来源（如有数据/案例） |
-| `publication_metrics.jsonl` | 版本绑定、只追加的发布后表现原始记录（可选） |
+| `publication_metrics.jsonl` | 版本绑定、只追加的发布后表现原始记录；同时快照标题公式、开头方案、社交货币、风格和来源哈希（可选） |
 | `performance_reviews/*.md` | 基于可比数据形成的观察、假设和规则候选（可选） |
 
 ## 使用示例
@@ -119,10 +121,11 @@ AI：
 3. **备注请写进同名 `_notes.md`**：不要再把字数统计、修改记录写回正文文件
 4. **维护 `run_manifest.json`**：新流程应把当前正文来源、备注文件和状态写进去
 5. **事实核查必须双绑定**：旧的无正文或标题哈希的 `fact_check_status=passed` 不再放行，正文或 `04_title.md` 修改后都应重跑 Stage 10.5
-6. **最终复制请用 `_clean.txt`**：它是发布出口，不是正文源文件；只通过 `auto_clean_hook.py --project "[项目名]"` 生成
-7. **定期备份**：重要文章建议定期备份整个项目文件夹
-8. **版本管理**：建议使用 Git 管理 articles 目录，方便追踪变更
-9. **发布数据只追加**：只通过 `record_publish_metrics.py` 写入 `publication_metrics.jsonl`，不要覆盖旧记录或把指标混进 `run_manifest.json`
+6. **配图先于最终事实核查**：Stage 11 选择配图时写入新正文版本；Stage 10.5 必须核查该版本，核查通过后不得再改正文
+7. **最终复制请用 `_clean.txt`**：它是发布出口，不是正文源文件；只通过 `auto_clean_hook.py --project "[项目名]"` 生成
+8. **定期备份**：重要文章建议定期备份整个项目文件夹
+9. **版本管理**：建议使用 Git 管理 articles 目录，方便追踪变更
+10. **发布数据只追加**：只通过 `record_publish_metrics.py` 写入 `publication_metrics.jsonl`，不要覆盖旧记录或把指标混进 `run_manifest.json`
 
 ## 清理建议
 
@@ -132,6 +135,6 @@ AI：
 
 ---
 
-**版本：** v1.2.0
+**版本：** v1.3.0
 
 **更新时间：** 2026-08-14

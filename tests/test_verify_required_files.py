@@ -13,7 +13,12 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def valid_evidence_ledger(*, duplicate: bool = False) -> str:
+def valid_evidence_ledger(
+    *,
+    duplicate: bool = False,
+    research_requirement: str | None = None,
+    research_attempts: list[dict] | None = None,
+) -> str:
     claim = {
         "evidence_id": "E001",
         "claim_type": "number",
@@ -28,7 +33,12 @@ def valid_evidence_ledger(*, duplicate: bool = False) -> str:
         "verification_status": "collected",
     }
     claims = [claim, {**claim}] if duplicate else [claim]
-    return json.dumps({"claims": claims, "notes": "测试账本"}, ensure_ascii=False)
+    ledger = {"claims": claims, "notes": "测试账本"}
+    if research_requirement is not None:
+        ledger["research_requirement"] = research_requirement
+    if research_attempts is not None:
+        ledger["research_attempts"] = research_attempts
+    return json.dumps(ledger, ensure_ascii=False)
 
 
 class VerifyRequiredFilesTests(unittest.TestCase):
@@ -244,6 +254,35 @@ class VerifyRequiredFilesTests(unittest.TestCase):
 
     def test_evidence_ledger_accepts_complete_claims(self) -> None:
         write(self.project_dir / "02_evidence_ledger.json", valid_evidence_ledger())
+
+        self.assertEqual([], find_file_issues(self.project_dir, ["02_evidence_ledger.json"]))
+
+    def test_evidence_ledger_requires_attempt_log_when_external_research_is_required(self) -> None:
+        write(
+            self.project_dir / "02_evidence_ledger.json",
+            valid_evidence_ledger(research_requirement="required", research_attempts=[]),
+        )
+
+        self.assertEqual(
+            [{"file": "02_evidence_ledger.json", "reason": "invalid_evidence_ledger"}],
+            find_file_issues(self.project_dir, ["02_evidence_ledger.json"]),
+        )
+
+    def test_evidence_ledger_accepts_structured_external_research_attempts(self) -> None:
+        write(
+            self.project_dir / "02_evidence_ledger.json",
+            valid_evidence_ledger(
+                research_requirement="required",
+                research_attempts=[
+                    {
+                        "target_claim": "核查报告中的样本量",
+                        "query": "示例报告 样本量",
+                        "outcome": "found",
+                        "notes": "找到发布方原始报告。",
+                    }
+                ],
+            ),
+        )
 
         self.assertEqual([], find_file_issues(self.project_dir, ["02_evidence_ledger.json"]))
 

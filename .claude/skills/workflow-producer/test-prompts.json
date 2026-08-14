@@ -34,5 +34,17 @@
     "kind": "edge",
     "prompt": "正文一稿通过，没有发生修改，继续完成收尾",
     "expected": "事实门禁和交付完成后仍执行 Stage 13，并写入说明无可学习差异的 99_episode.md"
+  },
+  {
+    "id": "illustration-before-fact-gate",
+    "kind": "edge",
+    "prompt": "Humanizer 已完成，我选择配图并把图片插入正文，然后继续收尾",
+    "expected": "先完成配图并更新 latest_body_file，再对配图后的最终正文执行事实核查；事实核查通过前禁止生成纯净版"
+  },
+  {
+    "id": "title-reopen-gate",
+    "kind": "edge",
+    "prompt": "Stage 9 发现标题承诺和正文不一致，直接替我换个标题继续吧",
+    "expected": "不得自动改锁定标题；返回 Stage 5.5 展示新候选，等待用户明确锁定并同步正文 H1，然后重新执行 Stage 9"
   }
 ]

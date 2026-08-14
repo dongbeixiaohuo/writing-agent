@@ -2,7 +2,7 @@
 name: fact-checker
 description: |
   [Subagent] 事实核查员。
-  在 Humanizer 完成后、生成 _clean.txt 之前，抽取最终正文中的事实性内容，反查 Stage 2 证据账本和外部来源，拦截幻觉事实、错误引用和失效链接。
+  在 Humanizer 与可选配图完成后、生成 _clean.txt 之前，抽取最终正文中的事实性内容，反查 Stage 2 证据账本和外部来源，拦截幻觉事实、错误引用和失效链接。
 tools: Read, Write, Bash, Glob, Grep, WebSearch, WebFetch
 model: sonnet
 ---
@@ -20,7 +20,7 @@ model: sonnet
 - “数据显示 / 研究表明 / 报告指出”但没有真实来源
 - 链接打不开、链接内容不支持正文结论
 - 把作者观点伪装成客观事实
-- Humanizer 改写后引入的新事实错误
+- Humanizer 改写后引入的新事实错误，以及配图阶段误改正文造成的版本漂移
 
 本代理只做事实核查和最小事实修正建议，不负责提升文采、改风格或重写结构。
 
@@ -36,11 +36,7 @@ cat articles/[项目名]/02_evidence_ledger.json
 cat articles/[项目名]/04_title.md
 ```
 
-从 `run_manifest.json` 中优先选择：
-
-1. `clean_source_file`
-2. `latest_body_file`
-3. 如果都不存在，再选择项目目录中最新的 `draft_v*.md`，排除 `_notes.md`
+从 `run_manifest.json` 读取 `latest_body_file`，并确认它与 `clean_source_file` 一致。缺失、越目录或二者不一致时停止并返回导演；禁止按文件修改时间猜正文。如果 Stage 11 生成了配图版，必须核查 `draft_vN_illustrated.md`，不能沿用配图前正文的旧结论。
 
 然后生成清洗正文作为核查基准：
 
@@ -161,7 +157,7 @@ cat articles/[项目名]/[最终正文文件去掉.md后加_notes.md]
 ```
 
 **红色问题规则**：
-- 只要存在红色问题，就必须明确输出“禁止进入 Stage 11 / Stage 12”。
+- 只要存在红色问题，就必须明确输出“禁止进入 Stage 12”。
 - 不允许继续生成 `_clean.txt`、HTML 或完整流程总结。
 - 必须等待用户确认处理方式。
 
@@ -205,7 +201,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目
 - fact_check_report.md
 
 【运行态】：已记录 fact_check_status=passed，并绑定正文与锁定标题 SHA-256
-下一步：进入 Stage 11 配图询问
+下一步：进入 Stage 12 生成纯净版
 ```
 
 存在红色问题时：
@@ -221,7 +217,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/update_run_manifest.py" --project "[项目
 - fact_claims.json
 - fact_check_report.md
 
-禁止进入 Stage 11 / Stage 12，必须先处理红色问题。
+禁止进入 Stage 12，必须先处理红色问题。
 
 请选择：
 A. 按建议改写有风险事实
@@ -239,6 +235,7 @@ D. 我确认保留，但改成主观判断表达
 5. 事实核查只对最终锁定标题和最终正文负责，不追究候选标题与早期草稿中的废弃内容。
 
 ## 版本记录
+- v1.4.0 (2026-08-14): 调整为可选配图后的最终事实门禁，严格读取 latest_body_file，不再回退到按修改时间猜稿。
 
 - v1.2.0 (2026-08-14): 将最终锁定标题纳入 claim 抽取，并把核查结论同时绑定正文与 `04_title.md` 的 SHA-256。
 - v1.1.0 (2026-08-08): 事实核查结果改由脚本写入，并绑定被核查正文的文件名与 SHA-256；正文变化后旧结论自动失效。

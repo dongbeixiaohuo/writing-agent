@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 import uuid
 from datetime import datetime
@@ -30,6 +31,7 @@ ALLOWED_METRIC_FIELDS = (
     "new_followers",
     "avg_read_seconds",
 )
+PENDING_METADATA_VALUES = ("待定", "等待用户", "未选择", "pending")
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -59,6 +61,146 @@ def _project_file(project_dir: Path, value: str, field: str) -> Path:
     if not resolved.is_file():
         raise ValueError(f"{field} 对应文件不存在: {value}")
     return resolved
+
+
+def _clean_metadata_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip().strip("| ").replace("**", "").replace("`", "").strip()
+    cleaned = cleaned.strip("「」『』\"'")
+    if not cleaned or any(marker.casefold() in cleaned.casefold() for marker in PENDING_METADATA_VALUES):
+        return None
+    return cleaned
+
+
+def _extract_labeled_value(content: str, *labels: str) -> str | None:
+    for label in labels:
+        escaped = re.escape(label)
+        line_match = re.search(
+            rf"(?mi)^\s*(?:>\s*|-\s*)?(?:\*\*)?{escaped}(?:\*\*)?\s*[：:]\s*(.+?)\s*$",
+            content,
+        )
+        if line_match:
+            return _clean_metadata_value(line_match.group(1))
+        table_match = re.search(
+            rf"(?mi)^\s*\|\s*(?:\*\*)?{escaped}(?:\*\*)?\s*\|\s*(.*?)\s*\|\s*$",
+            content,
+        )
+        if table_match:
+            return _clean_metadata_value(table_match.group(1))
+    return None
+
+
+def _selected_variant(value: str | None, allowed: str) -> str | None:
+    if value is None:
+        return None
+    custom = re.search(r"自定义", value, flags=re.IGNORECASE)
+    if custom:
+        return "自定义"
+    match = re.search(rf"(?<![A-Za-z])([{allowed}])(?![A-Za-z])", value, flags=re.IGNORECASE)
+    return match.group(1).upper() if match else None
+
+
+def _title_formula(content: str, selected_candidate: str | None) -> str | None:
+    if selected_candidate is None or selected_candidate == "自定义":
+        return None
+    lines = content.splitlines()
+    marker = re.compile(
+        rf"^\s*(?:#+\s*)?(?:\S+\s+)?{re.escape(selected_candidate)}(?:[.．、\s]|【|$)",
+        flags=re.IGNORECASE,
+    )
+    any_candidate = re.compile(
+        r"^\s*(?:#+\s*)?(?:\S+\s+)?[A-H](?:[.．、\s]|【|$)",
+        flags=re.IGNORECASE,
+    )
+    in_selected_block = False
+    for line in lines:
+        if marker.search(line):
+            in_selected_block = True
+            continue
+        if in_selected_block and any_candidate.search(line):
+            break
+        if in_selected_block:
+            formula = _extract_labeled_value(line, "公式")
+            if formula:
+                return formula
+    return None
+
+
+def _optional_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _metadata_source(project_dir: Path, path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    return {
+        "file": path.relative_to(project_dir).as_posix(),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def extract_creative_metadata(
+    project_dir: Path,
+    title_path: Path,
+    *,
+    platform: str,
+) -> dict:
+    """Snapshot normalized creative choices without requiring legacy projects to backfill them."""
+    opening_path = project_dir / "05c_opening_hook.md"
+    share_path = project_dir / "04_share_map.md"
+    theme_path = project_dir / "01_theme.md"
+
+    title_content = _optional_text(title_path)
+    opening_content = _optional_text(opening_path)
+    share_content = _optional_text(share_path)
+    theme_content = _optional_text(theme_path)
+
+    selected_candidate = _selected_variant(
+        _extract_labeled_value(title_content, "最终编号", "用户选择", "选择"),
+        "ABCDEFGH",
+    )
+    opening_variant = _selected_variant(
+        _extract_labeled_value(opening_content, "胜出方案", "最终选择", "用户选择", "选择"),
+        "ABC",
+    )
+
+    source_paths = {
+        "title": title_path,
+        "opening": opening_path,
+        "share_map": share_path,
+        "theme": theme_path,
+    }
+    sources = {
+        name: source
+        for name, path in source_paths.items()
+        if (source := _metadata_source(project_dir, path)) is not None
+    }
+
+    return {
+        "schema_version": "1.0",
+        "platform": platform,
+        "title": {
+            "selected_candidate": selected_candidate,
+            "formula": _title_formula(title_content, selected_candidate),
+        },
+        "opening": {"selected_variant": opening_variant},
+        "share": {
+            "primary_motive": _extract_labeled_value(
+                share_content,
+                "主导社交货币",
+                "终极分享引擎",
+            )
+        },
+        "style": {
+            "name": _extract_labeled_value(theme_content, "写作风格"),
+            "verification_status": _extract_labeled_value(theme_content, "风格证据状态"),
+        },
+        "sources": sources,
+    }
 
 
 def _required_text(payload: dict, field: str) -> str:
@@ -215,6 +357,11 @@ def record_publish_metrics(
             "cover_ref": normalized["cover_ref"],
         },
         "publication_url": normalized["publication_url"],
+        "creative_metadata": extract_creative_metadata(
+            project_dir,
+            title_path,
+            platform=normalized["platform"],
+        ),
         "metrics": normalized["metrics"],
         "derived_metrics": _derived_metrics(normalized["metrics"]),
         "notes": normalized["notes"],

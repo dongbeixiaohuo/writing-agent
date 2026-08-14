@@ -1,16 +1,3 @@
 {
-  "hooks": {
-    "SubagentStop": [
-      {
-        "matcher": "article-illustrator",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python scripts/auto_clean_hook.py",
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  }
+  "hooks": {}
 }

@@ -1,6 +1,6 @@
 """
-auto_clean_hook.py - 自动生成纯净版的 Hook 脚本
-触发时机：由 Claude Code Hook 在 Subagent 结束时自动调用
+auto_clean_hook.py - 自动生成纯净版的 Stage 12 脚本
+触发时机：由工作流导演在最终事实核查通过后显式调用；也兼容显式 Hook 事件
 功能：根据显式项目或正文来源生成 _clean.txt；旧的全局回退必须人工开启
 """
 

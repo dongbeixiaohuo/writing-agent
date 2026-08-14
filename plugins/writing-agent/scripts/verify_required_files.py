@@ -133,6 +133,8 @@ EVIDENCE_REQUIRED_FIELDS = (
     "use_boundary",
     "verification_status",
 )
+RESEARCH_ATTEMPT_REQUIRED_FIELDS = ("target_claim", "query", "outcome", "notes")
+RESEARCH_OUTCOMES = {"found", "not_found", "blocked"}
 
 
 def evidence_ledger_issue(content: str) -> str | None:
@@ -142,6 +144,28 @@ def evidence_ledger_issue(content: str) -> str | None:
         return "invalid_json"
 
     if not isinstance(ledger, dict) or not isinstance(ledger.get("claims"), list):
+        return "invalid_evidence_ledger"
+
+    research_requirement = ledger.get("research_requirement")
+    research_attempts = ledger.get("research_attempts")
+    if research_requirement is not None:
+        if research_requirement not in {"required", "not_required"}:
+            return "invalid_evidence_ledger"
+        if not isinstance(research_attempts, list):
+            return "invalid_evidence_ledger"
+        if research_requirement == "required" and not research_attempts:
+            return "invalid_evidence_ledger"
+        for attempt in research_attempts:
+            if not isinstance(attempt, dict):
+                return "invalid_evidence_ledger"
+            if any(
+                not isinstance(attempt.get(field), str) or not attempt[field].strip()
+                for field in RESEARCH_ATTEMPT_REQUIRED_FIELDS
+            ):
+                return "invalid_evidence_ledger"
+            if attempt["outcome"].strip().lower() not in RESEARCH_OUTCOMES:
+                return "invalid_evidence_ledger"
+    elif research_attempts is not None:
         return "invalid_evidence_ledger"
 
     claims = ledger["claims"]
