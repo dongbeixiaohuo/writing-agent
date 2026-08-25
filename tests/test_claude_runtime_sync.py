@@ -83,7 +83,7 @@ class BootstrapWorkspaceTests(unittest.TestCase):
             )
             self.assertFalse((plugin_data / "runtime" / "scripts" / "removed.ts").exists())
             self.assertEqual(1, len(calls))
-            self.assertEqual(plugin_data, calls[0][1])
+            self.assertEqual(plugin_data.resolve(), calls[0][1])
             self.assertIn("ci", calls[0][0])
 
             write(runtime_root / "package.json", '{"name":"test","version":"1.0.1"}\n')
