@@ -7,30 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.10.0] - 2026-08-31
+
+### Added — 创意反馈与尾部事实门禁
 
 - 🧬 **创意变量快照**：`record_publish_metrics.py` 自动从锁定产物记录标题公式、开头方案、主导社交货币、风格、发布平台及来源文件 SHA-256；`performance-review` 可扫描跨项目指标账本做同口径比较。
 - 🎭 **条件式趣味张力**：Share Map 增加“趣味谈资”，Editor 增加幽默、荒诞反差、认知意外与新鲜细节检查；严肃主题不强制搞笑，任何趣味细节都受真实素材和证据边界约束。
 - 🔎 **调研尝试留痕**：证据账本新增 `research_requirement` 与 `research_attempts`；计划使用外部事实时必须记录真实检索及 `found/not_found/blocked` 结果，不以机械搜索次数充数。
 
-### Changed
+### Changed — 流程职责与配图顺序
 
 - 🎨 **配图先于最终事实门禁**：尾部顺序改为 Humanizer → 可选配图 → Fact Checker → Auto Clean。配图版写入新正文并更新 `latest_body_file`，最终事实核查绑定配图后的 Markdown，避免插图使已通过哈希失效。
 - 🧭 **评审职责分家**：Editor 只管写作工艺与风格保真；Pre-publish 只管读者价值、逻辑和发布风险；Reader Test 只管平台行为；Humanizer 只负责表达改写。Stage 7/8 正式接入主题、记忆、锁定标题和动态正文。
 - 🎯 **标题可安全回开**：Stage 9 发现承诺错位时，可由用户选择返回 Stage 5.5；新标题必须重新锁定、同步正文 H1 并重跑 Stage 9。标题候选增加策略语义去重。
 - 🖼️ **平台化配图**：Article Illustrator 读取发布平台和动态正文，移除无效 `GenerateImage` 声明、模板化企业插画默认词和固定 16:9；比例需在策划阶段说明依据并由用户确认。
 
-### Fixed
+### Fixed — 内容与清稿边界
 
 - 🧍 **评审不再逼造第一人称**：移除“没有第一人称即扣分”等规则；作者声音来自判断和措辞，没有真实素材时禁止补造亲历。
 - 💬 **金句语义统一**：统一为“删除空心口号，保留带场景、代价或立场的判断句”，并清理重复破折号规则、评审步骤编号和通用 Agent 中的具体风格别名。
 - 🔒 **清稿触发时机**：移除配图 SubagentStop 的提前清稿 Hook；Stage 12 只在最终事实核查通过后，以显式项目参数调用自动清稿门禁。
+- 🪟 **Windows CI 稳定性**：Packaging checks 显式开启 Python UTF-8 模式，并按规范化路径比较 Windows 8.3 短路径与完整路径。
 
-## [0.10.0] - 2026-08-14
+### 平台增长主线
 
 > 面向“点击前设计 + 发布后学习”的功能版本：堵住标题事实边界，按平台设计分发与读者测试，并用版本绑定的真实指标建立可选复盘闭环。
 
-### Added
+#### Added
 
 - 📈 **可选发布后 Stage 14**：新增 `performance-review` 与 `record_publish_metrics.py`；以 append-only `publication_metrics.jsonl` 记录平台、观察窗口、流量来源、曝光/打开/完成阅读/分享等指标，并绑定标题、正文和封面版本。
 - 🧭 **平台分发文案**：`title-designer` 在 8 个标题之外同步生成 3 条公众号摘要、今日头条信息流导语或知乎回答导语，与标题一起由用户锁定。
@@ -38,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🧾 **风格登记原子工具**：新增 `manage_style_registry.py`，支持幂等登记、显式验证升级和开发仓库/插件工作区风格根目录解析；禁止无证据或未确认盲测通过时写入 `verified`。
 - 💬 **真实讨论入口**：Share Map 与大纲正式支持收集读者经验和反例的讨论问题，同时禁止骗评、虚假二选一与强迫站队。
 
-### Changed
+#### Changed
 
 - 🔐 **事实门禁升级为标题 + 正文双绑定**：`fact-checker` 显式抽取最终锁定标题和分发文案中的事实 claim；`run_manifest.json` 新增 `fact_checked_title_file`、`fact_checked_title_sha256`，任一内容变化都会使旧状态失效。
 - 🎯 **标题接入立场和证据**：Stage 5.5 正式读取 `01b_position.md` 与 `02_evidence_ledger.json`，区分结构数字与事实数字；账本和作者真实素材之外的精确数字禁止进入标题。
@@ -46,14 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🧩 **模式 C 机器化**：选题生成、选题验证及向 B 模式 Stage 1 的交接进入 `collab_v2.json`；候选会先查重 `articles/_topic_pool/` 并持久化对标账号。
 - 🧠 **记忆输入正式入约**：Stage 3、5.5、6、10 显式依赖 `00_memory_packet.md`；无历史经验时读取 Stage 0 的占位结论，而不是静默跳过。
 
-### Fixed
+#### Fixed
 
 - 🧷 **动态正文占位符**：`verify_required_files.py` 从项目 `run_manifest.json` 安全解析 `[latest_body_file]`，拒绝绝对路径和越目录路径，不再把占位符当字面文件名。
 - 🎬 **开场输入缺口**：Stage 5.8 补齐 `01_theme.md`、证据账本、大纲和锁定标题，使第一人称素材边界与标题—结构对齐都可执行。
 - ✅ **扩展契约校验**：`validate_workflow.py` 同时检查模式内阶段、发布后阶段和风格登记表，避免新增 agent 只存在于说明文档。
 - 🧩 **风格建模登记断点**：`style-modeler` 现在在创建档案后同步维护 `style_registry.json`；开发仓库写唯一源 `claude-runtime/styles` 后再同步镜像，普通插件工作区写 `.claude/styles`，不再出现新档案未登记或补证据后永久降级的问题。
 
-### Migration
+#### Migration
 
 - v0.9.1 及更早项目若缺少标题文件与标题 SHA-256 绑定，会被视为旧式未完整核查状态；请对当前 `04_title.md` 和最终正文重新执行 Stage 10.5。
 - 正常写作流程仍在 Stage 13 结束；Stage 14 仅在用户明确要求记录或复盘发布数据时运行，不会自动追加一次发布流程。
