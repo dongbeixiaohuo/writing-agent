@@ -14,11 +14,11 @@
 - 想让 AI 写作过程可中断、可修改、可复盘
 - 不只想拿到一篇文，而是想把写作变成稳定、可控、可积累的工作流
 
-当前实测可用模型：
+当前优先接入模型（官方资料核验于 2026-08-31）：
 
-- `DeepSeek-V3.2`：默认推荐，最适合低成本先把完整流程跑明白
-- `智谱 GLM`：已实测，不分伯仲
-- `MiniMax`：已实测，不分伯仲
+- `deepseek-v4-flash`：默认推荐的按量方案，成本低，支持 Anthropic 兼容接口
+- `qwen3.8-flash`：阿里云百炼 Token Plan 用户的优先日常档
+- `GLM-4.7`、`MiniMax-M2.7`、`kimi-for-coding`：已经购买对应套餐时直接使用，不必追最高档模型
 
 ---
 
@@ -42,7 +42,7 @@
 - 下载桌面应用：[桌面预览版](#桌面预览版)
 - 先看完整样本：[工资的一半，是你受的气折算的 Demo](#完整-demo工资的一半是你受的气折算的)
 - 再看当前版本：[最新更新](#最新更新)
-- 先判断模型成本：[模型与 Coding Plan](#模型与-coding-plan)
+- 先判断模型成本：[模型与 Token Plan](#模型与-token-plan)
 - 想直接部署：[完整版安装](#完整版安装)
 - 想按新手路径一步步装：[给新手的完整安装与使用说明](#给新手的完整安装与使用说明)
 
@@ -246,32 +246,26 @@ v0.10.0 正式版同时收录创意反馈、尾部事实门禁重排和平台化
 
 ---
 
-## 模型与 Coding Plan
+## 模型与 Token Plan
 
-这个项目不一定非要跑 Claude 官方模型。对大多数人来说，更实用的是通过 Anthropic 兼容接口接第三方模型。
+这个项目不一定非要跑 Claude 官方模型。只要服务商提供 Claude Code 可用的 Anthropic 兼容接口，就可以用第三方模型运行完整流程。
 
-当前推荐逻辑很简单：
+当前推荐顺序：
 
-- 想最低成本先把完整流程跑通：`DeepSeek-V3.2`
-- 已经有 `智谱 GLM` 或 `MiniMax` 套餐：直接用，也已经实测过，效果不分伯仲
-- 每个月会高频写作、频繁审稿和反复改稿：直接考虑 `Coding Plan`
-- 需要在多家兼容接口之间反复切换：上 [CC-Switch](https://github.com/farion1231/cc-switch)
+1. 低频或第一次试跑：`deepseek-v4-flash` 按量付费。
+2. 国内长期使用：先比较阿里云百炼 Token Plan Lite 和 MiniMax Token Plan Plus，不默认购买最高档。
+3. 已有套餐：GLM 用 `GLM-4.7`，MiniMax 用 `MiniMax-M2.7`，Kimi 用 `kimi-for-coding`；普通写作任务没必要先上旗舰模型。
+4. 需要切换多家兼容接口：使用 [CC-Switch](https://github.com/farion1231/cc-switch)。
 
-为什么首页默认先写 `DeepSeek-V3.2`：
-
-- 不是因为它明显强于另外两家
-- 而是最早测试路径最便宜，先充 10 块钱就足够把这套流程从头到尾验证一遍
-
-首页只保留一个简表：
-
-| 场景 | 推荐 |
+| 场景 | 优先选择 |
 |------|------|
-| 首次验证完整流程 | `DeepSeek-V3.2` 按量付费 |
-| 已有其他平台套餐 | `智谱 GLM` / `MiniMax` 直接接入 |
-| 中高频长期使用 | `Coding Plan` |
+| 第一次验证完整流程 | `deepseek-v4-flash` 按量付费 |
+| 已有阿里云 Token Plan | `qwen3.8-flash` |
+| 已有 GLM / MiniMax / Kimi 套餐 | `GLM-4.7` / `MiniMax-M2.7` / `kimi-for-coding` |
+| 中高频长期使用 | 从当前仍在售的入门 Token Plan 或会员档开始 |
 | 多模型来回切换 | `CC-Switch` |
 
-完整的模型接入文档、Coding Plan 地址和选型建议，见下方 [模型和成本怎么选](#模型和成本怎么选)。
+价格、额度、模型 ID 和官方接入地址见下方 [模型和成本怎么选](#模型和成本怎么选)。
 
 ---
 
@@ -622,28 +616,29 @@ Claude Code 装好之后，常见有五种用法：
 
 ### Claude 官方订阅
 
-如果你打算直接用 Claude 官方账号，常见档位是：
+如果你打算直接用 Claude 官方账号，当前个人档位是：
 
-| 方案 | 当前常见价格 | 适合谁 |
+| 方案 | 官方价格 | 建议 |
 |------|------|------|
-| Pro | `$20/月` | 轻量使用、学习、个人开发 |
-| Max 5x | `$100/月` | 高频使用、每天长时间对话 |
-| Max 20x | `$200/月` | 重度使用、多人或商业项目 |
+| Free | `$0` | 只做偶尔体验，额度有限 |
+| Pro | `$20/月` 或 `$200/年` | 本项目的默认起步档，先用一段时间再判断是否需要升级 |
+| Max 5x | `$100/月` | Pro 经常触顶时再考虑 |
+| Max 20x | `$200/月` | 不是本项目的默认推荐 |
 
-这组价格和额度变动比较快，最终以 Anthropic 官方页面为准。
+Claude 与 Claude Code 共用订阅额度；如果环境里保留了 `ANTHROPIC_API_KEY`，Claude Code 会优先走 API 按量计费，而不是消耗订阅额度。价格见 [Anthropic 个人套餐说明](https://support.claude.com/en/articles/11049762-choose-a-claude-plan)，登录方式见 [在 Claude Code 中使用 Pro 或 Max](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan)。
 
 简单选法：
 
-- 你只是想先体验 Claude 官方服务：先从 `Pro` 开始
-- 你每天都在用，或者很容易撞额度：再升 `Max 5x`
-- 你是团队或商业重度使用：再看 `Max 20x`
+- 偶尔体验先用 Free；准备正式跑长链路时从 `Pro` 开始
+- 只有 `Pro` 经常撞额度，才升级 `Max 5x`
+- 不要为了“模型最强”直接购买 `Max 20x`
 
 ### 这个仓库更常见的实际路径
 
 对这个项目来说，更常见的用法其实是：
 
 - 用 Anthropic 兼容接口
-- 接 `DeepSeek-V3.2`、`智谱 GLM`、`MiniMax` 这类第三方模型
+- 接 `deepseek-v4-flash`、`qwen3.8-flash`、`GLM-4.7`、`MiniMax-M2.7` 或 `kimi-for-coding`
 - 用更低成本把长链路写作流程跑通
 
 所以你不用把“Claude 官方订阅”和“第三方模型 API”理解成二选一。
@@ -652,44 +647,47 @@ Claude Code 装好之后，常见有五种用法：
 
 ## 模型和成本怎么选
 
-这个项目的模型选择逻辑，不是“谁绝对最强”，而是“谁更适合你的使用方式”。
+这个项目的模型选择逻辑，不是“谁绝对最强”，而是“能不能稳定跑完整流程，以及每个月实际花多少钱”。以下信息核验于 **2026-08-31**；活动价可能变化，购买前仍要打开链接确认结算页。
+
+### 先选日常档，不先买旗舰档
+
+- 默认按量模型：`deepseek-v4-flash`。它是当前 DeepSeek 的 Flash 模型，支持 1M 上下文、工具调用和 Anthropic 兼容接口。
+- 已有阿里云 Token Plan：优先 `qwen3.8-flash`，复杂任务失败时再临时切 `qwen3.8-max` 或其他高阶模型。
+- 已有 GLM Coding Plan：日常用 `GLM-4.7`；官方也建议只在复杂任务中切 `GLM-5.2`，后者会更快消耗额度。
+- 已有 MiniMax Token Plan：先用官方 Claude Code 接入文档明确支持的 `MiniMax-M2.7`。
+- 已有 Kimi 会员：入门档先用 `kimi-for-coding`（Kimi K2.7 Code），不必为了 K3 或 HighSpeed 直接升级高价档。
+
+这些是依据当前官方模型和计费文档给出的成本优先建议，不等于每个新模型别名都已在本仓库完成整条回归。正式写作前请先用 Demo 跑一遍。
 
 ### 按量付费模型
 
-| 模型 | 当前定位 | 什么时候用 | 获取 API Key | 官方文档 |
+| 模型 ID | 当前公开价格 | 什么时候用 | 官方入口 |
+|------|------|------|------|
+| **`deepseek-v4-flash`** | 每百万 Token：缓存未命中输入 `$0.22 / $0.44`、输出 `$0.66 / $1.32`（低谷 / 高峰） | 默认按量试跑；先少量充值，再看真实消耗 | [价格](https://api-docs.deepseek.com/quick_start/pricing/) · [Anthropic 接入](https://api-docs.deepseek.com/guides/anthropic_api/) |
+| **`qwen3-coder-flash`** | 单次输入不超过 32K 时，每百万 Token 输入 `¥1`、输出 `¥4`；长上下文分档涨价 | 已有百炼按量账号，并希望使用低价 Flash 档 | [百炼模型价格](https://help.aliyun.com/zh/model-studio/model-pricing) |
+
+DeepSeek 当前高峰时段为工作日北京时间 `09:00–12:00` 和 `14:00–18:00`，其余时段按低谷价；缓存命中输入另有更低价格，仍以实时价格页为准。
+
+不要用一次完整长文任务去反推“每篇固定多少钱”：本项目会经历多 Agent、多轮返工和长上下文，缓存命中、上下文长度、是否重跑阶段都会改变账单。
+
+### 当前仍在售的订阅方案
+
+| 平台 | 当前入门方案 | 日常模型建议 | 额度特点 | 官方链接 |
 |------|------|------|------|------|
-| **DeepSeek-V3.2** | 默认推荐 | 第一次完整验证流程、预算敏感、想先充少量金额试跑 | [DeepSeek 平台](https://platform.deepseek.com) | [接入文档](https://api-docs.deepseek.com/zh-cn/guides/anthropic_api) |
-| **智谱 GLM** | 已实测同级 | 已有 GLM 套餐或更习惯智谱生态 | [智谱开放平台](https://open.bigmodel.cn) | [接入文档](https://docs.bigmodel.cn/cn/coding-plan/tool/claude) |
-| **MiniMax** | 已实测同级 | 已有 MiniMax 套餐或更习惯 MiniMax 平台 | [MiniMax 平台](https://platform.minimaxi.com) | [接入文档](https://platform.minimaxi.com/docs/api-reference/text-anthropic-api) |
+| 阿里云百炼 Token Plan | Lite 原价 `¥60/月`，当前页面限时 `¥39/月` | `qwen3.8-flash` | 每 7 天 2,500 Credits；Token Plan Key 与按量/Coding Plan Key 不互通 | [套餐与价格](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview) · [接入指南](https://help.aliyun.com/zh/model-studio/token-plan-personal-quick-start) |
+| MiniMax Token Plan | Plus `¥49/月` | `MiniMax-M2.7` | 5 小时窗口和周窗口；更高档只在确实触顶后考虑 | [套餐与价格](https://platform.minimaxi.com/docs/guides/pricing-token-plan) · [Claude Code 接入](https://platform.minimaxi.com/docs/token-plan/claude-code) |
+| Kimi 会员 | Andante `¥49/月` | `kimi-for-coding` | Kimi Code 与其他会员功能共享额度；K3 需更高会员档 | [会员价格](https://www.kimi.com/help/membership/membership-pricing) · [Kimi Code 模型与接入](https://www.kimi.com/code/docs/) |
+| GLM Coding Plan | Lite 价格由登录后的订阅页实时显示 | `GLM-4.7` | 约 80 prompts/5 小时、400 prompts/周；`GLM-5.2` 消耗倍率更高 | [套餐说明](https://docs.bigmodel.cn/cn/coding-plan/overview) · [接入指南](https://docs.bigmodel.cn/cn/coding-plan/quick-start) |
+| Claude 官方订阅 | Pro `$20/月` 或 `$200/年` | 使用 Pro 当前提供的默认模型 | Claude 与 Claude Code 共用额度；先用 Pro，不默认推荐 Max | [套餐价格](https://support.claude.com/en/articles/11049762-choose-a-claude-plan) · [Claude Code 登录](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan) |
 
-这里要说清楚：
-
-- `智谱 GLM` 和 `MiniMax` 都已经实测过，和 `DeepSeek-V3.2` 不分伯仲
-- README 里先强调 `DeepSeek-V3.2`，不是因为它明显更强
-- 只是因为最开始测试时它的按量成本最低，先充 10 块钱就足够把一整条链路从头到尾跑明白
-
-### Coding Plan 包月套餐
-
-如果你会频繁使用本项目，按量付费不一定最省心。下面这些地址本身就值得收藏：
-
-| 平台 | 首月特惠 / 入门档 | 常见续费 | 适合谁 | 链接 |
-|------|------|------|------|------|
-| 阿里云百炼 | `¥7.9 / ¥39.9` | 约 `¥40 / ¥200` | 量大、价格低、入口稳定 | [阿里云百炼](https://bailian.console.aliyun.com/cn-beijing/?tab=coding-plan#/efm/index) |
-| 腾讯云 | `¥7.9 / ¥39.9` | 约 `¥40 / ¥200` | 腾讯云用户 | [腾讯云](https://cloud.tencent.com/act/pro/codingplan) |
-| 百度千帆 | `¥7.9 / ¥39.9` | 约 `¥40 / ¥200` | 千帆用户 | [百度千帆](https://cloud.baidu.com/product/codingplan.html) |
-| 火山引擎 | `¥9.9 / ¥49.9` | 约 `¥50+` | 字节生态用户 | [火山引擎](https://www.volcengine.com/activity/codingplan) |
-| 无问芯穹 | `¥19.9 / ¥40` | `¥40 / ¥200` | 追求更高配额的人 | [无问芯穹](https://cloud.infini-ai.com/platform/ai) |
-| MiniMax | `¥29/月` 起 | `¥290/年` 起 | 已在 MiniMax 生态内 | [MiniMax Coding Plan](https://platform.minimaxi.com/subscribe/coding-plan) |
-| 智谱 GLM | `¥30/月` 左右 | `¥411/年` 左右 | GLM 用户 | [智谱 GLM Coding](https://open.bigmodel.cn/glm-coding) |
-| Kimi Code | `¥49/月` 起 | 以官方页为准 | 想看 Kimi 方案的人 | [Kimi Code](https://www.kimi.com/code) |
-
-这些套餐的价格、额度和活动会变化，最终以各平台页面为准。这里保留完整地址，是为了方便收藏和后续比较。
+阿里云旧 Coding Plan Lite 已停止新购和续费，Pro 也改为限量供应；新用户应看 Token Plan。MiniMax 已改为 Token Plan，Kimi 使用会员额度。旧表里的腾讯云、百度千帆、火山引擎和无问芯穹促销入口因无法继续从官方页面确认现行套餐，已经移除。
 
 ### 怎么选最省事
 
-- 每月少量使用：`DeepSeek-V3.2` 按量付费
-- 每月持续写、持续改：优先看 `Coding Plan`
-- 手上已经有 `智谱 GLM` 或 `MiniMax` 套餐：直接接，不需要为了 README 刻意换
+- 每月少量使用：`deepseek-v4-flash` 按量付费
+- 每月持续写、持续改：先看阿里云 Token Plan Lite 或 MiniMax Token Plan Plus
+- 已有 GLM、MiniMax 或 Kimi 套餐：使用对应日常档模型，不需要为了 README 换平台
+- 只有日常档反复失败或额度长期不够，才升级模型或套餐
 
 ### 模型切换怎么搞
 
@@ -699,9 +697,11 @@ Claude Code 装好之后，常见有五种用法：
 
 它适合这类场景：
 
-- 你在 `DeepSeek-V3.2`、`智谱 GLM`、`MiniMax` 之间切换
+- 你在 `deepseek-v4-flash`、`qwen3.8-flash`、`GLM-4.7`、`MiniMax-M2.7`、`kimi-for-coding` 之间切换
 - 你不想反复改 `ANTHROPIC_BASE_URL`
 - 你不想每次都重新整理 API Key
+
+不同产品的订阅 Key、按量 API Key 和 Base URL 往往互不通用。切换后先用 `/status` 与 `/model` 读回实际服务地址和模型，不要只看配置文件里写了什么。
 
 ---
 
@@ -949,6 +949,6 @@ winget upgrade Anthropic.ClaudeCode
 ## 如果你只想记住最重要的 4 句话
 
 1. 先看 [`demo/工资的一半，是你受的气折算的/`](demo/工资的一半，是你受的气折算的/)，比先看安装说明更容易看懂项目价值。
-2. `DeepSeek-V3.2` 是默认推荐，不是因为它压过另外两家，而是因为它最适合低成本先把整套流程跑通。
+2. 低成本起步优先 `deepseek-v4-flash`；已有套餐就用对应平台的 Flash 或日常档，不要默认购买最贵模型。
 3. 完整版一定要在项目根目录启动 Claude Code，最后默认交付的是 `_clean.txt`，并可按需额外导出公众号排版 `.html`。
 4. 新版会在调研阶段生成 `02_evidence_ledger.json`，最终交付前生成 `fact_claims.json` 和 `fact_check_report.md`，用来拦截错误事实和失效引用。
