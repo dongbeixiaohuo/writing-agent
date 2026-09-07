@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-07
+
 ### Changed
 
 - 简报增加文体、读者新收获、作者声音、素材来源与传播目标；默认自主推进，支持逐步共创与已授权代选风格。
@@ -23,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - 本地配对盲评工具与 12 个固定写作案例；人工评分缺项不计为零，事实重大错误单独报告。尚未据此宣称真实写作效果改善。
+
+### Upgrade
+
+- v0.10.0 及更早项目必须针对当前终稿、锁定标题和证据账本重新执行 Stage 10.5，生成 `fact-check-v2` 快照、逐条核查清单与脚本报告；旧 `passed` 不会自动迁移为新版通过状态。
+- 已有插件工作区需备份并核对 `.claude/workflows/collab_v2.json`，再用新版插件工作流刷新或合并自定义内容；bootstrap 只补缺失文件，不覆盖已有工作流。
+- 根项目、插件清单及两份锁文件统一为 `0.11.0`。升级步骤与验证范围见 [v0.11.0 Release Notes](.github/releases/v0.11.0.md)。
 
 ## [0.10.0] - 2026-08-31
 
@@ -595,6 +603,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 版本号说明
 
-- **Major (X.0.0)**: 重大架构变更或不兼容更新
-- **Minor (0.X.0)**: 新功能添加
-- **Patch (0.0.X)**: Bug 修复和小优化
+- **当前 0.x 开发阶段**：新增功能、明显流程变化或契约调整递增次版本，并明确兼容性与迁移要求；向后兼容的修复和小优化递增修订号。
+- **1.0.0 及以后**：公共契约稳定后，不兼容更新递增主版本，兼容的新功能递增次版本，兼容的修复递增修订号。
+- 已发布标签保持不变；开发中的改动先归入 `Unreleased`，发布时统一更新项目和插件版本、更新日志及 Release Notes。
