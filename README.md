@@ -1,4 +1,4 @@
-# 写稿Agent v0.10.0
+# 写稿Agent v0.11.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Desktop App](https://img.shields.io/badge/Desktop%20App-Windows%20Preview-2f6f4f)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)
@@ -111,7 +111,7 @@
 - [04_share_map.md](demo/工资的一半，是你受的气折算的/04_share_map.md)：不是只做共情，而是设计读者为什么愿意转发
 - [05c_opening_hook.md](demo/工资的一半，是你受的气折算的/05c_opening_hook.md)：先赛马开头，再锁定起手式
 - [pre_publish_review.md](demo/工资的一半，是你受的气折算的/pre_publish_review.md)：发布前追问和红队挑刺
-- [wechat_reader_test.md](demo/工资的一半，是你受的气折算的/wechat_reader_test.md)：该历史样本记录公众号私域场景；v0.10.0 新项目会按公众号、头条或知乎切换测试矩阵
+- [wechat_reader_test.md](demo/工资的一半，是你受的气折算的/wechat_reader_test.md)：该历史样本记录公众号私域场景；当前新项目会按公众号、头条或知乎切换测试矩阵
 - [fact_check_report.md](demo/工资的一半，是你受的气折算的/fact_check_report.md)：把通过项、黄色建议和红色问题分级留痕
 - [draft_v1_humanized_clean.txt](demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt)：去 AI 味后的纯文本候选稿
 
@@ -127,7 +127,7 @@ demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
 
 首页前部只保留最近主线版本，历史版本不再堆在前面。
 
-### 当前工作区优化（Unreleased）
+### v0.11.0 文体化写作、集中修订与事实核查升级
 
 - 按争议评论、解释分析、叙事观察、实用经验组织创作，优先明确读者新收获和作者真实素材；传播目标可为不适用。
 - 默认自主推进，已有风格/方向授权不重复确认；需要逐阶段参与时选择逐步共创。
@@ -135,7 +135,7 @@ demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
 - 事实核查升级为 fact-check-v2：先固定正文、标题、证据账本，再验证逐条 claims 并计算结果；无依据、矛盾或部分支持的问题不能靠黄色标记放行。纯文本和 HTML 同用门禁。
 - 复盘区分用户修改和模型建议，新增 [12 案例写作盲评工具](evaluations/README.md)。文章质量是否提升需要实际成稿和人工评分验证。
 
-旧项目需要针对当前终稿重新核查，不能自动把旧 passed 升级为通过。历史 Demo 保留原始状态，不代表通过新版门禁。现行行为以 [工作流契约](docs/WORKFLOW_CONTRACT.md) 为准；以下内容为已发布版本记录。
+**升级须知：** v0.10.0 及更早项目需要针对当前终稿、锁定标题和证据账本重新执行 Stage 10.5；旧 passed 不能自动升级为通过。已有插件工作区还需核对并刷新 `.claude/workflows/collab_v2.json`，bootstrap 只补缺失文件，不会覆盖已有工作流。完整步骤见 [v0.11.0 Release Notes](.github/releases/v0.11.0.md)。历史 Demo 保留原始状态，不代表通过新版门禁。现行行为以 [工作流契约](docs/WORKFLOW_CONTRACT.md) 为准；以下为历史版本记录。
 
 ### v0.10.0 平台增长、创意反馈与双版本事实门禁
 
@@ -252,7 +252,7 @@ v0.10.0 正式版同时收录创意反馈、尾部事实门禁重排和平台化
 - `empathy-designer` 从共情点设计升级成“社交转发动机”，核心产物是 [04_share_map.md](demo/工资的一半，是你受的气折算的/04_share_map.md)
 - 新增 `opening-tournament`，在正式写稿前先赛马开头，核心产物是 [05c_opening_hook.md](demo/工资的一半，是你受的气折算的/05c_opening_hook.md)
 
-如果你只想知道仓库现在值不值得拉下来试，先看 `v0.10.0` 和 `v0.9.1` 这两节就够了。更老的版本记录去 [CHANGELOG](CHANGELOG.md) 或 Releases 看，不应该堵在首页前面。
+快速了解当前版本，先看 `v0.11.0` 的写作流程与升级须知；平台能力可继续参考 `v0.10.0`。更早的记录见 [CHANGELOG](CHANGELOG.md) 和 [Releases](https://github.com/dongbeixiaohuo/writing-agent/releases)。
 
 ---
 
