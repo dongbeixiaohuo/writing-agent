@@ -127,9 +127,10 @@ python "scripts/record_publish_metrics.py" --project "[项目名]" --body "[实�
 
 ## 记忆边界
 
-- `performance_reviews/*.md` 可被 memory-loader 扫描，但单篇报告中的“待验证假设”不得进入 `🔒 稳定规则`。
+- `performance_reviews/*.md` 可被 memory-loader 扫描，但单篇报告中的“待验证假设”不得进入“已确认偏好”。
 - 只有跨项目重复、口径可比、反例已检查的规则候选，才允许进入稳定记忆。
 - 原始 `publication_metrics.jsonl` 永不由本代理改写。
+- 写入复盘的结论必须标注来源为 `publication_metric`；不得把 agent 的标题、开头或风格推测写成用户偏好。只有用户明确编辑或确认的内容才可另标 `user_edit`。
 
 ## 版本记录
 

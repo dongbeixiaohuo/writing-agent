@@ -298,15 +298,17 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
     def test_mode_a_declares_minimal_stage_6_contract(self) -> None:
         mode_a = self.contract["modes"]["A"]
 
-        self.assertEqual(["1", "6", "7"], mode_a["stage_sequence"])
+        self.assertEqual(["1", "6", "7", "9.5"], mode_a["stage_sequence"])
+        self.assertTrue(mode_a["stage_overrides"]["9.5"]["optional"])
+        self.assertNotIn("02_evidence_ledger.json", mode_a["stage_overrides"]["9.5"]["inputs"])
         self.assertEqual(["01_theme.md"], mode_a["stage_overrides"]["6"]["inputs"])
         self.assertIn("--stage 6 --mode A", self.director)
         self.assertIn("工作流模式：A", self.executor)
 
     def test_mode_a_writing_rules_do_not_require_missing_collaboration_artifacts(self) -> None:
-        self.assertIn("模式 A 按 `01_theme.md` 确定主线", self.executor)
-        self.assertIn("模式 A 只使用简报中的用户素材", self.executor)
-        self.assertIn("模式 A 不要求 `evidence_id`", self.executor)
+        self.assertIn("模式 A 只使用 `01_theme.md` 的简报和用户素材", self.executor)
+        self.assertIn("模式 A 不得引入用户素材之外的外部事实", self.executor)
+        self.assertIn("账本为空不妨碍使用已定位的用户一手材料", self.executor)
 
     def test_mode_b_stage_6_gate_is_sourced_from_workflow_json(self) -> None:
         stage_6 = next(stage for stage in self.contract["stages"] if stage["id"] == "6")
@@ -371,10 +373,10 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
             ["01_theme.md", "04_title.md", "[latest_body_file]"],
             stages["9"]["inputs"],
         )
-        self.assertIn("分发文案候选（3 条）", self.title_designer)
+        self.assertIn("平台分发文案候选", self.title_designer)
         self.assertIn("公众号摘要", self.title_designer)
-        self.assertIn("今日头条信息流导语", self.title_designer)
-        self.assertIn("知乎回答导语", self.title_designer)
+        self.assertIn("信息流导语", self.title_designer)
+        self.assertIn("知乎导语", self.title_designer)
 
     def test_reader_test_uses_platform_specific_qualitative_proxies(self) -> None:
         self.assertIn("公众号矩阵", self.reader_test)
@@ -385,9 +387,9 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
         self.assertIn("01_theme.md", self.reader_test)
 
     def test_growth_design_uses_authentic_discussion_entries_not_comment_bait(self) -> None:
-        self.assertIn("真实讨论入口", self.empathy_designer)
+        self.assertIn("讨论应允许不同经验和不参与", self.empathy_designer)
         self.assertIn("禁止骗评", self.empathy_designer)
-        self.assertIn("讨论入口", self.outline_architect)
+        self.assertIn("互动问题若适用", self.outline_architect)
         self.assertNotIn("评论诱饵", self.empathy_designer)
 
     def test_post_publish_review_is_opt_in_and_does_not_extend_normal_workflow(self) -> None:
@@ -417,7 +419,8 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
 
         self.assertEqual(
             {
-                ("9", "10"),
+                ("9", "9.5"),
+                ("9.5", "10"),
                 ("10", "11"),
                 ("11", "10.5"),
                 ("10.5", "12"),
@@ -460,9 +463,9 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
     def test_fact_checker_records_a_hash_bound_manifest_result(self) -> None:
         self.assertIn("update_run_manifest.py", self.fact_checker)
         self.assertIn("--fact-check-status", self.fact_checker)
-        self.assertIn("fact_checked_body_sha256", self.fact_checker)
+        self.assertIn("fact_check_snapshot.json", self.fact_checker)
         self.assertIn("--title 04_title.md", self.fact_checker)
-        self.assertIn("fact_checked_title_sha256", self.fact_checker)
+        self.assertIn("support_scope", self.fact_checker)
 
     def test_title_and_opening_stages_receive_truth_and_alignment_inputs(self) -> None:
         title_stage = next(stage for stage in self.contract["stages"] if stage["id"] == "5.5")
@@ -500,12 +503,12 @@ class WorkflowRuntimeContractTests(unittest.TestCase):
         self.assertIn("02_evidence_ledger.json", self.title_designer)
         self.assertIn("01b_position.md", self.title_designer)
 
-    def test_candidate_title_gate_is_presence_only_but_final_gate_is_semantic(self) -> None:
-        self.assertIn("--presence-only", self.title_designer)
+    def test_candidate_title_gate_is_planning_but_final_gate_is_strict(self) -> None:
+        self.assertIn("--phase planning", self.title_designer)
         self.assertGreaterEqual(self.title_designer.count("--required 04_title.md"), 2)
 
     def test_opening_template_records_the_selected_option(self) -> None:
-        self.assertIn("赛马获胜方案：[A/B/C/自定义]", self.opening_tournament)
+        self.assertIn("选择：[A/B/C/D/自定义]", self.opening_tournament)
 
 
 if __name__ == "__main__":

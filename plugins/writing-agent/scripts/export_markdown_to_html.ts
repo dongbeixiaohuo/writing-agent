@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { load } from "cheerio";
 
 import {
@@ -43,6 +45,23 @@ interface ParsedResult {
 type ConvertMarkdownOptions = Partial<Omit<CliOptions, "inputPath">> & {
   title?: string;
 };
+
+function assertProjectFactCheck(markdownPath: string): boolean {
+  const projectDir = path.dirname(path.resolve(markdownPath));
+  const parents = path.dirname(projectDir).split(path.sep);
+  if (!parents.some((part) => part.toLowerCase() === "articles")) return false;
+  const gate = fileURLToPath(new URL("./fact_check_gate.py", import.meta.url));
+  const result = spawnSync("python", ["-B", gate, "check", "--project-dir", projectDir,
+    "--body", path.basename(markdownPath)], {
+    encoding: "utf8", timeout: 30000,
+    env: { ...process.env, PYTHONUTF8: "1" },
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error("当前版本未通过事实核查，禁止导出 HTML。" + (result.stderr || result.stdout || result.error?.message || ""));
+  }
+  return true;
+}
 
 function isSafeUrlAttribute(value: string, attribute: "href" | "src"): boolean {
   const normalized = value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
@@ -98,6 +117,10 @@ export async function convertMarkdown(
   markdownPath: string,
   options?: ConvertMarkdownOptions,
 ): Promise<ParsedResult> {
+  const managedProject = assertProjectFactCheck(markdownPath);
+  if (managedProject && options?.title) {
+    throw new Error("项目导出不能覆盖已核查标题；请先修改正文和锁定标题，再重新核查。");
+  }
   const baseDir = path.dirname(markdownPath);
   const content = fs.readFileSync(markdownPath, "utf-8");
   const theme = options?.theme;
@@ -165,6 +188,12 @@ export async function convertMarkdown(
   }
   finalContent = sanitizeRenderedHtml(finalContent);
 
+  if (managedProject) {
+    assertProjectFactCheck(markdownPath);
+    if (fs.readFileSync(markdownPath, "utf-8") !== content) {
+      throw new Error("渲染期间正文发生变化，请重新导出。");
+    }
+  }
   const temporaryHtmlPath = `${finalHtmlPath}.tmp-${process.pid}-${Date.now()}`;
   let backupPath: string | undefined;
   fs.writeFileSync(temporaryHtmlPath, finalContent, { encoding: "utf-8", flag: "wx" });

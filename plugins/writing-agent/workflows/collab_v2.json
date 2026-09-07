@@ -12,7 +12,8 @@
       "stage_sequence": [
         "1",
         "6",
-        "7"
+        "7",
+        "9.5"
       ],
       "stage_overrides": {
         "6": {
@@ -25,6 +26,15 @@
           "inputs": [
             "01_theme.md",
             "[latest_body_file]"
+          ]
+        },
+        "9.5": {
+          "optional": true,
+          "inputs": [
+            "01_theme.md",
+            "[latest_body_file]",
+            "editor_review.md",
+            "revision_brief.md"
           ]
         }
       }
@@ -70,27 +80,52 @@
     }
   },
   "interaction_policy": {
-    "default_after_stage": "wait_for_user",
+    "default_mode": "autonomous",
+    "default_after_stage": "continue",
+    "guided_after_stage": "wait_for_user",
+    "decision_checkpoints": [
+      {
+        "stage": "1",
+        "decision": "简报、素材边界和风格；已有明确授权不重复确认"
+      },
+      {
+        "stage": "3",
+        "decision": "文章方向与结构；已授权自主决定时记录选择后推进"
+      },
+      {
+        "stage": "9.5",
+        "decision": "整稿、最终标题与修订取舍；已有修改授权不重复确认"
+      }
+    ],
+    "optional_choices": {
+      "11": "使用简报中的配图决定；未要求配图时默认跳过",
+      "12.5": "使用简报中的导出决定；未要求 HTML 时默认只交付纯文本"
+    },
     "automatic_transitions": [
       {
         "from": "9",
+        "to": "9.5",
+        "condition": "三份独立评审已汇总到 revision_brief.md"
+      },
+      {
+        "from": "9.5",
         "to": "10",
-        "condition": "用户批准 Stage 9 结果"
+        "condition": "集中修订或保留完成；整稿取舍已确认或在既有授权范围内"
       },
       {
         "from": "10",
         "to": "11",
-        "condition": "Humanizer 完成"
+        "condition": "Humanizer 诊断完成；仅有具体收益时创建新正文"
       },
       {
         "from": "11",
         "to": "10.5",
-        "condition": "用户的 Y/N 选择已处理；选择 Y 时配图已完成"
+        "condition": "配图决定已处理；如有配图则已更新最新正文"
       },
       {
         "from": "10.5",
         "to": "12",
-        "condition": "事实核查通过且已绑定配图后的最终正文与锁定标题哈希"
+        "condition": "fact-check-v2 核查通过且全部输入及结果绑定仍有效"
       },
       {
         "from": "12",
@@ -100,7 +135,7 @@
       {
         "from": "12.5",
         "to": "13",
-        "condition": "HTML 选择已处理；选择导出时 HTML 已生成"
+        "condition": "HTML 决定已处理；选择导出时 HTML 已生成"
       }
     ],
     "terminal_stage": "13"
@@ -165,7 +200,8 @@
         "01_theme.md",
         "00_memory_packet.md",
         "01b_position.md",
-        "02_scar_tissue.md"
+        "02_scar_tissue.md",
+        "02_evidence_ledger.json"
       ],
       "outputs": [
         "03_outline.md"
@@ -188,6 +224,9 @@
       "id": "5",
       "agent": "concretizer",
       "inputs": [
+        "01_theme.md",
+        "02_scar_tissue.md",
+        "02_evidence_ledger.json",
         "03_outline.md",
         "04_share_map.md"
       ],
@@ -207,6 +246,9 @@
       ],
       "outputs": [
         "04_title.md"
+      ],
+      "optional_inputs": [
+        "[latest_body_file]"
       ]
     },
     {
@@ -253,11 +295,11 @@
         "01_theme.md",
         "00_memory_packet.md",
         "04_title.md",
+        "02_evidence_ledger.json",
         "[latest_body_file]"
       ],
       "outputs": [
-        "draft_vN.md",
-        "draft_vN_notes.md"
+        "editor_review.md"
       ]
     },
     {
@@ -267,6 +309,7 @@
         "01_theme.md",
         "00_memory_packet.md",
         "04_title.md",
+        "02_evidence_ledger.json",
         "[latest_body_file]"
       ],
       "outputs": [
@@ -286,6 +329,29 @@
       ]
     },
     {
+      "id": "9.5",
+      "agent": "writing-executor",
+      "inputs": [
+        "01_theme.md",
+        "00_memory_packet.md",
+        "01b_position.md",
+        "02_evidence_ledger.json",
+        "04_title.md",
+        "[latest_body_file]",
+        "editor_review.md",
+        "pre_publish_review.md",
+        "wechat_reader_test.md",
+        "revision_brief.md"
+      ],
+      "outputs": [
+        "revision_result.md"
+      ],
+      "conditional_outputs": [
+        "draft_vN.md",
+        "draft_vN_notes.md"
+      ]
+    },
+    {
       "id": "10",
       "agent": "humanizer",
       "inputs": [
@@ -296,7 +362,11 @@
         "[latest_body_file]"
       ],
       "outputs": [
-        "draft_vN_humanized.md"
+        "humanizer_review.md"
+      ],
+      "conditional_outputs": [
+        "draft_vN_humanized.md",
+        "draft_vN_humanized_notes.md"
       ]
     },
     {
@@ -314,11 +384,13 @@
       "id": "10.5",
       "agent": "fact-checker",
       "inputs": [
+        "01_theme.md",
         "02_evidence_ledger.json",
         "04_title.md",
         "[latest_body_file]"
       ],
       "outputs": [
+        "fact_check_snapshot.json",
         "fact_claims.json",
         "fact_check_report.md"
       ]
@@ -345,5 +417,34 @@
         "99_episode.md"
       ]
     }
-  ]
+  ],
+  "artifact_policy": {
+    "provisional_title_and_opening_stages": [
+      "3",
+      "4",
+      "5",
+      "5.5",
+      "5.8",
+      "6",
+      "7",
+      "8"
+    ],
+    "final_title_required_from_stage": "9",
+    "fact_check_schema": "fact-check-v2"
+  },
+  "revision_policy": {
+    "primary_writer": "writing-executor",
+    "review_stages": [
+      "7",
+      "8",
+      "9"
+    ],
+    "brief_file": "revision_brief.md",
+    "max_major_rounds": 2,
+    "no_change_keeps_body": true,
+    "recheck_after_promise_change": [
+      "5.5",
+      "9"
+    ]
+  }
 }

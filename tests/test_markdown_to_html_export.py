@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.fact_check_fixtures import approve
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = PROJECT_ROOT / "claude-runtime" / "scripts" / "export_markdown_to_html.ts"
@@ -111,6 +113,34 @@ print("hello")
 
         self.assertIsNotNone(second_result["backupPath"])
         self.assertTrue(Path(second_result["backupPath"]).exists())
+
+    def test_managed_project_requires_current_fact_check_in_both_entrypoints(self) -> None:
+        node = resolve_node_binary()
+        if node is None:
+            self.skipTest("node 不可用，跳过 HTML 导出测试")
+        project = self.root / "articles" / "managed"
+        project.mkdir(parents=True)
+        body = project / "draft.md"
+        body.write_text("# 测试标题\n\n这只是我的感受。", encoding="utf-8")
+        (project / "04_title.md").write_text("选择状态：已锁定\n最终标题：「测试标题」", encoding="utf-8")
+        html = body.with_suffix(".html")
+        for script in (SCRIPT_PATH, PROJECT_ROOT / "scripts/export_markdown_to_html.ts"):
+            command = [node, "--import", "tsx", str(script), str(body)]
+            result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, timeout=30)
+            self.assertNotEqual(0, result.returncode, result.stdout)
+            self.assertFalse(html.exists())
+        approve(project, body.name)
+        command = [node, "--import", "tsx", str(SCRIPT_PATH), str(body)]
+        result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, timeout=30)
+        self.assertEqual(0, result.returncode, result.stderr)
+        previous = html.read_bytes()
+        result = subprocess.run([*command, "--title", "核查外标题"], cwd=PROJECT_ROOT, capture_output=True, timeout=30)
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(previous, html.read_bytes())
+        (project / "02_evidence_ledger.json").write_text('{"claims":[],"notes":"依据已变化"}', encoding="utf-8")
+        result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, timeout=30)
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(previous, html.read_bytes())
 
     def test_failed_export_keeps_existing_html_in_place(self) -> None:
         node_binary = resolve_node_binary()

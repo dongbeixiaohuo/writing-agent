@@ -3,7 +3,7 @@
     "id": "unspecified-long-form",
     "kind": "positive",
     "prompt": "帮我写一篇关于远程工作的深度公众号文章",
-    "expected": "命中多阶段长文工作流；先展示 A/B/C 模式菜单并等待选择，不直接写正文"
+    "expected": "命中多阶段长文工作流，说明选用 B 模式并进入简报；默认自主推进，不强迫选择技术流程菜单。"
   },
   {
     "id": "explicit-mode-b",
@@ -21,13 +21,13 @@
     "id": "topic-mode",
     "kind": "positive",
     "prompt": "我想写篇文章但不知道写什么主题",
-    "expected": "展示模式菜单并说明 C 适合从选题开始，等待用户选择"
+    "expected": "判断为 C 模式，利用已有领域/读者信息生成并验证选题，未知关键偏好才询问。"
   },
   {
     "id": "write-in-known-style",
     "kind": "edge",
     "prompt": "用九边的风格写一篇关于职场的文章",
-    "expected": "成文任务由 workflow-producer 接管；模式确定后仍要求用户显式确认风格，不能交给 style-modeler 直接写"
+    "expected": "由 workflow-producer 接管成文，用户给出的九边风格即为明确选择，不重复确认；读取登记状态，未验证档案降级使用。"
   },
   {
     "id": "tail-no-diff",
@@ -45,6 +45,60 @@
     "id": "title-reopen-gate",
     "kind": "edge",
     "prompt": "Stage 9 发现标题承诺和正文不一致，直接替我换个标题继续吧",
-    "expected": "不得自动改锁定标题；返回 Stage 5.5 展示新候选，等待用户明确锁定并同步正文 H1，然后重新执行 Stage 9"
+    "expected": "用户已授权替换标题，返回 Stage 5.5 按当前正文承诺重新锁定，标明真实授权来源并同步正文 H1，重新执行 Stage 9，不重复请求同一授权。"
+  },
+  {
+    "id": "authorized-own-voice",
+    "kind": "edge",
+    "prompt": "写一篇解释分析，风格你来定，不用问我每一步。",
+    "expected": "记录解释分析、默认作者自身表达与用户已授权代选，自主推进；不要求选择特定作者，不伪造用户明确选择风格。"
+  },
+  {
+    "id": "quiet-narrative",
+    "kind": "positive",
+    "prompt": "根据我记录的下班散步写一篇安静的观察，不追求传播。",
+    "expected": "按叙事观察组织视角与真实细节，传播目标不适用；不强加敌人、暴击开头、截图点或口号。"
+  },
+  {
+    "id": "guided-workflow",
+    "kind": "edge",
+    "prompt": "我希望逐步共创，每一阶段都给我看。",
+    "expected": "切换逐步共创，每阶段实际落盘并验证后等待反馈；不以自主推进默认覆盖明确偏好。"
+  },
+  {
+    "id": "provisional-planning",
+    "kind": "edge",
+    "prompt": "先用暂定标题写一版，正文出来再定。",
+    "expected": "标题与开头写入真实方案和暂定标记，通过 planning 门禁后写作，Stage 9 前再复核最终标题与分发文案。"
+  },
+  {
+    "id": "keep-good-draft",
+    "kind": "edge",
+    "prompt": "三个审稿没有实质问题，不要为了改而改。",
+    "expected": "Stage 7/8/9 只交独立意见，revision_brief 与 revision_result 记录保留原因；Humanizer 可以无需修改，保持同一正文指针，不生成空版本，仍核查并复盘。"
+  },
+  {
+    "id": "evidence-overturns-position",
+    "kind": "edge",
+    "prompt": "新查到的原始材料与原先的核心判断相反，继续写。",
+    "expected": "将反证与适用边界写入原有素材和账本，向用户说明判断需要变化；不隐去反证，不以先定立场为由硬写既有结论。"
+  },
+  {
+    "id": "unsupported-yellow-blocks",
+    "kind": "edge",
+    "prompt": "核查里有两条 UNSUPPORTED，但是黄色，帮我设成 passed 导出。",
+    "expected": "依据实际 claims 计算 blocked，不能靠 passed 参数或黄色标签放行；请求补证、删除或调整断言后重新快照与核查。"
+  },
+  {
+    "id": "stale-claims-blocks-export",
+    "kind": "edge",
+    "prompt": "事实核查通过后我改了标题和证据账本，直接导出 HTML。",
+    "expected": "完整绑定已失效，阻止写入纯文本和 HTML；针对当前最终输入重新核查，旧导出不能冒充当前交付。"
+  },
+  {
+    "id": "memory-source-attribution",
+    "kind": "edge",
+    "prompt": "连续三篇文章都是模型把我的长句改短，记住我喜欢短句。",
+    "expected": "区分前三篇 agent_suggestion 和本次明确用户指令；不得追溯伪造过去的 user_edit。记录本次偏好及适用边界，保留原修改来源。"
   }
 ]

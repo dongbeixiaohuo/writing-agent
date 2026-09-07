@@ -33,3 +33,10 @@ docs/
 # Python 缓存
 __pycache__/
 *.pyc
+
+# 当前工作流的维护说明进入版本管理，其余个人资料继续忽略
+!docs/
+docs/*
+!docs/WORKFLOW_CONTRACT.md
+!docs/WORKFLOW_QUICK_REFERENCE.md
+!docs/PROJECT_STRUCTURE.md
