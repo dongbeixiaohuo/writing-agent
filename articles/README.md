@@ -1,140 +1,34 @@
 # articles 目录说明
 
-这个目录用于存放协作写作工作流生成的所有文章产物。
+每篇文章一个项目目录，当前正文以 `run_manifest.json -> latest_body_file` 为准。历史目录保持原状；新项目使用 [collab-v2 契约](../docs/WORKFLOW_CONTRACT.md)。
 
-## 目录结构
+| 文件 | 作用 |
+|---|---|
+| `01_theme.md` | 文体、读者新收获、作者声音、素材来源与授权 |
+| `00_memory_packet.md` | 有来源、有适用边界的记忆 |
+| `01b_position.md` | 可被研究修正的判断 |
+| `02_scar_tissue.md`、`02_evidence_ledger.json` | 真实素材、解释材料、来源、反证和边界 |
+| `03_outline.md` | 按文体组织的结构与素材分配 |
+| `04_share_map.md` | 与传播目标相符的读者价值，可为不适用 |
+| `05_concrete_library.md` | 细节、解释、类比及来源类型 |
+| `04_title.md`、`05c_opening_hook.md` | 早期暂定，成稿后复核标题和开头 |
+| `draft_v1.md`、`draft_v1_notes.md` | 正文与内部备注分别保存 |
+| `editor_review.md`、`pre_publish_review.md`、`wechat_reader_test.md` | 三份独立意见，不能直接改稿 |
+| `revision_brief.md`、`revision_result.md` | 导演汇总取舍，主笔集中修订或保留 |
+| `humanizer_review.md` | 表达诊断；需要改动才生成新正文 |
+| `draft_vN_illustrated.md` | 配图后的新正文，如有 |
+| `fact_check_snapshot.json` | 核查前固定的正文、标题和证据账本 |
+| `fact_claims.json`、`fact_check_report.md` | 逐项核查清单与脚本计算的报告 |
+| `run_manifest.json` | 当前版本、导出来源和核查绑定 |
+| `[正文文件名]_clean.txt`、`[正文文件名].html` | 纯文本与可选 HTML 出口 |
+| `99_episode.md` | 带来源的复盘，无差异也写原因 |
+| `publication_metrics.jsonl`、`performance_reviews/` | 用户明确要求时才记录的发布后真实数据与分析 |
 
-每篇文章都会创建一个独立的项目文件夹：
+可以手动编辑草稿并指定“基于这个版本继续”，agent 应记录改动来源。不要把内部备注写进正文，不要手动把事实状态设成 passed。正文、标题、账本或核查结果变动后，重新核查并生成导出；旧 `_clean.txt` 或 HTML 文件存在不代表当前稿可交付。
 
-```
-articles/
-├── [文章标题1]/
-│   ├── 00_memory_packet.md      # Stage 0: 写作记忆包（B 模式必需）
-│   ├── 01_theme.md              # Stage 1: 主题与读者
-│   ├── 01b_position.md          # Stage 1.5: 立场定调
-│   ├── 02_scar_tissue.md        # Stage 2: 伤疤素材库
-│   ├── 02_evidence_ledger.json  # Stage 2: 事实证据账本
-│   ├── 03_outline.md            # Stage 3: 大纲
-│   ├── 04_title.md              # Stage 5.5: 标题、平台分发文案候选与锁定结果
-│   ├── 04_share_map.md          # Stage 4: 分享触点地图
-│   ├── 05_concrete_library.md   # Stage 5: 具象化库
-│   ├── 05c_opening_hook.md      # Stage 5.8: 锁定开头
-│   ├── draft_v1.md              # Stage 6: 初稿
-│   ├── draft_v1_notes.md        # Stage 6: 初稿内部备注
-│   ├── draft_v2.md              # Stage 7: 修订稿
-│   ├── draft_v2_notes.md        # Stage 7: 修订稿内部备注
-│   ├── draft_vN_illustrated.md  # Stage 11: 可选配图版正文（最终事实核查之前）
-│   ├── run_manifest.json        # 当前正文来源与流程状态
-│   ├── fact_claims.json         # Stage 10.5: 锁定标题、分发文案与正文事实声明
-│   ├── fact_check_report.md     # Stage 10.5: 事实核查报告
-│   ├── publication_metrics.jsonl # 可选 Stage 14: 追加式发布指标账本
-│   ├── performance_reviews/     # 可选 Stage 14: 发布后表现复盘
-│   ├── draft_最终稿.md          # 最终版本
-│   ├── changelog.md             # 变更记录
-│   └── sources.md               # 引用来源
-│
-├── [文章标题2]/
-│   └── ...
-│
-└── README.md                    # 本文件
+```powershell
+python scripts/fact_check_gate.py check --project "[项目名]"
+python scripts/auto_clean_hook.py --project "[项目名]"
 ```
 
-## 文件说明
-
-### 阶段产物
-
-| 文件名 | 阶段 | 说明 |
-|-------|------|------|
-| `00_memory_packet.md` | Stage 0 | B 模式必需；历史经验或“暂无经验”占位结论 |
-| `01_theme.md` | Stage 1 | 主题、观点、读者画像、目标字数 |
-| `01b_position.md` | Stage 1.5 | 立场、判断边界、核心咬合点 |
-| `02_scar_tissue.md` | Stage 2 | 场景、代价、细节、证据 |
-| `02_evidence_ledger.json` | Stage 2 | 可外部核查事实的结构化证据账本 |
-| `03_outline.md` | Stage 3 | 大纲、段落功能标注、字数预估 |
-| `04_title.md` | Stage 5.5 | 8 个候选标题、3 条平台分发文案及最终锁定结果 |
-| `04_share_map.md` | Stage 4 | 分享触点、共鸣点、真实讨论入口与条件式趣味张力 |
-| `05_concrete_library.md` | Stage 5 | 类比库、画面库、行动库 |
-| `05c_opening_hook.md` | Stage 5.8 | 用户锁定的开头钩子 |
-
-### 版本文件
-
-| 文件名 | 说明 |
-|-------|------|
-| `draft_v1.md` | 初稿（Stage 6） |
-| `draft_v1_notes.md` | 初稿内部备注（字数统计、素材使用、自检问题） |
-| `draft_v2.md` | 修订稿（Stage 7） |
-| `draft_v2_notes.md` | 修订稿内部备注（修改记录、自检、遗留问题） |
-| `draft_v3.md` | 再修订（如有） |
-| `draft_vN_illustrated.md` | 可选配图版；保存为新文件并更新运行态，随后执行 Stage 10.5 |
-| `run_manifest.json` | 当前正文来源、备注、clean 来源，以及事实核查绑定的正文/标题文件和 SHA-256 |
-| `draft_最终稿.md` | 用户确认的最终版本 |
-
-### 辅助文件
-
-| 文件名 | 说明 |
-|-------|------|
-| `changelog.md` | 记录每次修改的变更内容 |
-| `sources.md` | 引用来源（如有数据/案例） |
-| `publication_metrics.jsonl` | 版本绑定、只追加的发布后表现原始记录；同时快照标题公式、开头方案、社交货币、风格和来源哈希（可选） |
-| `performance_reviews/*.md` | 基于可比数据形成的观察、假设和规则候选（可选） |
-
-## 使用示例
-
-### 创建新项目
-```
-用户：我想写一篇关于"35 岁程序员危机"的文章
-
-AI：
-→ 创建项目文件夹：articles/35岁程序员危机/
-→ 开始 Stage 1...
-```
-
-### 查看项目进度
-```
-用户：查看进度
-
-AI：
-项目：35岁程序员危机
-进度：Stage 3 已完成，等待用户确认
-
-已完成：
-✅ 01_theme.md
-✅ 01b_position.md
-✅ 02_scar_tissue.md
-✅ 03_outline.md
-
-下一步：04_share_map.md
-```
-
-### 导出最终稿
-```
-用户：导出最终稿
-
-AI：
-📁 已保存：articles/35岁程序员危机/draft_最终稿.md
-```
-
-## 注意事项
-
-1. **不要手动修改阶段产物文件**：这些文件由 Skills 自动生成，手动修改可能导致流程错乱
-2. **可以手动修改草稿正文文件**：`draft_v1.md` 等文件可以手动编辑，然后告诉 AI "基于这个版本继续修改"
-3. **备注请写进同名 `_notes.md`**：不要再把字数统计、修改记录写回正文文件
-4. **维护 `run_manifest.json`**：新流程应把当前正文来源、备注文件和状态写进去
-5. **事实核查必须双绑定**：旧的无正文或标题哈希的 `fact_check_status=passed` 不再放行，正文或 `04_title.md` 修改后都应重跑 Stage 10.5
-6. **配图先于最终事实核查**：Stage 11 选择配图时写入新正文版本；Stage 10.5 必须核查该版本，核查通过后不得再改正文
-7. **最终复制请用 `_clean.txt`**：它是发布出口，不是正文源文件；只通过 `auto_clean_hook.py --project "[项目名]"` 生成
-8. **定期备份**：重要文章建议定期备份整个项目文件夹
-9. **版本管理**：建议使用 Git 管理 articles 目录，方便追踪变更
-10. **发布数据只追加**：只通过 `record_publish_metrics.py` 写入 `publication_metrics.jsonl`，不要覆盖旧记录或把指标混进 `run_manifest.json`
-
-## 清理建议
-
-- 完成的项目可以移动到 `articles/archived/` 目录
-- 测试项目可以移动到 `articles/test/` 目录
-- 不需要的项目可以直接删除
-
----
-
-**版本：** v1.3.0
-
-**更新时间：** 2026-08-14
+纯文本统一通过显式项目的 Hook 生成。默认不配图、不导出 HTML，有明确要求时再处理。最终稿不要求固定名为 draft_最终稿.md；真实最新文件由 manifest 指向，避免多个“最终版”含义冲突。

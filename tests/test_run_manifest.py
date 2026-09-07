@@ -13,6 +13,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from scripts.auto_clean_hook import find_latest_draft, resolve_clean_source, resolve_clean_source_from_manifest
 from scripts.update_run_manifest import update_run_manifest
+from tests.fact_check_fixtures import write_claims
 
 
 def write(path: Path, content: str) -> None:
@@ -109,7 +110,7 @@ class RunManifestTests(unittest.TestCase):
         title = self.project_dir / "04_title.md"
         write(body, "# 已核查正文\n\n内容")
         write(title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「已核查标题」\n")
-        write(self.project_dir / "fact_claims.json", "{}")
+        write_claims(self.project_dir, body.name, title.name)
         write(self.project_dir / "fact_check_report.md", "# 报告")
 
         manifest = update_run_manifest(
@@ -138,7 +139,7 @@ class RunManifestTests(unittest.TestCase):
         write(body, "# 已核查正文")
         write(title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「标题」\n")
         write(self.project_dir / "draft_v3_notes.md", "# 备注")
-        write(self.project_dir / "fact_claims.json", "{}")
+        write_claims(self.project_dir, body.name, title.name)
         write(self.project_dir / "fact_check_report.md", "# 报告")
         update_run_manifest(
             project_dir=self.project_dir,
@@ -164,7 +165,7 @@ class RunManifestTests(unittest.TestCase):
         title = self.project_dir / "04_title.md"
         write(body, "# 已核查标题\n\n正文")
         write(title, "## 最终锁定\n- 选择状态：已锁定\n- 最终标题：「旧标题」\n")
-        write(self.project_dir / "fact_claims.json", "{}")
+        write_claims(self.project_dir, body.name, title.name)
         write(self.project_dir / "fact_check_report.md", "# 报告")
         update_run_manifest(
             project_dir=self.project_dir,

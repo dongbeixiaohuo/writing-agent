@@ -41,6 +41,8 @@ def theme_file_has_confirmed_style(content: str) -> bool:
         for marker in (
             "风格确认状态：用户已确认",
             "风格确认状态:用户已确认",
+            "风格确认状态：用户已授权代选",
+            "风格确认状态:用户已授权代选",
             "用户已显式确认风格选择",
             "无指定风格（用户确认）",
             "无指定风格(用户确认)",
@@ -56,7 +58,8 @@ def title_file_is_locked(content: str) -> bool:
     for raw_line in lines:
         normalized = raw_line.strip().replace("**", "")
         if "选择状态" in normalized:
-            selection_locked = "已锁定" in normalized and "待定" not in normalized
+            status_parts = re.split(r"[:：]", normalized, maxsplit=1)
+            selection_locked = len(status_parts) == 2 and status_parts[1].strip() == "已锁定"
         if "最终标题" in normalized and ("：" in normalized or ":" in normalized):
             value = re.split(r"[:：]", normalized, maxsplit=1)[1].strip().strip("*").strip()
             final_title_found = bool(value and "待定" not in value and "[" not in value)
@@ -81,7 +84,7 @@ def title_file_is_locked(content: str) -> bool:
 
 
 def distribution_copy_is_locked_if_declared(content: str) -> bool:
-    if "平台分发文案候选" not in content:
+    if not any(label in content for label in ("平台分发文案", "分发文案选择", "最终分发文案")):
         return True
 
     selection_value = ""
@@ -93,19 +96,20 @@ def distribution_copy_is_locked_if_declared(content: str) -> bool:
         if "最终分发文案" in normalized and ("：" in normalized or ":" in normalized):
             final_value = re.split(r"[:：]", normalized, maxsplit=1)[1].strip()
 
-    pending_markers = ("待定", "[候选", "[公众号", "[最终")
+    pending_markers = ("待定", "暂定", "[", "]")
     return bool(
         selection_value
         and final_value
         and not any(marker in selection_value for marker in pending_markers)
         and not any(marker in final_value for marker in pending_markers)
+        and final_value not in {"已确认", "已锁定"}
     )
 
 
 def opening_file_is_locked(content: str) -> bool:
     locked = "已锁定" in content or "锁定起手钩子" in content
     selected = re.search(
-        r"(?:选择|赛马获胜方案)\s*[：:]\s*(?:A|B|C|自定义)(?:\b|\s|[-—–（(])",
+        r"(?:选择|赛马获胜方案)\s*[：:]\s*(?:A|B|C|D|自定义)(?:\b|\s|[-—–（(])",
         content,
         flags=re.IGNORECASE,
     )
@@ -201,18 +205,26 @@ def evidence_ledger_issue(content: str) -> str | None:
     return None
 
 
-def semantic_file_issue(file_name: str, content: str) -> str | None:
+def semantic_file_issue(file_name: str, content: str, *, allow_provisional: bool = False) -> str | None:
     if file_name == "01_theme.md" and not theme_file_has_confirmed_style(content):
         return "unconfirmed_style"
     if file_name == "02_evidence_ledger.json":
         return evidence_ledger_issue(content)
     if file_name == "04_title.md":
+        provisional = re.search(r"选择状态\s*[:：]\s*暂定(?:\s|$)", content.replace("**", ""))
+        if allow_provisional and provisional:
+            planned = re.sub(r"选择状态\s*[:：]\s*暂定", "选择状态：已锁定", content)
+            return None if title_file_is_locked(planned) else "invalid_provisional_title"
         if not title_file_is_locked(content):
             return "unlocked_title"
         if not distribution_copy_is_locked_if_declared(content):
             return "unlocked_distribution_copy"
-    if file_name == "05c_opening_hook.md" and not opening_file_is_locked(content):
-        return "unlocked_opening"
+    if file_name == "05c_opening_hook.md":
+        if allow_provisional and re.search(r"确认状态\s*[:：]\s*暂定(?:\s|$)", content.replace("**", "")):
+            planned = re.sub(r"确认状态\s*[:：]\s*暂定", "已锁定\n> 选择：自定义", content)
+            return None if opening_file_is_locked(planned) else "invalid_provisional_opening"
+        if not opening_file_is_locked(content):
+            return "unlocked_opening"
     return None
 
 
@@ -221,6 +233,7 @@ def find_file_issues(
     required_files: list[str],
     *,
     presence_only: bool = False,
+    allow_provisional: bool = False,
 ) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
 
@@ -244,7 +257,7 @@ def find_file_issues(
             continue
 
         if not presence_only:
-            reason = semantic_file_issue(file_name, content)
+            reason = semantic_file_issue(file_name, content, allow_provisional=allow_provisional)
             if reason:
                 issues.append({"file": file_name, "reason": reason})
 
@@ -256,8 +269,9 @@ def verify_required_files(
     required_files: list[str],
     *,
     presence_only: bool = False,
+    allow_provisional: bool = False,
 ) -> bool:
-    return not find_file_issues(project_dir, required_files, presence_only=presence_only)
+    return not find_file_issues(project_dir, required_files, presence_only=presence_only, allow_provisional=allow_provisional)
 
 
 def _resolve_dynamic_inputs(project_dir: Path, required_files: list[str]) -> list[str]:
@@ -340,6 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--stage", help="从工作流契约读取该 Stage 的 inputs")
     parser.add_argument("--workflow", default=str(DEFAULT_WORKFLOW), help="工作流 JSON 路径")
     parser.add_argument("--mode", default="B", help="工作流模式，默认 B")
+    parser.add_argument("--phase", choices=("planning", "publication"), help="显式产物检查的阶段；交付阶段不允许暂定标题")
     parser.add_argument(
         "--presence-only",
         action="store_true",
@@ -370,7 +385,15 @@ def main() -> int:
         print(f"FAIL: 无法读取阶段契约：{exc}", file=sys.stderr)
         return 2
 
-    issues = find_file_issues(project_dir, required_files, presence_only=args.presence_only)
+    planning_stages = set()
+    if args.stage:
+        contract = json.loads(Path(args.workflow).read_text(encoding="utf-8"))
+        planning_stages = set(contract.get("artifact_policy", {}).get("provisional_title_and_opening_stages", []))
+    if args.phase == "planning" and args.stage and args.stage not in planning_stages:
+        print("FAIL: 该阶段不得使用 planning 门禁", file=sys.stderr)
+        return 2
+    allow_provisional = args.phase == "planning" or (args.phase is None and args.stage in planning_stages)
+    issues = find_file_issues(project_dir, required_files, presence_only=args.presence_only, allow_provisional=allow_provisional)
 
     if issues:
         print(json.dumps({"project_dir": str(project_dir), "issues": issues}, ensure_ascii=False, indent=2))

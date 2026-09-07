@@ -17,6 +17,7 @@ if str(PROJECT_SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_SOURCE_ROOT))
 
 from scripts.claude_runtime_paths import resolve_workspace_root, workspace_articles_dir
+from scripts.fact_check_gate import SCHEMA, assess_claims, atomic_text, publication_passed, render_report, sha256
 
 
 PROJECT_ROOT = resolve_workspace_root()
@@ -97,6 +98,7 @@ def _fact_binding_matches(manifest: dict, project_dir: Path, body_file: str) -> 
     return (
         hashlib.sha256(body_path.read_bytes()).hexdigest() == checked_hash.lower()
         and hashlib.sha256(title_path.read_bytes()).hexdigest() == checked_title_hash.lower()
+        and publication_passed(project_dir, body_file)
     )
 
 
@@ -129,26 +131,44 @@ def update_run_manifest(
     ):
         _validate_project_file(project_dir, value, field)
 
-    if fact_check_status is not None:
-        if fact_check_status not in {"passed", "blocked"}:
-            raise ValueError("fact_check_status 只能是 passed 或 blocked")
-        if not title_file:
-            raise ValueError("记录事实核查结果时必须提供 title_file")
-        if not fact_claims_file or not fact_check_report_file:
-            raise ValueError("记录事实核查结果时必须提供 fact_claims_file 和 fact_check_report_file")
-        _project_file_path(project_dir, title_file, "title_file", must_exist=True)
-        _project_file_path(project_dir, fact_claims_file, "fact_claims_file", must_exist=True)
-        _project_file_path(project_dir, fact_check_report_file, "fact_check_report_file", must_exist=True)
-
-    project_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = project_dir / "run_manifest.json"
-
     manifest: dict = {}
     if manifest_path.exists():
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(existing, dict):
             raise ValueError(f"run_manifest.json 顶层必须是对象: {manifest_path}")
         manifest.update(existing)
+
+    assessment = None
+    if fact_check_status is not None or fact_claims_file is not None:
+        if fact_check_status not in {None, "passed", "blocked"}:
+            raise ValueError("fact_check_status 只能是 passed 或 blocked")
+        if not title_file:
+            raise ValueError("记录事实核查结果时必须提供 title_file")
+        if not fact_claims_file or not fact_check_report_file:
+            raise ValueError("记录事实核查结果时必须提供 fact_claims_file 和 fact_check_report_file")
+        assessment = assess_claims(project_dir, body_file, title_file, fact_claims_file)
+        # The caller's status is not an authority. Even --fact-check-status passed
+        # cannot release a contradictory or partially supported claim.
+        fact_check_status = assessment["status"]
+        status = "fact-checked" if fact_check_status == "passed" else "fact-check-blocked"
+        report_path = _project_file_path(project_dir, fact_check_report_file, "fact_check_report_file")
+        if report_path in {
+            _project_file_path(project_dir, name, "protected_input")
+            for name in (body_file, title_file, notes_file, clean_source_file, html_file, html_source_file,
+                         fact_claims_file, assessment["snapshot"]["ledger_file"], "fact_check_snapshot.json", "run_manifest.json",
+                         manifest.get("latest_body_file"), manifest.get("latest_notes_file"),
+                         manifest.get("clean_source_file"), manifest.get("latest_html_file"), manifest.get("html_source_file"))
+            if isinstance(name, str) and name
+        }:
+            raise ValueError("事实报告不能覆盖正文、备注、导出文件或运行态")
+        prior_report = manifest.get("latest_fact_check_report")
+        if (report_path.exists() and report_path.name != "fact_check_report.md"
+                and (not prior_report or report_path != _project_file_path(project_dir, prior_report, "latest_fact_check_report"))):
+            raise ValueError("事实报告不能覆盖已有的其他项目文件")
+        atomic_text(report_path, render_report(assessment))
+
+    project_dir.mkdir(parents=True, exist_ok=True)
 
     if (
         fact_check_status is None
@@ -186,14 +206,15 @@ def update_run_manifest(
                 "fact_checked_title_file": title_file,
                 "fact_checked_title_sha256": project_file_sha256(project_dir, title_file, "title_file"),
                 "fact_checked_at": fact_checked_at or datetime.now().astimezone().isoformat(timespec="seconds"),
+                "fact_check_schema": SCHEMA,
+                "fact_checked_claims_sha256": assessment["claims_sha256"],
+                "fact_checked_snapshot_sha256": assessment["snapshot_sha256"],
+                "fact_checked_report_sha256": sha256(report_path),
             }
         )
         manifest.pop("fact_check_stale_reason", None)
 
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_text(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return manifest
 
 
@@ -210,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--html", help="最新导出的 HTML 文件名")
     parser.add_argument("--html-source", help="用于导出 HTML 的正文文件名")
     parser.add_argument("--html-theme", help="HTML 导出使用的版式主题")
-    parser.add_argument("--fact-check-status", choices=("passed", "blocked"), help="绑定到当前正文与锁定标题的事实核查结果")
+    parser.add_argument("--fact-check-status", choices=("passed", "blocked"), help="兼容旧调用；实际结果由事实清单计算，不能强制通过")
     parser.add_argument("--fact-claims", help="事实清单文件名")
     parser.add_argument("--fact-report", help="事实核查报告文件名")
     parser.add_argument("--fact-checked-at", help="事实核查时间，默认当前本地 ISO 时间")
@@ -237,7 +258,7 @@ def main() -> int:
         fact_checked_at=args.fact_checked_at,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
-    return 0
+    return 1 if args.fact_claims and manifest.get("fact_check_status") == "blocked" else 0
 
 
 if __name__ == "__main__":

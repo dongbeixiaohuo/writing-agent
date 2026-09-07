@@ -18,6 +18,7 @@ HOOK_SPEC = importlib.util.spec_from_file_location("runtime_auto_clean_hook", RU
 assert HOOK_SPEC is not None and HOOK_SPEC.loader is not None
 hook_module = importlib.util.module_from_spec(HOOK_SPEC)
 HOOK_SPEC.loader.exec_module(hook_module)
+from tests.fact_check_fixtures import approve
 
 
 def write(path: Path, content: str) -> None:
@@ -171,6 +172,14 @@ class AutoCleanHookTests(unittest.TestCase):
             ),
         )
 
+        legacy = json.loads((self.project_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        bound = approve(self.project_dir, body_path.name, title_path.name)
+        bound.update(legacy)
+        if not include_title_binding:
+            bound.pop("fact_checked_title_file", None)
+            bound.pop("fact_checked_title_sha256", None)
+        write(self.project_dir / "run_manifest.json", json.dumps(bound, ensure_ascii=False))
+
         generator = self.root / "fake_generate_clean.py"
         write(
             generator,
@@ -270,6 +279,9 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
                 ensure_ascii=False,
             ),
         )
+
+        approve(self.project_dir, target_body.name, target_title.name)
+        approve(other_project, other_body.name, other_title.name)
 
         result = subprocess.run(
             [

@@ -15,7 +15,7 @@ model: sonnet
 
 ## 核心职责
 
-聚焦**平台行为**：在发布前模拟“读者为什么继续、为什么退出、为什么分享/收藏/讨论”。这里使用的是**定性代理指标**，只能定位文本风险，不能代替真实发布数据；写作工艺和通用发布价值已经由 Stage 7/8 处理，本阶段不重复打分。
+聚焦**平台行为与全文承诺兑现**：在发布前模拟“读者为什么继续、为什么退出、为什么分享/收藏/讨论”，并以成稿复核最终标题和分发文案。这里使用的是**定性代理指标**，只能定位文本风险，不能代替真实发布数据；写作工艺和通用发布价值已经由 Stage 7/8 处理，本阶段不重复打分。
 
 硬规则：
 
@@ -23,6 +23,8 @@ model: sonnet
 - 每个判断都要引用标题或正文中的具体句子，禁止只给“中高”“不错”等空评级。
 - 禁止预测具体 CTR、完读率、推荐量或评论量；没有真实曝光数据时，不能把模型感觉写成百分比。
 - 修改建议只能修正承诺错位、弃读点和互动入口，不能为了传播新增未经证据支持的事实。
+- 先确认 `04_title.md` 的标题、分发文案和选择状态；若仍为暂定，按自主推进/逐步共创规则完成成稿复核。不得用候选或早期标题测试最终正文。
+- 传播目标“不适用”时跳过分享/收藏/互动矩阵，仍检查读者是否理解、愿意继续以及全文承诺。若无明显弃读点，允许写“未发现”，不能为了完成模板编造问题。
 
 ## Step 1: 读取锁定输入
 
@@ -30,8 +32,7 @@ model: sonnet
 cat articles/[项目名]/01_theme.md
 cat articles/[项目名]/04_title.md
 cat articles/[项目名]/run_manifest.json
-python "scripts/generate_clean.py" --stdout articles/[项目名]/[latest_body_file] > temp/reader_test_body.txt
-cat temp/reader_test_body.txt
+python "scripts/generate_clean.py" --stdout articles/[项目名]/[latest_body_file]
 ```
 
 从 `01_theme.md` 提取发布平台；从 `run_manifest.json` 读取 `latest_body_file`，禁止靠文件修改时间猜正文版本。
@@ -79,6 +80,7 @@ cat temp/reader_test_body.txt
 - 最终分发文案：[原文 / 不适用]
 - 承诺一致性：[通过 / 风险]
 - 证据：[引用具体文本]
+- 全文承诺兑现：[标题、分发文案、首屏和结尾是否一致；必要时标出最小调整]
 
 ## 最早弃读点
 - 位置：[段落/句子]
@@ -98,33 +100,20 @@ cat temp/reader_test_body.txt
 
 ## 结论
 - 最大阻碍：[一句话]
-- 必改项：[列表；没有则写无]
-- 可选优化：[列表]
+- **必须修**：[列表；没有则写无]
+- **可选**：[列表]
+- **保留原样**：[成立的选择及理由]
 ```
 
-## Step 4: 等待用户确认
+## Step 4: 交接统一修订
 
-```text
-平台读者压力测试已完成。
-
-请选择：
-A. 按必改项修正文稿
-B. 调整测试平台或视角后重测
-C. 当前强度合格，进入 Stage 10 Humanizer
-D. 标题承诺有误，返回 Stage 5.5 重新设计并锁定标题
-```
-
-如果用户选择 A 并授权修改，保存为新的 `draft_vN.md` 与 `draft_vN_notes.md`，然后执行：
-
-```bash
-python "scripts/update_run_manifest.py" --project "[项目名]" --body draft_vN.md --notes draft_vN_notes.md --status reader_test_revised --workflow-version collab-v2
-```
+本阶段不直接修改正文。导演将 Stage 7/8/9 的意见汇总到 `revision_brief.md`，由主笔最多进行两轮重大修订；每项记录接受、拒绝或延后及理由。标题承诺、论证、首屏或分发文案发生实质变化后，重新完成标题成稿复核与本阶段测试；无改动或不影响承诺的局部措辞修订不重复整轮测试。
 
 如果用户选择 D：
 
 1. 返回 Stage 5.5，重新调用 `title-designer`；必须把 `latest_body_file` 作为现有正文参考，避免新标题承诺正文没有的内容。
-2. 只生成候选，不得自动替用户选标题。必须等用户明确锁定具体标题和分发文案。
-3. 用户明确锁定后，同时更新 `04_title.md` 与当前正文 H1，再调用 `update_run_manifest.py` 记录 `status=title_reopened`。标题之外的正文不得顺手改写。
+2. 只生成候选；逐步共创时等待用户选择，自主推进时可暂定但必须标明非用户选择。
+3. 成稿复核确认后更新 `04_title.md` 与当前正文 H1；未经用户明确要求，标题之外的正文不得顺手改写。
 4. 重新执行 Stage 9；旧的 reader test 报告不能继续放行。
 
 标题重新打开不等于解除事实边界。新标题中的数字、人物、机构、日期和具体事件仍必须来自 `02_evidence_ledger.json` 或 `01_theme.md` 的作者真实素材。

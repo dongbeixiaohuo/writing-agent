@@ -151,6 +151,18 @@ def main():
         print(f"全文行数：{stats['total_lines']}")
         return
 
+    # Stats/stdout are read-only inputs to the checker. A managed project's
+    # actual delivery file must pass the same gate as the hook and HTML export.
+    if any(parent.name.casefold() == 'articles' for parent in input_path.resolve().parent.parents):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from scripts.fact_check_gate import publication_passed
+        if not publication_passed(input_path.resolve().parent, input_path.name):
+            print('FAIL: 当前正文未通过事实核查，禁止生成交付文件', file=sys.stderr)
+            raise SystemExit(1)
+        if input_path.read_text(encoding='utf-8') != source_text:
+            print('FAIL: 清稿期间正文发生变化，请重新核查', file=sys.stderr)
+            raise SystemExit(1)
+
     output_name = input_path.stem + '_clean.txt'
     output_path = input_path.parent / output_name
     output_path.write_text(body_text, encoding='utf-8')

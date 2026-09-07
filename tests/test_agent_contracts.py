@@ -24,11 +24,11 @@ class AgentContractTests(unittest.TestCase):
         self.assertNotIn("web-search-prime", research_expert)
         self.assertNotIn("web-search-prime", topic_research)
 
-    def test_title_designer_uses_eight_candidates_and_persists_title_file(self) -> None:
+    def test_title_designer_uses_distinct_genre_appropriate_candidates(self) -> None:
         content = (PROJECT_ROOT / ".claude/agents/title-designer.md").read_text(encoding="utf-8")
 
-        self.assertIn("设计8个候选标题", content)
-        self.assertIn("A/B/C/D/E/F/G/H", content)
+        self.assertIn("真正不同的候选", content)
+        self.assertIn("不要求覆盖固定公式", content)
         self.assertIn("04_title.md", content)
 
     def test_workflow_contract_requires_title_file_before_stage_6(self) -> None:
@@ -46,8 +46,8 @@ class AgentContractTests(unittest.TestCase):
 
         self.assertIn("04_title.md", editor_review)
         self.assertIn("04_title.md", pre_publish_review)
-        self.assertIn("不得直接改标题", editor_review)
-        self.assertIn("不得直接改标题", pre_publish_review)
+        self.assertIn("不在本阶段改标题", editor_review)
+        self.assertIn("不得假设已锁定或直接改标题", pre_publish_review)
         self.assertIn("标题", humanizer)
         self.assertIn("原样保留", humanizer)
 
@@ -65,8 +65,8 @@ class AgentContractTests(unittest.TestCase):
 
         self.assertNotIn("外包程序员很累", research_expert)
         self.assertNotIn("外包就是一块破抹布", empathy_designer)
-        self.assertIn("除非主题本身就是科技", research_expert)
-        self.assertIn("除非主题本身就是科技", empathy_designer)
+        self.assertIn("不得默认使用互联网公司", research_expert)
+        self.assertIn("所有细节必须可回到主题", empathy_designer)
 
     def test_styles_must_not_inherit_author_industry_examples(self) -> None:
         jiubian = (PROJECT_ROOT / ".claude/styles/jiubian.md").read_text(encoding="utf-8")
@@ -91,12 +91,12 @@ class AgentContractTests(unittest.TestCase):
         self.assertIn("Stage 13 完成前", workflow_producer)
         self.assertIn("跳过也要落盘", edit_diff_learner)
 
-    def test_opening_tournament_cannot_auto_select_opening(self) -> None:
+    def test_opening_distinguishes_provisional_and_user_selected_choices(self) -> None:
         opening_tournament = (PROJECT_ROOT / ".claude/agents/opening-tournament.md").read_text(encoding="utf-8")
 
-        self.assertIn("禁止自行推荐后直接选定某一款", opening_tournament)
-        self.assertIn("禁止在用户回复 A/B/C 前写入 `05c_opening_hook.md`", opening_tournament)
-        self.assertIn("不能默认选择 B", opening_tournament)
+        self.assertIn("逐步共创时展示方案等待选择", opening_tournament)
+        self.assertIn("自主推进时可暂定", opening_tournament)
+        self.assertIn("不得把暂定写成用户已确认", opening_tournament)
 
     def test_style_modeler_requires_kernel_and_validation(self) -> None:
         style_modeler = (PROJECT_ROOT / ".claude/skills/style-modeler/SKILL.md").read_text(encoding="utf-8")
@@ -120,8 +120,8 @@ class AgentContractTests(unittest.TestCase):
         self.assertIn("02_evidence_ledger.json", writing_stage["inputs"])
         self.assertIn("02_evidence_ledger.json", research_expert)
         self.assertIn("evidence_id", research_expert)
-        self.assertIn("没有证据", writing_executor)
-        self.assertIn("事实性内容", writing_executor)
+        self.assertIn("不得写入无来源的外部", writing_executor)
+        self.assertIn("用户材料位置及尚待核查的事实", writing_executor)
 
     def test_fact_checker_runs_after_optional_illustration_before_final_outputs(self) -> None:
         contract = json.loads((PROJECT_ROOT / ".claude/workflows/collab_v2.json").read_text(encoding="utf-8"))
@@ -168,30 +168,30 @@ class AgentContractTests(unittest.TestCase):
         pre_publish = (PROJECT_ROOT / ".claude/agents/pre-publish-review.md").read_text(encoding="utf-8")
         reader_test = (PROJECT_ROOT / ".claude/agents/wechat-reader-test.md").read_text(encoding="utf-8")
 
-        self.assertIn("写作工艺与风格保真", editor)
-        self.assertIn("读者价值与发布风险", pre_publish)
+        self.assertIn("写作工艺、结构、语言模板感和作者声音", editor)
+        self.assertIn("读者价值与风险", pre_publish)
         self.assertIn("平台行为", reader_test)
         self.assertNotIn("AI味道残留", pre_publish)
         self.assertNotIn("无第一人称", pre_publish)
         self.assertNotIn("XX/25", pre_publish)
-        self.assertIn("禁止为了作者声音新增第一人称亲历", pre_publish)
+        self.assertIn("不编写第一人称经历", pre_publish)
 
     def test_fun_dimension_is_conditional_and_evidence_bound(self) -> None:
         empathy = (PROJECT_ROOT / ".claude/agents/empathy-designer.md").read_text(encoding="utf-8")
         editor = (PROJECT_ROOT / ".claude/agents/editor-review.md").read_text(encoding="utf-8")
 
-        self.assertIn("趣味谈资", empathy)
-        self.assertIn("不得为了好玩编造", empathy)
-        self.assertIn("趣味张力", editor)
-        self.assertIn("不强制搞笑", editor)
+        self.assertIn("传播目标为“不适用”", empathy)
+        self.assertIn("所有细节必须可回到", empathy)
+        self.assertIn("克制文不因", editor)
+        self.assertIn("不要求每篇有可删段落", editor)
 
-    def test_reader_test_can_reopen_title_only_with_user_confirmation(self) -> None:
+    def test_reader_test_reopens_title_with_recorded_authority_and_retest(self) -> None:
         reader_test = (PROJECT_ROOT / ".claude/agents/wechat-reader-test.md").read_text(encoding="utf-8")
         title_designer = (PROJECT_ROOT / ".claude/agents/title-designer.md").read_text(encoding="utf-8")
 
         self.assertIn("返回 Stage 5.5", reader_test)
         self.assertIn("重新执行 Stage 9", reader_test)
-        self.assertIn("用户明确锁定", reader_test)
+        self.assertIn("逐步共创时等待用户选择", reader_test)
         self.assertIn("策略语义去重", title_designer)
         self.assertIn("点击理由相同", title_designer)
 
@@ -233,11 +233,11 @@ class AgentContractTests(unittest.TestCase):
         pre_publish = (PROJECT_ROOT / ".claude/agents/pre-publish-review.md").read_text(encoding="utf-8")
         opening = (PROJECT_ROOT / ".claude/agents/opening-tournament.md").read_text(encoding="utf-8")
 
-        self.assertIn("删除空心金句", executor)
+        self.assertIn("只删无信息的填充", executor)
         self.assertNotIn("**5. 删除金句**", executor)
-        self.assertEqual(1, executor.count("揭示前有破折号？→ 删除它"))
-        self.assertIn("带场景、代价或立场", editor)
-        self.assertIn("带场景、代价或立场", pre_publish)
+        self.assertNotIn("三项列举？→ 改为两项或四项", executor)
+        self.assertIn("不输出百分制或伪客观总分", editor)
+        self.assertIn("不以金句或截图点扣分", pre_publish)
         self.assertNotIn("15-25字", pre_publish)
         self.assertNotIn("《三表猫风》", opening)
 
