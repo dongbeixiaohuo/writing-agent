@@ -318,6 +318,10 @@ v0.10.0 正式版同时收录创意反馈、尾部事实门禁重排和平台化
 - 不关心中间产物、只关心快的人
 - 不想做任何确认和审稿的人
 
+### 素材可以是「说出来的」或本地音视频
+
+这套流程的素材和证据要能被账本引用，前提是它们已经是文本。网页正文仓库已用 `web-article-extractor` 处理；如果素材是访谈录音、会议或直播这类「说出来的内容」、或本地音频/视频，先用 [cue-omni-reader](https://github.com/sensedeal/cue-skills/tree/main/cue-omni-reader) 把它们收成 Markdown——网页（含页内视频/附件）与已授权的本地文档/音频/视频 → Markdown，一次可选多个本地文件——再交给流程做素材和事实核查。一行安装：`npx skills add sensedeal/cue-skills --skill cue-omni-reader`（MIT，可能计费）。
+
 ---
 
 ## 完整版安装
