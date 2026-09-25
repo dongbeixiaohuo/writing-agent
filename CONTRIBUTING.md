@@ -2,6 +2,27 @@
 
 感谢你考虑为 写稿Agent 做出贡献！
 
+## 1.0 独立运行时贡献入口
+
+当前仓库同时保留 legacy `0.11.x` 工作流与 `next/runtime` 上的 1.0 独立运行时。提交前先确认改动属于哪条线：
+
+- `claude-runtime/`、`.claude/`、`plugins/writing-agent/`：legacy 工作流镜像，仍用 `npm run check` 验证。
+- `packages/writing-core`、`packages/runtime`、`packages/application`、`packages/storage`：1.0 领域和运行时。
+- `packages/ui`、`packages/client-bridge`、`apps/web`、`apps/desktop`：DSH 派生同源 UI、Bridge 和桌面分发。
+- `packages/legacy-migration`：旧数据只读迁移；不得修改源库或提升旧核查状态。
+
+1.0 改动至少运行与范围匹配的检查：
+
+```powershell
+npm run check:runtime
+npm run check:ui
+npm run check:desktop
+```
+
+涉及发行候选时再运行 `apps/desktop/scripts/run_rc_validation.ps1`。真实模型调用、公开 PR/Release、签名和仓库设置需要维护者明确授权；不要在普通 CI 消耗维护者 Key。
+
+如果复制或修改上游源码，必须同步 `upstream-sources.json`、`THIRD_PARTY_NOTICES.md`、来源 hash 和相应测试。不要把 DeepSeek Harness 官方品牌、updater、遥测、账户或插件服务带入 Writing Agent。
+
 ## 如何贡献
 
 ### 报告 Bug
@@ -30,8 +51,8 @@
 1. **Fork 项目**
    ```bash
    # 在 GitHub 上点击 Fork 按钮
-   git clone https://github.com/dongbeixiaohuo/写稿Agent.git
-   cd 写稿Agent
+   git clone https://github.com/dongbeixiaohuo/writing-agent.git
+   cd writing-agent
    ```
 
 2. **创建特性分支**

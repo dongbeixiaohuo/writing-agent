@@ -1,0 +1,262 @@
+{
+  "schema_version": "1.0",
+  "last_updated": "2026-09-18",
+  "purpose": "Machine-readable source audit and future port provenance. A component is not shipped until status is ported_unverified or ported_verified and copied_files is non-empty.",
+  "status_values": [
+    "audited_planned",
+    "reference_only",
+    "excluded",
+    "ported_unverified",
+    "ported_verified"
+  ],
+  "upstreams": [
+    {
+      "id": "deepseek-harness",
+      "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
+      "commit": "0d1f50007f9bca3f52b06e1c3074fa14d5fb0720",
+      "version": "0.1.6-alpha.1",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "notices_path": "THIRD_PARTY_NOTICES.md",
+      "distribution_included": true,
+      "components": [
+        {
+          "id": "runtime-core-contracts",
+          "status": "audited_planned",
+          "source_units": [
+            { "path": "packages/core/agent", "git_tree_oid": "081975b59b07e73cc78ff0bfd00f8c911b08e0ee" },
+            { "path": "packages/core/agent-loop", "git_tree_oid": "bbc68ffe7572c0b5355101ea1ca5918d2a12b11f" },
+            { "path": "packages/core/tools", "git_tree_oid": "fb6aeb8e9bf6787abe1b46d4bbc42800e40c707e" },
+            { "path": "packages/core/session", "git_tree_oid": "d0ff9dce1241a394ced5ab910ae5620c93de6f40" },
+            { "path": "packages/core/system-prompt", "git_tree_oid": "1d86b7d4047e59bb4c2497755638c4135e919b90" },
+            { "path": "packages/core/scope", "git_tree_oid": "5e93d1be3e8d68172e72824a1bd1f2e22b9e4efd" },
+            { "path": "packages/llm/llm", "git_tree_oid": "6d3b4e4af59561c37db78b4fef4303ff1014030a" }
+          ],
+          "target_paths": [
+            "packages/runtime-core",
+            "packages/model-adapters"
+          ],
+          "copied_files": [],
+          "required_tests": [
+            "agent-loop stream/tool/cancel tests",
+            "provider capability and error tests",
+            "independence tests"
+          ]
+        },
+        {
+          "id": "runtime-persistence-reference",
+          "status": "audited_planned",
+          "source_units": [
+            { "path": "packages/session/session-persistence", "git_tree_oid": "e78b0bcb50d4e747962e326c51c20b93b1a492fa" },
+            { "path": "packages/session/session-persistence-jsonl", "git_tree_oid": "ee3ae34865851f8de0815072c2ff3f6213de9b93" },
+            { "path": "packages/storage/storage", "git_tree_oid": "0902b677088ee2c9ec2a466822a8c404f7fb9e5c" },
+            { "path": "packages/storage/storage-domain", "git_tree_oid": "93cf4d975f2c1611b48d6c30f9ce000b01a15975" },
+            { "path": "packages/storage/storage-json", "git_tree_oid": "57d06ac2d1194d2cb316274205bda556df2d6e53" }
+          ],
+          "target_paths": [
+            "packages/runtime-core/persistence",
+            "packages/storage"
+          ],
+          "copied_files": [],
+          "required_tests": [
+            "event replay and idempotency tests",
+            "SQLite transaction and CAS tests",
+            "crash recovery tests"
+          ]
+        },
+        {
+          "id": "frontend-foundation",
+          "status": "ported_verified",
+          "source_units": [
+            { "path": "packages/client/web", "git_tree_oid": "9585c8b4f78c6c64ff70f6574f8426e2d248ba50" },
+            { "path": "packages/client/modules", "git_tree_oid": "d507a6a245cefc7a8680ff349478a2ee2a988db7" },
+            { "path": "packages/client/connection", "git_tree_oid": "0f22ab518f8582b19875b30412cac0a1d0b92457" },
+            { "path": "packages/client/store", "git_tree_oid": "093e34ebb33a34f72a222b8128e0773612eab873" },
+            { "path": "packages/client/locale", "git_tree_oid": "4a7e31b16e42287d3f6972451ea8e3eeac7e9ac7" },
+            { "path": "packages/client/ui-renderer", "git_tree_oid": "c356aace388cf4fd278f2c872f80db9e8d523093" },
+            { "path": "packages/client/ui-slots", "git_tree_oid": "1bd5db981c752a264a9a9bafcf29b92027714b50" },
+            { "path": "packages/client/ui-theme", "git_tree_oid": "3a88771bdb68fe47b019402964fe8255c9b77cfd" },
+            { "path": "packages/client/ui-primitives", "git_tree_oid": "883082f0e16abeb102af604cfb6fec490ab01456" }
+          ],
+          "target_paths": [
+            "packages/ui/shell",
+            "packages/ui/primitives",
+            "packages/ui/theme",
+            "apps/web"
+          ],
+          "copied_files": [
+            {
+              "source_path": "packages/client/ui-theme/src/styles/base.css",
+              "target_path": "packages/ui/src/upstream/theme/base.css",
+              "sha256": "85f8970d2650108ad47d66da1db3ba00ebbe3f26aaec00551cfa69dd029347a3",
+              "exact_copy": true
+            },
+            {
+              "source_path": "packages/client/ui-theme/src/styles/design-platform.css",
+              "target_path": "packages/ui/src/upstream/theme/design-platform.css",
+              "sha256": "5273cda5af6322fe0f8f9ef4ce00aecb8e85c2495c67e452d4350cd835f47046",
+              "exact_copy": true
+            },
+            {
+              "source_path": "packages/client/ui-theme/src/styles/scrollbar.css",
+              "target_path": "packages/ui/src/upstream/theme/scrollbar.css",
+              "sha256": "16d27a2a4600d6439b9ed6c5cfb504885bb5e9d0a7d8a5120c23e7516bf1c1d5",
+              "exact_copy": true
+            },
+            {
+              "source_path": "packages/client/ui-theme/src/styles/corner-shape.css",
+              "target_path": "packages/ui/src/upstream/theme/corner-shape.css",
+              "sha256": "d94f82e1332b6d37e8345aafe1b6b4129faed65891edd3861c00b88940ec4d3f",
+              "exact_copy": true
+            },
+            {
+              "source_path": "packages/client/ui-primitives/src/Button.tsx",
+              "target_path": "packages/ui/src/upstream/primitives/Button.tsx",
+              "sha256": "5f1db06042fa372c45d777feffaab3b1d0c9395a89fa00b735bd9cbc8a389371",
+              "exact_copy": true
+            },
+            {
+              "source_path": "packages/client/ui-primitives/src/Button.module.css",
+              "target_path": "packages/ui/src/upstream/primitives/Button.module.css",
+              "sha256": "a32017eff252569cef883d7d3308b2ca01fc41b167b568ad00b923603a902f99",
+              "exact_copy": true
+            }
+          ],
+          "required_tests": [
+            "source provenance check",
+            "standalone local web build",
+            "theme and accessibility checks",
+            "visual baseline"
+          ]
+        },
+        {
+          "id": "frontend-shell-and-writing-surfaces",
+          "status": "ported_verified",
+          "source_units": [
+            { "path": "packages/client/ui-layout", "git_tree_oid": "d378b61ee60d867f01f8a7de0d6c5567e521d7d7" },
+            { "path": "packages/client/ui-dockkit", "git_tree_oid": "4ff72df129cbe6904a3654b75be80853e370668d" },
+            { "path": "packages/client/ui-sidebar", "git_tree_oid": "154ee0af86d21bfe63b6d56f57f17e9fb13be44c" },
+            { "path": "packages/client/ui-sidebar-right", "git_tree_oid": "df4cacd5a0b5f79cc43ef997d04ff964dd79c0b4" },
+            { "path": "packages/client/ui-sidebar-documentpreview", "git_tree_oid": "4c218f045f7d6f6781b9a8b218060d4741addfa4" },
+            { "path": "packages/client/resources", "git_tree_oid": "d4ea8d59412d762d4545cdb70edc74dd30164f91" },
+            { "path": "packages/client/ui-conversation", "git_tree_oid": "babe7dc8fbf611dc71dcd5273b0e904228b3eb3e" },
+            { "path": "packages/client/ui-chat", "git_tree_oid": "91389dc8d536ec7db7173423a0b87d7232ecf410" },
+            { "path": "packages/client/ui-session", "git_tree_oid": "ef3f7f7dbd30977b949f7011a783db3c3961eeac" },
+            { "path": "packages/client/ui-tool", "git_tree_oid": "a3e5bf32cfb8b313afef4c8597668b5106f02be0" },
+            { "path": "packages/client/ui-workspace", "git_tree_oid": "74ffb06482a441fa3e644c8a15f513f34df8f1aa" },
+            { "path": "packages/client/ui-model-selection", "git_tree_oid": "1dc154e953d8eec5f0c5638483b0ab0e60ade873" },
+            { "path": "packages/client/ui-settings", "git_tree_oid": "3567b79393c51ff3712a78e4764e8f563da262ea" },
+            { "path": "packages/client/ui-settings-models", "git_tree_oid": "28bcbeea14244bea64789c66daa21c3aedf1988e" },
+            { "path": "packages/client/ui-deliverables", "git_tree_oid": "f46e608ef97de096c368e7d31b65b2c889b60dd3" }
+          ],
+          "target_paths": [
+            "packages/ui/shell",
+            "packages/client-bridge",
+            "packages/writing-ui"
+          ],
+          "copied_files": [
+            {
+              "source_path": "packages/client/ui-layout/src/client/AppFrame.module.css",
+              "target_path": "packages/ui/src/upstream/layout/AppFrame.module.css",
+              "sha256": "3ea2d3c3035a26484ee5e7760f5f6d53719b5a665cac1e09dca96bf88e8e44ec",
+              "exact_copy": true
+            },
+            {
+              "source_path": "packages/client/ui-layout/src/client/columns.ts",
+              "target_path": "packages/ui/src/upstream/layout/columns.ts",
+              "sha256": "c08a7a77874b4a8d1d963da05362886dd7e9d756c24d5d0c4b7919d8472cc1c9",
+              "exact_copy": true
+            },
+            {
+              "source_path": "packages/client/ui-sidebar/src/client/SidebarRoot.module.css",
+              "target_path": "packages/ui/src/upstream/sidebar/SidebarRoot.module.css",
+              "sha256": "aa6b29bceab34a49e00c7c10c0448eaab288acedc1adedf27b96235db4e6265e",
+              "exact_copy": true
+            },
+            {
+              "source_path": "packages/client/ui-conversation/src/client/skeleton/InputBar.module.css",
+              "target_path": "packages/ui/src/upstream/conversation/InputBar.module.css",
+              "sha256": "f7483b4349fe46089ae368d5b785d3576d16c284077c64ec039d19bd50dae2ae",
+              "exact_copy": true
+            }
+          ],
+          "required_tests": [
+            "conversation stream and history tests",
+            "document preview security tests",
+            "project switch/reconnect/cancel tests",
+            "visual and interaction baseline"
+          ]
+        },
+        {
+          "id": "frontend-host-api-type-closure",
+          "status": "audited_planned",
+          "source_units": [
+            { "path": "packages/host/webserver", "git_tree_oid": "9031ef10b491ca8acddbe935ab3aecc4f936071a" },
+            { "path": "packages/host/frontend-static", "git_tree_oid": "36ea968d6786ac34dc67eb871cf0856f517a07e1" },
+            { "path": "packages/api/gateway", "git_tree_oid": "c2a9cd3d088f3967eab796da33447f732e56c26d" },
+            { "path": "packages/api/remotes", "git_tree_oid": "1f0c5585ab44f6e28ef2911cdbbc154c92afbd7c" },
+            { "path": "packages/api/session-controller", "git_tree_oid": "f13e361c21b76b93c40839e70bffcfcd8ec42f17" },
+            { "path": "packages/api/settings-controller", "git_tree_oid": "936aa8991ea7745c030b27cdef16ce199ad608f5" },
+            { "path": "packages/api/workspace-controller", "git_tree_oid": "0fde5a6d092461282afc38a5601b04d7ec763d70" },
+            { "path": "packages/api/workspace-files", "git_tree_oid": "a4e18edb3517444946d9eaf47817d5a01ba9b63f" },
+            { "path": "packages/typert/protocol", "git_tree_oid": "3218368fa9fbb061106a8e4d99a3e64dbb1db700" },
+            { "path": "packages/typert/registry", "git_tree_oid": "9d24c2d18b04fa24bf854cc42658774f359bae3d" },
+            { "path": "apps/web", "git_tree_oid": "a183a80d3343149716b852894598f639303e0b06" }
+          ],
+          "target_paths": [
+            "packages/client-bridge",
+            "apps/web"
+          ],
+          "copied_files": [],
+          "required_tests": [
+            "bridge protocol version test",
+            "snapshot/stream/cancel/reconnect tests",
+            "no external DSH host test"
+          ]
+        },
+        {
+          "id": "official-brand-module",
+          "status": "excluded",
+          "source_units": [
+            { "path": "packages/client/ui-brand-official", "git_tree_oid": "23deaf6c1952528b10295ddd3aec05754a097f99" }
+          ],
+          "target_paths": [
+            "packages/ui/brand"
+          ],
+          "copied_files": [],
+          "replacement": "Writing Agent-owned brand module; upstream legal attribution remains in notices."
+        },
+        {
+          "id": "electron-shell-reference",
+          "status": "ported_verified",
+          "source_units": [
+            { "path": "apps/desktop", "git_tree_oid": "5c34ef8a69782a01782ca396ab705da3108de3c7" }
+          ],
+          "target_paths": [
+            "apps/desktop"
+          ],
+          "copied_files": [
+            {
+              "source_path": "apps/desktop/src/single-instance.ts",
+              "target_path": "apps/desktop/src/single-instance.ts",
+              "sha256": "dc6a6e263a6fdedc3f1cfacb97eb6f60dd5b04ad5d3b02daae4640f2e30a5150",
+              "exact_copy": true
+            }
+          ],
+          "excluded_features": [
+            "DSH runtime/profile startup",
+            "official auto-update endpoints",
+            "online plugin management",
+            "DSH shared home directory"
+          ],
+          "required_tests": [
+            "contextIsolation and nodeIntegration checks",
+            "preload/IPC allowlist tests",
+            "navigation and external-link tests",
+            "Windows packaged smoke test"
+          ]
+        }
+      ]
+    }
+  ]
+}

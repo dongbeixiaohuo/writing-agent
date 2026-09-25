@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": false,
+    "noEmit": true,
+    "types": ["node", "electron"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "../../packages/client-bridge/src/**/*.ts",
+    "../../packages/application/src/**/*.ts",
+    "../../packages/storage/src/**/*.ts",
+    "../../packages/writing-core/src/**/*.ts",
+    "../../packages/writing-pack/src/**/*.ts",
+    "../../packages/runtime/**/*.ts",
+    "../../packages/model-adapters/**/*.ts"
+  ]
+}

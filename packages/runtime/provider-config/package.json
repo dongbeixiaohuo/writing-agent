@@ -1,0 +1,15 @@
+{
+  "name": "@writing-agent/runtime-provider-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  }
+}

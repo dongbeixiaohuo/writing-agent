@@ -1,0 +1,1024 @@
+{
+  "schema_version": "1.0",
+  "document_date": "2026-09-16",
+  "repository": "dongbeixiaohuo/writing-agent",
+  "baseline_commit": "ca01dcf989729a5c255bbb50b4b7896f3ef810a4",
+  "upstream_reference": {
+    "repository": "deepseek-ai/deepseek-harness",
+    "commit": "0d1f50007f9bca3f52b06e1c3074fa14d5fb0720",
+    "usage": "runtime source transplantation plus direct frontend source reuse; no external DSH host/SDK runtime dependency"
+  },
+  "integration_branch": "next/runtime",
+  "status_vocabulary": [
+    "NOT_STARTED",
+    "IN_PROGRESS",
+    "IMPLEMENTED_NOT_VERIFIED",
+    "BLOCKED_EXTERNAL",
+    "DONE"
+  ],
+  "notes": [
+    "These are planning IDs, not GitHub issue numbers.",
+    "No repository changes or releases have been performed by creating this document.",
+    "Do not mark DONE without the stated verification.",
+    "PRD 1.1 supersedes the old-desktop UI/Tauri reuse plan, not the target product version 1.0.",
+    "Task IDs remain stable; WA-023–025 are inserted by dependency, not after release."
+  ],
+  "tasks": [
+    {
+      "id": "WA-001",
+      "milestone": "M0",
+      "priority": "P0",
+      "title": "审计原仓库、指引、执行链和真实数据结构",
+      "status": "DONE",
+      "depends_on": [],
+      "requirements": [
+        "F11",
+        "IND-01",
+        "UI-07"
+      ],
+      "acceptance_test_ids": [
+        "AT-29"
+      ],
+      "deliverables": [
+        "docs/architecture/BASELINE_AUDIT.md"
+      ],
+      "definition_of_done": [
+        "记录实际 HEAD、未提交修改和旧/新产品范围；不覆盖用户工作",
+        "列出 legacy 与 desktop 的执行、依赖及 SQLite/目录格式差异",
+        "所有现有/未实现/未知能力分栏，不将历史 PRD 当运行实测",
+        "旧桌面仅作数据/历史审计，不把 App.tsx/CSS/Tauri 启动链列为新版复用目标"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-002",
+      "milestone": "M0",
+      "priority": "P0",
+      "title": "固定 DSH 前后端源码并审计依赖、UI 来源与许可",
+      "status": "DONE",
+      "depends_on": [
+        "WA-001"
+      ],
+      "requirements": [
+        "IND-02",
+        "IND-03",
+        "IND-05",
+        "F14",
+        "UI-01",
+        "UI-06"
+      ],
+      "acceptance_test_ids": [
+        "AT-30"
+      ],
+      "deliverables": [
+        "docs/architecture/UPSTREAM_MAP.md",
+        "upstream-sources.json",
+        "THIRD_PARTY_NOTICES.md（按实际移植内容建立）",
+        "docs/architecture/FRONTEND_UPSTREAM_MAP.md",
+        "docs/testing/UI_BASELINE_PLAN.md"
+      ],
+      "definition_of_done": [
+        "记录所选 commit、原路径、依赖闭包、测试、许可与目标路径",
+        "明确保留、移植、重写、排除项，不以 SDK/profile 作为实现",
+        "未取得源码时标明阻塞，不编造 ported 状态",
+        "前端 client/host/API/类型生成/主题/品牌依赖一并审计，不只复制组件",
+        "标出官方端点、资源许可、预览非编辑和 HTML 安全差异"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-003",
+      "milestone": "M0",
+      "priority": "P0",
+      "title": "运行旧版回归并冻结迁移/门禁测试夹具",
+      "status": "DONE",
+      "depends_on": [
+        "WA-001"
+      ],
+      "requirements": [
+        "F09",
+        "F11"
+      ],
+      "acceptance_test_ids": [
+        "AT-17",
+        "AT-21",
+        "AT-22",
+        "AT-29"
+      ],
+      "deliverables": [
+        "docs/testing/BASELINE_RESULTS.md",
+        "tests/fixtures/legacy/（新建规范夹具）"
+      ],
+      "definition_of_done": [
+        "逐项记录实际命令与 PASS/FAIL/SKIPPED 及原因",
+        "保留旧项目与桌面项目规范夹具，不含私人数据和 Key",
+        "建立严格门禁和损坏输入夹具供差分测试"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-004",
+      "milestone": "M0",
+      "priority": "P0",
+      "title": "确定架构 ADR、集成分支和基础 CI",
+      "status": "DONE",
+      "depends_on": [
+        "WA-002",
+        "WA-003"
+      ],
+      "requirements": [
+        "IND-01",
+        "IND-02",
+        "IND-03",
+        "IND-04",
+        "UI-01",
+        "UI-05",
+        "UI-06"
+      ],
+      "acceptance_test_ids": [
+        "AT-24",
+        "AT-30"
+      ],
+      "deliverables": [
+        "docs/architecture/adr/0001-independent-source-runtime.md",
+        "docs/architecture/adr/0002-storage-and-recovery.md",
+        "docs/architecture/adr/0003-distribution-and-transport.md",
+        "docs/architecture/adr/0004-legacy-migration-and-export-semantics.md",
+        "CI 初始配置",
+        "docs/architecture/adr/0005-dsh-frontend-source-reuse.md"
+      ],
+      "definition_of_done": [
+        "确定普通底层库、源码移植粒度、存储/分发与旧导出兼容策略",
+        "保留 main，使用 next/runtime 的正常分支/小 PR 方式",
+        "检查包名与当前 private 状态，不提前宣布 npm 命令可用",
+        "明确直接复用 DSH UI；桌面默认评估同源 Electron 最小壳，不能自动恢复旧 Tauri 路线",
+        "安排 WA-023 与运行时并行，主题/Slot 及协议边界提前定义"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-023",
+      "milestone": "M1",
+      "priority": "P0",
+      "title": "源码移植 DSH 前端并建立保真 UI 基线",
+      "status": "DONE",
+      "depends_on": [
+        "WA-004"
+      ],
+      "requirements": [
+        "F14",
+        "UI-01",
+        "UI-02",
+        "UI-06",
+        "UI-07",
+        "UI-08"
+      ],
+      "acceptance_test_ids": [
+        "AT-30",
+        "AT-31",
+        "AT-32",
+        "AT-36"
+      ],
+      "deliverables": [
+        "packages/ui/ 初始源码移植",
+        "必要 client/host/构建依赖闭包",
+        "UI 上游/派生截图与差异白名单",
+        "本地 mock UI 预览入口"
+      ],
+      "definition_of_done": [
+        "固定 commit 与源码许可/依赖映射，不仿写原版页面，也不混用旧 UI",
+        "保留原版布局/导航/输入/主题/设置交互，品牌与非写作功能裁剪显式记录",
+        "不依赖外部 DSH 服务或旧应用启动；mock 明确标识且不写入真实项目",
+        "实际启动与对照检查有记录；无法运行的项不得写 PASS"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-005",
+      "milestone": "M1",
+      "priority": "P0",
+      "title": "实现领域基础类型、SQLite 事务与不可变版本",
+      "status": "DONE",
+      "depends_on": [
+        "WA-004"
+      ],
+      "requirements": [
+        "F05",
+        "F07"
+      ],
+      "acceptance_test_ids": [
+        "AT-05",
+        "AT-06",
+        "AT-23",
+        "AT-27",
+        "AT-28"
+      ],
+      "deliverables": [
+        "packages/storage/",
+        "packages/writing-core/（实体与版本基础）",
+        "存储与 schema 测试"
+      ],
+      "definition_of_done": [
+        "内容、事件、指针、门禁失效及 operation 结果原子提交",
+        "并发版本条件与 operationId/inputHash 去重有效",
+        "数据库损坏/新版本/磁盘错误不静默清库；备份和删除边界可验证"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-006",
+      "milestone": "M1",
+      "priority": "P0",
+      "title": "移植或适配模型接口并实现第一个 provider",
+      "status": "DONE",
+      "depends_on": [
+        "WA-004"
+      ],
+      "requirements": [
+        "F03",
+        "F12"
+      ],
+      "acceptance_test_ids": [
+        "AT-02",
+        "AT-20"
+      ],
+      "deliverables": [
+        "packages/runtime/llm/",
+        "mock provider 与协议 fixtures"
+      ],
+      "definition_of_done": [
+        "支持完整流式文本、工具调用、usage、错误和 abort",
+        "非法或截断工具参数不执行，真实能力与宣称一致",
+        "无 Key 时 mock 可以验证；真实调用仅在授权后进行"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-007",
+      "milestone": "M1",
+      "priority": "P0",
+      "title": "实现工具注册、参数校验与最小权限",
+      "status": "DONE",
+      "depends_on": [
+        "WA-005",
+        "WA-006"
+      ],
+      "requirements": [
+        "F04"
+      ],
+      "acceptance_test_ids": [
+        "AT-02",
+        "AT-18",
+        "AT-19",
+        "AT-25"
+      ],
+      "deliverables": [
+        "packages/runtime/tools/",
+        "内置材料/版本工具",
+        "工具权限测试"
+      ],
+      "definition_of_done": [
+        "仅注册首批所需工具；默认无任意 shell",
+        "工具 permission 由应用判断，不信任模型自授",
+        "路径、网络与不可信材料边界具备可执行测试",
+        "内部模块启动校验依赖/重名，失败逆序清理；不开放热安装与外部未知插件"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-008",
+      "milestone": "M1",
+      "priority": "P0",
+      "title": "建立自有循环、session 和可重建请求快照",
+      "status": "DONE",
+      "depends_on": [
+        "WA-005",
+        "WA-006",
+        "WA-007"
+      ],
+      "requirements": [
+        "IND-02",
+        "F02",
+        "F05"
+      ],
+      "acceptance_test_ids": [
+        "AT-02",
+        "AT-03",
+        "AT-24"
+      ],
+      "deliverables": [
+        "packages/runtime/agent/",
+        "packages/runtime/session/",
+        "apps/cli/（最小入口）"
+      ],
+      "definition_of_done": [
+        "在本仓库代码中完成模型→工具→结果→模型循环",
+        "实际模型输入内容/schema/参数与内容引用落盘可重建",
+        "不启动外部 dsh/Claude SDK，不使用虚假进度事件"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-009",
+      "milestone": "M1",
+      "priority": "P0",
+      "title": "实现取消、操作对账、崩溃恢复和预算",
+      "status": "DONE",
+      "depends_on": [
+        "WA-008"
+      ],
+      "requirements": [
+        "F06",
+        "F12"
+      ],
+      "acceptance_test_ids": [
+        "AT-03",
+        "AT-04",
+        "AT-05",
+        "AT-06",
+        "AT-07",
+        "AT-10",
+        "AT-26"
+      ],
+      "deliverables": [
+        "runtime recovery/operation 实现",
+        "CLI inspect/replay/resume",
+        "故障注入测试"
+      ],
+      "definition_of_done": [
+        "本地 replay 无外部调用，已提交任务状态恢复",
+        "未知外部结果先对账/用户决定，不自动再次收费",
+        "取消后迟到输出不合入；重试与工具调用计入总预算"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-010",
+      "milestone": "M1",
+      "priority": "P0",
+      "title": "迁移中性写作能力包并跑通文章闭环",
+      "status": "IN_PROGRESS",
+      "depends_on": [
+        "WA-008",
+        "WA-009"
+      ],
+      "requirements": [
+        "F01",
+        "F02",
+        "F13"
+      ],
+      "acceptance_test_ids": [
+        "AT-02",
+        "AT-26",
+        "AT-29"
+      ],
+      "deliverables": [
+        "packages/writing-pack/",
+        "旧 Stage 到新任务的映射说明",
+        "真实与 mock 示例"
+      ],
+      "definition_of_done": [
+        "保留作者素材、文体、授权和集中修订规则",
+        "quick/deep 不机械膨胀为二十个独立循环",
+        "CLI 完成材料到稿件保存，所有能力状态如实标记",
+        "CR-002 C02-01 至 C02-10：缺口即时等待、主对话答复同 run 恢复、导演委派和隔离评审有请求与权限证据",
+        "CR-003 C03-01 至 C03-08：一句想法开启对话，未知保持未知，建议和用户授权分离，旧方案失效，确认后同会话写作；必填表单不算完成访谈",
+        "阶段执行完不等于可交付，真实模型和桌面主旅程通过后才能重新申请最终用户验收"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-011",
+      "milestone": "M2",
+      "priority": "P0",
+      "title": "将 DSH 源码派生前端接入自有写作服务与事件流",
+      "status": "DONE",
+      "depends_on": [
+        "WA-010",
+        "WA-023"
+      ],
+      "requirements": [
+        "F01",
+        "F02",
+        "F05",
+        "F06",
+        "F14",
+        "UI-01",
+        "UI-03",
+        "UI-04",
+        "UI-06"
+      ],
+      "acceptance_test_ids": [
+        "AT-04",
+        "AT-10",
+        "AT-25",
+        "AT-31",
+        "AT-35",
+        "AT-36"
+      ],
+      "deliverables": [
+        "packages/ui/ 中移植的 DSH 前端",
+        "packages/client-bridge/ 与所需 Host/Remote 实现",
+        "apps/web/",
+        "应用命令/事件映射与桥接测试"
+      ],
+      "definition_of_done": [
+        "复用 DSH 对话/导航/设置/布局与主题，不引入旧桌面页面",
+        "真实自有服务支持模型引导、简报、稿件状态和停止继续；mock 与正式入口明确分离",
+        "UI 从领域/持久事件读取已保存状态，按项目补读并处理 generation/迟到回包",
+        "本地服务有 Origin/Host/凭据校验，客户端不直写 DB 或直连 provider",
+        "协议/类型生成与前端构建闭包在本仓库可复现，不启动外部 DSH server"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-012",
+      "milestone": "M2",
+      "priority": "P0",
+      "title": "实现块级局部修改、锁定、差异与冲突保护",
+      "status": "DONE",
+      "depends_on": [
+        "WA-005",
+        "WA-011"
+      ],
+      "requirements": [
+        "F07",
+        "F08",
+        "F14",
+        "UI-03",
+        "UI-04"
+      ],
+      "acceptance_test_ids": [
+        "AT-08",
+        "AT-09",
+        "AT-10",
+        "AT-27",
+        "AT-33"
+      ],
+      "deliverables": [
+        "writing-core revisions/decisions",
+        "UI diff/versions/locks",
+        "并发修改测试"
+      ],
+      "definition_of_done": [
+        "每个修改提案绑定 baseVersion 与块 ID/hash",
+        "接受提案创建新版本；过期基准与锁定冲突拒绝",
+        "回退不删除历史，同内容非回退操作不制造空版本",
+        "用移植的面板/基础控件实现稿件编辑与差异；不把 DSH 只读预览当成编辑完成"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-013",
+      "milestone": "M2",
+      "priority": "P0",
+      "title": "移植事实门禁并建立失效传播与来源查询",
+      "status": "DONE",
+      "depends_on": [
+        "WA-003",
+        "WA-005",
+        "WA-010"
+      ],
+      "requirements": [
+        "F07",
+        "F09",
+        "UI-03",
+        "UI-04"
+      ],
+      "acceptance_test_ids": [
+        "AT-11",
+        "AT-12",
+        "AT-13",
+        "AT-14",
+        "AT-17"
+      ],
+      "deliverables": [
+        "writing-core fact-check/provenance",
+        "TS/Python 差分测试",
+        "当前快照状态查询"
+      ],
+      "definition_of_done": [
+        "所有旧阻断状态和 full 支持条件保留",
+        "任一输入改变即 stale，历史报告不可冒充当前报告",
+        "来源关系可查，未知保持未知，不宣称溯源即真实"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-014",
+      "milestone": "M2",
+      "priority": "P0",
+      "title": "实现工作备份与 TXT/HTML 统一正式导出",
+      "status": "DONE",
+      "depends_on": [
+        "WA-012",
+        "WA-013"
+      ],
+      "requirements": [
+        "F10",
+        "UI-03",
+        "UI-04"
+      ],
+      "acceptance_test_ids": [
+        "AT-06",
+        "AT-11",
+        "AT-12",
+        "AT-15",
+        "AT-16"
+      ],
+      "deliverables": [
+        "writing-core export",
+        "CLI/UI 导出入口",
+        "导出中断/重试测试"
+      ],
+      "definition_of_done": [
+        "备份与正式交付分开，保存草稿不被门禁扣留",
+        "TXT/HTML 均调用同一有效快照 gate，失败保护旧文件",
+        "导出操作具备文件/数据库对账与 hash 校验"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-015",
+      "milestone": "M2",
+      "priority": "P0",
+      "title": "完成第二协议、Key 安全、网络与诊断边界",
+      "status": "DONE",
+      "depends_on": [
+        "WA-006",
+        "WA-007",
+        "WA-009",
+        "WA-011"
+      ],
+      "requirements": [
+        "F03",
+        "F04",
+        "F12",
+        "UI-06"
+      ],
+      "acceptance_test_ids": [
+        "AT-18",
+        "AT-19",
+        "AT-20",
+        "AT-25",
+        "AT-26",
+        "AT-36",
+        "AT-38"
+      ],
+      "deliverables": [
+        "第二 provider 协议适配",
+        "系统凭据库适配",
+        "安全/诊断测试与模型矩阵"
+      ],
+      "definition_of_done": [
+        "两种必要协议路径经 fixture/真实授权测试，限制明确",
+        "Key 不进上下文/日志；没有安全存储时只会话保存",
+        "HTML/网络/提示注入/预算限制通过；成本未知不记 0",
+        "审计派生 UI 的反馈/遥测/模型 onboarding/HTML；禁不受信任文档脚本，不照搬上游更新/提交默认值"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-024",
+      "milestone": "M2",
+      "priority": "P0",
+      "title": "集中管理品牌主题并建立写作 Slot 扩展边界",
+      "status": "DONE",
+      "depends_on": [
+        "WA-011"
+      ],
+      "requirements": [
+        "F14",
+        "UI-03",
+        "UI-05",
+        "UI-06"
+      ],
+      "acceptance_test_ids": [
+        "AT-33",
+        "AT-34",
+        "AT-36"
+      ],
+      "deliverables": [
+        "packages/ui/theme 与 brand 覆盖层",
+        "packages/writing-ui/ 扩展注册",
+        "docs/implementation/UI_EXTENSION_GUIDE.md",
+        "主题/面板示例与隔离测试"
+      ],
+      "definition_of_done": [
+        "沿用 DSH tokens/控件/布局机制；配色/品牌修改不进入 runtime",
+        "挂载/卸载演示面板不修改 agent loop、不影响其他页面；演示不作为正式功能默认挂载",
+        "写作模块消费 bridge；基础组件不实现事实门禁，不建设在线主题/插件市场",
+        "允许保留原 CSS 标识和版权；上游补丁与本地差异可追溯"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-025",
+      "milestone": "M2",
+      "priority": "P0",
+      "title": "执行 DSH 派生 UI 的视觉与桥接一致性验收",
+      "status": "DONE",
+      "depends_on": [
+        "WA-011",
+        "WA-012",
+        "WA-013",
+        "WA-014",
+        "WA-024"
+      ],
+      "requirements": [
+        "F14",
+        "UI-01",
+        "UI-02",
+        "UI-03",
+        "UI-04",
+        "UI-05",
+        "UI-06",
+        "UI-07",
+        "UI-08"
+      ],
+      "acceptance_test_ids": [
+        "AT-31",
+        "AT-32",
+        "AT-33",
+        "AT-34",
+        "AT-35",
+        "AT-36"
+      ],
+      "deliverables": [
+        "docs/testing/UI_BASELINE_RESULTS.md",
+        "docs/testing/UI_CHANGE_ALLOWLIST.md",
+        "可复现视觉/交互脚本和截图",
+        "Client bridge 协议/重连测试"
+      ],
+      "definition_of_done": [
+        "同内容/环境验证关键页面明暗主题和交互，非必要重设计不能作为默认合入",
+        "稿件编辑/锁定/差异/核查真实可操作，文档预览与编辑能力明确区分",
+        "重连、generation 旧回包、项目切换与协议版本不兼容不产生假状态",
+        "未检查的浏览器/分辨率不宣称支持；所有视觉/行为失败可复现"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-016",
+      "milestone": "M3",
+      "priority": "P0",
+      "title": "建立旧 manifest 与桌面库的只读迁移",
+      "status": "DONE",
+      "depends_on": [
+        "WA-003",
+        "WA-005",
+        "WA-013"
+      ],
+      "requirements": [
+        "F11",
+        "F13",
+        "UI-07"
+      ],
+      "acceptance_test_ids": [
+        "AT-21",
+        "AT-22",
+        "AT-23",
+        "AT-28",
+        "AT-37"
+      ],
+      "deliverables": [
+        "迁移扫描/dry-run/执行/报告",
+        "两类旧格式测试",
+        "迁移和回退文档"
+      ],
+      "definition_of_done": [
+        "先扫描与备份，再写新目标；旧源 hash 不变",
+        "中断和重试不重复导入，旧 passed 不升级为通过",
+        "未知来源与 legacy 风格状态保留，Key 单独处理",
+        "迁移在新程序内完成，不要求安装或运行旧桌面应用"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-017",
+      "milestone": "M3",
+      "priority": "P0",
+      "title": "以新桌面容器分发 DSH 派生 UI 与自有 runtime",
+      "status": "DONE",
+      "depends_on": [
+        "WA-011",
+        "WA-014",
+        "WA-015",
+        "WA-024"
+      ],
+      "requirements": [
+        "IND-01",
+        "IND-04",
+        "F03",
+        "F14",
+        "UI-06",
+        "UI-07"
+      ],
+      "acceptance_test_ids": [
+        "AT-01",
+        "AT-24",
+        "AT-25",
+        "AT-30",
+        "AT-36",
+        "AT-37",
+        "AT-38"
+      ],
+      "deliverables": [
+        "apps/desktop/（默认评估源码移植 DSH Electron 最小壳）",
+        "Windows 自包含打包脚本与来源/依赖清单",
+        "独立品牌/路径/桥接安全与安装卸载测试"
+      ],
+      "definition_of_done": [
+        "携带匹配的自有 runtime 与同源前端，不要求用户装开发环境/DSH/旧应用",
+        "不使用旧 App.tsx/CSS/Tauri 启动链；不出现第二套写作 UI/领域流程",
+        "应用 ID、数据目录、协议与更新身份归 Writing Agent；不继承上游官方默认服务",
+        "若采用 Electron，renderer Node 集成关闭、上下文隔离/受限 preload/IPC/导航验证通过",
+        "替代容器需 ADR 与维护者批准；署名/签名/校验和/卸载数据行为如实说明"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-018",
+      "milestone": "M3",
+      "priority": "P0",
+      "title": "执行端到端、恢复、安全与迁移发布候选验收",
+      "status": "BLOCKED_EXTERNAL",
+      "depends_on": [
+        "WA-010",
+        "WA-009",
+        "WA-012",
+        "WA-014",
+        "WA-015",
+        "WA-016",
+        "WA-017",
+        "WA-025"
+      ],
+      "requirements": [
+        "F01",
+        "F02",
+        "IND-01",
+        "IND-04",
+        "F06",
+        "F08",
+        "F09",
+        "F11",
+        "F14",
+        "UI-01",
+        "UI-02",
+        "UI-03",
+        "UI-04",
+        "UI-05",
+        "UI-06",
+        "UI-07",
+        "UI-08"
+      ],
+      "acceptance_test_ids": [
+        "AT-01",
+        "AT-02",
+        "AT-03",
+        "AT-04",
+        "AT-05",
+        "AT-06",
+        "AT-07",
+        "AT-08",
+        "AT-09",
+        "AT-10",
+        "AT-11",
+        "AT-12",
+        "AT-13",
+        "AT-14",
+        "AT-15",
+        "AT-16",
+        "AT-17",
+        "AT-18",
+        "AT-19",
+        "AT-20",
+        "AT-21",
+        "AT-22",
+        "AT-23",
+        "AT-24",
+        "AT-25",
+        "AT-26",
+        "AT-27",
+        "AT-28",
+        "AT-29",
+        "AT-30",
+        "AT-31",
+        "AT-32",
+        "AT-33",
+        "AT-34",
+        "AT-35",
+        "AT-36",
+        "AT-37",
+        "AT-38"
+      ],
+      "deliverables": [
+        "docs/testing/RC_RESULTS.md",
+        "可复现失败/恢复脚本",
+        "真实模型与环境记录"
+      ],
+      "definition_of_done": [
+        "38 项验收逐项有实际结果、环境和限制；源码/视觉/协议/安全分别记录",
+        "CR-002 C02-01 至 C02-10 有真实业务证据，未解决导演/缺口交互/独立评审问题禁止最终用户验收就绪",
+        "未解决严重数据/权限/门禁问题阻止 RC 签收",
+        "真实模型调用与 mock 测试明确分开",
+        "新 UI 不含旧页面依赖，Web/桌面运行同一移植前端，旧数据独立导入可用"
+      ],
+      "owner_role": "qa_and_maintainer",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-019",
+      "milestone": "M4",
+      "priority": "P0",
+      "title": "运行配对质量评估和真实用户上手实验",
+      "status": "BLOCKED_EXTERNAL",
+      "depends_on": [
+        "WA-018"
+      ],
+      "requirements": [
+        "F01",
+        "F02",
+        "F08"
+      ],
+      "acceptance_test_ids": [],
+      "deliverables": [
+        "evaluations/ 评估结果",
+        "docs/testing/QUALITY_AND_USABILITY.md"
+      ],
+      "definition_of_done": [
+        "12 例旧/新/简单基线同输入比较，明确成本/模型和变量",
+        "人工评分与重大事实错误单独记录，不宣称小样本显著",
+        "建议 5 人上手目标有真实分母/阻塞记录；未执行标缺失",
+        "DSH 界面复用、运行时变更与写作策略变更分开记录，不把视觉变化当质量收益"
+      ],
+      "owner_role": "qa_and_maintainer",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-020",
+      "milestone": "M4",
+      "priority": "P0",
+      "title": "完成迁移文档、README 与分阶段发布材料",
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "depends_on": [
+        "WA-018",
+        "WA-019"
+      ],
+      "requirements": [
+        "F11",
+        "UI-01",
+        "UI-08"
+      ],
+      "acceptance_test_ids": [],
+      "deliverables": [
+        "README/Quickstart/Legacy/Migration",
+        "Release 草稿与演示脚本",
+        "GitHub 跟踪与贡献指南草稿",
+        "UI 源码来源/主题扩展说明与可复现演示材料"
+      ],
+      "definition_of_done": [
+        "安装命令与下载资产真实可用，未上线能力不宣称",
+        "旧稳定入口、历史 Demo 与原仓库关系保留",
+        "不群发 stargazers，不误用 DSH 官方身份",
+        "对外明确 DSH UI 源码复用，区分 mock UI 预览与真实独立写作；不声称全部 UI 原创"
+      ],
+      "owner_role": "implementation_agent",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-021",
+      "milestone": "M4",
+      "priority": "P0",
+      "title": "审查独立性、第三方声明、发行资产与回退",
+      "status": "BLOCKED_EXTERNAL",
+      "depends_on": [
+        "WA-018",
+        "WA-019",
+        "WA-020"
+      ],
+      "requirements": [
+        "IND-01",
+        "IND-02",
+        "IND-03",
+        "IND-04",
+        "IND-05",
+        "UI-01",
+        "UI-02",
+        "UI-03",
+        "UI-04",
+        "UI-05",
+        "UI-06",
+        "UI-07",
+        "UI-08"
+      ],
+      "acceptance_test_ids": [
+        "AT-01",
+        "AT-24",
+        "AT-30",
+        "AT-31",
+        "AT-32",
+        "AT-33",
+        "AT-34",
+        "AT-35",
+        "AT-36",
+        "AT-37",
+        "AT-38"
+      ],
+      "deliverables": [
+        "docs/testing/RELEASE_GATE.md",
+        "发行校验和/来源清单",
+        "维护者签收清单"
+      ],
+      "definition_of_done": [
+        "确认所有硬门禁、迁移、许可证、质量限制与产物一致",
+        "保留 legacy 版本、备份和可执行回退步骤",
+        "区分已可发布与缺证书/账号/测试等阻塞，不代替维护者签收"
+      ],
+      "owner_role": "qa_and_maintainer",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    },
+    {
+      "id": "WA-022",
+      "milestone": "M4",
+      "priority": "P0",
+      "title": "维护者批准后主线切换并发布 1.0",
+      "status": "BLOCKED_EXTERNAL",
+      "depends_on": [
+        "WA-021"
+      ],
+      "requirements": [
+        "IND-01",
+        "IND-05"
+      ],
+      "acceptance_test_ids": [],
+      "deliverables": [
+        "经批准的 main 合并 PR",
+        "正式 Release 与旧版入口",
+        "发布后反馈记录"
+      ],
+      "definition_of_done": [
+        "仅经明确授权执行远程/公开发布与设置变化",
+        "普通 PR 合并保留历史；不强推/重建仓库/覆盖旧 tag",
+        "实际发布入口、版本、校验和、限制与宣传一致"
+      ],
+      "owner_role": "maintainer_release",
+      "requires_maintainer_approval_for_public_actions": true,
+      "github_issue_url": null
+    }
+  ],
+  "document_version": "1.1",
+  "ui_source_policy": {
+    "decision_id": "CR-001",
+    "status": "USER_CONFIRMED",
+    "source": "deepseek-ai/deepseek-harness frontend source",
+    "legacy_desktop_ui": "not a new-product UI or shell baseline; preserve history and data import only",
+    "desktop_container": "default: evaluate source-porting minimal DSH Electron shell; alternatives require ADR and maintainer approval",
+    "sequence": "WA-023 in parallel with WA-005–010; join at WA-011",
+    "contract": "FRONTEND_REUSE_PLAN.md"
+  }
+}

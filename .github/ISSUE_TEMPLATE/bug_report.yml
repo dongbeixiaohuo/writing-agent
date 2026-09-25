@@ -1,0 +1,60 @@
+name: Bug 报告
+description: 报告可复现的 Writing Agent 问题；不要提交 API Key 或私人正文
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先脱敏。不要粘贴 API Key、完整私人文章、客户资料或 Credential Manager 内容。
+  - type: input
+    id: version
+    attributes:
+      label: Writing Agent 版本
+      placeholder: 例如 1.0.0-rc.1；设置页或安装包文件名
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: 入口
+      options:
+        - Windows 桌面版
+        - 本地 Web
+        - CLI/runtime
+        - Legacy 工作流/插件
+        - 迁移工具
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 最小复现步骤
+      description: 从一个全新或已备份的项目开始，逐步说明操作。
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: Windows 版本、架构、安装路径、provider 协议/模型名；不要填写 Key。
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 脱敏诊断
+      description: 请先在应用中预览诊断包，确认不含私人正文、路径和 Key 后再附上。
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我确认内容不含 API Key、私人全文或未经授权的第三方数据
+          required: true

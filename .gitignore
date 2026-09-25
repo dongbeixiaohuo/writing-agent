@@ -24,6 +24,10 @@ Thumbs.db
 
 # 依赖（如果将来添加）
 node_modules/
+.playwright-cli/
+apps/web/dist/
+apps/desktop/dist/
+output/
 docs/
 .env
 .claude/settings.local.json
@@ -40,3 +44,12 @@ docs/*
 !docs/WORKFLOW_CONTRACT.md
 !docs/WORKFLOW_QUICK_REFERENCE.md
 !docs/PROJECT_STRUCTURE.md
+!docs/QUICKSTART_1_0.md
+!docs/architecture/
+!docs/architecture/**
+!docs/implementation/
+!docs/implementation/**
+!docs/launch/
+!docs/launch/**
+!docs/testing/
+!docs/testing/**

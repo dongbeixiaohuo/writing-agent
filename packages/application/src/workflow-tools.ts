@@ -1,0 +1,1121 @@
+import type {
+  ArtifactKind,
+  ArtifactVersion,
+  FactClaim,
+  JsonValue,
+  MutationResult,
+  ProjectMode,
+  StoragePort,
+} from "../../writing-core/src/index.js";
+import {
+  workflowStageSequence,
+  type WritingWorkflowStage,
+} from "../../writing-pack/src/index.js";
+import {
+  ToolExecutionFault,
+  type ToolDefinition,
+  type ToolExecutionContext,
+} from "../../runtime/tools/src/index.js";
+
+type ContentStage = Exclude<WritingWorkflowStage, "fact_check">;
+import { FactClaimStatusSchema, FactClaimTypeSchema } from '../../writing-core/src/index.js';
+import { isPublicationSelectionCurrent } from './publication-choice.js';
+type BodyStage = Extract<ContentStage, "draft" | "central_revision" | "language_review">;
+
+interface SubmitWritingStageArgs {
+  readonly stage: ContentStage;
+  readonly content: string;
+}
+
+interface SubmitFactCheckArgs {
+  readonly claims: readonly FactClaim[];
+  readonly noFactualClaimsReason: string;
+}
+
+interface AssessWritingReadinessArgs {
+  readonly status: "ready" | "needs_input";
+  readonly reason: string;
+  readonly questions: readonly string[];
+}
+
+export function assertBusinessInputQuestions(reason: string, questions: readonly string[]): void {
+  if (/(?:COLLABORATION_STATE|inputVersionIds|contentVersionId|artifactVersionId|UUID)/iu.test([reason, ...questions].join("\n"))) {
+    throw new ToolExecutionFault("INTERNAL_METADATA_NOT_USER_GAP",
+      "Internal runtime IDs are not missing writing material. The runtime binds input versions automatically; an empty research artifact list is valid. Ask users only about actual writing scope or evidence, never tool metadata.");
+  }
+}
+
+export interface WritingWorkflowCompletion {
+  readonly complete: boolean;
+  readonly bodyVersionId: string | null;
+  readonly publicationReady: boolean;
+}
+
+export interface WritingWorkflowTools {
+  readonly definitions: readonly ToolDefinition<never, JsonValue>[];
+  isReady(runId: string): boolean;
+  unreadReadinessArtifactIds(runId: string): readonly string[];
+  invalidate(context: ToolExecutionContext, stage: WritingWorkflowStage): readonly WritingWorkflowStage[];
+  progress(runId: string): {
+    readonly completedStages: readonly WritingWorkflowStage[];
+    readonly nextStage: WritingWorkflowStage | null;
+  };
+  continuationContext(runId: string): {
+    readonly nextStage: WritingWorkflowStage | null;
+    readonly artifacts: readonly {
+      readonly stage: WritingWorkflowStage | "current_body";
+      readonly artifactVersionId: string;
+    }[];
+  };
+  completion(runId: string): WritingWorkflowCompletion;
+}
+
+const CO_CREATION_CHECKPOINT_STAGES = new Set<ContentStage>([
+  "outline",
+  "draft",
+  "review_editor",
+  "review_publish",
+  "review_reader",
+]);
+
+function value<T>(result: MutationResult<T>): T {
+  if (result.ok) return result.result;
+  throw new ToolExecutionFault(result.code, result.message, result.retryable, {
+    operationId: result.operationId,
+  });
+}
+
+function markerKey(runId: string, stage: WritingWorkflowStage): string {
+  return `workflow:${runId}:${stage}`;
+}
+
+function stageMarker(
+  storage: StoragePort,
+  projectId: string,
+  runId: string,
+  stage: WritingWorkflowStage,
+): ArtifactVersion | null {
+  const invalidated = new Set(storage.listArtifactVersions(projectId, "report", `workflow-invalidated:${runId}`)
+    .flatMap((version) => { try { return JSON.parse(version.content).markerIds as string[]; } catch { return []; } }));
+  return storage
+    .listArtifactVersions(projectId, "report", markerKey(runId, stage))
+    .filter((version) => !invalidated.has(version.id)).reverse().find(
+      (version) =>
+        version.actor.kind === "agent" && version.actor.runId === runId,
+    ) ?? null;
+}
+
+function expectedStage(
+  storage: StoragePort,
+  projectId: string,
+  runId: string,
+  mode: ProjectMode,
+): WritingWorkflowStage | null {
+  return workflowStageSequence(mode).find(
+    (stage) => stageMarker(storage, projectId, runId, stage) === null || (stage === "fact_check" && storage.getFactCheckStatus(projectId).status !== "passed"),
+  ) ?? null;
+}
+
+function assertExpectedStage(
+  storage: StoragePort,
+  context: ToolExecutionContext,
+  mode: ProjectMode,
+  received: WritingWorkflowStage,
+): void {
+  const expected = expectedStage(
+    storage,
+    context.projectId,
+    context.runId,
+    mode,
+  );
+  if (expected === null) {
+    throw new ToolExecutionFault(
+      "WORKFLOW_ALREADY_COMPLETE",
+      "All writing workflow stages have already been submitted",
+    );
+  }
+  if (received !== expected) {
+    throw new ToolExecutionFault(
+      "WORKFLOW_STAGE_OUT_OF_ORDER",
+      `Expected ${expected} before ${received}`,
+      false,
+      { expected, received },
+    );
+  }
+}
+
+function actor(stage: WritingWorkflowStage, runId: string) {
+  const id = stage.startsWith("review_")
+    ? `writing-pack/${stage}`
+    : stage === "research" || stage === "fact_check"
+      ? "writing-pack/researcher"
+      : "writing-pack/writer";
+  return { kind: "agent" as const, id, runId };
+}
+
+function logicalKey(stage: ContentStage, runId: string): string {
+  if (stage.startsWith("review_")) return `${stage}:${runId}`;
+  return "main";
+}
+
+function artifactKind(stage: ContentStage): ArtifactKind {
+  if (stage === "research") return "evidence";
+  if (stage === "outline") return "outline";
+  if (stage.startsWith("review_")) return "review";
+  return "body";
+}
+
+export function assertCleanBodyStageContent(stage: BodyStage, content: string, boundBody?: string): void {
+  const normalized = content.trim();
+  if (stage === "language_review" && boundBody?.trim() === normalized) return;
+  const firstLine = normalized.split(/\r?\n/u, 1)[0] ?? "";
+  const startsWithProcessHeading = /^#{1,6}\s*(?:语言终审|语言审校|最终审校|集中修订说明|修订说明|编辑说明|初稿说明)(?:\s|$)/u.test(firstLine);
+  const includesWrappedArticleMarker = /(?:终稿|正文)(?:与[^\n]{0,40})?(?:如下|如下所示)|以下(?:是|为)(?:最终)?(?:正文|终稿)/u.test(
+    normalized.slice(0, 1_000),
+  );
+  const startsWithReviewAssessment = /^(?:#{1,6}\s*)?(?:本稿|该稿|此稿|当前稿件|原稿)(?:的)?(?:语言|结构|表达|节奏|文字|整体|底子)/u.test(firstLine);
+  const containsReviewRecommendations = /建议优先处理|整体可保留|审校意见|修改建议|建议保留[：:]/u.test(normalized.slice(0, 1_000));
+  const standaloneReviewConclusion = !normalized.includes("\n") && /^(?:无需(?:修改|调整)|整体表达|未发现明显问题|没有需要(?:修改|调整))/u.test(normalized);
+  const headings = (text: string) => text.split(/\r?\n/u).filter((line) => /^#{1,6}\s/u.test(line)).map((line) => line.trim());
+  const changedArticleShape = stage === "language_review" && boundBody !== undefined && (
+    normalized.length < boundBody.trim().length * 0.65 ||
+    normalized.split(/\r?\n/u)[0]?.trim() !== boundBody.trim().split(/\r?\n/u)[0]?.trim() ||
+    JSON.stringify(headings(normalized)) !== JSON.stringify(headings(boundBody))
+  );
+  if (!startsWithProcessHeading && !includesWrappedArticleMarker && !(startsWithReviewAssessment && containsReviewRecommendations) && !standaloneReviewConclusion && !changedArticleShape) return;
+  throw new ToolExecutionFault(
+    "BODY_STAGE_CONTAINS_PROCESS_NOTES",
+    "Body stages must contain the complete article only, without review conclusions or process notes",
+    false,
+    {
+      stage,
+      correction:
+        "Resubmit only the complete Markdown article. Start with the real article title; omit conclusions, rationale, change lists, and phrases such as 'final article below'.",
+    },
+  );
+}
+
+function evidenceLedgerContent(content: string): string {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as { claims?: unknown }).claims)
+    ) {
+      return JSON.stringify(parsed);
+    }
+  } catch {
+    // Free-form research notes remain useful, but they do not become evidence
+    // claims implicitly. The fact gate will therefore reject any unsupported
+    // factual claims instead of treating prose notes as verified evidence.
+  }
+  return JSON.stringify({ claims: [], notes: content.trim() });
+}
+
+export function evidenceIdsFromLedger(content: string): readonly string[] {
+  try {
+    const parsed = JSON.parse(content) as { readonly claims?: readonly unknown[] };
+    if (!Array.isArray(parsed.claims)) return [];
+    return parsed.claims.flatMap((claim) => {
+      if (claim === null || typeof claim !== "object" || Array.isArray(claim)) return [];
+      const evidenceId = (claim as { readonly evidence_id?: unknown }).evidence_id;
+      return typeof evidenceId === "string" && /^E\d{3,}$/u.test(evidenceId)
+        ? [evidenceId]
+        : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+interface WorkflowStageMarkerPayload {
+  readonly schemaVersion: "writing-workflow-stage-v1";
+  readonly runId: string;
+  readonly stage: WritingWorkflowStage;
+  readonly artifactVersionId: string;
+}
+
+interface WritingReviewEnvelope {
+  readonly schemaVersion: "writing-review-v1";
+  readonly reviewType: Extract<ContentStage, `review_${string}`>;
+  readonly runId: string;
+  readonly bodyVersionId: string;
+  readonly content: string;
+}
+
+function markerPayload(marker: ArtifactVersion | null): WorkflowStageMarkerPayload | null {
+  if (marker === null) return null;
+  try {
+    const payload = JSON.parse(marker.content) as Partial<WorkflowStageMarkerPayload>;
+    if (
+      payload.schemaVersion !== "writing-workflow-stage-v1" ||
+      typeof payload.runId !== "string" ||
+      typeof payload.stage !== "string" ||
+      typeof payload.artifactVersionId !== "string"
+    ) {
+      return null;
+    }
+    return payload as WorkflowStageMarkerPayload;
+  } catch {
+    return null;
+  }
+}
+
+function continuationContextStages(
+  nextStage: WritingWorkflowStage | null,
+  mode: ProjectMode,
+): readonly WritingWorkflowStage[] {
+  if (nextStage === null || nextStage === "research") return [];
+  if (nextStage === "outline") return ["research"];
+  if (nextStage === "draft") return ["research", "outline"];
+  if (
+    nextStage === "review_editor" ||
+    nextStage === "review_publish" ||
+    nextStage === "review_reader"
+  ) {
+    return ["research", "draft"];
+  }
+  if (nextStage === "central_revision") {
+    return [
+      "research",
+      "draft",
+      ...workflowStageSequence(mode).filter((stage) => stage.startsWith("review_")),
+    ];
+  }
+  if (nextStage === "language_review") return ["research", "central_revision"];
+  return ["research", "language_review"];
+}
+
+function continuationContextArtifacts(
+  storage: StoragePort,
+  projectId: string,
+  runId: string,
+  mode: ProjectMode,
+  nextStage: WritingWorkflowStage | null,
+): readonly { readonly stage: WritingWorkflowStage; readonly artifactVersionId: string }[] {
+  if (nextStage === "central_revision") {
+    const rework = storage.listArtifactVersions(projectId, "report", `workflow-invalidated:${runId}`).at(-1);
+    const binding = rework === undefined ? null : JSON.parse(rework.content).revisionInput;
+    if (binding?.bodyVersionId) {
+      const research = markerPayload(stageMarker(storage, projectId, runId, "research"));
+      return [
+        ...(research === null ? [] : [{ stage: "research" as const, artifactVersionId: research.artifactVersionId }]),
+        { stage: "language_review", artifactVersionId: binding.bodyVersionId },
+        { stage: "fact_check", artifactVersionId: rework!.id },
+      ];
+    }
+  }
+  if (nextStage === "fact_check") {
+    const project = storage.inspectProject(projectId);
+    return [
+      ...(project?.currentEvidenceVersionId ? [{ stage: "research" as const, artifactVersionId: project.currentEvidenceVersionId }] : []),
+      ...(project?.latestBodyVersionId ? [{ stage: "language_review" as const, artifactVersionId: project.latestBodyVersionId }] : []),
+    ];
+  }
+  const artifacts: Array<{ stage: WritingWorkflowStage; artifactVersionId: string }> = [];
+  const seen = new Set<string>();
+  for (const stage of continuationContextStages(nextStage, mode)) {
+    const marker = markerPayload(stageMarker(storage, projectId, runId, stage));
+    if (marker === null || seen.has(marker.artifactVersionId)) continue;
+    seen.add(marker.artifactVersionId);
+    artifacts.push({ stage, artifactVersionId: marker.artifactVersionId });
+  }
+  return artifacts;
+}
+
+function draftVersionForReview(
+  storage: StoragePort,
+  context: ToolExecutionContext,
+  requireCurrentDraft = true,
+): string {
+  const draftMarker = markerPayload(
+    stageMarker(storage, context.projectId, context.runId, "draft"),
+  );
+  if (draftMarker === null) {
+    throw new ToolExecutionFault(
+      "REVIEW_DRAFT_MISSING",
+      "A persisted draft is required before independent review",
+    );
+  }
+  const draft = storage.getArtifactVersion(draftMarker.artifactVersionId);
+  if (draft === null || draft.kind !== "body") {
+    throw new ToolExecutionFault(
+      "REVIEW_DRAFT_MISSING",
+      "The draft bound to this workflow could not be read",
+    );
+  }
+  const project = storage.inspectProject(context.projectId);
+  if (requireCurrentDraft && project?.latestBodyVersionId !== draft.id) {
+    throw new ToolExecutionFault(
+      "REVIEW_DRAFT_CHANGED",
+      "The body changed after the workflow draft was saved; start a new run before reviewing",
+    );
+  }
+  return draft.id;
+}
+
+function reviewEnvelopeContent(
+  storage: StoragePort,
+  context: ToolExecutionContext,
+  stage: Extract<ContentStage, `review_${string}`>,
+  content: string,
+): string {
+  const envelope: WritingReviewEnvelope = {
+    schemaVersion: "writing-review-v1",
+    reviewType: stage,
+    runId: context.runId,
+    bodyVersionId: draftVersionForReview(storage, context),
+    content: content.trim(),
+  };
+  return JSON.stringify(envelope);
+}
+
+function assertReviewsBoundToDraft(
+  storage: StoragePort,
+  context: ToolExecutionContext,
+  mode: ProjectMode,
+): void {
+  // Review reports remain bound to their original draft. A later authorized
+  // central rework reads the current body; its write is guarded by assignment CAS.
+  const draftVersionId = draftVersionForReview(storage, context, false);
+  const reviewStages = workflowStageSequence(mode).filter(
+    (stage): stage is Extract<ContentStage, `review_${string}`> =>
+      stage.startsWith("review_"),
+  );
+  for (const stage of reviewStages) {
+    const marker = markerPayload(
+      stageMarker(storage, context.projectId, context.runId, stage),
+    );
+    const review = marker === null
+      ? null
+      : storage.getArtifactVersion(marker.artifactVersionId);
+    if (review === null || review.kind !== "review") {
+      throw new ToolExecutionFault(
+        "REVIEW_BINDING_MISSING",
+        `${stage} must be persisted before central revision`,
+      );
+    }
+    try {
+      const envelope = JSON.parse(review.content) as Partial<WritingReviewEnvelope>;
+      if (
+        envelope.schemaVersion !== "writing-review-v1" ||
+        envelope.reviewType !== stage ||
+        envelope.runId !== context.runId ||
+        envelope.bodyVersionId !== draftVersionId ||
+        typeof envelope.content !== "string" ||
+        envelope.content.trim().length === 0
+      ) {
+        throw new Error("invalid review binding");
+      }
+    } catch {
+      throw new ToolExecutionFault(
+        "REVIEW_BINDING_INVALID",
+        `${stage} is not bound to the workflow draft`,
+      );
+    }
+  }
+}
+
+function commitStageArtifact(
+  storage: StoragePort,
+  context: ToolExecutionContext,
+  stage: ContentStage,
+  content: string,
+): ArtifactVersion {
+  const project = storage.inspectProject(context.projectId);
+  if (project === null) {
+    throw new ToolExecutionFault("PROJECT_NOT_FOUND", "Writing project is unavailable");
+  }
+  const kind = artifactKind(stage);
+  const key = logicalKey(stage, context.runId);
+  const persistedContent = stage === "research"
+    ? evidenceLedgerContent(content)
+    : stage.startsWith("review_")
+      ? reviewEnvelopeContent(
+          storage,
+          context,
+          stage as Extract<ContentStage, `review_${string}`>,
+          content,
+        )
+      : content;
+  const baseVersionId = kind === "body"
+    ? context.expectedBodyVersionId
+    : kind === "evidence"
+      ? project.currentEvidenceVersionId
+      : storage.listArtifactVersions(context.projectId, kind, key).at(-1)?.id ?? null;
+  const prior = storage.listArtifactVersions(context.projectId, kind, key).find((version) => version.operationId === `${context.operationId}:artifact`);
+  if (prior !== undefined) {
+    if (prior.content !== persistedContent) throw new ToolExecutionFault("IDEMPOTENCY_CONFLICT", "The submitted artifact differs from this operation's committed result");
+    return prior;
+  }
+  const committed = storage.commitArtifactVersion({
+    operationId: `${context.operationId}:artifact`,
+    projectId: context.projectId,
+    expectedProjectRevision: project.revision,
+    kind,
+    logicalKey: key,
+    baseVersionId,
+    content: persistedContent,
+    reason: `workflow:${stage}`,
+    requestSnapshotId: null,
+    actor: actor(stage, context.runId),
+  });
+  const committedValue = value(committed);
+  const version = storage.getArtifactVersion(committedValue.versionId);
+  if (version === null) {
+    throw new ToolExecutionFault(
+      "WORKFLOW_ARTIFACT_MISSING",
+      "Submitted workflow artifact could not be read back",
+    );
+  }
+  return version;
+}
+
+function markStage(
+  storage: StoragePort,
+  context: ToolExecutionContext,
+  stage: WritingWorkflowStage,
+  artifactVersionId: string,
+): void {
+  const project = storage.inspectProject(context.projectId);
+  if (project === null) {
+    throw new ToolExecutionFault("PROJECT_NOT_FOUND", "Writing project is unavailable");
+  }
+  value(storage.commitArtifactVersion({
+    operationId: `${context.operationId}:marker`,
+    projectId: context.projectId,
+    expectedProjectRevision: project.revision,
+    kind: "report",
+    logicalKey: markerKey(context.runId, stage),
+    baseVersionId: storage.listArtifactVersions(context.projectId, "report", markerKey(context.runId, stage)).at(-1)?.id ?? null,
+    content: JSON.stringify({
+      schemaVersion: "writing-workflow-stage-v1",
+      runId: context.runId,
+      stage,
+      artifactVersionId,
+    }),
+    reason: `workflow-stage-complete:${stage}`,
+    requestSnapshotId: null,
+    actor: actor(stage, context.runId),
+  }));
+}
+
+function titleFromBody(content: string): string {
+  const heading = content
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => /^#{1,6}\s+\S/u.test(line));
+  if (heading !== undefined) return heading.replace(/^#{1,6}\s+/u, "").trim();
+  const firstLine = content.split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
+  return firstLine?.slice(0, 80) ?? "未命名稿件";
+}
+
+const WRITING_STAGE_SCHEMA = {
+  type: "object",
+  properties: {
+    stage: {
+      type: "string",
+      enum: [
+        "research",
+        "outline",
+        "draft",
+        "review_editor",
+        "review_publish",
+        "review_reader",
+        "central_revision",
+        "language_review",
+      ],
+    },
+    content: {
+      type: "string",
+      minLength: 1,
+      maxLength: 1_000_000,
+      description:
+        "Stage output. For research this must be a JSON evidence ledger, never Markdown: claims[].evidence_id uses E001/E002 and each claim includes claim_type, claim_text, source_title, source_publisher, source_quote, accessed_at, reliability, use_boundary, verification_status. Use claims:[] plus non-empty notes when no evidence claim exists. For draft, central_revision, and language_review, submit only the complete Markdown article with its real title; never wrap it in review conclusions, rationale, change lists, or 'final article below' notes.",
+    },
+  },
+  required: ["stage", "content"],
+  additionalProperties: false,
+} as const;
+
+const WRITING_READINESS_SCHEMA = {
+  type: "object",
+  properties: {
+    status: { type: "string", enum: ["ready", "needs_input"] },
+    reason: { type: "string", minLength: 1, maxLength: 20_000 },
+    questions: {
+      type: "array",
+      maxItems: 2,
+      items: { type: "string", minLength: 1, maxLength: 2_000 },
+    },
+  },
+  required: ["status", "reason", "questions"],
+  additionalProperties: false,
+} as const;
+
+const NULLABLE_STRING_SCHEMA = {
+  anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
+} as const;
+
+const FACT_CHECK_SCHEMA = {
+  type: "object",
+  properties: {
+    claims: {
+      type: "array",
+      maxItems: 1_000,
+      items: {
+        type: "object",
+        properties: {
+          claimId: { type: "string", pattern: "^C[0-9]{3,}$" },
+          claimText: { type: "string", minLength: 1 },
+          claimType: {
+            type: "string",
+            enum: FactClaimTypeSchema.options,
+          },
+          location: { type: "string", minLength: 1 },
+          status: {
+            type: "string",
+            enum: FactClaimStatusSchema.options,
+            description: 'Exact uppercase enum. Unverifiable=UNSUPPORTED; missing author evidence=NEEDS_USER_SOURCE. Partial belongs to supportScope, never status. SUPPORTED requires complete evidence. Final passed/blocked is computed by the application.',
+          },
+          risk: { type: "string", enum: ["red", "yellow", "green"] },
+          supportScope: { type: "string", enum: ["full", "partial", "none"] },
+          matchedEvidenceId: {
+            ...NULLABLE_STRING_SCHEMA,
+            description:
+              "Exact E### evidence_id from the persisted research ledger. Never use a material ID, version ID, claim ID, or invented ID. Use JSON null if no exact ledger ID exists.",
+          },
+          sourceReference: {
+            ...NULLABLE_STRING_SCHEMA,
+            description:
+              "Authorized material ID or independently verifiable source locator. Required for SUPPORTED when matchedEvidenceId is null.",
+          },
+          evidenceSummary: { type: "string", minLength: 1 },
+          recommendedAction: { type: "string", minLength: 1 },
+        },
+        required: [
+          "claimId",
+          "claimText",
+          "claimType",
+          "location",
+          "status",
+          "risk",
+          "supportScope",
+          "matchedEvidenceId",
+          "sourceReference",
+          "evidenceSummary",
+          "recommendedAction",
+        ],
+        additionalProperties: false,
+      },
+    },
+    noFactualClaimsReason: { type: "string", maxLength: 20_000 },
+  },
+  required: ["claims", "noFactualClaimsReason"],
+  additionalProperties: false,
+} as const;
+
+export function createWritingWorkflowTools(options: {
+  readonly storage: StoragePort;
+  readonly projectId: string;
+  readonly mode: ProjectMode;
+  readonly factCheckOnly?: boolean;
+  readonly interactionMode?: "autonomous" | "co_creation";
+  readonly requiredMaterialIds?: readonly string[];
+  readonly completedMaterialIds?: (runId: string) => readonly string[];
+  readonly enforceContinuationReads?: boolean;
+  readonly requiredInitialArtifactIds?: readonly string[];
+  readonly completedArtifactReadIds?: (runId: string) => readonly string[];
+}): WritingWorkflowTools {
+  const {
+    storage,
+    projectId,
+    mode,
+    factCheckOnly = false,
+    interactionMode = "autonomous",
+    requiredMaterialIds = [],
+    completedMaterialIds,
+    enforceContinuationReads = false,
+    requiredInitialArtifactIds = [],
+    completedArtifactReadIds,
+  } = options;
+  const continuationEntryStageByRun = new Map<string, WritingWorkflowStage | null>();
+  const readyInputsByRun = new Map<string, string>();
+  const initialContextIds = (runId: string): readonly string[] =>
+    storage.listArtifactVersions(projectId, "report", markerKey(runId, "draft")).length > 0 ? [] : requiredInitialArtifactIds;
+
+  const nextStageForRun = (runId: string): WritingWorkflowStage | null =>
+    factCheckOnly
+      ? (stageMarker(storage, projectId, runId, "fact_check") === null
+          ? "fact_check"
+          : null)
+      : expectedStage(storage, projectId, runId, mode);
+
+  // Admission belongs to one stage and its exact inputs, not to the whole run.
+  // Include markers so rework of the same stage cannot reuse an older approval.
+  const readinessKey = (runId: string): string => {
+    const project = storage.inspectProject(projectId)!;
+    return JSON.stringify({
+      nextStage: nextStageForRun(runId),
+      brief: project.currentBriefVersionId,
+      body: project.latestBodyVersionId,
+      title: project.currentTitleVersionId,
+      evidence: project.currentEvidenceVersionId,
+      materials: storage.listMaterials(projectId).filter(m => requiredMaterialIds.includes(m.id)).map(m => [m.id, m.contentVersionId]),
+      stages: workflowStageSequence(mode).map(stage => stageMarker(storage, projectId, runId, stage)?.id ?? null),
+      rework: storage.listArtifactVersions(projectId, 'report', `workflow-invalidated:${runId}`).at(-1)?.id ?? null,
+    });
+  };
+  const isReady = (runId: string): boolean =>
+    nextStageForRun(runId) === null || readyInputsByRun.get(runId) === readinessKey(runId);
+
+  const requiredContextArtifacts = (
+    context: Pick<ToolExecutionContext, 'projectId' | 'runId'>,
+    stage: WritingWorkflowStage | null,
+  ): readonly { readonly artifactVersionId: string; readonly source: string }[] => [
+    ...(enforceContinuationReads
+      ? continuationContextArtifacts(
+          storage,
+          context.projectId,
+          context.runId,
+          mode,
+          stage,
+        ).map((artifact) => ({
+          artifactVersionId: artifact.artifactVersionId,
+          source: artifact.stage,
+        }))
+      : []),
+    ...initialContextIds(context.runId).map((artifactVersionId) => ({
+      artifactVersionId,
+      source: "current_body",
+    })),
+  ].filter((artifact, index, artifacts) =>
+    artifacts.findIndex((candidate) =>
+      candidate.artifactVersionId === artifact.artifactVersionId,
+    ) === index,
+  );
+
+  const unreadReadinessArtifactIds = (runId: string): readonly string[] => {
+    // Later stages receive their exact bound artifacts in their independent
+    // request context. Explicit rereads are required only on entry/recovery.
+    if (readyInputsByRun.has(runId)) return [];
+    const read = new Set(completedArtifactReadIds?.(runId) ?? []);
+    return requiredContextArtifacts({ projectId, runId }, nextStageForRun(runId))
+      .map(a => a.artifactVersionId).filter(id => !read.has(id));
+  };
+
+  const assertReadinessPrerequisites = (context: ToolExecutionContext): void => {
+    const completedMaterials = new Set(completedMaterialIds?.(context.runId) ?? []);
+    const unreadMaterialIds = requiredMaterialIds.filter(
+      (materialId) => !completedMaterials.has(materialId),
+    );
+    if (unreadMaterialIds.length > 0) {
+      throw new ToolExecutionFault(
+        "READINESS_MATERIAL_READ_REQUIRED",
+        "Read every material authorized by the brief before declaring writing readiness",
+        false,
+        { unreadMaterialIds: [...unreadMaterialIds] },
+      );
+    }
+    const unreadIds = new Set(unreadReadinessArtifactIds(context.runId));
+    const unreadArtifacts = requiredContextArtifacts(context, nextStageForRun(context.runId)).filter(a => unreadIds.has(a.artifactVersionId));
+    if (unreadArtifacts.length > 0) {
+      throw new ToolExecutionFault(
+        "READINESS_CONTEXT_READ_REQUIRED",
+        "Read every required persisted context artifact before declaring writing readiness",
+        false,
+        { unreadArtifacts },
+      );
+    }
+  };
+
+  const assertWritingReady = (context: ToolExecutionContext): void => {
+    if (isReady(context.runId)) return;
+    throw new ToolExecutionFault(
+      "WRITING_READINESS_REQUIRED",
+      "Assess writing readiness for the current stage and current input versions before submitting it",
+      false,
+      {
+        correction:
+          "After reading all required inputs, call assess_writing_readiness with ready or needs_input before any stage submission.",
+      },
+    );
+  };
+
+  const assertContinuationContextRead = (
+    context: ToolExecutionContext,
+    stage: WritingWorkflowStage,
+  ): void => {
+    if (!enforceContinuationReads && requiredInitialArtifactIds.length === 0) return;
+    if (!continuationEntryStageByRun.has(context.runId)) {
+      continuationEntryStageByRun.set(
+        context.runId,
+        factCheckOnly
+          ? "fact_check"
+          : expectedStage(storage, context.projectId, context.runId, mode),
+      );
+    }
+    if (continuationEntryStageByRun.get(context.runId) !== stage) return;
+    const requiredArtifacts = requiredContextArtifacts(context, stage);
+    const completed = new Set(completedArtifactReadIds?.(context.runId) ?? []);
+    const unreadArtifacts = requiredArtifacts.filter(
+      (artifact) => !completed.has(artifact.artifactVersionId),
+    );
+    if (unreadArtifacts.length === 0) return;
+    throw new ToolExecutionFault(
+      "CONTINUATION_CONTEXT_READ_REQUIRED",
+      "Read every required persisted context artifact before continuing the workflow",
+      false,
+      {
+        nextStage: stage,
+        unreadArtifacts,
+        correction:
+          "Call read_artifact_version once for every unread artifactVersionId, then resubmit the same stage using that persisted context as the editing baseline.",
+      },
+    );
+  };
+
+  const assessWritingReadiness: ToolDefinition<AssessWritingReadinessArgs, JsonValue> = {
+    name: "assess_writing_readiness",
+    version: "1.0.0",
+    description:
+      "Assess the NEXT stage using its current inputs and the previous expert result, before dispatch or submission. This approval expires after a stage is saved, reworked, or its inputs change. Ask at most two focused questions only for actual missing author information; agent-created defects belong to internal rework.",
+    inputSchema: WRITING_READINESS_SCHEMA,
+    effect: "local_idempotent",
+    permissions: ["workflow:submit"],
+    execute(args, context) {
+      if (context.projectId !== projectId) {
+        throw new ToolExecutionFault("PROJECT_SCOPE_MISMATCH", "Workflow belongs to another project");
+      }
+      const reason = args.reason.trim();
+      const questions = args.questions.map((question) => question.trim());
+      if (reason.length === 0 || questions.some((question) => question.length === 0)) {
+        throw new ToolExecutionFault(
+          "WRITING_READINESS_INVALID",
+          "Readiness reason and every question must be non-empty",
+        );
+      }
+      if (args.status === "ready") {
+        if (questions.length > 0) {
+          throw new ToolExecutionFault(
+            "WRITING_READINESS_INVALID",
+            "A ready assessment must not include unresolved questions",
+          );
+        }
+        assertReadinessPrerequisites(context);
+        readyInputsByRun.set(context.runId, readinessKey(context.runId));
+        return {
+          status: "ready",
+          reason,
+          questions: [],
+          nextStage: nextStageForRun(context.runId),
+        };
+      }
+      if (questions.length === 0) {
+        throw new ToolExecutionFault(
+          "WRITING_READINESS_INVALID",
+          "A needs_input assessment must include at least one focused question",
+        );
+      }
+      assertBusinessInputQuestions(reason, questions);
+      readyInputsByRun.delete(context.runId);
+      const nextStage = nextStageForRun(context.runId);
+      const requiredArtifactVersionIds =
+        nextStage === "research" || nextStage === "outline" || nextStage === "draft"
+          ? [...initialContextIds(context.runId)]
+          : [];
+      return {
+        status: "needs_input",
+        reason,
+        questions,
+        nextStage,
+        awaitingUserInput: {
+          reason,
+          questions,
+          nextStage,
+          requiredArtifactVersionIds,
+        },
+      };
+    },
+  };
+
+  const submitWritingStage: ToolDefinition<SubmitWritingStageArgs, JsonValue> = {
+    name: "submit_writing_stage",
+    version: "1.0.0",
+    description:
+      "Persist the next required writing workflow stage. Stages are ordered and review stages cannot modify the body.",
+    inputSchema: WRITING_STAGE_SCHEMA,
+    effect: "local_idempotent",
+    permissions: ["workflow:submit"],
+    execute(args, context) {
+      if (context.projectId !== projectId) {
+        throw new ToolExecutionFault("PROJECT_SCOPE_MISMATCH", "Workflow belongs to another project");
+      }
+      assertWritingReady(context);
+      assertExpectedStage(storage, context, mode, args.stage);
+      assertContinuationContextRead(context, args.stage);
+      if (/^(?:正在|仍在)(?:整理|生成|撰写|提交|保存)(?:文章)?(?:提纲|大纲|正文|稿件|本阶段(?:成果|内容))?[。！!…\s]*$/u.test(args.content.trim())) {
+        throw new ToolExecutionFault('STAGE_OUTPUT_IS_STATUS_ONLY', 'Return the complete stage deliverable, not an acknowledgement or promise to generate it.');
+      }
+      if (args.stage === "research" && requiredMaterialIds.length > 0) {
+        const completed = new Set(completedMaterialIds?.(context.runId) ?? []);
+        const unreadMaterialIds = requiredMaterialIds.filter(
+          (materialId) => !completed.has(materialId),
+        );
+        if (unreadMaterialIds.length > 0) {
+          throw new ToolExecutionFault(
+            "MATERIAL_READ_REQUIRED",
+            "Read every material authorized by the brief before submitting research",
+            false,
+            { unreadMaterialIds: [...unreadMaterialIds] },
+          );
+        }
+      }
+      if (args.stage === "central_revision") {
+        assertReviewsBoundToDraft(storage, context, mode);
+      }
+      if (
+        args.stage === "draft" ||
+        args.stage === "central_revision" ||
+        args.stage === "language_review"
+      ) {
+        const languageSource = args.stage === "language_review" ? markerPayload(stageMarker(storage, context.projectId, context.runId, "central_revision")) : null;
+        assertCleanBodyStageContent(args.stage, args.content, languageSource === null ? undefined : storage.getArtifactVersion(languageSource.artifactVersionId)?.content);
+      }
+      const artifact = commitStageArtifact(storage, context, args.stage, args.content);
+      markStage(storage, context, args.stage, artifact.id);
+      const nextStage = expectedStage(storage, context.projectId, context.runId, mode);
+      const awaitingUserConfirmation =
+        interactionMode === "co_creation" &&
+        CO_CREATION_CHECKPOINT_STAGES.has(args.stage) &&
+        nextStage !== null
+          ? {
+              stage: args.stage,
+              nextStage,
+              requiredArtifactVersionIds:
+                nextStage === "draft" ? [...initialContextIds(context.runId)] : [],
+            }
+          : null;
+      return {
+        stage: args.stage,
+        artifactVersionId: artifact.id,
+        bodyVersionId: storage.inspectProject(context.projectId)?.latestBodyVersionId ?? null,
+        nextStage,
+        ...(args.stage === "research"
+          ? {
+              evidenceIds: [...evidenceIdsFromLedger(artifact.content)],
+              factCheckReferenceRule:
+                "matchedEvidenceId must be one of evidenceIds; otherwise use null and provide sourceReference",
+            }
+          : {}),
+        ...(awaitingUserConfirmation === null
+          ? {}
+          : { awaitingUserConfirmation }),
+      };
+    },
+  };
+
+  const submitFactCheck: ToolDefinition<SubmitFactCheckArgs, JsonValue> = {
+    name: "submit_fact_check",
+    version: "1.0.0",
+    description:
+      "Evaluate the final body against the saved evidence ledger. Unsupported claims remain blockers; the model cannot self-approve the gate.",
+    inputSchema: FACT_CHECK_SCHEMA,
+    effect: "local_idempotent",
+    permissions: ["workflow:submit", "fact:submit"],
+    execute(args, context) {
+      if (context.projectId !== projectId) {
+        throw new ToolExecutionFault("PROJECT_SCOPE_MISMATCH", "Workflow belongs to another project");
+      }
+      if (!factCheckOnly) assertWritingReady(context);
+      if (!factCheckOnly) assertExpectedStage(storage, context, mode, "fact_check");
+      if (!factCheckOnly) assertContinuationContextRead(context, "fact_check");
+      let project = storage.inspectProject(context.projectId);
+      if (
+        project === null ||
+        project.latestBodyVersionId === null ||
+        project.currentEvidenceVersionId === null
+      ) {
+        throw new ToolExecutionFault(
+          "FACT_INPUTS_INCOMPLETE",
+          "Final body and evidence must exist before fact checking",
+        );
+      }
+      const body = storage.getArtifactVersion(project.latestBodyVersionId);
+      if (project.latestBodyVersionId !== context.expectedBodyVersionId) throw new ToolExecutionFault("BASE_VERSION_CONFLICT", "The body changed after this fact-check assignment; request a fresh assignment before evaluating it");
+      if (body === null) {
+        throw new ToolExecutionFault("FACT_INPUTS_INCOMPLETE", "Final body could not be read");
+      }
+      const evidence = storage.getArtifactVersion(project.currentEvidenceVersionId);
+      if (evidence === null || evidence.kind !== "evidence") {
+        throw new ToolExecutionFault("FACT_INPUTS_INCOMPLETE", "Evidence ledger could not be read");
+      }
+      const validEvidenceIds = evidenceIdsFromLedger(evidence.content);
+      const validEvidenceIdSet = new Set(validEvidenceIds);
+      const invalidEvidenceIds = [...new Set(args.claims
+        .map((claim) => claim.matchedEvidenceId)
+        .filter((evidenceId): evidenceId is string =>
+          evidenceId !== null && !validEvidenceIdSet.has(evidenceId),
+        ))];
+      if (invalidEvidenceIds.length > 0) {
+        throw new ToolExecutionFault(
+          "FACT_CHECK_EVIDENCE_REFERENCE_INVALID",
+          "matchedEvidenceId must exactly match the saved evidence ledger or be null",
+          false,
+          {
+            invalidEvidenceIds,
+            validEvidenceIds,
+            correction:
+              "Use an exact E### ID from validEvidenceIds. If the list is empty or no item matches, set matchedEvidenceId to null and provide sourceReference.",
+          },
+        );
+      }
+      const title = titleFromBody(body.content);
+      const selectedTitle = project.currentTitleVersionId ? storage.getArtifactVersion(project.currentTitleVersionId) : null;
+      if ((interactionMode === 'co_creation' || selectedTitle?.reason === 'author-publication-selection') && !isPublicationSelectionCurrent(storage, context.projectId)) {
+        throw new ToolExecutionFault('PUBLICATION_SELECTION_REQUIRED', '先在主对话确认发布标题，再核查该标题与正文，不得把生成的标题冒充用户选择。');
+      }
+      const titleCommit = selectedTitle?.reason === 'author-publication-selection' ? null : storage.commitArtifactVersion({
+        operationId: `${context.operationId}:title`,
+        projectId: context.projectId,
+        expectedProjectRevision: project.revision,
+        kind: "title",
+        logicalKey: "main",
+        baseVersionId: project.currentTitleVersionId,
+        content: `- 选择状态：已锁定\n- 最终标题：「${title}」\n- 选择来源：按自主推进模式代选当前稿件标题\n- 分发文案范围：本次不包含分发文案，核查覆盖其缺省状态\n`,
+        reason: "workflow:fact-check-title",
+        requestSnapshotId: null,
+        actor: actor("fact_check", context.runId),
+      });
+      const titleValue = titleCommit === null ? { versionId: selectedTitle!.id } : value(titleCommit);
+      project = storage.inspectProject(context.projectId);
+      if (project === null) {
+        throw new ToolExecutionFault("PROJECT_NOT_FOUND", "Writing project is unavailable");
+      }
+      const frozen = storage.createFactCheckSnapshot({
+        operationId: `${context.operationId}:snapshot`,
+        projectId: context.projectId,
+        expectedProjectRevision: project.revision,
+        bodyVersionId: body.id,
+        titleVersionId: titleValue.versionId,
+        evidenceVersionId: evidence.id,
+        actor: actor("fact_check", context.runId),
+      });
+      const frozenValue = value(frozen);
+      project = storage.inspectProject(context.projectId);
+      if (project === null) {
+        throw new ToolExecutionFault("PROJECT_NOT_FOUND", "Writing project is unavailable");
+      }
+      const evaluated = storage.evaluateFactCheckSnapshot({
+        operationId: `${context.operationId}:evaluation`,
+        projectId: context.projectId,
+        expectedProjectRevision: project.revision,
+        snapshotId: frozenValue.snapshotId,
+        payload: {
+          schemaVersion: "fact-check-v2",
+          snapshotId: frozenValue.snapshotId,
+          bodyVersionId: body.id,
+          titleVersionId: titleValue.versionId,
+          coverage: { body: true, title: true, distributionCopy: true },
+          claims: [...args.claims],
+          noFactualClaimsReason: args.noFactualClaimsReason,
+        },
+        actor: actor("fact_check", context.runId),
+      });
+      const evaluation = value(evaluated);
+      markStage(storage, context, "fact_check", evaluation.assessmentId);
+      return {
+        stage: "fact_check",
+        snapshotId: evaluation.snapshotId,
+        assessmentId: evaluation.assessmentId,
+        status: evaluation.status,
+        blockers: [...evaluation.blockers],
+        unresolvedClaims: args.claims.filter((claim) => evaluation.blockers.includes(claim.claimId)).map((claim) => ({ claimText: claim.claimText, recommendedAction: claim.recommendedAction })),
+        bodyVersionId: body.id,
+        nextStage: null,
+      };
+    },
+  };
+
+  return {
+    isReady,
+    unreadReadinessArtifactIds,
+    invalidate(context, stage) {
+      const sequence = workflowStageSequence(mode);
+      const affected = sequence.slice(sequence.indexOf(stage));
+      const markerIds = affected.flatMap((item) => {
+        const marker = stageMarker(storage, projectId, context.runId, item);
+        return marker === null ? [] : [marker.id];
+      });
+      const key = `workflow-invalidated:${context.runId}`;
+      const project = storage.inspectProject(projectId)!;
+      value(storage.commitArtifactVersion({ operationId: `${context.operationId}:invalidate`, projectId,
+        expectedProjectRevision: project.revision, kind: "report", logicalKey: key,
+        baseVersionId: storage.listArtifactVersions(projectId, "report", key).at(-1)?.id ?? null,
+        content: JSON.stringify({ markerIds, invalidatedStages: affected,
+          ...(stage === "central_revision" && project.latestBodyVersionId !== null ? { revisionInput: { bodyVersionId: project.latestBodyVersionId, factCheck: storage.getFactCheckStatus(projectId) } } : {}) }), reason: `workflow-rework:${stage}`,
+        requestSnapshotId: null, actor: { kind: "agent", id: "writing-pack/director", runId: context.runId } }));
+      return affected;
+    },
+    definitions: (factCheckOnly
+      ? [submitFactCheck]
+      : [assessWritingReadiness, submitWritingStage, submitFactCheck]) as unknown as readonly ToolDefinition<never, JsonValue>[],
+    progress(runId) {
+      const sequence = factCheckOnly
+        ? (["fact_check"] as const)
+        : workflowStageSequence(mode);
+      const completedStages = sequence.filter(
+        (stage) => stageMarker(storage, projectId, runId, stage) !== null && (factCheckOnly || stage !== "fact_check" || storage.getFactCheckStatus(projectId).status === "passed"),
+      );
+      return {
+        completedStages,
+        nextStage: sequence.find(
+          (stage) => !completedStages.includes(stage),
+        ) ?? null,
+      };
+    },
+    continuationContext(runId) {
+      const nextStage = factCheckOnly
+        ? (stageMarker(storage, projectId, runId, "fact_check") === null ? "fact_check" : null)
+        : expectedStage(storage, projectId, runId, mode);
+      return {
+        nextStage,
+        artifacts: [
+          ...continuationContextArtifacts(storage, projectId, runId, mode, nextStage),
+          ...initialContextIds(runId).map((artifactVersionId) => ({
+            stage: "current_body" as const,
+            artifactVersionId,
+          })),
+        ].filter((artifact, index, artifacts) =>
+          artifacts.findIndex((candidate) =>
+            candidate.artifactVersionId === artifact.artifactVersionId,
+          ) === index,
+        ),
+      };
+    },
+    completion(runId) {
+      const complete = factCheckOnly
+        ? stageMarker(storage, projectId, runId, "fact_check") !== null
+        : expectedStage(storage, projectId, runId, mode) === null;
+      const project = storage.inspectProject(projectId);
+      return {
+        complete,
+        bodyVersionId: project?.latestBodyVersionId ?? null,
+        publicationReady:
+          complete && storage.getFactCheckStatus(projectId).status === "passed",
+      };
+    },
+  };
+}
+
+export function createFactCheckOnlyTools(options: {
+  readonly storage: StoragePort;
+  readonly projectId: string;
+}): WritingWorkflowTools {
+  return createWritingWorkflowTools({
+    ...options,
+    mode: "quick",
+    factCheckOnly: true,
+  });
+}

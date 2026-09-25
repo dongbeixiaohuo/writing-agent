@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "topic": "一次安静的下班散步",
+  "genre": "narrative_observation",
+  "audience": "工作节奏很快的城市上班族",
+  "lengthTarget": {
+    "targetCharacters": 800
+  },
+  "materialIds": [
+    "walk-notes"
+  ],
+  "constraints": [
+    "只使用材料中的亲历细节",
+    "不添加未经授权的人物和事件"
+  ],
+  "interactionMode": "autonomous",
+  "authorAuthorization": {
+    "voice": "安静、克制、具体",
+    "styleReference": null,
+    "styleDecision": "user_confirmed",
+    "directionDecision": "user_confirmed",
+    "firsthandMaterialIds": [
+      "walk-notes"
+    ]
+  },
+  "platform": null,
+  "publicationGoal": "not_applicable",
+  "confirmationStatus": "confirmed"
+}

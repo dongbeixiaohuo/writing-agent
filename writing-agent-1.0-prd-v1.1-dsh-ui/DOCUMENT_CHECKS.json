@@ -1,0 +1,102 @@
+{
+  "document_version": "1.1",
+  "product_target_version": "1.0",
+  "revision_id": "CR-002",
+  "checks": {
+    "backlog_json_parse": "PASS",
+    "task_count": 25,
+    "dependency_graph_acyclic": "PASS",
+    "all_backlog_dependencies_resolved": "PASS",
+    "ui_track_parallel_and_joined": "PASS",
+    "acceptance_scenarios": 38,
+    "collaboration_acceptance_scenarios": 14,
+    "requirement_and_acceptance_ids_resolved": "PASS",
+    "markdown_code_fences_balanced": "PASS",
+    "relative_document_links": "PASS",
+    "source_ids_resolved": "PASS",
+    "known_superseded_positive_routes_removed": "PASS"
+  },
+  "not_performed": [
+    "application source transplantation",
+    "application tests",
+    "repository mutation",
+    "installer build",
+    "live UI rendering or screenshots",
+    "visual regression tests",
+    "real model execution",
+    "human usability experiment",
+    "external URL availability validation"
+  ],
+  "files": [
+    {
+      "path": ".claude/settings.local.json",
+      "bytes": 55,
+      "sha256": "b03083a62d44f718118cf4912ca8e98873e7484cad6fe329222288a67c85da24"
+    },
+    {
+      "path": "CHANGELOG_PRD.md",
+      "bytes": 4290,
+      "sha256": "22d2836eeccaa6488629a058f80c310c5094fe661a0d139fa4a913bfc4520644"
+    },
+    {
+      "path": "docs/implementation/AGENT_HANDOFF.md",
+      "bytes": 10867,
+      "sha256": "3c6e46b423f5e4921f3954ee0cf5ee2b0d964802d02fe0d697d3ca0664172e7c"
+    },
+    {
+      "path": "docs/implementation/BACKLOG.json",
+      "bytes": 31390,
+      "sha256": "3bfd46426eccbb585b1216874742ecd40de47f945e531619f5a3ba8af3a9cf1d"
+    },
+    {
+      "path": "docs/implementation/CR002_INTERACTIVE_COLLABORATION.md",
+      "bytes": 9376,
+      "sha256": "76955b6c4a0f6642eca09f4cedd34b522a19a9ac46812b7e224fa50f744d211b"
+    },
+    {
+      "path": "docs/implementation/CR003_CONVERSATION_FIRST_HARNESS.md",
+      "bytes": 8978,
+      "sha256": "eb610c44d041078050c06201729b15d5a3660b3532e26c1c76b56b18855d8954"
+    },
+    {
+      "path": "docs/implementation/FRONTEND_REUSE_PLAN.md",
+      "bytes": 17516,
+      "sha256": "62298ce0e472d0afbd1accf0f5eaca9dab044237cd71c42ab4868736e5eae5b6"
+    },
+    {
+      "path": "docs/implementation/RUNTIME_CONTRACTS.md",
+      "bytes": 27035,
+      "sha256": "e96c7f1c62016d7c293820c103a2b2538c054f0ebf000f6948f2d70f797e4b9e"
+    },
+    {
+      "path": "docs/prd/WRITING_AGENT_1_0_PRD.md",
+      "bytes": 52481,
+      "sha256": "c545a9052b9a39a937fee1841a6b891fd2310003289e72420a7a88da5773109a"
+    },
+    {
+      "path": "docs/research/SOURCE_BASELINE.md",
+      "bytes": 10973,
+      "sha256": "d67347cfbc05857af8df503af3dbd1278c72adfc3bd21c36d8cbb44a5de8be90"
+    },
+    {
+      "path": "docs/roadmap/GITHUB_AND_LAUNCH_PLAN.md",
+      "bytes": 16677,
+      "sha256": "4cf9a37881a96a57ac12e5adcc5cd30c026f7e6d3d4d247400216884ed29c9df"
+    },
+    {
+      "path": "START_HERE.md",
+      "bytes": 5027,
+      "sha256": "88404f226fa2815478a3fb0dc5f67299b86880518d68e36d5e499a189026cebd"
+    },
+    {
+      "path": "tools/check_document_pack.py",
+      "bytes": 6342,
+      "sha256": "9a32bee4d6fecb63071a5a2b7aa89e7d80cb06b8d10fda15895bcf8d20ccc189"
+    },
+    {
+      "path": "Writing_Agent_1.0_PRD_Full.md",
+      "bytes": 174552,
+      "sha256": "2382df2d49bf30ee25b4492f2f8dc18536a4c4afb4e3861812cf0d72f70b790a"
+    }
+  ]
+}

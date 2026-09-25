@@ -7,7 +7,27 @@ on:
 env:
   PYTHONUTF8: "1"
 
+permissions:
+  contents: read
+
 jobs:
+  m0-foundation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+      - run: npm ci --ignore-scripts
+      - run: npm run check:m0
+
   check:
     strategy:
       fail-fast: false

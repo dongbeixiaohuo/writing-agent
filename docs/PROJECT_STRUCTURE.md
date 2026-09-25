@@ -2,6 +2,8 @@
 
 ## 顶层目录
 
+仓库目前有两条明确分离的产品线：legacy `0.11.x` 工作流，以及 `next/runtime` 上的 1.0 独立运行时。不要把 `.claude/` 工作流镜像与新桌面 runtime 混成同一启动链。
+
 ```text
 写稿Agent/
 ├── .claude/
@@ -12,10 +14,23 @@
 │   ├── settings.json
 │   └── settings.example.json
 ├── articles/                   # 每篇文章一个项目目录
+├── apps/
+│   ├── cli/                    # 1.0 runtime/迁移 CLI
+│   ├── web/                    # DSH 派生同源 Web composition/Local Host
+│   └── desktop/                # Electron 44 最小壳与 NSIS 配置
+├── packages/
+│   ├── application/            # 1.0 唯一业务写边界
+│   ├── writing-core/           # 领域、版本、门禁、导出合同
+│   ├── storage/                # SQLite schema、事务、恢复
+│   ├── runtime/                # LLM、agent loop、工具、凭据、诊断
+│   ├── model-adapters/         # OpenAI/Anthropic-compatible
+│   ├── client-bridge/          # Web/Desktop/Mock 版本化桥接
+│   ├── ui/、writing-ui/        # DSH 派生壳和写作 Slot
+│   └── legacy-migration/       # 旧 manifest/SQLite 只读迁移
 ├── docs/                       # 使用说明、结构文档、计划文档
 ├── scripts/                    # hook、清洗、校验、run manifest 等脚本
 ├── tests/                      # Python 回归测试
-├── evaluations/                # 固定简报、配对盲评工具与说明
+├── evaluations/                # 固定简报、A/B 与三组三盲评工具
 ├── README.md
 ├── package.json
 └── CHANGELOG.md

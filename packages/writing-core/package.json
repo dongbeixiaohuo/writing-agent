@@ -1,0 +1,15 @@
+{
+  "name": "@writing-agent/writing-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

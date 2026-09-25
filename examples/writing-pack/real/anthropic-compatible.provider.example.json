@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "kind": "anthropic_compatible",
+  "providerId": "replace-with-provider-id",
+  "baseURL": "https://api.example.com/v1",
+  "credentialRef": "managed:anthropic-primary",
+  "model": "replace-with-tool-capable-model-id",
+  "tools": "supported",
+  "usage": "unknown",
+  "anthropicVersion": "2023-06-01",
+  "authHeader": "x-api-key",
+  "defaultMaxOutputTokens": 4096
+}

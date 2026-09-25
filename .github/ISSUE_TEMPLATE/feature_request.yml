@@ -1,0 +1,41 @@
+name: 功能建议
+description: 描述真实写作任务和阻塞，不以模型或界面名代替需求
+title: "[Feature] "
+labels: ["evaluation"]
+body:
+  - type: textarea
+    id: job
+    attributes:
+      label: 真实任务
+      description: 你要完成什么文章/修改/核查/迁移结果？请使用脱敏示例。
+    validations:
+      required: true
+  - type: textarea
+    id: blocker
+    attributes:
+      label: 当前卡点
+      description: 目前在哪一步失败，现有替代方法有什么代价？
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 可检查的完成标准
+      description: 什么结果能证明问题被解决？
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 主要范围
+      options:
+        - 写作质量/简报
+        - 稿件版本/局部修改
+        - 事实核查/交付
+        - 恢复/可靠性
+        - 模型兼容性
+        - 迁移
+        - 桌面 UI/可访问性
+        - 文档/贡献体验
+    validations:
+      required: true

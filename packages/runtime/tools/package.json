@@ -1,0 +1,16 @@
+{
+  "name": "@writing-agent/runtime-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "cheerio": "1.0.0"
+  }
+}

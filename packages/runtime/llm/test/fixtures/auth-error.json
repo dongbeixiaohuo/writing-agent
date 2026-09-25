@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "auth-error",
+  "provider": {
+    "id": "mock",
+    "adapterVersion": "mock-fixture-v1",
+    "capabilities": {
+      "protocol": "mock",
+      "streaming": "supported",
+      "tools": "supported",
+      "usage": "reported"
+    }
+  },
+  "steps": [
+    {
+      "type": "error",
+      "error": {
+        "code": "AUTH_FAILED",
+        "message": "测试凭据被拒绝",
+        "retryable": false,
+        "status": 401,
+        "providerRequestId": "mock-error-1"
+      }
+    }
+  ]
+}

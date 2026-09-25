@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "text-success",
+  "provider": {
+    "id": "mock",
+    "adapterVersion": "mock-fixture-v1",
+    "capabilities": {
+      "protocol": "mock",
+      "streaming": "supported",
+      "tools": "supported",
+      "usage": "reported"
+    }
+  },
+  "steps": [
+    { "type": "text_delta", "delta": "第一段" },
+    { "type": "text_delta", "delta": "，第二段。" },
+    {
+      "type": "usage",
+      "usage": {
+        "inputTokens": 12,
+        "outputTokens": 6,
+        "totalTokens": 18,
+        "cacheReadTokens": null,
+        "reasoningTokens": null
+      }
+    },
+    { "type": "completed", "finishReason": "stop", "providerRequestId": "mock-response-1" }
+  ]
+}

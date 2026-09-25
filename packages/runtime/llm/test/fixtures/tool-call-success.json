@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "tool-call-success",
+  "provider": {
+    "id": "mock",
+    "adapterVersion": "mock-fixture-v1",
+    "capabilities": {
+      "protocol": "mock",
+      "streaming": "supported",
+      "tools": "supported",
+      "usage": "reported"
+    }
+  },
+  "steps": [
+    {
+      "type": "tool_call_delta",
+      "index": 0,
+      "id": "call-material-1",
+      "name": "read_material",
+      "argumentsDelta": "{\"material"
+    },
+    {
+      "type": "tool_call_delta",
+      "index": 0,
+      "argumentsDelta": "Id\":\"material-1\"}"
+    },
+    { "type": "completed", "finishReason": "tool_calls" }
+  ]
+}

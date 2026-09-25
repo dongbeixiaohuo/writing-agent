@@ -1,7 +1,9 @@
 # 写稿Agent v0.11.0
 
+> **2026-09-19 当前桌面产品状态：BLOCKED_CORE_WORKFLOW。** rc.6 的最终用户验收就绪判断已撤回。原安装包与下文运行结果只作为历史证据保留；[CR-002](writing-agent-1.0-prd-v1.1-dsh-ui/docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)重新要求缺口即时追问、同 run 恢复、导演委派及隔离评审，尚未全部实现/验收。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Desktop App](https://img.shields.io/badge/Desktop%20App-Windows%20Preview-2f6f4f)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)
+[![Legacy Desktop](https://img.shields.io/badge/Legacy%20Desktop-0.1.0-777777)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)
 [![Writing Workflow](https://img.shields.io/badge/Writing%20Workflow-Stage%20Driven-1f6feb)](https://github.com/dongbeixiaohuo/writing-agent)
 
 把写作从“一次性吐全文”，改成“分阶段策划、证据留痕、审稿、去 AI 味、导出终稿”的流水线。
@@ -20,11 +22,28 @@
 - `qwen3.8-flash`：阿里云百炼 Token Plan 用户的优先日常档
 - `GLM-4.7`、`MiniMax-M2.7`、`kimi-for-coding`：已经购买对应套餐时直接使用，不必追最高档模型
 
+## Writing Agent 1.0 独立桌面版进展
+
+`next/runtime` 正在把写作能力升级为本地优先的独立运行时：同一套 DSH 派生界面中包含自有模型/工具循环、SQLite 稿件版本、可控修改、事实门禁、恢复、旧数据迁移和 Windows 桌面分发。普通用户目标是不需要安装 DSH、Claude Code、Python 或旧 Tauri 应用。
+
+截至 2026-09-19，`1.0.0-rc.1`–`rc.5` 已退出当前验收。新 `1.0.0-rc.6` 包含主对话优先信息架构：可恢复有会话的旧项目，也可在零会话历史项目中直接开启新对话；当前项目/会话有强选中态，阶段成果自动展开并渲染 Markdown，事实阻断和完整稿件直接出现在主对话，项目列表提供带精确名称确认的删除入口；“稿件与版本”收口为历史追溯与精细调整工作台。Windows 升级还会明确依次显示“正在移除旧版本”和“正在安装新版本”。这组工程证据曾被误判为最终用户验收就绪；该判断现已撤回，当前状态为 **`BLOCKED_CORE_WORKFLOW`**。本地候选位于 `output/desktop/Writing-Agent-Setup-1.0.0-rc.6-x64.exe`，SHA-256 为 `11bfd315eeaca79ac548ac2cfc47cea5028341bce901ff6397a9d726e00531fa`；它尚未签名或公开发布。下方 `app-preview-0.1.0` 仍是历史 Legacy 预览，不是 1.0 下载入口。
+
+已安装 rc.1/rc.2/rc.3 的用户无需手工卸载：直接运行 rc.4 安装包会明确显示升级和数据保留说明，原位替换程序并保留项目、设置与 Credential Manager 中的模型 Key。若旧卸载登记意外缺失，安装器会通过 Writing Agent 快捷方式找回原位置；rc.2 正常/缺失登记升级到 rc.4，以及 rc.3 升级到 rc.4，均已通过隔离的真实 NSIS 安装回归。
+
+- [1.0 快速开始与真实状态](docs/QUICKSTART_1_0.md)
+- [RC 38 项验收记录](docs/testing/RC_RESULTS.md)
+- [最终用户验收清单](docs/testing/FINAL_USER_UAT_CHECKLIST.md)
+- [质量与易用性缺口](docs/testing/QUALITY_AND_USABILITY.md)
+- [发布门禁](docs/testing/RELEASE_GATE.md)
+- [架构实施进展](docs/architecture/IMPLEMENTATION_PROGRESS.md)
+
+界面源码复用和许可见 `upstream-sources.json` 与 `THIRD_PARTY_NOTICES.md`。Writing Agent 并非 DeepSeek 官方产品；未上线能力不会在 README 中提供假下载链接。
+
 ---
 
-## 桌面预览版
+## 旧桌面预览版（Legacy 0.1.0）
 
-现在可以直接下载 `Writing Agent App` 的 Windows 预览版：
+历史 `Writing Agent App` Windows 预览版仍保留，便于旧用户访问和迁移：
 
 - [下载 Writing Agent App 预览版 0.1.0](https://github.com/dongbeixiaohuo/writing-agent/releases/download/app-preview-0.1.0/Writing.Agent.App_0.1.0_x64-setup.exe)
 
@@ -32,14 +51,14 @@
 
 - `writing-agent-app/`
 
-如果你只想直接使用桌面应用，优先下载上面的安装包。  
-如果你想查看或参与源码开发，可以直接看仓库里的 `writing-agent-app/` 目录。
+它使用旧 Tauri/旧 UI，不会继续扩展为 1.0。需要历史版本可下载上面的安装包；准备使用 1.0 时请等待经门禁签收的新 Release，并按迁移指南导入数据。旧源码仍在 `writing-agent-app/`。
 
 ---
 
 ## 快速入口
 
-- 下载桌面应用：[桌面预览版](#桌面预览版)
+- 了解 1.0：[独立桌面版进展](#writing-agent-10-独立桌面版进展)
+- 下载旧版：[Legacy 0.1.0](#旧桌面预览版legacy-010)
 - 先看完整样本：[工资的一半，是你受的气折算的 Demo](#完整-demo工资的一半是你受的气折算的)
 - 再看当前版本：[最新更新](#最新更新)
 - 先判断模型成本：[模型与 Token Plan](#模型与-token-plan)
