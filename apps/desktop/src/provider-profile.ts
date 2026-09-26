@@ -118,19 +118,30 @@ const catalogSchema = z.object({
   }).strict()).max(50),
 }).strict();
 
+// Profiles saved before a preset gained reviewed vendor request fields keep
+// working: when a stored config still exactly matches that preset (id + kind
+// + endpoint), the preset's extraBody is filled at read time without
+// rewriting the file. Modified addresses no longer match and get nothing.
+function withPresetExtraBody(config: NormalizedProviderConfig): NormalizedProviderConfig {
+  if (config.kind !== 'openai_compatible' || config.extraBody !== undefined) return config;
+  const preset = PROVIDER_PRESETS.find(item => item.id === config.providerId && item.kind === config.kind
+    && item.baseURL === config.baseURL.replace(/\/+$/u, '') && item.extraBody !== undefined);
+  return preset?.extraBody === undefined ? config : parseProviderConfig({ ...config, extraBody: preset.extraBody });
+}
+
 export function loadDesktopProviderCatalog(filePathInput: string): DesktopProviderCatalog {
   const filePath = resolve(filePathInput);
   try {
     const value = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
     if (typeof value === 'object' && value !== null && 'schemaVersion' in value && value.schemaVersion === 3) {
       const parsed = catalogSchema.parse(value);
-      const profiles = parsed.profiles.map(profile => ({ ...profile, config: parseProviderConfig(profile.config) }));
+      const profiles = parsed.profiles.map(profile => ({ ...profile, config: withPresetExtraBody(parseProviderConfig(profile.config)) }));
       if (new Set(profiles.map(profile => profile.id)).size !== profiles.length ||
         !profiles.some(profile => profile.id === parsed.activeProfileId) ||
         profiles.some(profile => !profile.models.includes(profile.config.model))) throw new Error('INVALID_CATALOG');
       return { schemaVersion: 3, activeProfileId: parsed.activeProfileId, profiles };
     }
-    const config = parseProviderConfig(value);
+    const config = withPresetExtraBody(parseProviderConfig(value));
     // Read legacy files without rewriting them or moving their managed Key.
     return { schemaVersion: 3, activeProfileId: 'legacy-primary', profiles: [
       { id: 'legacy-primary', displayName: config.providerId, models: [config.model], config },
@@ -176,10 +187,16 @@ export function providerConfigForInput(input: DesktopProviderProfileInput, previ
   // working saved profile preserves its authentication unless explicitly set.
   const authHeader = input.authHeader ?? (sameTransport && previous.kind === 'anthropic_compatible'
     ? previous.authHeader : preset?.authHeader);
+  // Vendor request fields likewise: keep the existing profile's on the same
+  // transport, otherwise adopt the preset's reviewed adaptation (e.g.
+  // DeepSeek thinking disabled). Never carried across different endpoints.
+  const extraBody = input.kind !== 'openai_compatible' ? undefined
+    : (sameTransport && previous?.kind === 'openai_compatible' ? previous.extraBody : undefined) ?? preset?.extraBody;
   const config = parseProviderConfig({ schemaVersion: 2, kind: input.kind, providerId: input.providerId,
     baseURL: input.baseURL, model: input.model, tools: input.tools, usage: input.usage,
     credentialRef: previous?.credentialRef ?? 'managed:pending',
     ...(input.allowInsecureHttp === undefined ? {} : { allowInsecureHttp: input.allowInsecureHttp }),
+    ...(extraBody === undefined ? {} : { extraBody }),
     ...(input.kind === 'anthropic_compatible' ? {
       ...(input.anthropicVersion === undefined ? {} : { anthropicVersion: input.anthropicVersion }),
       ...(authHeader === undefined ? {} : { authHeader }),

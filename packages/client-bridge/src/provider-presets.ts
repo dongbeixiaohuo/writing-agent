@@ -22,6 +22,9 @@ export interface ProviderPreset {
   readonly modelExamples?: readonly string[];
   readonly sourceNames?: readonly string[];
   readonly authHeader?: 'authorization' | 'x-api-key';
+  // Vendor-specific request fields the adapter adds to every request body.
+  // Product-level adaptations reviewed per preset; never user-editable.
+  readonly extraBody?: Readonly<Record<string, unknown>>;
 }
 
 // Data only: these addresses never grant the renderer network access. The host
@@ -87,6 +90,18 @@ const PLAN_VARIANTS = [
   { id: 'qwen-cn-coding-anthropic', kind: 'anthropic_compatible', baseURL: 'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1', modelExamples: [], authHeader: 'authorization' },
 ] as const;
 
+// Reviewed vendor-specific request fields per preset (adapter merges them
+// additively into every request body; protocol fields win on collision).
+const PRESET_EXTRA_BODY: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+  // DeepSeek's thinking mode (default on deepseek-flash) rejects
+  // tool_choice="required" — verified 2026-09-26 via upstream error "Thinking
+  // mode does not support this tool_choice". This app's stage submissions and
+  // connection probe always require tool calls, so DeepSeek must run with
+  // thinking disabled. See docs/implementation/PROVIDER_PRESETS.md (rc.45).
+  'cc-deepseek': { thinking: { type: 'disabled' } },
+  'deepseek': { thinking: { type: 'disabled' } },
+};
+
 function describePreset(data: Omit<ProviderPreset, 'offering' | 'label' | 'group'>, offering: ProviderOffering): ProviderPreset {
   const plan = ['coding', 'token', 'agent', 'step', 'subscription'].includes(offering.product);
   const group: ProviderPreset['group'] = offering.product === 'shared' ? 'API / 套餐共用入口'
@@ -101,7 +116,8 @@ function describePreset(data: Omit<ProviderPreset, 'offering' | 'label' | 'group
   const regionNote = offering.region === 'unspecified' ? '目录不拆分国内 / 国际入口；实际可用地区和账号权益以服务商为准。' : '国内站与国际站的账号、Key 和套餐可能不通用。';
   return { ...data, offering, group,
     label: `${offering.provider} · ${providerRegionLabel(offering)} · ${providerProductLabel(offering)} · ${PROVIDER_PROTOCOL_LABELS[data.kind]}`,
-    note: [data.note, productNote, regionNote, channelNote].filter(Boolean).join(' ') };
+    note: [data.note, productNote, regionNote, channelNote].filter(Boolean).join(' '),
+    ...(PRESET_EXTRA_BODY[data.id] === undefined ? {} : { extraBody: PRESET_EXTRA_BODY[data.id] }) };
 }
 
 function completeProviderCatalog(): readonly ProviderPreset[] {

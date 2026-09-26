@@ -86,6 +86,33 @@ describe("provider configuration boundary", () => {
     assert.equal(anthropic.capabilitiesFor("unknown-model").tools, "unknown");
   });
 
+  it("carries vendor extraBody through parsing into the OpenAI-compatible provider", () => {
+    const broker = new CredentialBroker({ environment: {} });
+    const config = parseProviderConfig({
+      schemaVersion: 2,
+      kind: "openai_compatible",
+      providerId: "cc-deepseek",
+      baseURL: "https://api.deepseek.com",
+      credentialRef: "managed:deepseek-primary",
+      model: "deepseek-flash",
+      tools: "supported",
+      usage: "reported",
+      extraBody: { thinking: { type: "disabled" } },
+    });
+    assert.deepEqual(config.extraBody, { thinking: { type: "disabled" } });
+    const provider = createConfiguredProvider(config, broker);
+    const snapshot = provider.snapshotRequest({
+      requestId: "request-extra-body-config",
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "连接测试" }],
+      parameters: {},
+    });
+    assert.deepEqual(
+      (snapshot.normalizedPayload as Record<string, unknown>).thinking,
+      { type: "disabled" },
+    );
+  });
+
   it("rejects plaintext, malformed and ambiguous credential references", () => {
     const base = {
       schemaVersion: 2,

@@ -406,6 +406,50 @@ describe("OpenAI-compatible provider", () => {
     });
   });
 
+  it("merges vendor extraBody into the wire body without overriding protocol fields", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    await withLocalServer((request, response) => {
+      void (async () => {
+        bodies.push(await readJson(request));
+        sendSse(response, [
+          { id: "chatcmpl-text-1", choices: [{ index: 0, delta: { role: "assistant", content: "完成。" }, finish_reason: null }] },
+          { id: "chatcmpl-text-1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+          { id: "chatcmpl-text-1", choices: [], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } },
+        ]);
+      })().catch((error: unknown) => {
+        response.destroy(error instanceof Error ? error : new Error(String(error)));
+      });
+    }, async (baseURL) => {
+      const provider = new OpenAICompatibleProvider({
+        id: "local-openai-extra",
+        baseURL,
+        credentialRef: "test/openai-compatible",
+        resolveCredential: async () => fakeApiKey,
+        allowInsecureHttp: true,
+        timeoutMs: 2_000,
+        models: { "mock-text-model": { tools: "supported", usage: "reported" } },
+        extraBody: { thinking: { type: "disabled" }, model: "must-not-win", stream: false },
+      });
+      const request = {
+        requestId: "request-extra-body",
+        model: "mock-text-model",
+        messages: [{ role: "user" as const, content: "连接测试" }],
+        parameters: {},
+      };
+      const events = await collectModelEvents(provider.stream(request));
+      assert.equal(events.at(-1)?.type, "completed");
+      assert.equal(bodies.length, 1);
+      assert.deepEqual(bodies[0]?.thinking, { type: "disabled" });
+      assert.equal(bodies[0]?.model, "mock-text-model");
+      assert.equal(bodies[0]?.stream, true);
+      const snapshot = provider.snapshotRequest(request);
+      assert.deepEqual(
+        (snapshot.normalizedPayload as Record<string, unknown>).thinking,
+        { type: "disabled" },
+      );
+    });
+  });
+
   it("classifies a transport reset as a retryable network error", async () => {
     await withLocalServer((request) => {
       request.socket.destroy();

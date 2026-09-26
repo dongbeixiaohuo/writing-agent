@@ -447,7 +447,11 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
     finally { setBusy(false) }
   }
 
-  const choices = (status?.profiles ?? []).filter(profile => profile.configured)
+  // summary mode intentionally skips credential reads, so `configured` is
+  // always false and `credentialChecked` is false for every profile. Treat
+  // "not checked" as "key was saved at some point"; the host still verifies
+  // the credential on selectProvider and reports a missing key then.
+  const choices = (status?.profiles ?? []).filter(profile => profile.configured || profile.credentialChecked === false)
     .flatMap(profile => profile.models.map(model => ({ profile, model })))
 
   return <div className={css.modelSwitchRoot} ref={rootRef}>
@@ -457,6 +461,7 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
       {currentLabel}⌄</button>
     {open && <div className={css.modelSwitchMenu} role="menu" aria-label="可切换的模型">
       {loading && <p className={css.modelSwitchHint} role="status">正在读取已配置的模型…</p>}
+      {busy && <p className={css.modelSwitchHint} role="status">正在切换模型，请稍候…</p>}
       {!loading && error === null && choices.length === 0 && <p className={css.modelSwitchHint}>没有已保存 Key 的模型可切换，请先在模型设置中完成配置。</p>}
       {!loading && choices.map(({ profile, model }) => {
         const active = profile.profileId === status?.activeProfileId && model === status.model

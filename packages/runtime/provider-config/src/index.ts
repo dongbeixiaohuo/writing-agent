@@ -44,6 +44,9 @@ const OpenAIConfigSchema = z
     tools: ToolSupportSchema,
     usage: UsageSchema,
     allowInsecureHttp: z.boolean().optional(),
+    // Vendor-specific extra request fields (e.g. DeepSeek thinking toggle).
+    // Additive only; protocol fields always win on key collision.
+    extraBody: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -83,6 +86,7 @@ interface NormalizedProviderConfigBase {
   readonly tools: "supported" | "unsupported";
   readonly usage: "reported" | "unknown";
   readonly allowInsecureHttp?: boolean;
+  readonly extraBody?: Readonly<Record<string, unknown>>;
 }
 
 export interface OpenAIProviderConfig extends NormalizedProviderConfigBase {
@@ -156,6 +160,9 @@ export function parseProviderConfig(input: unknown): NormalizedProviderConfig {
     ...(config.allowInsecureHttp === undefined
       ? {}
       : { allowInsecureHttp: config.allowInsecureHttp }),
+    ...(!('extraBody' in config) || config.extraBody === undefined
+      ? {}
+      : { extraBody: config.extraBody }),
   };
   if (config.kind === "openai_compatible" || config.kind === 'openai_responses') {
     return Object.freeze({ ...common, kind: config.kind });
@@ -203,7 +210,10 @@ export function createConfiguredProvider(
       : { allowInsecureHttp: config.allowInsecureHttp }),
   };
   if (config.kind === "openai_compatible") {
-    return new OpenAICompatibleProvider(common);
+    return new OpenAICompatibleProvider({
+      ...common,
+      ...(config.extraBody === undefined ? {} : { extraBody: config.extraBody }),
+    });
   }
   if (config.kind === 'openai_responses') return new OpenAIResponsesProvider(common);
   return new AnthropicCompatibleProvider({

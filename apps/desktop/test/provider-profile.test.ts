@@ -35,6 +35,48 @@ test('new Anthropic plan presets use source Bearer authentication only for their
   }
 });
 
+test('DeepSeek preset supplies thinking-disabled vendor fields and fills matching stored profiles at read time', () => {
+  const preset = PROVIDER_PRESETS.find(p => p.id === 'cc-deepseek')!;
+  assert.deepEqual(preset.extraBody, { thinking: { type: 'disabled' } });
+
+  // New transport adopts the preset's reviewed adaptation.
+  const input = { kind: preset.kind, providerId: preset.id, baseURL: preset.baseURL, model: 'deepseek-flash',
+    tools: 'supported' as const, usage: 'reported' as const, apiKey: 'synthetic', persistence: 'session' as const };
+  const current = providerConfigForInput(input);
+  assert.deepEqual(current.extraBody, { thinking: { type: 'disabled' } });
+
+  // A modified address no longer borrows the preset's vendor fields.
+  const changed = providerConfigForInput({ ...input, baseURL: 'https://different.example.test/v1' });
+  assert.equal('extraBody' in changed, false);
+
+  // Re-saving the same transport preserves what the profile already carries.
+  const edited = providerConfigForInput({ ...input, model: 'deepseek-v4-pro' }, current);
+  assert.deepEqual(edited.extraBody, { thinking: { type: 'disabled' } });
+
+  // Stored profiles saved before the adaptation are filled at read time only
+  // when they still exactly match the preset; the file itself is not rewritten.
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-extrabody-'));
+  const path = join(root, 'provider.json');
+  try {
+    const stored = { schemaVersion: 3, activeProfileId: 'p1', profiles: [
+      { id: 'p1', displayName: 'DeepSeek', models: ['deepseek-flash'], config: {
+        schemaVersion: 2, kind: 'openai_compatible', providerId: 'cc-deepseek',
+        baseURL: 'https://api.deepseek.com', model: 'deepseek-flash', tools: 'supported', usage: 'reported',
+        credentialRef: 'managed:desktop-x' } },
+      { id: 'p2', displayName: 'DeepSeek 自建', models: ['deepseek-flash'], config: {
+        schemaVersion: 2, kind: 'openai_compatible', providerId: 'custom',
+        baseURL: 'https://ds.example.test/v1', model: 'deepseek-flash', tools: 'supported', usage: 'reported',
+        credentialRef: 'managed:desktop-y' } },
+    ] };
+    const original = JSON.stringify(stored);
+    writeFileSync(path, original);
+    const catalog = loadDesktopProviderCatalog(path);
+    assert.deepEqual(catalog.profiles.find(p => p.id === 'p1')!.config.extraBody, { thinking: { type: 'disabled' } });
+    assert.equal('extraBody' in catalog.profiles.find(p => p.id === 'p2')!.config, false);
+    assert.equal(readFileSync(path, 'utf8'), original);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 class MemoryCredentials implements SystemCredentialBackend {
   readonly values = new Map<string, string>();
   async isAvailable(): Promise<boolean> { return true; }

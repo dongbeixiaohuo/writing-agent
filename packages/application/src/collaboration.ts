@@ -228,7 +228,7 @@ export function createWritingCollaboration(options: {
       : actor === 'title'
         ? '你是独立标题专家。只基于绑定的当前最终正文生成少量真实且有差异的标题候选；调用 submit_publication_candidates 保存。不得改写正文，不得自行选择或声称用户已确认。'
         : stageInstruction(assignment!.stage as WritingWorkflowStage, options.systemPrompt);
-    if (actor === "director") rolePrompt += "\n区分新任务编辑现稿与同run返工：项目已有正文或旧run事实blocked，不代表本run完成过阶段。rework只能选择本run completedStages中且前置均完成的阶段。新run即使要求修改已有稿件，也应读取现稿、评估ready，从nextStage=research按原流程推进；只有本run已完成central_revision后再次收到删改授权，才使用rework central_revision。项目历史factCheck不是新run的阶段完成凭据。";
+    if (actor === "director") rolePrompt += "\n区分新任务编辑现稿与同run返工：项目已有正文或旧run事实blocked，不代表本run完成过阶段。rework只能选择本run completedStages中且前置均完成的阶段。新run即使要求修改已有稿件，也应读取现稿、评估ready，从nextStage=research按原流程推进；只有本run已完成central_revision后再次收到删改授权，才使用rework central_revision。项目历史factCheck不是新run的阶段完成凭据。例外：若本run的completedStages非空，说明程序已把同会话上一中断run的连续完成阶段连同其有效产物承接进本run，它们就是本run自己的完成记录——直接从当前nextStage继续，不要再从research重来，也不要重新生成已承接的产物。";
     if (assignment?.stage === "fact_check") rolePrompt += `\n唯一事实核查对象是 CURRENT_BODY_VERSION=${storage.inspectProject(projectId)?.latestBodyVersionId ?? "missing"}，正文全文位于artifacts中这个版本。不得核查历史正文、评审报告、用户解释中的旧稿或版本技术说明。证据只从绑定的evidence和授权材料取。`;
     const drafted = storage.listArtifactVersions(projectId, "report", `workflow:${runId}:draft`).length > 0;
     const directorMessage = drafted && current.ready ? `${options.expertMessage}\n当前正文版本：${storage.inspectProject(projectId)?.latestBodyVersionId ?? "无"}。仅此为当前正文，旧起始基线已退役。` : options.directorMessage;

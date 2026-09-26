@@ -101,6 +101,58 @@ it('requires a separate author decision after each independent review, including
   } finally { f.close(); }
 });
 
+it('carries a dead run\'s contiguous completed stages into the next run of the same session', async () => {
+  const provider = new CollaborationProvider();
+  const f = setup(provider, 'co_creation');
+  try {
+    const first = await f.app.runDraft(f.input);
+    const firstRun = f.storage.getRun(first.runId)!;
+    assert.equal(firstRun.stopReason, 'CO_CREATION_CHECKPOINT');
+    const before = provider.requests.length;
+    // Simulate the user abandoning the interrupted pipeline (e.g. after a bug loop).
+    f.app.cancelDraft({ projectId: 'p', runId: first.runId, operationId: 'abandon', reason: 'user_stop' });
+
+    const second = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, sessionId: firstRun.sessionId, userInstruction: '继续' });
+    // Carried markers belong to the new run and reference the same stage outputs.
+    const carriedOutline = f.storage.listArtifactVersions('p', 'report', `workflow:${second.runId}:outline`).at(-1);
+    const sourceOutline = f.storage.listArtifactVersions('p', 'report', `workflow:${first.runId}:outline`).at(-1);
+    assert.ok(carriedOutline && sourceOutline);
+    assert.equal(JSON.parse(carriedOutline.content).artifactVersionId, JSON.parse(sourceOutline.content).artifactVersionId);
+    assert.equal(carriedOutline.actor.kind === 'agent' && carriedOutline.actor.runId, second.runId);
+    // The continuation starts at draft: outline/research were carried, not redone.
+    const continuationStates = provider.requests.slice(before).map(request => collaborationState(request)).filter(state => state !== null);
+    assert.ok(continuationStates.length > 0);
+    assert.deepEqual(continuationStates[0]!.completedStages, ['research', 'outline']);
+    assert.equal(continuationStates[0]!.nextStage, 'draft');
+    assert.equal(continuationStates.filter(state => state.stage === 'outline').length, 0);
+    assert.equal(continuationStates.some(state => state.stage === 'draft'), true);
+    // fact_check is never carried: it stays with the project-level gate.
+    assert.equal(f.storage.listArtifactVersions('p', 'report', `workflow:${second.runId}:fact_check`).length, 0);
+  } finally { f.close(); }
+});
+
+it('does not carry stages from a completed run or into another session', async () => {
+  const provider = new CollaborationProvider();
+  const f = setup(provider, 'autonomous');
+  try {
+    const first = await f.app.runDraft(f.input);
+    assert.equal(f.storage.getRun(first.runId)?.status, 'completed');
+    const sessionId = f.storage.getRun(first.runId)!.sessionId;
+
+    const sameSession = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, sessionId, userInstruction: '再写一篇' });
+    const sameSessionStates = provider.requests.map(request => collaborationState(request)).filter(state => state !== null);
+    const sameSessionStart = sameSessionStates.findLast(state => state.completedStages.length === 0);
+    assert.ok(sameSessionStart, 'a completed run never carries: the next run starts empty');
+    assert.equal(sameSessionStart!.nextStage, 'research');
+
+    const otherSession = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, userInstruction: '换一个话题' });
+    assert.equal(f.storage.listArtifactVersions('p', 'report', `workflow:${otherSession.runId}:research`).length >= 0, true);
+    const otherRunMarkers = f.storage.listArtifactVersions('p', 'report', `workflow:${otherSession.runId}:outline`);
+    assert.ok(otherRunMarkers.length > 0, 'the new session runs its own pipeline');
+    assert.equal(otherRunMarkers.every(marker => marker.actor.kind === 'agent' && marker.actor.runId === otherSession.runId), true);
+  } finally { f.close(); }
+});
+
 it('saves a streamed outline verbatim through the harness without a second model request', async () => {
   const parts = ['# 安静的提纲\n\n', '一、窗边的观察。\n\n', '二、收回目光，留一点余味。'];
   let inspect = () => {};

@@ -941,6 +941,12 @@ export class WritingApplicationService {
     };
   }
 
+  // Cheap freshness probe for the bridge poll: reads only events newer than
+  // the caller's recorded sequence instead of rebuilding a full projection.
+  hasProjectEventsAfter(projectId: string, projectSeq: number): boolean {
+    return this.#storage.listEvents(projectId, projectSeq).length > 0;
+  }
+
   recoverWorkspace(): readonly RecoveredProjectRun[] {
     if (this.#activeRuns.size > 0) {
       throw new ApplicationServiceError(

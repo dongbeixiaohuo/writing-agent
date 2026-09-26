@@ -351,6 +351,7 @@ export interface SessionStore {
   getSession(sessionId: string): SessionRecord | null;
   startRun(input: StartRunInput): RunRecord;
   getRun(runId: string): RunRecord | null;
+  listRuns(projectId: string, sessionId?: string): RunRecord[];
   saveRequestSnapshot(input: SaveRequestSnapshotInput): RequestSnapshotRecord;
   getRequestSnapshot(snapshotId: string): RequestSnapshotRecord | null;
   listRequestSnapshots(runId: string): RequestSnapshotRecord[];

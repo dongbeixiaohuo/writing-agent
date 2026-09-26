@@ -29,6 +29,10 @@ export interface OpenAICompatibleProviderOptions {
   readonly timeoutMs?: number;
   readonly streamIdleTimeoutMs?: number;
   readonly allowInsecureHttp?: boolean;
+  // Vendor-specific extra request fields (e.g. DeepSeek's thinking toggle).
+  // Added to the request body before protocol fields, so these can never
+  // override model/messages/stream/tools or other adapter-owned keys.
+  readonly extraBody?: Readonly<Record<string, unknown>>;
 }
 
 type WireMessage =
@@ -552,6 +556,7 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
   private readonly models: OpenAICompatibleProviderOptions["models"];
   private readonly firstResponseTimeoutMs: number;
   private readonly streamIdleTimeoutMs: number;
+  private readonly extraBody: OpenAICompatibleProviderOptions["extraBody"];
 
   constructor(options: OpenAICompatibleProviderOptions) {
     if (options.id.trim().length === 0) throw new Error("provider id 不能为空");
@@ -581,6 +586,7 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
     this.models = { ...options.models };
     this.firstResponseTimeoutMs = firstResponseTimeoutMs;
     this.streamIdleTimeoutMs = streamIdleTimeoutMs;
+    this.extraBody = options.extraBody;
   }
 
   override capabilitiesFor(model: string): ModelCapabilities {
@@ -593,10 +599,15 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
     };
   }
 
+  private wireBody(request: ModelRequest): WireRequest {
+    const body = serializeRequest(request);
+    return this.extraBody === undefined ? body : { ...this.extraBody, ...body };
+  }
+
   override snapshotRequest(request: ModelRequest): ProviderRequestSnapshot {
     return {
       normalizedPayload: JSON.parse(
-        JSON.stringify(serializeRequest(request)),
+        JSON.stringify(this.wireBody(request)),
       ) as ProviderRequestSnapshot["normalizedPayload"],
       serializationVersion: ADAPTER_VERSION,
       redactions: ["authorization"],
@@ -625,7 +636,7 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
           retryable: false,
         });
       }
-      const body = serializeRequest(request);
+      const body = this.wireBody(request);
       let encoded: string;
       try {
         encoded = JSON.stringify(body);

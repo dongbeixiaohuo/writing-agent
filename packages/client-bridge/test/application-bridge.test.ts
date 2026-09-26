@@ -432,6 +432,49 @@ describe("Application Service client bridge", () => {
       bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true });
     }
   });
+  it('skips the periodic snapshot rebuild while no project has new events, and rebuilds after one', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'wa-bridge-poll-gate-'));
+    const storage = openWorkspaceStorage({ workspacePath });
+    const provider = new BridgeWritingProvider();
+    const service = new WritingApplicationService({ storage, provider });
+    seedProject(service, 'project-gate', 'test');
+    const bridge = bridgeFor(service);
+    try {
+      const unsubscribe = bridge.subscribe(() => {});
+      await bridge.selectProject('project-gate');
+      const first = bridge.getSnapshot().revision;
+      // With no new events, idle poll ticks must not rebuild projections at all.
+      const original = service.getProjectProjection.bind(service);
+      let rebuilds = 0;
+      (service as { getProjectProjection: typeof original }).getProjectProjection = (projectId: string) => {
+        rebuilds += 1;
+        return original(projectId);
+      };
+      await new Promise(resolve => setTimeout(resolve, 60));
+      assert.equal(rebuilds, 0, 'idle ticks must probe event sequences, not rebuild');
+      assert.equal(bridge.getSnapshot().revision, first);
+      // A new event anywhere makes the next tick rebuild and publish.
+      const imported = service.importMaterial({
+        operationId: 'gate-material',
+        projectId: 'project-gate',
+        expectedProjectRevision: storage.inspectProject('project-gate')!.revision,
+        materialId: 'gate-material',
+        displayName: '门控材料',
+        sourceKind: 'pasted_text',
+        sourceReference: 'test',
+        role: 'illustrative',
+        trustLabel: 'user_provided_untrusted',
+        permissionScope: 'project_only',
+        content: '门控测试内容',
+        actor,
+      });
+      assert.equal(imported.ok, true, JSON.stringify(imported));
+      await waitUntil(() => rebuilds > 0 && bridge.getSnapshot().revision > first);
+      unsubscribe();
+    } finally {
+      bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
   it("selects an existing project without sessions and starts its first conversation", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "wa-bridge-empty-project-"));
     const storage = openWorkspaceStorage({ workspacePath });

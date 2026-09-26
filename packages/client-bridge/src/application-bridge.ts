@@ -919,6 +919,7 @@ export class ApplicationClientBridge implements ClientBridge {
   readonly #commands = new Map<string, CachedCommand<unknown>>();
   #snapshot: BridgeSnapshot;
   #pollTimer: ReturnType<typeof setInterval> | null = null;
+  readonly #eventSeqByProject = new Map<string, number>();
   #disposed = false;
   #handoffError: { projectId: string; error: NonNullable<BridgeSnapshot['lastError']> } | null = null;
 
@@ -999,7 +1000,7 @@ export class ApplicationClientBridge implements ClientBridge {
     this.#listeners.add(listener);
     if (this.#pollTimer === null) {
       this.#pollTimer = setInterval(() => {
-        void this.refresh();
+        void this.#refreshWhenDirty();
       }, this.#pollIntervalMs);
     }
     return () => {
@@ -1010,6 +1011,27 @@ export class ApplicationClientBridge implements ClientBridge {
       }
     };
   };
+
+  // The poll exists to pick up data changes. A full snapshot rebuild replays
+  // every project's events (tens of ms on grown workspaces), so idle ticks
+  // must not pay it: rebuild only when some project recorded a newer event
+  // (or the project set itself changed). Probe errors fail open into a full
+  // refresh, preserving the existing offline reporting path.
+  async #refreshWhenDirty(): Promise<void> {
+    if (this.#disposed) return;
+    try {
+      const projects = this.#service.listProjects();
+      const dirty =
+        projects.length !== this.#eventSeqByProject.size ||
+        projects.some((project) => {
+          const known = this.#eventSeqByProject.get(project.id);
+          return known === undefined || this.#service.hasProjectEventsAfter(project.id, known);
+        });
+      if (dirty) await this.refresh();
+    } catch {
+      await this.refresh();
+    }
+  }
 
   async selectProject(projectId: string): Promise<void> {
     this.#ensureLive();
@@ -2045,6 +2067,10 @@ export class ApplicationClientBridge implements ClientBridge {
     const projections = this.#service
       .listProjects()
       .map((project) => this.#service.getProjectProjection(project.id));
+    this.#eventSeqByProject.clear();
+    for (const projection of projections) {
+      this.#eventSeqByProject.set(projection.project.id, projection.latestProjectSeq);
+    }
     const selectedProjection =
       projections.find(
         (projection) => projection.project.id === requestedProjectId,

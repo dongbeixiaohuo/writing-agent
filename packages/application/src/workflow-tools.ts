@@ -7,6 +7,7 @@ import type {
   ProjectMode,
   StoragePort,
 } from "../../writing-core/src/index.js";
+import type { RunRecord } from "../../runtime/session/src/index.js";
 import {
   workflowStageSequence,
   type WritingWorkflowStage,
@@ -16,6 +17,13 @@ import {
   type ToolDefinition,
   type ToolExecutionContext,
 } from "../../runtime/tools/src/index.js";
+
+// The workflow layer needs run history for cross-run stage carry-over; the
+// concrete workspace storage implements both ports.
+type WorkflowStorage = StoragePort & {
+  getRun(runId: string): RunRecord | null;
+  listRuns(projectId: string, sessionId?: string): RunRecord[];
+};
 
 type ContentStage = Exclude<WritingWorkflowStage, "fact_check">;
 import { FactClaimStatusSchema, FactClaimTypeSchema } from '../../writing-core/src/index.js';
@@ -492,6 +500,7 @@ function markStage(
   context: ToolExecutionContext,
   stage: WritingWorkflowStage,
   artifactVersionId: string,
+  reason?: string,
 ): void {
   const project = storage.inspectProject(context.projectId);
   if (project === null) {
@@ -510,10 +519,65 @@ function markStage(
       stage,
       artifactVersionId,
     }),
-    reason: `workflow-stage-complete:${stage}`,
+    reason: reason ?? `workflow-stage-complete:${stage}`,
     requestSnapshotId: null,
     actor: actor(stage, context.runId),
   }));
+}
+
+// A run that died mid-pipeline keeps its stage markers. A brand-new run in
+// the same session carries the dead run's contiguous completed prefix (with
+// the same stage output versions) so the director continues at nextStage
+// instead of restarting research→outline→draft on an already-written body.
+// Carried markers are this run's own artifacts: rework/invalidation and all
+// downstream CAS checks apply to them exactly like freshly earned markers.
+const CARRY_SOURCE_STATUSES: ReadonlySet<string> = new Set(["failed", "cancelled", "interrupted"]);
+
+function seedCarriedStageMarkers(
+  storage: WorkflowStorage,
+  projectId: string,
+  runId: string,
+  mode: ProjectMode,
+): void {
+  const run = storage.getRun(runId);
+  if (run === null) return;
+  const sequence = workflowStageSequence(mode);
+  // Own progress (or an earlier seeding) already exists: nothing to carry.
+  if (sequence.some((stage) => stageMarker(storage, projectId, runId, stage) !== null)) return;
+  const source = storage
+    .listRuns(projectId, run.sessionId)
+    .filter((candidate) =>
+      candidate.id !== runId &&
+      candidate.createdAt < run.createdAt &&
+      CARRY_SOURCE_STATUSES.has(candidate.status))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .find((candidate) =>
+      sequence.some((stage) => stageMarker(storage, projectId, candidate.id, stage) !== null));
+  if (source === undefined) return;
+  for (const stage of sequence) {
+    // fact_check completion stays with the project-level gate; never carried.
+    if (stage === "fact_check") continue;
+    const marker = stageMarker(storage, projectId, source.id, stage);
+    if (marker === null) break; // contiguous prefix only
+    let artifactVersionId: unknown;
+    try {
+      artifactVersionId = (JSON.parse(marker.content) as { artifactVersionId?: unknown }).artifactVersionId;
+    } catch {
+      break;
+    }
+    if (typeof artifactVersionId !== "string" || artifactVersionId.length === 0) break;
+    try {
+      markStage(
+        storage,
+        { operationId: `carry:${runId}:${stage}`, projectId, runId } as ToolExecutionContext,
+        stage,
+        artifactVersionId,
+        `workflow-stage-carried:${stage}`,
+      );
+    } catch {
+      break; // a partial carry still forms a valid contiguous prefix
+    }
+  }
 }
 
 function titleFromBody(content: string): string {
@@ -632,7 +696,7 @@ const FACT_CHECK_SCHEMA = {
 } as const;
 
 export function createWritingWorkflowTools(options: {
-  readonly storage: StoragePort;
+  readonly storage: WorkflowStorage;
   readonly projectId: string;
   readonly mode: ProjectMode;
   readonly factCheckOnly?: boolean;
@@ -657,6 +721,12 @@ export function createWritingWorkflowTools(options: {
   } = options;
   const continuationEntryStageByRun = new Map<string, WritingWorkflowStage | null>();
   const readyInputsByRun = new Map<string, string>();
+  const carryCheckedRuns = new Set<string>();
+  const seedCarryOnce = (runId: string): void => {
+    if (factCheckOnly || carryCheckedRuns.has(runId)) return;
+    carryCheckedRuns.add(runId);
+    seedCarriedStageMarkers(storage, projectId, runId, mode);
+  };
   const initialContextIds = (runId: string): readonly string[] =>
     storage.listArtifactVersions(projectId, "report", markerKey(runId, "draft")).length > 0 ? [] : requiredInitialArtifactIds;
 
@@ -1077,6 +1147,7 @@ export function createWritingWorkflowTools(options: {
       ? [submitFactCheck]
       : [assessWritingReadiness, submitWritingStage, submitFactCheck]) as unknown as readonly ToolDefinition<never, JsonValue>[],
     progress(runId) {
+      seedCarryOnce(runId);
       const sequence = factCheckOnly
         ? (["fact_check"] as const)
         : workflowStageSequence(mode);
@@ -1125,7 +1196,7 @@ export function createWritingWorkflowTools(options: {
 }
 
 export function createFactCheckOnlyTools(options: {
-  readonly storage: StoragePort;
+  readonly storage: WorkflowStorage;
   readonly projectId: string;
 }): WritingWorkflowTools {
   return createWritingWorkflowTools({

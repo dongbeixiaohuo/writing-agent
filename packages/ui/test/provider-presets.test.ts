@@ -210,6 +210,14 @@ test('new choices prefer Responses only within the same region and account offer
   assert.equal(choices.length, 100);
 });
 
+test('DeepSeek presets carry the reviewed thinking-disabled adaptation after real-account falsification', () => {
+  for (const id of ['cc-deepseek', 'deepseek']) {
+    const preset = presets.PROVIDER_PRESETS.find(p => p.id === id)!;
+    assert.equal(preset.kind, 'openai_compatible');
+    assert.deepEqual(preset.extraBody, { thinking: { type: 'disabled' } }, id);
+  }
+});
+
 test('unified region wording and Chinese provider aliases are searchable', () => {
   assert.equal(presets.PROVIDER_REGIONS.unspecified, '不区分国内 / 国际');
   assert.ok(presets.filterProviderPresets('深度求索').some(p => p.id === 'cc-deepseek'));
