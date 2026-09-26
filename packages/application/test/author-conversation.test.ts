@@ -102,6 +102,31 @@ it('does not let a title selection delegate to an expert unable to save the requ
   } finally { f.close(); }
 });
 
+it('self-corrects a wrong candidateVersionId and defaults to the current candidates when omitted', () => {
+  const provider = new AuthorProvider([]);
+  const f = setup(provider);
+  try {
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    const candidates = savePublicationCandidates(f.storage, 'p', 'choices', bodyId, [{title:'窗边',opening:null,distributionCopy:null,rationale:'意象'}]);
+    // Omitted id falls back to the current candidates version.
+    const chosen = choosePublicationCandidate(f.storage, 'p', 'select-1', '1', undefined, 1);
+    assert.equal(chosen.title, '窗边');
+    // The salient body id is the classic wrong guess: the error must hand back the exact correction.
+    const fresh = savePublicationCandidates(f.storage, 'p', 'choices-2', bodyId, [{title:'灯下',opening:null,distributionCopy:null,rationale:'对照'}]);
+    assert.throws(
+      () => choosePublicationCandidate(f.storage, 'p', 'select-2', '1', bodyId, 1),
+      (error: unknown) => {
+        const message = String((error as Error).message);
+        assert.match(message, /candidateVersionId 不匹配/u);
+        assert.ok(message.includes(fresh.id), 'error must name the correct candidates id');
+        assert.ok(message.includes('不是正文 id'), 'error must say what the wrong id actually was');
+        return true;
+      },
+    );
+    assert.ok(candidates.id !== fresh.id);
+  } finally { f.close(); }
+});
+
 it('keeps an already chosen title after body correction without a second selection loop', async () => {
   const provider = new AuthorProvider([{name:'respond_author',args:{reply:'保留你已选的标题，不用再选。'}}]);
   const f = setup(provider);

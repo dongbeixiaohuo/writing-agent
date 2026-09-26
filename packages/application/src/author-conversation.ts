@@ -115,7 +115,7 @@ export function startAuthorConversation(options: {
         reply = '好的，这组标题先保留。你想用哪一个？告诉我序号或标题即可，也可以继续调整。确认标题后我会继续核查，正文不重写。';
       }
     }
-    if (!/(?:ID|UUID|内部|技术)/iu.test(input.userInstruction) && /(?:contentHash|versionId|candidateVersionId|publicationCandidates|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-)/iu.test(reply)) throw new ToolExecutionFault('AUTHOR_REPLY_TOO_TECHNICAL', '用普通作者能理解的语言回复，不暴露内部ID、hash或工具字段，不要求用户填写它们。');
+    if (!/(?:ID|UUID|内部|技术)/iu.test(input.userInstruction) && /(?:contentHash|versionId|candidateVersionId|publicationCandidates|central_revision|language_review|review_editor|review_publish|review_reader|fact_check|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-)/iu.test(reply)) throw new ToolExecutionFault('AUTHOR_REPLY_TOO_TECHNICAL', '用普通作者能理解的语言回复，不暴露内部ID、hash、工具字段或英文阶段名（改为：集中修订、语言终审、编辑审校、发布审校、读者审校、事实核查），不要求用户填写它们。');
     const saved = value(storage.commitArtifactVersion({ operationId: context.operationId, projectId: project.id,
       expectedProjectRevision: storage.inspectProject(project.id)!.revision, kind: 'report', logicalKey: `author-turn:${context.runId}`,
       baseVersionId: null, content: JSON.stringify({ reply, role: assignment?.role ?? 'director', task: assignment?.task ?? input.userInstruction,
@@ -220,10 +220,10 @@ export function startAuthorConversation(options: {
         return { ...saved, status: 'awaiting_user_selection' } as unknown as JsonValue;
       },
     }),
-    definition<{ candidateVersionId: string; index: number }>({
+    definition<{ candidateVersionId?: string; index: number }>({
       name: 'choose_publication', version: '1.0.0', effect: 'local_idempotent', permissions: ['author:propose'],
       description: 'Confirm a previously displayed publication candidate only when the actual user explicitly selects its number or complete title. The tool independently validates the original user message and current article version. Cannot change article paragraphs.',
-      inputSchema: { type: 'object', properties: { candidateVersionId: { type: 'string' }, index: { type: 'integer', minimum: 1, maximum: 6 } }, required: ['candidateVersionId', 'index'], additionalProperties: false },
+      inputSchema: { type: 'object', properties: { candidateVersionId: { type: 'string', description: '可省略：省略时使用当前 publicationCandidates.id。不要填写正文 id；正文 id 会被拒绝并返回正确值。' }, index: { type: 'integer', minimum: 1, maximum: 6 } }, required: ['index'], additionalProperties: false },
       execute(args, context) { const selected = choosePublicationCandidate(storage, project.id, context.operationId, input.userInstruction, args.candidateVersionId, args.index); titleSelected = true; return selected; },
     }),
     definition<Record<string, never>>({

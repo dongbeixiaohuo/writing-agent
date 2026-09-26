@@ -1478,6 +1478,43 @@
   border-top: 1px solid var(--dsw-alias-border-l3);
 }
 
+.sessionPreviewCard {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  gap: 8px;
+  width: 320px;
+  max-width: 40vw;
+  padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  background: var(--dsw-specific-popover);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 14%);
+  pointer-events: none;
+}
+
+.sessionPreviewLine {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  margin: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.sessionPreviewUser {
+  color: var(--dsw-alias-brand-primary);
+}
+
+.sessionPreviewEmpty {
+  margin: 0;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+}
+
 .composerContext {
   color: var(--dsw-alias-label-caption);
   font-size: 11px;

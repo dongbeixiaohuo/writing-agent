@@ -1473,6 +1473,21 @@ export function WritingAgentShell({
   const [navigationError, setNavigationError] = useState<string | null>(null)
   const [projectActionNotice, setProjectActionNotice] = useState<string | null>(null)
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<BridgeSnapshot['projects'][number] | null>(null)
+  const [sessionPreview, setSessionPreview] = useState<{ sessionId: string; top: number; left: number } | null>(null)
+  const sessionPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showSessionPreview = (sessionId: string, anchor: HTMLElement): void => {
+    if (sessionPreviewTimer.current !== null) clearTimeout(sessionPreviewTimer.current)
+    const rect = anchor.getBoundingClientRect()
+    sessionPreviewTimer.current = setTimeout(() => {
+      setSessionPreview({ sessionId, top: rect.top, left: rect.right + 8 })
+      sessionPreviewTimer.current = null
+    }, 220)
+  }
+  const hideSessionPreview = (): void => {
+    if (sessionPreviewTimer.current !== null) { clearTimeout(sessionPreviewTimer.current); sessionPreviewTimer.current = null }
+    setSessionPreview(null)
+  }
+  useEffect(() => () => { if (sessionPreviewTimer.current !== null) clearTimeout(sessionPreviewTimer.current) }, [])
   const [composerHandoff, setComposerHandoff] = useState<{ id: number, draft: string, restoreFocus: boolean } | null>(null)
   const activePanel = activePanelId === null ? undefined : extensions.getPanel(activePanelId)
   const rightOpen = activePanel !== undefined
@@ -1637,7 +1652,7 @@ export function WritingAgentShell({
         gridTemplateColumns: `${columns.sidebar}px minmax(0, ${columns.center}px) ${columns.rightbar}px`,
       }}
     >
-      <aside className={appFrameCss.sidebarCol} aria-label="项目和会话">
+      <aside className={appFrameCss.sidebarCol} aria-label="项目和会话" onScroll={hideSessionPreview}>
         <div className={clsx(sidebarCss.root, sidebarCollapsed && sidebarCss.collapsed)}>
           <div className={sidebarCss.logoRow}>
             {!sidebarCollapsed && <button className={sidebarCss.brand} type="button" onClick={beginNewProject}>
@@ -1715,7 +1730,11 @@ export function WritingAgentShell({
                     type="button"
                     key={session.id}
                     aria-current={session.id === snapshot.selectedSessionId && !hero ? 'page' : undefined}
-                    onClick={() => void openSession(project.id, session.id)}
+                    onClick={() => { hideSessionPreview(); void openSession(project.id, session.id) }}
+                    onMouseEnter={event => showSessionPreview(session.id, event.currentTarget)}
+                    onMouseLeave={hideSessionPreview}
+                    onFocus={event => showSessionPreview(session.id, event.currentTarget)}
+                    onBlur={hideSessionPreview}
                   >
                     <span className={css.sessionIdentity}><span className={css.sessionIndicator} aria-hidden="true" /><span className={css.sessionTitle}>{session.title}</span></span>
                     <span className={session.id === snapshot.selectedSessionId && !hero ? css.sessionCurrent : css.relativeTime}>{session.id === snapshot.selectedSessionId && !hero ? '正在查看' : session.relativeTime}</span>
@@ -1735,6 +1754,22 @@ export function WritingAgentShell({
           </div>
         </div>
       </aside>
+      {sessionPreview !== null && (() => {
+        const previewItems = (snapshot.timelineBySession[sessionPreview.sessionId] ?? [])
+          .filter(item => item.kind === 'message')
+          .slice(-4)
+        const snippet = (body: string): string => {
+          const text = body.replace(/\*\*/gu, '').replace(/^#{1,6}\s*/gmu, '').replace(/\s+/gu, ' ').trim()
+          return text.length > 120 ? `${text.slice(0, 120)}…` : text
+        }
+        return <div className={css.sessionPreviewCard} style={{ top: sessionPreview.top, left: sessionPreview.left }} role="tooltip">
+          {previewItems.length === 0
+            ? <p className={css.sessionPreviewEmpty}>还没有对话内容</p>
+            : previewItems.map(item => <p key={item.id} className={clsx(css.sessionPreviewLine, item.role === 'user' && css.sessionPreviewUser)}>
+                <span>{item.role === 'user' ? '你：' : ''}{snippet(item.body)}</span>
+              </p>)}
+        </div>
+      })()}
 
       <section className={clsx(appFrameCss.centerCol, css.center)} aria-label="写作会话">
         <div className={clsx(css.previewBanner, snapshot.mode === 'application' && css.applicationBanner)}>

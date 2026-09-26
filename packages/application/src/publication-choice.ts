@@ -79,10 +79,17 @@ export function savePublicationCandidates(storage: StoragePort, projectId: strin
 }
 
 /** The model chooses a proposed index; only the actual user operation can authorize it. */
-export function choosePublicationCandidate(storage: StoragePort, projectId: string, operationId: string, userText: string, candidateVersionId: string, index: number) {
+export function choosePublicationCandidate(storage: StoragePort, projectId: string, operationId: string, userText: string, candidateVersionId: string | undefined, index: number) {
   const saved = getPublicationCandidates(storage, projectId);
   const project = storage.inspectProject(projectId)!;
-  if (!saved || saved.id !== candidateVersionId || saved.bodyVersionId !== project.latestBodyVersionId) throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE', 'Candidate version or article changed; ask for a fresh selection');
+  if (!saved || saved.bodyVersionId !== project.latestBodyVersionId) throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE', 'Candidate version or article changed; ask for a fresh selection');
+  // The article body id is far more salient than the candidates id; a wrong
+  // id must hand the caller the exact correction instead of a loop of guesses.
+  const expected = candidateVersionId ?? saved.id;
+  if (saved.id !== expected) {
+    throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE',
+      `candidateVersionId 不匹配：当前候选版本 id 是 publicationCandidates.id=${saved.id}（不是正文 id ${saved.bodyVersionId}）。请改用这个 id 重新调用 choose_publication；省略 candidateVersionId 时会自动使用当前候选版本。`);
+  }
   const candidate = saved.candidates[index - 1];
   const body = project.latestBodyVersionId ? storage.getArtifactVersion(project.latestBodyVersionId) : null;
   if (!candidate || body?.kind !== 'body' || !isUsablePublicationTitle(candidate.title, body.content)) {

@@ -116,6 +116,14 @@ export class CredentialBroker {
   readonly #systemBackend: SystemCredentialBackend | undefined;
   readonly #environment: Readonly<Record<string, string | undefined>>;
   readonly #session = new Map<string, string>();
+  // Backend availability cannot change during the process lifetime; probing
+  // it spawns a shell on Windows, so it is memoized once.
+  #availabilityProbe: Promise<boolean> | undefined;
+  // Status metadata for UI display. A short TTL collapses the repeated
+  // inspects in one configure/switch flow (each is a shell read on Windows)
+  // without showing meaningfully stale status.
+  readonly #inspectCache = new Map<string, { at: number; value: CredentialMetadata }>();
+  static readonly #INSPECT_TTL_MS = 10_000;
 
   constructor(options: CredentialBrokerOptions = {}) {
     this.#systemBackend = options.systemBackend;
@@ -132,6 +140,7 @@ export class CredentialBroker {
     const reference = managedReference(normalizedId);
     if (persistence === "session") {
       this.#session.set(normalizedId, normalizedSecret);
+      this.#inspectCache.delete(reference);
       return {
         reference,
         configured: true,
@@ -145,6 +154,7 @@ export class CredentialBroker {
       !(await this.#available(this.#systemBackend))
     ) {
       this.#session.set(normalizedId, normalizedSecret);
+      this.#inspectCache.delete(reference);
       return {
         reference,
         configured: true,
@@ -155,6 +165,7 @@ export class CredentialBroker {
     try {
       await this.#systemBackend.write(normalizedId, normalizedSecret);
       this.#session.delete(normalizedId);
+      this.#inspectCache.delete(reference);
       return {
         reference,
         configured: true,
@@ -163,6 +174,7 @@ export class CredentialBroker {
       };
     } catch {
       this.#session.set(normalizedId, normalizedSecret);
+      this.#inspectCache.delete(reference);
       return {
         reference,
         configured: true,
@@ -189,6 +201,14 @@ export class CredentialBroker {
   }
 
   async inspect(reference: string): Promise<CredentialMetadata> {
+    const cached = this.#inspectCache.get(reference);
+    if (cached !== undefined && Date.now() - cached.at < CredentialBroker.#INSPECT_TTL_MS) return cached.value;
+    const value = await this.#inspectUncached(reference);
+    this.#inspectCache.set(reference, { at: Date.now(), value });
+    return value;
+  }
+
+  async #inspectUncached(reference: string): Promise<CredentialMetadata> {
     const parsed = parseReference(reference);
     if (parsed.kind === "environment") {
       return {
@@ -229,6 +249,7 @@ export class CredentialBroker {
   async deleteManaged(id: string): Promise<void> {
     const normalizedId = validateCredentialId(id);
     this.#session.delete(normalizedId);
+    this.#inspectCache.delete(managedReference(normalizedId));
     if (
       this.#systemBackend !== undefined &&
       (await this.#available(this.#systemBackend))
@@ -246,14 +267,18 @@ export class CredentialBroker {
 
   clearSession(): void {
     this.#session.clear();
+    this.#inspectCache.clear();
   }
 
   async #available(backend: SystemCredentialBackend): Promise<boolean> {
-    try {
-      return await backend.isAvailable();
-    } catch {
-      return false;
-    }
+    this.#availabilityProbe ??= (async () => {
+      try {
+        return await backend.isAvailable();
+      } catch {
+        return false;
+      }
+    })();
+    return this.#availabilityProbe;
   }
 }
 

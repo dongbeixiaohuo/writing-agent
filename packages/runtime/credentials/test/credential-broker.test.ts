@@ -40,7 +40,49 @@ class MemorySystemBackend implements SystemCredentialBackend {
   }
 }
 
+class CountingSystemBackend implements SystemCredentialBackend {
+  readonly values = new Map<string, string>();
+  probes = 0;
+  reads = 0;
+
+  async isAvailable(): Promise<boolean> { this.probes += 1; return true; }
+  async read(id: string): Promise<string | null> { this.reads += 1; return this.values.get(id) ?? null; }
+  async write(id: string, secret: string): Promise<void> { this.values.set(id, secret); }
+  async delete(id: string): Promise<void> { this.values.delete(id); }
+}
+
 describe("CredentialBroker", () => {
+  it("memoizes availability and collapses repeated inspects, invalidating on save and delete", async () => {
+    const backend = new CountingSystemBackend();
+    const broker = new CredentialBroker({ systemBackend: backend, environment: {} });
+
+    await broker.saveManaged("cached-one", fakeSecret, "system");
+    const reference = "managed:cached-one";
+    const first = await broker.inspect(reference);
+    const afterFirst = { probes: backend.probes, reads: backend.reads };
+    for (let n = 0; n < 5; n++) {
+      assert.deepEqual(await broker.inspect(reference), first);
+    }
+    assert.deepEqual(
+      { probes: backend.probes, reads: backend.reads },
+      afterFirst,
+      "repeated inspects within the TTL must not spawn new backend work",
+    );
+
+    await broker.saveManaged("cached-one", `${fakeSecret}-rotated`, "system");
+    assert.equal(backend.values.get("cached-one"), `${fakeSecret}-rotated`);
+    const readsAfterSave = backend.reads;
+    assert.deepEqual((await broker.inspect(reference)).configured, true);
+    assert.equal(backend.reads, readsAfterSave + 1, "a save invalidates the cached entry exactly once");
+
+    await broker.deleteManaged("cached-one");
+    const readsAfterDelete = backend.reads;
+    assert.deepEqual((await broker.inspect(reference)).configured, false);
+    assert.equal(backend.reads, readsAfterDelete + 1, "a delete also invalidates the cached entry");
+
+    assert.equal(backend.probes, 1, "backend availability is probed once per broker, not per operation");
+  });
+
   it("stores managed credentials in the system backend and exposes metadata only", async () => {
     const backend = new MemorySystemBackend(true);
     const broker = new CredentialBroker({

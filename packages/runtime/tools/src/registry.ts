@@ -233,7 +233,7 @@ export class ToolRegistry {
         context,
         fixedError(
           "TOOL_PERMISSION_DENIED",
-          "The application did not grant this tool permission",
+          "The application did not grant this tool permission. This denial is final: do not retry the same tool or the same target again this turn. Continue only with the tools listed in allowedTools, or submit the current result without that read.",
         ),
       );
     }
