@@ -485,7 +485,7 @@ describe("Anthropic-compatible provider", () => {
           "no-quota": {
             status: 400,
             type: "billing_error",
-            message: `credit balance at C:\\private\\key.txt`,
+            message: "credit balance exhausted",
           },
           "rate-limited": {
             status: 429,
@@ -522,7 +522,7 @@ describe("Anthropic-compatible provider", () => {
         response.end(
           JSON.stringify({
             type: "error",
-            error: { type: selected.type, message: selected.message },
+            error: { type: selected.type, message: selected.message, debug: "C:\\private\\key.txt" },
           }),
         );
       })().catch((error: unknown) => {
@@ -556,6 +556,16 @@ describe("Anthropic-compatible provider", () => {
         assert.equal(events[0].error.providerRequestId, `anthropic-${model}`);
         assert.equal(JSON.stringify(events).includes(fakeApiKey), false);
         assert.equal(JSON.stringify(events).includes("C:\\private"), false);
+        if (model === "wrong-key") {
+          // The sanitized upstream reason is exposed, with the credential masked.
+          assert.equal(events[0].error.providerDetail, "invalid ***");
+        }
+        if (model === "no-quota") {
+          assert.equal(events[0].error.providerDetail, "credit balance exhausted");
+        }
+        if (model === "unknown-model") {
+          assert.equal(events[0].error.providerDetail, "model MiniMax-X not found");
+        }
         if (model === "rate-limited") {
           assert.equal(events[0].error.retryAfterMs, 1_500);
         }

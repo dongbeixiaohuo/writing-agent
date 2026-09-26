@@ -245,6 +245,8 @@ export type DesktopProviderConnectionResultView =
         | "tools";
       readonly errorCode: string;
       readonly retryable: boolean;
+      // Sanitized upstream error reason when the provider returned one.
+      readonly providerDetail?: string;
     };
 
 export interface DesktopRpcRequest {

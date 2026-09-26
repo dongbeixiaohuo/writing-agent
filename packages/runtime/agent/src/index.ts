@@ -735,6 +735,7 @@ export class AgentRuntime {
             stream: attempt.stream,
             ...(attempt.error.transport === undefined ? {} : { transport: attempt.error.transport }),
             ...(attempt.error.status === undefined ? {} : { providerHttpStatus: attempt.error.status }),
+            ...(attempt.error.providerDetail === undefined ? {} : { providerDetail: attempt.error.providerDetail }),
             ...(providerSnapshot.outputTokenLimit === undefined ? {} : { outputTokenLimit: providerSnapshot.outputTokenLimit }),
             ...(attempt.error.providerRequestId === undefined ? {} : { providerRequestId: attempt.error.providerRequestId }),
             ...(attempt.error.code === "MODEL_OUTPUT_TRUNCATED" ? {

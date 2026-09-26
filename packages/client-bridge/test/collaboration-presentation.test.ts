@@ -42,6 +42,27 @@ async function fixture(purpose = 'writing-pack:draft') {
   };
 }
 
+test('model failure surfaces the sanitized upstream reason in the timeline', async () => {
+  const f = await fixture();
+  try {
+    f.event('request.dispatch_attempted', 'model-1', { requestId: 'request-1' });
+    f.event('request.failed', 'model-1', {
+      error: { code: 'INVALID_REQUEST', message: '模型服务拒绝了请求参数' },
+      providerHttpStatus: 400,
+      providerDetail: 'unknown parameter: include',
+    });
+    f.storage.finishRun({ projectId: 'project', runId: 'run', operationId: 'fail', status: 'failed', stopReason: 'INVALID_REQUEST' });
+    const snapshot = await f.snapshot();
+    const row = snapshot.timelineBySession.session.find(item => item.kind === 'tool' && item.label === '运行失败');
+    assert.ok(row?.kind === 'tool');
+    assert.match(row.detail, /模型服务拒绝了请求/u);
+    assert.match(row.detail, /上游返回：unknown parameter: include/u);
+    const requestRow = snapshot.timelineBySession.session.find(item => item.kind === 'tool' && item.label === '写作模型');
+    assert.ok(requestRow?.kind === 'tool');
+    assert.match(requestRow.detail, /上游返回：unknown parameter: include/u);
+  } finally { f.close(); }
+});
+
 test('timeout diagnostics expose a safe local deadline and response timing, not a provider failure claim', async () => {
   const f = await fixture();
   try {

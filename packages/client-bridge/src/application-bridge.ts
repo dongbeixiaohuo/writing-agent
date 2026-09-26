@@ -298,7 +298,13 @@ export function mergeWorkflowStageStatus(
   return incoming;
 }
 
-function modelFailureDetail(code: string | null): string {
+function nestedProviderDetail(payload: Readonly<Record<string, unknown>>): string | null {
+  // Sanitized by the adapter before persistence; only its presence is checked.
+  const detail = payload.providerDetail;
+  return typeof detail === "string" && detail.length > 0 ? detail : null;
+}
+
+function modelFailureDetail(code: string | null, providerDetail: string | null = null): string {
   const messages: Readonly<Record<string, string>> = {
     ABORTED: "模型请求已停止。",
     AUTH_FAILED: "API Key 无效或没有访问权限，请在“设置 → 模型”中更新 Key 并验证连接。",
@@ -314,9 +320,10 @@ function modelFailureDetail(code: string | null): string {
     TIMEOUT: "模型服务响应超时，请检查网络后重试。",
     UNKNOWN_PROVIDER_ERROR: "模型服务返回未知错误，请验证连接并检查服务商状态。",
   };
-  return code === null
+  const base = code === null
     ? "模型请求失败，请在“设置 → 模型”中验证连接后重试。"
     : messages[code] ?? "模型请求失败，请在“设置 → 模型”中验证连接后重试。";
+  return providerDetail === null ? base : `${base}（上游返回：${providerDetail}）`;
 }
 
 function sessionStatus(runs: readonly RunRecord[]): SessionSummary["status"] {
@@ -387,6 +394,7 @@ function timelineForSession(
   const savedIntakeReplyRunIds = new Set<string>();
   const latestToolFailureCodes = new Map<string, string>();
   const latestModelFailureCodes = new Map<string, string>();
+  const latestModelFailureDetails = new Map<string, string>();
   const deliveryReady = (versionId: string | null): boolean => versionId !== null &&
     projection.currentBody?.id === versionId && projection.factCheck.status === 'passed';
 
@@ -398,6 +406,8 @@ function timelineForSession(
     if (event.type === 'request.failed') {
       const code = nestedErrorCode(event.payload);
       if (code !== null) latestModelFailureCodes.set(event.runId, code);
+      const providerDetail = nestedProviderDetail(event.payload);
+      if (providerDetail !== null) latestModelFailureDetails.set(event.runId, providerDetail);
     }
     if (event.type === 'tool.failed') {
       const failureCode = nestedErrorCode(event.payload);
@@ -512,7 +522,7 @@ function timelineForSession(
               : event.type.endsWith("outcome_unknown")
                 ? "外部结果未知，需要用户决定"
                 : event.type === "request.failed"
-                  ? modelFailureDetail(nestedErrorCode(event.payload))
+                  ? modelFailureDetail(nestedErrorCode(event.payload), nestedProviderDetail(event.payload))
                   : toolFailureDetail(nestedErrorCode(event.payload)),
             state: outputRecovery ? 'pending' : !factNeedsWork && (succeeded || recovered) ? "success" : "failure",
           };
@@ -604,6 +614,7 @@ function timelineForSession(
                 (textPayload(event.payload, 'code') ?? textPayload(event.payload, 'stopReason')) === 'MODEL_RESPONSE_INVALID'
                   && latestModelFailureCodes.get(event.runId) === 'MODEL_OUTPUT_TRUNCATED'
                   ? 'MODEL_OUTPUT_TRUNCATED' : textPayload(event.payload, 'code') ?? textPayload(event.payload, 'stopReason'),
+                latestModelFailureDetails.get(event.runId) ?? null,
               )
             : event.type === "run.budget_exhausted"
               ? intake

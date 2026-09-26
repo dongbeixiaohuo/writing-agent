@@ -313,6 +313,22 @@ test("model connection results explain what the user must correct", () => {
   );
   assert.deepEqual(
     providerConnectionMessage({
+      ok: false,
+      provider: "primary",
+      model: "deepseek-flash",
+      adapterVersion: "openai-responses-v1",
+      stage: "provider",
+      errorCode: "INVALID_REQUEST",
+      retryable: false,
+      providerDetail: "unknown parameter: include",
+    }),
+    {
+      tone: "failure",
+      text: "服务拒绝了测试请求，请检查服务类型、API 地址和模型 ID。（上游返回：unknown parameter: include）",
+    },
+  );
+  assert.deepEqual(
+    providerConnectionMessage({
       ok: true,
       provider: "primary",
       model: "valid-model",

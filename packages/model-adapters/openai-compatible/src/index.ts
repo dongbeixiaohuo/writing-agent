@@ -431,21 +431,44 @@ function responseFacts(response: Response): {
   };
 }
 
-export async function mapHttpError(response: Response, notFoundIsModel = true): Promise<ModelError> {
+const MAX_PROVIDER_DETAIL_CHARS = 240;
+
+// Extract a user-presentable reason from an upstream error body field. The
+// raw body never leaves the adapter: control characters are stripped,
+// whitespace collapses to single spaces, the result is truncated, and any
+// exact occurrence of the request credential is masked. This is a diagnostic
+// string only; callers must treat it as untrusted text.
+export function sanitizeProviderErrorDetail(value: unknown, redact: readonly string[] = []): string | undefined {
+  if (typeof value !== "string") return undefined;
+  // eslint-disable-next-line no-control-regex
+  let cleaned = value.replace(/[\x00-\x1F\x7F-\x9F]/gu, " ").replace(/\s+/gu, " ").trim();
+  for (const secret of redact) {
+    if (secret.length >= 8) cleaned = cleaned.split(secret).join("***");
+  }
+  if (cleaned.length === 0) return undefined;
+  return cleaned.length <= MAX_PROVIDER_DETAIL_CHARS ? cleaned : `${cleaned.slice(0, MAX_PROVIDER_DETAIL_CHARS)}…`;
+}
+
+export async function mapHttpError(response: Response, notFoundIsModel = true, redact: readonly string[] = []): Promise<ModelError> {
   const rawBody = await readLimitedErrorBody(response);
   let code = "";
   let type = "";
+  let upstreamMessage: string | undefined;
   try {
     const parsed: unknown = JSON.parse(rawBody);
     if (isRecord(parsed) && isRecord(parsed.error)) {
       if (typeof parsed.error.code === "string") code = parsed.error.code;
       if (typeof parsed.error.type === "string") type = parsed.error.type;
+      upstreamMessage = sanitizeProviderErrorDetail(parsed.error.message, redact);
     }
   } catch {
     // HTTP status remains authoritative when a gateway returns malformed JSON.
   }
   const detail = `${code} ${type}`.toLowerCase();
-  const facts = responseFacts(response);
+  const facts = {
+    ...responseFacts(response),
+    ...(upstreamMessage === undefined ? {} : { providerDetail: upstreamMessage }),
+  };
   if (response.status === 401 || response.status === 403) {
     return {
       code: "AUTH_FAILED",
@@ -621,7 +644,7 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
         body: encoded,
         signal: deadline.signal,
       });
-      if (!response.ok) throw providerFailure(await mapHttpError(response));
+      if (!response.ok) throw providerFailure(await mapHttpError(response, true, rawCredential === undefined ? [] : [rawCredential]));
       if (response.body === null) {
         throw invalidResponse(
           "模型服务返回了空响应体",

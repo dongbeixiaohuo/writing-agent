@@ -12,6 +12,7 @@ import {
   type ProviderTokenUsage,
 } from "../../../runtime/llm/src/index.js";
 import { TransportDeadline } from "../../../runtime/llm/src/transport-deadline.js";
+import { sanitizeProviderErrorDetail } from "../../openai-compatible/src/index.js";
 
 export interface AnthropicCompatibleModelCapabilities {
   readonly tools: CapabilitySupport;
@@ -484,7 +485,7 @@ function responseFacts(response: Response): {
   };
 }
 
-async function mapHttpError(response: Response): Promise<ModelError> {
+async function mapHttpError(response: Response, redact: readonly string[] = []): Promise<ModelError> {
   const rawBody = await readLimitedErrorBody(response);
   let type = "";
   let message = "";
@@ -498,7 +499,11 @@ async function mapHttpError(response: Response): Promise<ModelError> {
     // HTTP status remains authoritative for malformed gateway responses.
   }
   const detail = `${type} ${message}`.toLowerCase();
-  const facts = responseFacts(response);
+  const upstreamMessage = sanitizeProviderErrorDetail(message, redact);
+  const facts = {
+    ...responseFacts(response),
+    ...(upstreamMessage === undefined ? {} : { providerDetail: upstreamMessage }),
+  };
   if (response.status === 401 || response.status === 403) {
     return {
       code: "AUTH_FAILED",
@@ -575,14 +580,17 @@ async function mapHttpError(response: Response): Promise<ModelError> {
   };
 }
 
-function embeddedStreamError(value: Record<string, unknown>): ModelError {
+function embeddedStreamError(value: Record<string, unknown>, redact: readonly string[] = []): ModelError {
   const error = isRecord(value.error) ? value.error : {};
   const type = typeof error.type === "string" ? error.type : "";
+  const providerDetail = sanitizeProviderErrorDetail(error.message, redact);
+  const detailField = providerDetail === undefined ? {} : { providerDetail };
   if (type === "overloaded_error" || type === "api_error") {
     return {
       code: "PROVIDER_UNAVAILABLE",
       message: "模型服务在流中报告暂时不可用",
       retryable: true,
+      ...detailField,
     };
   }
   if (type === "rate_limit_error") {
@@ -590,12 +598,14 @@ function embeddedStreamError(value: Record<string, unknown>): ModelError {
       code: "RATE_LIMITED",
       message: "模型服务在流中报告限流",
       retryable: true,
+      ...detailField,
     };
   }
   return {
     code: "MODEL_RESPONSE_INVALID",
     message: "模型服务在流中报告错误",
     retryable: false,
+    ...detailField,
   };
 }
 
@@ -745,7 +755,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
         body: encoded,
         signal: deadline.signal,
       });
-      if (!response.ok) throw providerFailure(await mapHttpError(response));
+      if (!response.ok) throw providerFailure(await mapHttpError(response, [credential]));
       if (response.body === null) {
         throw invalidResponse(
           "模型服务返回了空响应体",
@@ -784,7 +794,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
           case "ping":
             break;
           case "error":
-            yield { type: "error", error: embeddedStreamError(chunk) };
+            yield { type: "error", error: embeddedStreamError(chunk, [credential]) };
             return;
           case "message_start": {
             if (!isRecord(chunk.message)) {

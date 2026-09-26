@@ -107,6 +107,10 @@ export interface ModelError {
   readonly code: ModelErrorCode;
   readonly message: string;
   readonly retryable: boolean;
+  // Sanitized upstream error reason (control chars stripped, whitespace
+  // collapsed, truncated). Never the raw response body; may still be absent
+  // when the provider returned no usable message.
+  readonly providerDetail?: string;
   readonly toolSchemaFeedback?: {
     readonly toolName: string;
     readonly issues: readonly { readonly path: string; readonly rule: string; readonly message: string; readonly expected: JsonValue }[];

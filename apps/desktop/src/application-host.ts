@@ -294,6 +294,7 @@ export class DesktopApplicationHost {
           stage: result.stage,
           errorCode: result.error.code,
           retryable: result.error.retryable,
+          ...(result.error.providerDetail === undefined ? {} : { providerDetail: result.error.providerDetail }),
         };
     if (config === this.#providerConfig) this.#connectionTest = connectionTest;
     return connectionTest;

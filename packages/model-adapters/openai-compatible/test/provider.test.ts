@@ -342,6 +342,70 @@ describe("OpenAI-compatible provider", () => {
     });
   });
 
+  it("exposes a sanitized, credential-masked and truncated upstream error detail", async () => {
+    await withLocalServer((_request, response) => {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: `unknown parameter: include\n参见 ${fakeApiKey} ${"x".repeat(500)}`,
+            code: "invalid_request_error",
+            type: "invalid_request_error",
+            debug: "RAW_BODY_MARKER",
+          },
+        }),
+      );
+    }, async (baseURL) => {
+      const provider = createProvider(baseURL);
+      const events = await collectModelEvents(
+        provider.stream({
+          requestId: "request-upstream-detail",
+          model: "mock-text-model",
+          messages: [{ role: "user", content: "连接测试" }],
+          parameters: {},
+        }),
+      );
+
+      assert.equal(events.length, 1);
+      assert.equal(events[0]?.type, "error");
+      if (events[0]?.type !== "error") return;
+      assert.equal(events[0].error.code, "INVALID_REQUEST");
+      const detail = events[0].error.providerDetail;
+      assert.equal(typeof detail, "string");
+      if (typeof detail !== "string") return;
+      assert.ok(detail.startsWith("unknown parameter: include 参见 *** "), detail);
+      assert.equal(detail.includes(fakeApiKey), false);
+      assert.ok(detail.endsWith("…"), detail);
+      assert.ok(detail.length <= 241, detail);
+      // eslint-disable-next-line no-control-regex
+      assert.equal(/[\x00-\x1F\x7F-\x9F]/u.test(detail), false);
+      assert.equal(JSON.stringify(events).includes("RAW_BODY_MARKER"), false);
+    });
+  });
+
+  it("omits the upstream detail when the error message is missing or not a string", async () => {
+    await withLocalServer((_request, response) => {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { code: "invalid_request_error", type: "invalid_request_error" } }));
+    }, async (baseURL) => {
+      const provider = createProvider(baseURL);
+      const events = await collectModelEvents(
+        provider.stream({
+          requestId: "request-upstream-detail-missing",
+          model: "mock-text-model",
+          messages: [{ role: "user", content: "连接测试" }],
+          parameters: {},
+        }),
+      );
+
+      assert.equal(events.length, 1);
+      assert.equal(events[0]?.type, "error");
+      if (events[0]?.type !== "error") return;
+      assert.equal(events[0].error.code, "INVALID_REQUEST");
+      assert.equal(events[0].error.providerDetail, undefined);
+    });
+  });
+
   it("classifies a transport reset as a retryable network error", async () => {
     await withLocalServer((request) => {
       request.socket.destroy();

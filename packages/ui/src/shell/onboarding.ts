@@ -237,9 +237,10 @@ export function providerConnectionMessage(
     RATE_LIMITED: "请求过于频繁，请稍后再验证。",
     TIMEOUT: "连接测试超时，请检查网络或稍后重试。",
   };
+  const base = messages[result.errorCode] ?? "连接验证失败，请检查配置后重试。";
   return {
     tone: "failure",
-    text: messages[result.errorCode] ?? "连接验证失败，请检查配置后重试。",
+    text: result.providerDetail === undefined ? base : `${base}（上游返回：${result.providerDetail}）`,
   };
 }
 

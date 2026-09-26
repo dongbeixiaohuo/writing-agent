@@ -5,7 +5,7 @@ import {
 import { TransportDeadline } from '../../../runtime/llm/src/transport-deadline.js';
 import {
   validateBaseURL, validateCredential, serializeMessages, invalidRequest, invalidResponse,
-  mapHttpError, parseSse, type OpenAICompatibleProviderOptions,
+  mapHttpError, parseSse, sanitizeProviderErrorDetail, type OpenAICompatibleProviderOptions,
 } from '../../openai-compatible/src/index.js';
 
 const VERSION = 'openai-responses-v1';
@@ -94,7 +94,7 @@ export class OpenAIResponsesProvider extends ModelProviderBase {
         body: JSON.stringify(serialize(request, this.scope(request.model))),
       });
       providerRequestId = response.headers.get('x-request-id') ?? undefined;
-      if (!response.ok) throw new ModelProviderFailure(await mapHttpError(response, false));
+      if (!response.ok) throw new ModelProviderFailure(await mapHttpError(response, false, key === undefined ? [] : [key]));
       if (!response.body) throw invalidResponse('Responses 响应体为空');
       yield { type: 'response_activity', phase: 'headers' };
       const calls = new Map<number, { id: string; itemId: string; name: string; arguments: string; done: boolean }>();
@@ -158,9 +158,11 @@ export class OpenAIResponsesProvider extends ModelProviderBase {
         } else if (type === 'response.failed' || type === 'error') {
           const detail = record(e.response) && record(e.response.error) ? e.response.error : e;
           const code = detail.code;
+          const providerDetail = sanitizeProviderErrorDetail(detail.message, key === undefined ? [] : [key]);
           // Map only stable codes; never expose raw provider error bodies.
           throw new ModelProviderFailure({ code: code === 'rate_limit_exceeded' ? 'RATE_LIMITED' : code === 'server_error' ? 'PROVIDER_UNAVAILABLE' : 'MODEL_RESPONSE_INVALID',
-            message: '模型服务未完成本次 Responses 请求', retryable: code === 'rate_limit_exceeded' || code === 'server_error' });
+            message: '模型服务未完成本次 Responses 请求', retryable: code === 'rate_limit_exceeded' || code === 'server_error',
+            ...(providerDetail === undefined ? {} : { providerDetail }) });
         } else if (type.startsWith('response.reasoning') && typeof e.delta === 'string' && e.delta.length > 0) {
           // Activity only. Internal reasoning is not article text or a user-visible answer.
           deadline.content(); yield { type: 'response_activity', phase: 'content' };

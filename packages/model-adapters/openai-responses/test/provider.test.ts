@@ -99,7 +99,7 @@ test('Responses streams text before completion, then round-trips function calls 
   });
 });
 
-for (const [name, terminal] of [['truncated', null], ['incomplete', { type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } } }], ['failed', { type: 'response.failed', response: { error: { code: 'server_error', message: 'SECRET_BODY' } } }]] as const) {
+for (const [name, terminal] of [['truncated', null], ['incomplete', { type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } } }], ['failed', { type: 'response.failed', response: { error: { code: 'server_error', message: 'upstream rejected the request', debug: 'SECRET_BODY' } } }]] as const) {
   test(`Responses ${name} never releases incomplete tools`, async () => {
     await fixture(res => {
       event(res, { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: tool.name, arguments: '' } });
@@ -108,8 +108,13 @@ for (const [name, terminal] of [['truncated', null], ['incomplete', { type: 'res
     }, async provider => {
       const events = await collectModelEvents(provider.stream(request));
       assert.equal(events.some(e => e.type === 'tool_call_complete'), false);
-      assert.equal(events.at(-1)?.type, 'error');
+      const last = events.at(-1);
+      assert.equal(last?.type, 'error');
+      // Only the sanitized upstream message may surface; other body fields never do.
       assert.equal(JSON.stringify(events).includes('SECRET_BODY'), false);
+      if (name === 'failed' && last?.type === 'error') {
+        assert.equal(last.error.providerDetail, 'upstream rejected the request');
+      }
     });
   });
 }
