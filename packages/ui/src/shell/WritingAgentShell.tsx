@@ -30,6 +30,7 @@ import type {
   DesktopLegacyMigrationPlanView,
   DesktopLegacyMigrationResultView,
   DesktopLegacySourceKind,
+  DesktopProviderStatusView,
   DesktopWorkspaceBackupResultView,
   DesktopWorkspaceRestorePreviewView,
   DesktopWorkspaceRestoreResultView,
@@ -404,7 +405,76 @@ interface ComposerSubmission {
   pendingDraft: string
 }
 
-function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, onSubmitted, onHandoffConsumed, onConfigureModel }: {
+function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings }: {
+  host: DesktopHostConfiguration
+  currentLabel: string
+  offline: boolean
+  running: boolean
+  onOpenSettings: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<DesktopProviderStatusView | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (rootRef.current !== null && !rootRef.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('mousedown', onPointerDown); document.removeEventListener('keydown', onKeyDown) }
+  }, [open])
+
+  const toggle = async (): Promise<void> => {
+    if (busy) return
+    if (open) { setOpen(false); return }
+    setOpen(true); setLoading(true); setError(null)
+    try { setStatus(await host.providerStatus('summary')) }
+    catch (reason) { setError(commandErrorMessage(reason, '模型配置读取失败，请重试。')) }
+    finally { setLoading(false) }
+  }
+
+  const choose = async (profileId: string, model: string): Promise<void> => {
+    if (busy) return
+    setBusy(true); setError(null)
+    try { await host.selectProvider(profileId, model); setOpen(false) }
+    catch (reason) { setError(commandErrorMessage(reason, '模型切换失败，请稍后重试。')) }
+    finally { setBusy(false) }
+  }
+
+  const choices = (status?.profiles ?? []).filter(profile => profile.configured)
+    .flatMap(profile => profile.models.map(model => ({ profile, model })))
+
+  return <div className={css.modelSwitchRoot} ref={rootRef}>
+    <button type="button" aria-label={`切换模型，当前 ${currentLabel}`} aria-expanded={open} aria-haspopup="menu"
+      onClick={() => void toggle()}
+      className={clsx(css.connectionPill, css.connectionAction, offline && css.connectionOffline, running && css.connectionRunning)}>
+      {currentLabel}⌄</button>
+    {open && <div className={css.modelSwitchMenu} role="menu" aria-label="可切换的模型">
+      {loading && <p className={css.modelSwitchHint} role="status">正在读取已配置的模型…</p>}
+      {!loading && error === null && choices.length === 0 && <p className={css.modelSwitchHint}>没有已保存 Key 的模型可切换，请先在模型设置中完成配置。</p>}
+      {!loading && choices.map(({ profile, model }) => {
+        const active = profile.profileId === status?.activeProfileId && model === status.model
+        return <button key={`${profile.profileId}:${model}`} type="button" role="menuitemradio" aria-checked={active}
+          className={css.modelSwitchItem} disabled={busy || active} onClick={() => void choose(profile.profileId, model)}>
+          <span className={css.modelSwitchItemMain}>{model}<small>{profile.displayName}</small></span>
+          {active && <span className={css.modelSwitchCurrent}>当前使用</span>}
+        </button>
+      })}
+      {error !== null && <p className={css.modelSwitchError} role="alert">{error}</p>}
+      <div className={css.modelSwitchFooter}>
+        <button type="button" className={css.providerCustomize} onClick={() => { setOpen(false); onOpenSettings() }}>管理模型设置…</button>
+      </div>
+    </div>}
+  </div>
+}
+
+function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, onSubmitted, onHandoffConsumed, onConfigureModel, hostConfiguration }: {
   bridge: ClientBridge
   hero?: boolean
   newProject?: boolean
@@ -413,6 +483,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   onSubmitted?: (submission: ComposerSubmission) => void
   onHandoffConsumed?: () => void
   onConfigureModel?: () => void
+  hostConfiguration?: DesktopHostConfiguration | undefined
 }) {
   const snapshot = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -541,7 +612,9 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
           </div>
           <div className={inputCss.trailing}>
             {modelConfigured
-              ? <button type="button" aria-label={`切换模型，当前 ${snapshot.settings.providerLabel}`} onClick={onConfigureModel} className={clsx(css.connectionPill, css.connectionAction, snapshot.connection === 'offline' && css.connectionOffline, running && css.connectionRunning)}>{snapshot.settings.providerLabel}⌄</button>
+              ? (hostConfiguration !== undefined
+                ? <ModelSwitchMenu host={hostConfiguration} currentLabel={snapshot.settings.providerLabel} offline={snapshot.connection === 'offline'} running={running} onOpenSettings={() => onConfigureModel?.()} />
+                : <button type="button" aria-label={`切换模型，当前 ${snapshot.settings.providerLabel}`} onClick={onConfigureModel} className={clsx(css.connectionPill, css.connectionAction, snapshot.connection === 'offline' && css.connectionOffline, running && css.connectionRunning)}>{snapshot.settings.providerLabel}⌄</button>)
               : <button className={clsx(css.connectionPill, css.connectionAction, css.connectionUnconfigured)} type="button" onClick={onConfigureModel}>模型未配置 · 去设置</button>}
             <button
               className={inputCss.primary}
@@ -1704,7 +1777,7 @@ export function WritingAgentShell({
             setActiveTab('conversation')
             setHero(false)
             forceFollowLatest()
-          }} onConfigureModel={() => openSettings('models')} />
+          }} onConfigureModel={() => openSettings('models')} hostConfiguration={hostConfiguration} />
           <details className={css.optionalSetup}><summary>高级设置（可选）</summary>
             <p>习惯自己指定字段时，可以使用这些工具；也可以直接在对话中说明要求。</p>
             <button className={css.secondaryAction} type="button" onClick={() => setProjectSetupOpen(true)}>手动建立项目</button>
@@ -1755,6 +1828,7 @@ export function WritingAgentShell({
             onHandoffConsumed={() => setComposerHandoff(null)}
             onSubmitted={forceFollowLatest}
             onConfigureModel={() => openSettings('models')}
+            hostConfiguration={hostConfiguration}
           /></div>
         </> : <div className={css.runRecordsScroll}><RunRecords records={snapshot.runRecords} /></div>}
       </section>

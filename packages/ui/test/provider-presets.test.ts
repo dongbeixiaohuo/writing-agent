@@ -92,7 +92,10 @@ test('all source API Key entries are represented, with actual upstream API forma
 });
 
 test('Responses variants coexist with old Chat and Anthropic presets without migrating saved configs', () => {
-  for (const [oldId, name] of [['minimax-cn', 'MiniMax'], ['deepseek', 'DeepSeek'], ['kimi-cn', 'Kimi'], ['qwen-cn', '千问AI平台']]) {
+  // DeepSeek is intentionally absent: its cc entry was corrected back to Chat
+  // Completions on 2026-09-26 after the official endpoint rejected this app's
+  // Responses payload with HTTP 400 on a verified-valid key.
+  for (const [oldId, name] of [['minimax-cn', 'MiniMax'], ['kimi-cn', 'Kimi'], ['qwen-cn', '千问AI平台']]) {
     const old = presets.PROVIDER_PRESETS.find(p => p.id === oldId)!;
     const next = presets.PROVIDER_PRESETS.find(p => p.sourceNames?.includes(name!))!;
     assert.notEqual(old.kind, next.kind);
@@ -189,7 +192,14 @@ test('new choices prefer Responses only within the same region and account offer
     const previous = presets.PROVIDER_PRESETS.find(p => p.id === chat)!;
     const next = presets.PROVIDER_PRESETS.find(p => p.id === responses)!;
     assert.deepEqual(previous.offering, next.offering);
-    assert.equal(next.kind, 'openai_responses');
+    if (responses === 'cc-deepseek') {
+      // Reviewed exception: DeepSeek's official endpoint rejected this app's
+      // Responses payload with HTTP 400 on a verified-valid key (2026-09-26),
+      // so its preferred new selection is the verifiable Chat Completions path.
+      assert.equal(next.kind, 'openai_compatible');
+    } else {
+      assert.equal(next.kind, 'openai_responses');
+    }
     const oldForm = { ...existing, ...previous, providerId: previous.id };
     const before = JSON.stringify(oldForm);
     assert.equal(presets.identifyProviderPreset(oldForm), previous.id);

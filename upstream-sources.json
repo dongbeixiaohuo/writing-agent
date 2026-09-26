@@ -274,7 +274,7 @@
         "copied_files": [{
           "source_path": "src/config/codexProviderPresets.ts",
           "target_path": "packages/client-bridge/src/cc-switch-codex-presets.ts",
-          "sha256": "6a5a3e8cd7eda157b27f54d09a65faa2a765e7bd691a7fa30d6342bd4178336c",
+          "sha256": "bdd62ce0f000ce9e32ce3bff368bdc47e926add1085ee9f49d1629b6f9614491",
           "exact_copy": false
         }],
         "excluded_features": ["OAuth login", "Azure resource templates", "affiliate links", "upstream runtime", "supplier system prompts", "automatic endpoint fallback"],
@@ -290,7 +290,7 @@
         ],
         "target_paths": ["packages/client-bridge/src/provider-presets.ts", "packages/client-bridge/src/provider-offerings.ts"],
         "copied_files": [
-          { "source_path": "src/config/claudeProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-presets.ts", "sha256": "9ef5129890287e3c018920c8a89d464e34161f082b57e68be31810c282be7fb4", "exact_copy": false },
+          { "source_path": "src/config/claudeProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-presets.ts", "sha256": "35e137a674be70b0fdc68eccd76a659054bb94bc1fe91992ab2f9fc6428be884", "exact_copy": false },
           { "source_path": "src/config/codexProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-offerings.ts", "sha256": "f0c282c26e2b6a252bb8ebca6aa322a2bcbb2cd17f275e08bea6499de8a7fa26", "exact_copy": false }
         ],
         "excluded_features": ["dynamic KAT-Coder resource template", "guessed regions", "inferred billing entitlements", "endpoint-only plan merging", "automatic endpoint fallback"],

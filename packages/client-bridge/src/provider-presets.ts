@@ -138,6 +138,12 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = completeProviderCatal
 // Explicitly reviewed SAME-OFFERING pairs, not a brand-wide protocol upgrade.
 // Keep the complete registry for saved configs; simplify only new selections.
 // No credentials, endpoints or models are migrated by this preference.
+// Every mapped target is Responses EXCEPT cc-deepseek: the source claims
+// native Responses for DeepSeek's official endpoint, but on 2026-09-26 that
+// endpoint rejected this app's Responses payload with HTTP 400 twice on a
+// verified-valid key, so DeepSeek prefers the verifiable Chat Completions path
+// (the cc entry is kept for its model examples; the legacy Chat entry stays
+// hidden to avoid a duplicate same-endpoint choice).
 export const RESPONSES_PREFERRED_OVER_CHAT: Readonly<Record<string, string>> = {
   deepseek: 'cc-deepseek', 'qwen-cn': 'cc-qianwenai', 'qwen-sg': 'cc-qwencloud',
   'kimi-cn': 'cc-kimi', 'kimi-global': 'cc-kimi-global', volcengine: 'cc-doubaoseed',

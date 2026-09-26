@@ -17,10 +17,17 @@
 
 ## 参考来源与适配
 
-### rc.41：搜索反馈、性能和双协议选择（当前规则）
+### rc.43：DeepSeek 改回 Chat Completions（真实账号证伪）
+
+- cc-switch 资料声称 DeepSeek 官方端点原生支持 Responses（`apiFormat: openai_responses`），rc.38/41 明确标注未经过真实账号验证。2026-09-26 首次真实账号使用即被证伪：本应用 Responses 请求体在有效 Key 下被 `api.deepseek.com` 以 **HTTP 400** 连续拒绝两次（工作区 `request_snapshots` + `request.failed` 事件留证），连接测试同样失败。
+- `cc-deepseek` 的 `apiFormat` 更正为 `openai_chat`，目录标签自动变为 Chat Completions；Chat 是 DeepSeek 主力文档 API，属于可验证路径。模型示例沿用源资料（`deepseek-flash`、`deepseek-v4-pro`），示例不代表账号已开通。
+- `RESPONSES_PREFERRED_OVER_CHAT` 的 `deepseek → cc-deepseek` 配对保留，但语义变为"同身份去重"：隐藏无模型示例的旧 `deepseek` 条目，新选项只显示 cc 版 Chat 条目；其余 9 组仍为 Responses 偏好。存量 Responses 协议配置不自动迁移，按自定义连接显示，用户可手动改协议（改协议需重填 Key）。
+- 教训：目录中"收录不代表连接已验证"的声明是真实的；任何 Responses 预设首次被真实账号证伪时，按同样方式更正 `apiFormat` 并在本文件留证，不做无法验证的静默兼容。
+
+### rc.41：搜索反馈、性能和双协议选择（身份规则保留，DeepSeek 例外见 rc.43）
 
 - 原搜索仅修改原生 select 的隐藏 options，画面却一直显示上次选择，造成“搜索无效”。现结果直接可见，搜索状态与凭据编辑表单分离，索引预计算；设置页移除全屏背景模糊以降低输入后的重绘成本。不是删除功能来伪装性能改善。
-- `RESPONSES_PREFERRED_OVER_CHAT` 是显式配对：DeepSeek、千问北京/Qwen 新加坡、Kimi 国内/国际、火山方舟通用 API、OpenAI、OpenRouter、智谱/Z.AI Coding Plan，共 10 组。配对测试要求供应商/地区/套餐/档位/渠道一致；不能仅凭品牌或 URL 归并。
+- `RESPONSES_PREFERRED_OVER_CHAT` 是显式配对：DeepSeek（rc.43 起为 Chat 去重例外）、千问北京/Qwen 新加坡、Kimi 国内/国际、火山方舟通用 API、OpenAI、OpenRouter、智谱/Z.AI Coding Plan，共 10 组。配对测试要求供应商/地区/套餐/档位/渠道一致；不能仅凭品牌或 URL 归并。
 - 智谱/Z.AI 的通用 API 仍保留 Chat，因为目录中的 Responses 属于 Coding Plan；不能拿订阅账号代替通用 API。只有 Chat 的服务和 Anthropic 变体不变。
 - 旧 Chat ID、模型、地址、Key、协议保持原样，仍可打开编辑；新建自定义 API 仍能选择 Chat，不自动迁移、不静默切换或降级。
 - Responses 的功能覆盖更广，OpenAI 对新项目推荐使用它，但这不保证第三方实现和每个模型完全等价。目录偏好仅依据用户指定的固定 cc-switch 资料，不声称所有账号已联网验证。依据：[OpenAI 官方迁移说明](https://developers.openai.com/api/docs/guides/migrate-to-responses)。本应用仍使用自己的 Harness；不会因为选择 Responses 就自动启用服务商内置工具或服务端历史保存。
@@ -51,7 +58,7 @@
 - `apiFormat: openai_chat` → 本产品 `openai_compatible`；`openai_responses` → `openai_responses`。不能只看源配置的 `wire_api=responses`：Chat 预设在 cc-switch 中经本地路由转换，本产品直接使用 Chat adapter。
 - 未显式声明 `apiFormat` 的条目按源 `generateThirdPartyConfig` / TOML 中的 Responses 协议提取；收录不等于厂商认证或账户连通性验证。
 - 当时将 90 条资料按“协议 + 主地址”合并为 87 个接口，保留原 15 项后共 102 项。此规则错误地合并了腾讯不同档位，rc.40 已移除，**不能继续用于新增预设**。
-- 旧 Chat/Anthropic 预设、ID 和持久配置完全保留；新增 MiniMax、DeepSeek、Kimi、千问等 Responses 变体，不静默迁移任何存量 Key、地址或模型。每个预设可见实际 API 格式与请求地址。
+- 旧 Chat/Anthropic 预设、ID 和持久配置完全保留；新增 MiniMax、DeepSeek、Kimi、千问等 Responses 变体，不静默迁移任何存量 Key、地址或模型。每个预设可见实际 API 格式与请求地址。（其中 DeepSeek 变体经真实账号证伪，rc.43 已改回 Chat。）
 - 模型 ID 只作离线提示，不自动填入、保存或当作账号已开通目录。主地址以源文件为准，不复制候选地址并自动重试，以免把 Key 发往未选择的端点。
 - 源数据为 `packages/client-bridge/src/cc-switch-codex-presets.ts`；归并和产品文案为 `provider-presets.ts`。MIT 版权说明随安装包分发，来源与哈希登记于 `upstream-sources.json`。
 

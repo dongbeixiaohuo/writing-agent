@@ -66,7 +66,12 @@ export const CC_SWITCH_CODEX_PRESETS: readonly CodexPresetRow[] = [
   ["cc-amux","Amux","openai_responses","https://api.amux.ai/v1",["gpt-5.6-sol"],"aggregator"],
   ["cc-atlascloud","AtlasCloud","openai_chat","https://api.atlascloud.ai/v1",["zai-org/glm-5.2"],"aggregator"],
   ["cc-soshow","Soshow","openai_responses","https://maas.so-show.com/v1",["gpt-5.6-sol"],"aggregator"],
-  ["cc-deepseek","DeepSeek","openai_responses","https://api.deepseek.com",["deepseek-flash","deepseek-v4-pro"],"cn_official"],
+  // 2026-09-26 real-account correction: the source claims native Responses for
+  // DeepSeek's official endpoint, but this app's Responses payload was rejected
+  // with HTTP 400 twice on a verified-valid key (run snapshot evidence). Chat
+  // Completions is DeepSeek's primary documented API; prefer the verifiable
+  // path until Responses support is account-verified with our exact payload.
+  ["cc-deepseek","DeepSeek","openai_chat","https://api.deepseek.com",["deepseek-flash","deepseek-v4-pro"],"cn_official"],
   ["cc-zhipu-glm","Zhipu GLM","openai_responses","https://open.bigmodel.cn/api/v1",["glm-5.3","glm-5-turbo"],"cn_official"],
   ["cc-zhipu-glm-en","Zhipu GLM en","openai_responses","https://api.z.ai/api/v1",["glm-5.3"],"cn_official"],
   ["cc-qianfan","Baidu Qianfan","openai_responses","https://qianfan.baidubce.com/v2",["deepseek-v4-pro","deepseek-v4-flash"],"cn_official"],

@@ -26,6 +26,7 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [checkingKey, setCheckingKey] = useState(false)
+  const [changePreset, setChangePreset] = useState(false)
   const editRequest = useRef(0)
 
   useEffect(() => {
@@ -50,6 +51,7 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
   const openEditor = (profile?: DesktopSavedProviderView) => {
     const request = ++editRequest.current
     setCheckingKey(false)
+    setChangePreset(false)
     setError(null); setNotice(null); setCatalog([]); setEditing(true)
     if (!profile) {
       setForm(emptyForm()); setModels(['']); setSelectedModel(0); setMode('preset'); setPresetId(''); return
@@ -137,10 +139,13 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
 
   return <div className={css.providerSettings}>
     <h3 className={css.settingsSectionTitle}>模型</h3>
-    <p className={css.providerLead}>添加供应商和 API 密钥，选择本次写作使用的模型。</p>
-    <p className={css.settingHint}>模型选择对所有项目生效，包括已有对话；从下一次请求开始使用。</p>
+    <p className={css.providerLead}>{editing
+      ? (existing ? `编辑 ${existing.displayName} 的连接、Key 和模型。` : '添加供应商和 API 密钥，选择本次写作使用的模型。')
+      : '添加供应商和 API 密钥，选择本次写作使用的模型。'}</p>
+    {!editing && <p className={css.settingHint}>模型选择对所有项目生效，包括已有对话；从下一次请求开始使用。</p>}
     {!host ? <p className={css.aboutCopy}>请在桌面版中添加和切换模型。</p> : <>
       {loading && <p role="status">正在读取模型配置…</p>}
+      {!editing && <>
       <div className={css.providerList} aria-label="已保存的模型供应商">
         {profiles.map(profile => {
           const identity = PROVIDER_PRESETS.find(item => item.id === identifyProviderPreset(profile))
@@ -174,15 +179,24 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
       </div>
       {notice && <p className={css.providerNotice} role="status">{notice}</p>}
       {error && <div className={css.editorError} role="alert">{error}</div>}
-      {!editing ? <button type="button" className={css.addProviderButton} disabled={busy || loading} onClick={() => openEditor()}><PlusIcon />添加模型供应商</button>
-        : <fieldset className={css.providerEditor} disabled={busy}>
+      <button type="button" className={css.addProviderButton} disabled={busy || loading} onClick={() => openEditor()}><PlusIcon />添加模型供应商</button>
+      </>}
+      {editing && <>
+        {error && <div className={css.editorError} role="alert">{error}</div>}
+        <fieldset className={css.providerEditor} disabled={busy}>
           <legend className={css.srOnly}>{existing ? '编辑模型供应商' : '添加模型供应商'}</legend>
           <div className={css.providerTabs} role="tablist" aria-label="供应商配置方式">
             <button type="button" role="tab" aria-selected={mode === 'preset'} onClick={() => setMode('preset')}>预置模型供应商</button>
             <button type="button" role="tab" aria-selected={mode === 'custom'} onClick={() => setMode('custom')}>自定义模型 API</button>
           </div>
           <p className={css.providerIntro}>{mode === 'preset' ? '先按购买页面核对国内 / 国际站和套餐，再选择接口协议，填写该账号的 Key 和模型 ID。' : '连接中转服务或自部署模型，填写服务地址、协议和模型 ID。'}</p>
-          {mode === 'preset' && <><ProviderPresetPicker key={form.profileId ?? 'new'} selectedId={presetId} onSelect={choosePreset} />
+          {mode === 'preset' && <>{form.profileId !== null && !changePreset
+            ? <div className={css.providerPresetInfo} aria-label="当前供应商预设">
+                <strong>{preset ? preset.label : '自定义连接'}</strong>
+                <p className={css.settingHint}>正在编辑已保存的配置，直接修改下面的 Key、模型和显示名称即可；只有更换供应商时才需要展开预设目录。</p>
+                <button type="button" className={css.secondaryAction} onClick={() => setChangePreset(true)}>更换供应商预设</button>
+              </div>
+            : <ProviderPresetPicker key={form.profileId ?? 'new'} selectedId={presetId} onSelect={choosePreset} />}
           {preset && <div className={css.providerPresetInfo} aria-label="预设连接信息">
             <p className={css.settingHint}>当前配置 · 搜索不会更改下面的配置，点击结果才会切换。</p>
             {Object.hasOwn(RESPONSES_PREFERRED_OVER_CHAT, preset.id) && <p className={css.settingHint}>此配置使用已保存的 Chat Completions 协议，继续保留；不会自动迁移到 Responses。</p>}
@@ -235,7 +249,7 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
           <p className={css.settingHint}>保存后会发送一条最小请求来验证连接，可能产生少量模型费用。正在生成回复时，请先停止或等本轮结束再切换。</p>
           <div className={css.providerEditorActions}><button type="button" className={css.secondaryAction} onClick={() => { editRequest.current++; setCheckingKey(false); setEditing(false); setForm(emptyForm()); setError(null) }}>取消</button>
             <button type="button" className={css.primaryAction} disabled={checkingKey && !form.apiKey} onClick={() => void save()}>{busy ? '处理中…' : '保存并验证连接'}</button></div>
-        </fieldset>}
+        </fieldset></>}
       {busy && <p className={css.settingHint} role="status">正在处理模型配置，请稍候…</p>}
     </>}
   </div>
