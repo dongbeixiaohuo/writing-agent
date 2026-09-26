@@ -493,14 +493,14 @@ function ConversationMinimap({ scrollRef, itemCount }: {
     const container = scrollRef.current
     if (container === null) return
     const measure = (): void => {
-      const trackHeight = trackRef.current?.clientHeight ?? 0
       const scrollHeight = container.scrollHeight
-      if (trackHeight <= 0 || scrollHeight <= container.clientHeight + 1) {
-        setScrollable(false)
+      const canScroll = scrollHeight > container.clientHeight + 1
+      setScrollable(canScroll)
+      const trackHeight = trackRef.current?.clientHeight ?? 0
+      if (!canScroll || trackHeight <= 0) {
         setMarkers([])
         return
       }
-      setScrollable(true)
       const base = container.getBoundingClientRect().top
       const next: { top: number; height: number }[] = []
       container.querySelectorAll('[data-message-id]').forEach(element => {
@@ -520,7 +520,7 @@ function ConversationMinimap({ scrollRef, itemCount }: {
     const observer = new ResizeObserver(measure)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [scrollRef, itemCount])
+  }, [scrollRef, itemCount, scrollable])
 
   useEffect(() => {
     const container = scrollRef.current
@@ -551,10 +551,18 @@ function ConversationMinimap({ scrollRef, itemCount }: {
     container.scrollTo({ top: fraction * container.scrollHeight - container.clientHeight / 2, behavior: 'smooth' })
   }
 
-  if (!scrollable) return null
-  return <div ref={trackRef} className={css.minimap} role="presentation" aria-label="对话位置快速定位" onClick={jump}>
-    <div className={css.minimapViewport} style={{ top: viewport.top, height: viewport.height }} />
-    {markers.map((marker, index) => <div key={index} className={css.minimapMarker} style={{ top: marker.top, height: marker.height }} />)}
+  return <div
+    ref={trackRef}
+    className={css.minimap}
+    style={{ display: scrollable ? undefined : 'none' }}
+    role="presentation"
+    aria-label="对话位置快速定位"
+    onClick={jump}
+  >
+    {scrollable && <>
+      <div className={css.minimapViewport} style={{ top: viewport.top, height: viewport.height }} />
+      {markers.map((marker, index) => <div key={index} className={css.minimapMarker} style={{ top: marker.top, height: marker.height }} />)}
+    </>}
   </div>
 }
 
