@@ -7,6 +7,7 @@ export const TOOL_PRESENTATION: Readonly<Record<string, { label: string; descrip
   ['director_decide', '导演调度', '调度', '记录导演的分派、追问、返工或结束决定；调度本身不等于专家已完成任务。'],
   ['submit_writing_stage', '保存写作阶段', '保存', '校验并保存当前专家的阶段成果；不代表整篇文章已通过核查。'],
   ['submit_fact_check', '提交事实核查', '保存', '保存绑定指定稿件版本的核查结论；提交成功不等于核查通过。'],
+  ['read_fact_source', '联网核对已登记来源', '联网读取', '只重读证据账本中已登记的来源 URL 以核对事实主张；不是开放式全网搜索，也不保存任何内容。'],
   ['submit_publication_candidates', '保存发布标题候选', '保存', '保存标题专家提出的候选，等待用户选择；不代替用户确认。'],
   ['respond_writing_intake', '保存需求交流', '保存', '保存本轮回复、需求摘要和待回答问题，以及可选的待确认方案或确认结果；不生成正文。'],
   ['respond_author', '保存作者交流', '保存', '保存本轮讨论或专家回复；不直接覆盖正文。'],

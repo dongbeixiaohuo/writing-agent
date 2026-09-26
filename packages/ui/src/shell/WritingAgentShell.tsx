@@ -11,6 +11,7 @@ import {
   useState,
   useSyncExternalStore,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject,
 } from 'react'
@@ -476,6 +477,84 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
         <button type="button" className={css.providerCustomize} onClick={() => { setOpen(false); onOpenSettings() }}>管理模型设置…</button>
       </div>
     </div>}
+  </div>
+}
+
+function ConversationMinimap({ scrollRef, itemCount }: {
+  scrollRef: RefObject<HTMLElement | null>
+  itemCount: number
+}) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const [markers, setMarkers] = useState<readonly { top: number; height: number }[]>([])
+  const [viewport, setViewport] = useState({ top: 0, height: 0 })
+  const [scrollable, setScrollable] = useState(false)
+
+  useLayoutEffect(() => {
+    const container = scrollRef.current
+    if (container === null) return
+    const measure = (): void => {
+      const trackHeight = trackRef.current?.clientHeight ?? 0
+      const scrollHeight = container.scrollHeight
+      if (trackHeight <= 0 || scrollHeight <= container.clientHeight + 1) {
+        setScrollable(false)
+        setMarkers([])
+        return
+      }
+      setScrollable(true)
+      const base = container.getBoundingClientRect().top
+      const next: { top: number; height: number }[] = []
+      container.querySelectorAll('[data-message-id]').forEach(element => {
+        const rect = element.getBoundingClientRect()
+        next.push({
+          top: ((rect.top - base + container.scrollTop) / scrollHeight) * trackHeight,
+          height: Math.max(2, (rect.height / scrollHeight) * trackHeight),
+        })
+      })
+      setMarkers(next)
+      setViewport({
+        top: (container.scrollTop / scrollHeight) * trackHeight,
+        height: (container.clientHeight / scrollHeight) * trackHeight,
+      })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [scrollRef, itemCount])
+
+  useEffect(() => {
+    const container = scrollRef.current
+    if (container === null) return
+    let raf = 0
+    const onScroll = (): void => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const trackHeight = trackRef.current?.clientHeight ?? 0
+        const scrollHeight = container.scrollHeight
+        if (trackHeight <= 0 || scrollHeight <= 0) return
+        setViewport({
+          top: (container.scrollTop / scrollHeight) * trackHeight,
+          height: (container.clientHeight / scrollHeight) * trackHeight,
+        })
+      })
+    }
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => { container.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf) }
+  }, [scrollRef])
+
+  const jump = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    const container = scrollRef.current
+    const track = trackRef.current
+    if (container === null || track === null) return
+    const rect = track.getBoundingClientRect()
+    const fraction = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height))
+    container.scrollTo({ top: fraction * container.scrollHeight - container.clientHeight / 2, behavior: 'smooth' })
+  }
+
+  if (!scrollable) return null
+  return <div ref={trackRef} className={css.minimap} role="presentation" aria-label="对话位置快速定位" onClick={jump}>
+    <div className={css.minimapViewport} style={{ top: viewport.top, height: viewport.height }} />
+    {markers.map((marker, index) => <div key={index} className={css.minimapMarker} style={{ top: marker.top, height: marker.height }} />)}
   </div>
 }
 
@@ -1473,21 +1552,6 @@ export function WritingAgentShell({
   const [navigationError, setNavigationError] = useState<string | null>(null)
   const [projectActionNotice, setProjectActionNotice] = useState<string | null>(null)
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<BridgeSnapshot['projects'][number] | null>(null)
-  const [sessionPreview, setSessionPreview] = useState<{ sessionId: string; top: number; left: number } | null>(null)
-  const sessionPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const showSessionPreview = (sessionId: string, anchor: HTMLElement): void => {
-    if (sessionPreviewTimer.current !== null) clearTimeout(sessionPreviewTimer.current)
-    const rect = anchor.getBoundingClientRect()
-    sessionPreviewTimer.current = setTimeout(() => {
-      setSessionPreview({ sessionId, top: rect.top, left: rect.right + 8 })
-      sessionPreviewTimer.current = null
-    }, 220)
-  }
-  const hideSessionPreview = (): void => {
-    if (sessionPreviewTimer.current !== null) { clearTimeout(sessionPreviewTimer.current); sessionPreviewTimer.current = null }
-    setSessionPreview(null)
-  }
-  useEffect(() => () => { if (sessionPreviewTimer.current !== null) clearTimeout(sessionPreviewTimer.current) }, [])
   const [composerHandoff, setComposerHandoff] = useState<{ id: number, draft: string, restoreFocus: boolean } | null>(null)
   const activePanel = activePanelId === null ? undefined : extensions.getPanel(activePanelId)
   const rightOpen = activePanel !== undefined
@@ -1652,7 +1716,7 @@ export function WritingAgentShell({
         gridTemplateColumns: `${columns.sidebar}px minmax(0, ${columns.center}px) ${columns.rightbar}px`,
       }}
     >
-      <aside className={appFrameCss.sidebarCol} aria-label="项目和会话" onScroll={hideSessionPreview}>
+      <aside className={appFrameCss.sidebarCol} aria-label="项目和会话">
         <div className={clsx(sidebarCss.root, sidebarCollapsed && sidebarCss.collapsed)}>
           <div className={sidebarCss.logoRow}>
             {!sidebarCollapsed && <button className={sidebarCss.brand} type="button" onClick={beginNewProject}>
@@ -1730,11 +1794,7 @@ export function WritingAgentShell({
                     type="button"
                     key={session.id}
                     aria-current={session.id === snapshot.selectedSessionId && !hero ? 'page' : undefined}
-                    onClick={() => { hideSessionPreview(); void openSession(project.id, session.id) }}
-                    onMouseEnter={event => showSessionPreview(session.id, event.currentTarget)}
-                    onMouseLeave={hideSessionPreview}
-                    onFocus={event => showSessionPreview(session.id, event.currentTarget)}
-                    onBlur={hideSessionPreview}
+                    onClick={() => void openSession(project.id, session.id)}
                   >
                     <span className={css.sessionIdentity}><span className={css.sessionIndicator} aria-hidden="true" /><span className={css.sessionTitle}>{session.title}</span></span>
                     <span className={session.id === snapshot.selectedSessionId && !hero ? css.sessionCurrent : css.relativeTime}>{session.id === snapshot.selectedSessionId && !hero ? '正在查看' : session.relativeTime}</span>
@@ -1754,22 +1814,6 @@ export function WritingAgentShell({
           </div>
         </div>
       </aside>
-      {sessionPreview !== null && (() => {
-        const previewItems = (snapshot.timelineBySession[sessionPreview.sessionId] ?? [])
-          .filter(item => item.kind === 'message')
-          .slice(-4)
-        const snippet = (body: string): string => {
-          const text = body.replace(/\*\*/gu, '').replace(/^#{1,6}\s*/gmu, '').replace(/\s+/gu, ' ').trim()
-          return text.length > 120 ? `${text.slice(0, 120)}…` : text
-        }
-        return <div className={css.sessionPreviewCard} style={{ top: sessionPreview.top, left: sessionPreview.left }} role="tooltip">
-          {previewItems.length === 0
-            ? <p className={css.sessionPreviewEmpty}>还没有对话内容</p>
-            : previewItems.map(item => <p key={item.id} className={clsx(css.sessionPreviewLine, item.role === 'user' && css.sessionPreviewUser)}>
-                <span>{item.role === 'user' ? '你：' : ''}{snippet(item.body)}</span>
-              </p>)}
-        </div>
-      })()}
 
       <section className={clsx(appFrameCss.centerCol, css.center)} aria-label="写作会话">
         <div className={clsx(css.previewBanner, snapshot.mode === 'application' && css.applicationBanner)}>
@@ -1825,6 +1869,7 @@ export function WritingAgentShell({
             {!newProjectIntent && snapshot.brief?.confirmationStatus === 'tentative' && snapshot.conversationIntake?.phase !== 'proposal' && <BriefConfirmationCard brief={snapshot.brief} confirming={briefConfirming} error={briefConfirmationError} onConfirm={() => void confirmBrief()} onEdit={() => setBriefEditOpen(true)} />}
           </details>
         </div> : activeTab === 'conversation' ? <>
+          <div className={css.conversationWrap}>
           <div ref={conversationScrollRef} className={css.scrollBody} data-conversation-feed="true" onScroll={handleConversationScroll}>
             {snapshot.lastError?.code === 'CONVERSATION_HANDOFF_FAILED' && <p className={css.navigationError} role="alert">{snapshot.lastError.message}</p>}
             {latestRun !== undefined && latestRun.stages.length > 0 && <WorkflowProgress run={latestRun} />}
@@ -1859,6 +1904,8 @@ export function WritingAgentShell({
               }}>查看当前稿件</button>
             </section>}
             </>} />
+          </div>
+          <ConversationMinimap scrollRef={conversationScrollRef} itemCount={timeline.length} />
           </div>
           {showJumpLatest && <button className={css.jumpLatest} type="button" onClick={forceFollowLatest}>回到最新进度 ↓</button>}
           <div className={css.composerSeat}><Composer

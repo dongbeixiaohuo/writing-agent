@@ -8,7 +8,7 @@ import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { WritingApplicationService } from '../src/index.js';
 import { createApplicationBridge } from '../../client-bridge/src/application-bridge.js';
 import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
-import { savePublicationCandidates, choosePublicationCandidate } from '../src/publication-choice.js';
+import { savePublicationCandidates, choosePublicationCandidate, publicationSelectionIndex } from '../src/publication-choice.js';
 import { isReviewConfirmation } from '../src/review-checkpoint.js';
 
 it('accepts ordinary review approvals but not mixed objections or questions', () => {
@@ -124,6 +124,29 @@ it('self-corrects a wrong candidateVersionId and defaults to the current candida
       },
     );
     assert.ok(candidates.id !== fresh.id);
+  } finally { f.close(); }
+});
+
+it('parses natural selection phrases the way users actually write them', () => {
+  const provider = new AuthorProvider([]);
+  const f = setup(provider);
+  try {
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    const saved = savePublicationCandidates(f.storage, 'p', 'choices', bodyId, [
+      { title: '窗边', opening: null, distributionCopy: null, rationale: '一' },
+      { title: '灯下', opening: null, distributionCopy: null, rationale: '二' },
+    ]);
+    for (const [phrase, expected] of [
+      ['选择标题2', 2], ['确认标题2', 2], ['用标题2', 2], ['选标题二', 2],
+      ['标题2', 2], ['标题第2条', 2],
+      ['用第2条', 2], ['选第2条', 2], ['就用第2条', 2], ['第2条', 2], ['第2个', 2],
+      ['2', 2], ['我就选第2个', 2], ['确认标题：《灯下》', 2],
+    ] as const) {
+      assert.equal(publicationSelectionIndex(phrase, saved), expected, phrase);
+    }
+    for (const phrase of ['说说标题2的问题', '标题2哪里好', '先聊聊第二条', 'ok']) {
+      assert.equal(publicationSelectionIndex(phrase, saved), null, phrase);
+    }
   } finally { f.close(); }
 });
 

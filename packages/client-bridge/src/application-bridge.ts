@@ -326,6 +326,15 @@ function modelFailureDetail(code: string | null, providerDetail: string | null =
   return providerDetail === null ? base : `${base}（上游返回：${providerDetail}）`;
 }
 
+function questionAlreadyCovered(reason: string, question: string): boolean {
+  // The model sometimes writes the same sentence into both reason and
+  // questions; show it once. Deliberately conservative: only an exact match
+  // after normalization counts, so genuinely different questions always show.
+  const normalize = (value: string): string => value.replace(/[\s\p{P}\p{S}]/giu, '');
+  const q = normalize(question);
+  return q.length >= 12 && normalize(reason).includes(q);
+}
+
 function sessionStatus(runs: readonly RunRecord[]): SessionSummary["status"] {
   const latest = runs.at(-1);
   if (latest === undefined) return "idle";
@@ -555,8 +564,10 @@ function timelineForSession(
     if (event.type === "run.waiting_user") {
       const inputRequest = writingInputRequest(event.payload);
       if (inputRequest !== null) {
+        const pendingQuestions = inputRequest.questions.filter(question => !questionAlreadyCovered(inputRequest.reason, question));
+        const questionBlock = pendingQuestions.length === 0 ? '' : `${pendingQuestions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\n\n`;
         items.push({ id: event.id, kind: 'message', role: 'assistant', createdAt,
-          body: `需要补充信息，写作已暂停。\n\n${inputRequest.reason}\n\n${inputRequest.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\n\n请直接回复下面的问题；收到补充并确认信息充分后才会继续。` });
+          body: `需要补充信息，写作已暂停。\n\n${inputRequest.reason}\n\n${questionBlock}请直接回复下面的问题；收到补充并确认信息充分后才会继续。` });
         continue;
       }
       const reason = textPayload(event.payload, "stopReason");

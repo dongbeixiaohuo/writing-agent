@@ -215,7 +215,12 @@ export function createConfiguredProvider(
       ...(config.extraBody === undefined ? {} : { extraBody: config.extraBody }),
     });
   }
-  if (config.kind === 'openai_responses') return new OpenAIResponsesProvider(common);
+  if (config.kind === 'openai_responses') {
+    return new OpenAIResponsesProvider({
+      ...common,
+      ...(config.extraBody === undefined ? {} : { extraBody: config.extraBody }),
+    });
+  }
   return new AnthropicCompatibleProvider({
     ...common,
     ...(config.anthropicVersion === undefined

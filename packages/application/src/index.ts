@@ -1290,6 +1290,8 @@ export class WritingApplicationService {
           "artifact:read",
           "workflow:submit",
           "fact:submit",
+          // fact_check 专用：只允许重读证据账本中已登记的来源 URL（read_fact_source）
+          "network:https:read",
         ],
         expectedBodyVersionId: project.latestBodyVersionId,
         displayInstruction:

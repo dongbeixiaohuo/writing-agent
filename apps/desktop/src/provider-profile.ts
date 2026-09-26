@@ -119,12 +119,16 @@ const catalogSchema = z.object({
 }).strict();
 
 // Profiles saved before a preset gained reviewed vendor request fields keep
-// working: when a stored config still exactly matches that preset (id + kind
-// + endpoint), the preset's extraBody is filled at read time without
-// rewriting the file. Modified addresses no longer match and get nothing.
+// working: when a stored config still exactly matches that preset family
+// (provider id + endpoint), the preset's extraBody is filled at read time
+// without rewriting the file. DeepSeek's thinking toggle is protocol-level
+// (its thinking mode rejects tool_choice="required" on both Chat and
+// Responses), so the match ignores wire protocol for this additive field.
+// Modified addresses no longer match and get nothing.
 function withPresetExtraBody(config: NormalizedProviderConfig): NormalizedProviderConfig {
-  if (config.kind !== 'openai_compatible' || config.extraBody !== undefined) return config;
-  const preset = PROVIDER_PRESETS.find(item => item.id === config.providerId && item.kind === config.kind
+  if (config.extraBody !== undefined) return config;
+  if (config.kind !== 'openai_compatible' && config.kind !== 'openai_responses') return config;
+  const preset = PROVIDER_PRESETS.find(item => item.id === config.providerId
     && item.baseURL === config.baseURL.replace(/\/+$/u, '') && item.extraBody !== undefined);
   return preset?.extraBody === undefined ? config : parseProviderConfig({ ...config, extraBody: preset.extraBody });
 }

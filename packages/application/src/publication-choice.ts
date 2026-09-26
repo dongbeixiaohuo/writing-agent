@@ -52,14 +52,18 @@ export function publicationSelectionIndex(userText: string, saved: PublicationCa
   const exactTitle = saved.candidates.findIndex(candidate => candidate.title === userText.trim());
   if (exactTitle >= 0) return exactTitle + 1;
   const text = userText.trim().replace(/[。！!\s]+$/u, '');
-  const number = text.match(/^(?:那就|我就|就|我)?(?:选用|选择|选|采用|确认|用|定)(?:第)?([1-6一二三四五六])(?:个|项|号)?(?:标题|方案)?(?:吧|就行|即可|好了)?(?:[，,](?:正文别动|保留正文|不改正文))?$/u)?.[1]
-    ?? text.match(/^第([1-6一二三四五六])(?:个|项|号)(?:标题|方案)?(?:就行|就好|吧)?$/u)?.[1]
+  const number = text.match(/^(?:那就|我就|就|我)?(?:选用|选择|选|采用|确认|用|定)(?:第)?([1-6一二三四五六])(?:个|项|号|条)?(?:标题|方案)?(?:吧|就行|即可|好了)?(?:[，,](?:正文别动|保留正文|不改正文))?$/u)?.[1]
+    // "选择标题2 / 确认标题2 / 用标题二": verb first, then 标题, then the number.
+    ?? text.match(/^(?:那就|我就|就|我)?(?:选用|选择|选|采用|确认|用|定)标题(?:第)?([1-6一二三四五六])(?:个|项|号|条)?(?:吧|就行|即可|好了)?$/u)?.[1]
+    // "标题2 / 标题第2条".
+    ?? text.match(/^标题(?:第)?([1-6一二三四五六])(?:个|项|号|条)?$/u)?.[1]
+    ?? text.match(/^第([1-6一二三四五六])(?:个|项|号|条)(?:标题|方案)?(?:就行|就好|吧)?$/u)?.[1]
     ?? text.match(/^([1-6一二三四五六])$/u)?.[1];
   if (number) {
     const index = /^[1-6]$/u.test(number) ? Number(number) : '一二三四五六'.indexOf(number) + 1;
     return saved.candidates[index - 1] ? index : null;
   }
-  const index = saved.candidates.findIndex(c => [`确认标题：${c.title}`, `确认标题:${c.title}`, `选用标题：${c.title}`,
+  const index = saved.candidates.findIndex(c => [`确认标题：${c.title}`, `确认标题:${c.title}`, `确认标题：《${c.title}》`, `确认《${c.title}》`, `选用标题：${c.title}`,
     `用《${c.title}》吧`, `就用《${c.title}》`, `就用「${c.title}」`, `采用《${c.title}》`].includes(text));
   return index < 0 ? null : index + 1;
 }

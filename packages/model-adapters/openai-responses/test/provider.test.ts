@@ -40,7 +40,7 @@ test('Responses times out/cancels an idle stream, sanitizes HTTP errors and refu
   } finally { server.closeAllConnections(); server.close(); await once(server, 'close'); }
 });
 
-async function fixture(events: (res: ServerResponse, body: any, call: number) => void | Promise<void>, run: (provider: ReturnType<typeof createConfiguredProvider>, bodies: any[], recreate: () => ReturnType<typeof createConfiguredProvider>) => Promise<void>) {
+async function fixture(events: (res: ServerResponse, body: any, call: number) => void | Promise<void>, run: (provider: ReturnType<typeof createConfiguredProvider>, bodies: any[], recreate: () => ReturnType<typeof createConfiguredProvider>) => Promise<void>, extraConfig: Record<string, unknown> = {}) {
   const bodies: any[] = [];
   const server = createServer(async (req, res) => {
     assert.equal(req.url, '/v1/responses');
@@ -55,11 +55,27 @@ async function fixture(events: (res: ServerResponse, body: any, call: number) =>
   try {
     const address = server.address(); assert.ok(address && typeof address !== 'string');
     const config = parseProviderConfig({ schemaVersion: 2, kind: 'openai_responses', providerId: 'responses',
-      baseURL: `http://127.0.0.1:${address.port}/v1`, credentialRef: 'env:TEST_KEY', model: 'test-model', tools: 'supported', usage: 'reported', allowInsecureHttp: true });
+      baseURL: `http://127.0.0.1:${address.port}/v1`, credentialRef: 'env:TEST_KEY', model: 'test-model', tools: 'supported', usage: 'reported', allowInsecureHttp: true,
+      ...extraConfig });
     const recreate = () => createConfiguredProvider(config, new CredentialBroker({ environment: { TEST_KEY: 'fake-responses-key' } }));
     await run(recreate(), bodies, recreate);
   } finally { server.closeAllConnections(); server.close(); await once(server, 'close'); }
 }
+
+test('Responses merges vendor extraBody into the wire body without overriding protocol fields', async () => {
+  await fixture(res => {
+    event(res, { type: 'response.output_text.delta', delta: '完成' });
+    event(res, { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } });
+    res.end();
+  }, async (provider, bodies) => {
+    const events = await collectModelEvents(provider.stream(request));
+    assert.equal(events.at(-1)?.type, 'completed');
+    assert.equal(bodies.length, 1);
+    assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
+    assert.equal(bodies[0].model, 'test-model');
+    assert.equal(bodies[0].store, false);
+  }, { extraBody: { thinking: { type: 'disabled' }, model: 'must-not-win', store: true } });
+});
 
 test('Responses streams text before completion, then round-trips function calls without duplicate arguments', async () => {
   let release!: () => void;

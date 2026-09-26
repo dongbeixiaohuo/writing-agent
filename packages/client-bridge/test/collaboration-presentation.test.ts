@@ -42,6 +42,27 @@ async function fixture(purpose = 'writing-pack:draft') {
   };
 }
 
+test('a paused question already covered by the reason is shown once, not twice', async () => {
+  const f = await fixture();
+  try {
+    const reason = '只剩一处发布层面事项需要你确认：事实核查以完整正文、锁定标题与分发文案为核查范围，正文本身这一版不动，可以吗？';
+    f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'need-input', reason: 'WRITING_INPUT_REQUIRED',
+      payload: { reason, questions: ['事实核查以完整正文、锁定标题与分发文案为核查范围，正文本身这一版不动，可以吗？'] } });
+    const snapshot = await f.snapshot();
+    const pauseMessage = snapshot.timelineBySession.session.find(item => item.kind === 'message' && item.body.includes('需要补充信息，写作已暂停'));
+    assert.ok(pauseMessage?.kind === 'message');
+    assert.equal(/\d+\. /u.test(pauseMessage.body), false, 'the covered question must not be repeated as a numbered item');
+    assert.ok(pauseMessage.body.includes('可以吗'));
+
+    f.storage.resumeRun({ projectId: 'project', runId: 'run', operationId: 'r', decision: 'resume', displayInstruction: '继续' });
+    f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'need-input-2', reason: 'WRITING_INPUT_REQUIRED',
+      payload: { reason, questions: ['你那段加班经历具体发生在哪一年？'] } });
+    const second = (await f.snapshot()).timelineBySession.session.filter(item => item.kind === 'message' && item.body.includes('需要补充信息，写作已暂停')).at(-1);
+    assert.ok(second?.kind === 'message');
+    assert.ok(second.body.includes('1. 你那段加班经历具体发生在哪一年？'), 'a genuinely different question still shows as a numbered item');
+  } finally { f.close(); }
+});
+
 test('model failure surfaces the sanitized upstream reason in the timeline', async () => {
   const f = await fixture();
   try {

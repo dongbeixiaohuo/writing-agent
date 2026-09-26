@@ -67,12 +67,18 @@ test('DeepSeek preset supplies thinking-disabled vendor fields and fills matchin
         schemaVersion: 2, kind: 'openai_compatible', providerId: 'custom',
         baseURL: 'https://ds.example.test/v1', model: 'deepseek-flash', tools: 'supported', usage: 'reported',
         credentialRef: 'managed:desktop-y' } },
+      { id: 'p3', displayName: 'DeepSeek Responses', models: ['deepseek-flash'], config: {
+        schemaVersion: 2, kind: 'openai_responses', providerId: 'cc-deepseek',
+        baseURL: 'https://api.deepseek.com', model: 'deepseek-flash', tools: 'supported', usage: 'reported',
+        credentialRef: 'managed:desktop-z' } },
     ] };
     const original = JSON.stringify(stored);
     writeFileSync(path, original);
     const catalog = loadDesktopProviderCatalog(path);
     assert.deepEqual(catalog.profiles.find(p => p.id === 'p1')!.config.extraBody, { thinking: { type: 'disabled' } });
     assert.equal('extraBody' in catalog.profiles.find(p => p.id === 'p2')!.config, false);
+    assert.deepEqual(catalog.profiles.find(p => p.id === 'p3')!.config.extraBody, { thinking: { type: 'disabled' } },
+      'Responses-protocol DeepSeek profiles get the same thinking adaptation');
     assert.equal(readFileSync(path, 'utf8'), original);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

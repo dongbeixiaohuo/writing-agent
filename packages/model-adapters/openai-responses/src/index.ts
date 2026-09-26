@@ -74,12 +74,18 @@ export class OpenAIResponsesProvider extends ModelProviderBase {
   }
 
   override snapshotRequest(request: ModelRequest): ProviderRequestSnapshot {
-    return { normalizedPayload: JSON.parse(JSON.stringify(serialize(request, this.scope(request.model)))) as ProviderRequestSnapshot['normalizedPayload'],
+    return { normalizedPayload: JSON.parse(JSON.stringify(this.wireBody(request))) as ProviderRequestSnapshot['normalizedPayload'],
       serializationVersion: VERSION, redactions: ['authorization'], unreconstructableFields: [],
       ...(request.parameters.maxOutputTokens === undefined ? {} : { outputTokenLimit: { value: request.parameters.maxOutputTokens, source: 'request' as const } }) };
   }
 
   private scope(model: string): string { return JSON.stringify([VERSION, this.id, this.baseURL, model]); }
+
+  private wireBody(request: ModelRequest): Record<string, unknown> {
+    const body = serialize(request, this.scope(request.model));
+    const extraBody = this.options.extraBody;
+    return extraBody === undefined ? body : { ...extraBody, ...body };
+  }
 
   protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
     const deadline = new TransportDeadline(this.firstTimeout, this.idleTimeout, request.signal);
@@ -91,7 +97,7 @@ export class OpenAIResponsesProvider extends ModelProviderBase {
       const response = await fetch(`${this.baseURL}/responses`, {
         method: 'POST', redirect: 'error', signal: deadline.signal,
         headers: { authorization: `Bearer ${validateCredential(key)}`, 'content-type': 'application/json', accept: 'text/event-stream' },
-        body: JSON.stringify(serialize(request, this.scope(request.model))),
+        body: JSON.stringify(this.wireBody(request)),
       });
       providerRequestId = response.headers.get('x-request-id') ?? undefined;
       if (!response.ok) throw new ModelProviderFailure(await mapHttpError(response, false, key === undefined ? [] : [key]));

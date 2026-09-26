@@ -9,6 +9,7 @@ import { buildExpertInstructions } from '../../writing-pack/src/expert-instructi
 import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, type WritingWorkflowTools } from "./workflow-tools.js";
 import { getPublicationCandidates, savePublicationCandidates, isPublicationSelectionCurrent, isUsablePublicationTitle,
   PUBLICATION_SELECTION_WAIT_REASON, type PublicationCandidate } from './publication-choice.js';
+import { createFactSourceTool } from './fact-web.js';
 
 type Decision = { action: "dispatch" | "ask" | "rework" | "finish"; stage: WritingWorkflowStage | null; reason: string; questions: string[]; inputVersionIds?: string[] };
 type CollaborationStage = WritingWorkflowStage | "title";
@@ -221,7 +222,7 @@ export function createWritingCollaboration(options: {
     const materialReadTools = current.ready ? [] : ['read_material'];
     const allowedTools = actor === "director" ? [...materialReadTools, "read_artifact_version", "assess_writing_readiness", ...(current.ready ? ["director_decide"] : [])] : actor === 'title'
       ? ['read_artifact_version', 'submit_publication_candidates']
-      : [...materialReadTools, "read_artifact_version", "assess_writing_readiness", assignment?.stage === "fact_check" ? "submit_fact_check" : "submit_writing_stage"];
+      : [...materialReadTools, "read_artifact_version", "assess_writing_readiness", ...(assignment?.stage === "fact_check" ? ["submit_fact_check", "read_fact_source"] : ["submit_writing_stage"])];
     const commonPrompt = options.systemPrompt.split("\n").filter((line) => /^(?:材料安全：|文体规则：|作者声音：|方向决定状态：|没有已授权的一手|只有这些材料)/u.test(line)).join("\n");
     let rolePrompt = actor === "director"
       ? "你是写作导演，只能调度独立专家、提问、返工或结束，不得直接写正文。director_decide.reason是传给专家的任务说明：明确本次解决什么、范围和预期输出。汇总评审分歧后给修订主笔取舍依据。nextStage仅约束普通dispatch，不覆盖用户当前修改要求；已完成正文需删改时先 rework central_revision，再dispatch central_revision→language_review→fact_check。不要直接dispatch已完成的language_review；它只能最小润色，不承担内容删改。事实blocked后若用户已授权删改，必须先实际修改当前被核查正文，再独立核查新版本，不能反复核查旧稿或再次索要同一授权；若只补充来源而无正文改动，可重新核查。提纲改向先rework outline再重新确认。全部阶段保存且当前事实门禁passed才finish，之后用一句话结束。"
@@ -234,9 +235,10 @@ export function createWritingCollaboration(options: {
     const directorMessage = drafted && current.ready ? `${options.expertMessage}\n当前正文版本：${storage.inspectProject(projectId)?.latestBodyVersionId ?? "无"}。仅此为当前正文，旧起始基线已退役。` : options.directorMessage;
     const sharedStateRules = "COLLABORATION_STATE是程序每次请求更新的当前任务状态。director_decide省略inputVersionIds，由程序自动绑定；research开始的空产物数组完全合法，不代表缺料，不得向用户索取内部ID或工具参数。materials是同一run中已实际读取、版本仍一致的去重缓存，供各独立角色作为数据直接使用，不包含其他专家的私有对话。只有授权目录中尚未读取或片段不完整的材料才调用read_material补读；不得因为角色切换或用户确认而重新读取已有完整材料。ready=true只对当前下一阶段及当前输入版本有效；每个阶段保存、返工或输入变化后失效。ready=false不代表缓存失效：结合注入的artifacts、materials、刚完成的专家成果与作者约定，先判断下一阶段是否充分；只补齐真正缺失的读取，不能机械沿用上阶段结论。已有明确缺口立即assess_writing_readiness needs_input（最多两个问题），收到回答后再次核对，仍不足就继续交流，不得把缺料说明冒充正文或留到终审才问。只允许读取当前绑定版本，旧失效产物保留为历史。每次只提交分配的一个stage，成功后运行时自动交还导演。";
     if (actor === 'director') rolePrompt += '\n核查问题归属：factCheck未通过是专家反馈，不等于作者缺材料。先核对主张是否真的在当前正文/选定标题中、是否为可核实事实、是否属于作者明确要求。Agent自行加入的无来源细节或误引，由你安排rework central_revision纠正并独立重查，不要求作者为Agent的错误补材料；不得改变作者立场、核心事实或已确认范围。若核查把修辞/创作性化用当成事实、核查了旧稿或正文不存在的句子，应安排fact_check重新审查并给出依据，不为凑passed删掉真正事实。只有确实依赖作者独有经历、来源或重要取舍时才needs_input/ask，直接说清需要哪一点及为何需要，不输出系统阻断通知。已知缺口必须在进入依赖它的阶段前解决；终审只能发现新增问题，不能替代前置沟通。';
-    if (assignment?.stage === 'fact_check') rolePrompt += '\n先辨别可核实事实与作者表达：普通比喻、感受、明确虚构场景以及不冒充原文的创作性化用，不因缺少事实来源就列为UNSUPPORTED。涉及古籍原句、作者归属、具体出处、历史或科学论断则仍须核实；不能因为文体是散文而放行错误引文。每条claimText必须对应当前正文或选定标题中的真实主张，不把评审意见、建议改写或不存在的句子作为核查对象。';
+    if (assignment?.stage === 'fact_check') rolePrompt += '\n先辨别可核实事实与作者表达：普通比喻、感受、明确虚构场景以及不冒充原文的创作性化用，不因缺少事实来源就列为UNSUPPORTED。涉及古籍原句、作者归属、具体出处、历史或科学论断则仍须核实；不能因为文体是散文而放行错误引文。每条claimText必须对应当前正文或选定标题中的真实主张，不把评审意见、建议改写或不存在的句子作为核查对象。第一人称亲历叙事的现场、动作、对白与感受属于作者本人的来源，不因合理加工、细节补写或语感润色被判为超范围，也不要求作者为记忆提供更逐字的证据；用词一致与文风对齐建议归语言终审，不生成核查编号。没有外部事实主张时直接给空 claims，不为显得尽责制造咬文嚼字。';
     if (actor === 'director') rolePrompt += '\n可选润色不是必要信息缺口：你认为某个比喻可以更好看、末句可以更贴原典，不等于作者必须再次确认。作者已表明这是现代比喻且未要求修改时，保持原句并安排独立核查区分事实与修辞；不要把核查专家的可选建议升级为新的写作要求。确实需要提问时用日常语言、每次1—2个不同的问题，不向作者暴露C008、rework、central_revision等后台术语，也不重复询问已经明确的选择。';
     if (actor === 'director') rolePrompt += '\n与作者交流一律使用中文角色名，禁止内部标识：研究与证据（不要写research）、文章提纲（不要写outline）、完整初稿（不要写draft）、编辑审校（不要写review_editor）、发布审校（不要写review_publish）、读者审校（不要写review_reader）、集中修订（不要写central_revision）、语言终审（不要写language_review）、事实核查（不要写fact_check）、标题专家（不要写title expert）。reason、提问和给作者看的任何文字都不出现英文阶段名、stage、rework、dispatch、C008等后台术语，也不中英混写（例如"先走language_review"）。';
+    if (actor === 'director') rolePrompt += '\n提问只为真实业务缺口（缺素材、缺方向、缺取舍）。核查范围、阶段顺序、下一步流程都由程序按规则自动确定，不要请作者确认"是否按此范围核查""是否可以开始/继续"这类程序性问题，也不要把"正文这一版不动，可以吗"当作问题。reason 只写为什么需要作者补充，不要把要问的问题复述进去；问题只写在 questions 数组里。';
     const scopeId = `${actor}:${assignment?.decisionId ?? `director-${current.resume}-${current.events.filter((event) => event.type === "tool.completed" && ["submit_writing_stage", "submit_fact_check", "director_decide"].includes((event.payload.result as any)?.toolName)).length}`}`;
     if (actor === 'director') rolePrompt += '\n共创审校为逐位交接：每位审校专家保存后程序暂停，先与作者核对当前意见，明确认可后才进入下一位。不能将编辑、发布、读者三份报告连续输出后才确认。作者在审校讨论中保留或拒绝的修改要传给修订主笔，不得被旧报告覆盖。';
     if (assignment?.stage === 'central_revision') rolePrompt += '\n绑定的authorReviewDiscussion是作者与审校专家公开交流的数据。作者最新明确保留、拒绝或调整的意见优先于旧审校报告；专家提议不等于作者同意，不能把作者已拒绝的可选修改重新应用。真正事实问题仍须处理或继续沟通，作者认可不能替代事实依据。';
@@ -264,6 +266,7 @@ export function createWritingCollaboration(options: {
         if (call.name === "read_material") return options.materialIds.includes(String(args.materialId));
         if (call.name === "submit_writing_stage") return args.stage === assignment?.stage;
         if (call.name === 'submit_publication_candidates') return actor === 'title';
+        if (call.name === "read_fact_source") return assignment?.stage === "fact_check";
         if (call.name === "submit_fact_check") {
           const project = storage.inspectProject(projectId);
           return project !== null && inputs.includes(project.currentEvidenceVersionId ?? "") && inputs.includes(project.latestBodyVersionId ?? "");
@@ -272,6 +275,7 @@ export function createWritingCollaboration(options: {
       },
     };
   };
-  return { definitions: [definition as unknown as ToolDefinition<never, JsonValue>, publicationCandidatesDefinition as unknown as ToolDefinition<never, JsonValue>],
+  return { definitions: [definition as unknown as ToolDefinition<never, JsonValue>, publicationCandidatesDefinition as unknown as ToolDefinition<never, JsonValue>,
+      createFactSourceTool({ storage, projectId }) as unknown as ToolDefinition<never, JsonValue>],
     requestPolicy, finished: (runId: string) => state(runId).finished };
 }
