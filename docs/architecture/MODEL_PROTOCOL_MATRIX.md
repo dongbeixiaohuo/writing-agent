@@ -2,16 +2,17 @@
 
 状态：`IMPLEMENTED_LOCAL`  
 对应任务：WA-006 / WA-015  
-最后核验：2026-09-17
+最后核验：2026-09-25（rc.38 增加 Responses；既有协议历史证据保留）
 
 ## 1. 当前支持面
 
 | 配置 kind | 协议/入口 | 认证方式 | 工具往返 | 流式完成条件 | usage | 本地证据 | 真实授权测试 |
 |---|---|---|---|---|---|---|---|
 | `openai_compatible` | Chat Completions，`/chat/completions` | `Authorization: Bearer` | `tool_calls` → `role=tool` | 有合法 finish reason 且收到 `[DONE]` | reported / unknown | 6 项本机 SSE fixture PASS | `NOT_RUN_REQUIRES_KEY_AND_COST_APPROVAL` |
+| `openai_responses` | Responses，`/responses` | `Authorization: Bearer` | `function_call` → `function_call_output`，保留 call_id 及加密续接 | 完整增量和 `response.completed`；不要求 `[DONE]` | reported / unknown | rc.38 独立本机 SSE fixture | `NOT_RUN` |
 | `anthropic_compatible` | Messages，规范化 Base URL 后追加 `/messages` | `x-api-key`；可配 Bearer | `tool_use` → `tool_result` | `message_start` → content blocks → `message_delta` → `message_stop` | reported / unknown | 7 项本机 SSE fixture PASS | `NOT_RUN_REQUIRES_KEY_AND_COST_APPROVAL` |
 
-两条 adapter 都实现同一个 `ModelProvider` 合同，UI、Application Service 与 AgentRuntime 不按厂商分叉。工具必须有稳定 ID、完整 JSON object 并通过声明的 JSON Schema 后，才会产生 `tool_call_complete`；部分 JSON、未知工具、结束原因不一致或截断流都 fail closed。
+三条 adapter 都实现同一个 `ModelProvider` 合同，UI、Application Service 与 AgentRuntime 不按厂商分叉。工具必须有稳定 ID、完整 JSON object 并通过声明的 JSON Schema 后，才会产生 `tool_call_complete`；部分 JSON、未知工具、结束原因不一致或截断流都 fail closed。
 
 Anthropic-compatible 映射依据当前官方 Messages 工具块和 SSE 事件结构：系统消息移到顶层 `system`，输出上限使用 `max_tokens`，工具 schema 使用 `input_schema`，历史工具结果放入 user `tool_result`。参考 [Anthropic tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview)、[handling tool calls](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls) 与 [streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)。兼容端点若偏离这些语义，必须由显式 `doctor` 探测或单独 adapter 处理，不能靠宽松解析假成功。
 
@@ -22,7 +23,7 @@ schema v2 的共同字段为：
 ```json
 {
   "schemaVersion": 2,
-  "kind": "openai_compatible | anthropic_compatible",
+  "kind": "openai_compatible | openai_responses | anthropic_compatible",
   "providerId": "provider-profile-id",
   "baseURL": "https://provider.example/v1",
   "credentialRef": "managed:profile-id",

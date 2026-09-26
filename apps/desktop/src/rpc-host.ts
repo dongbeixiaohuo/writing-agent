@@ -9,6 +9,10 @@ function rpcError(code: string, message: string): DesktopRpcResponse {
 }
 
 const publicMessages: Readonly<Record<string, string>> = {
+  PROVIDER_API_KEY_REQUIRED: '请填写此供应商的 API Key；同一地址的已有配置可以留空沿用。',
+  PROVIDER_PROFILE_NOT_FOUND: '这项模型配置已变化，请重新打开模型设置。',
+  PROVIDER_SETTINGS_BUSY: '正在保存模型配置，请稍后重试。',
+  PROVIDER_CATALOG_UNAVAILABLE: '暂时无法获取模型目录，可以直接填写服务商提供的模型 ID。',
   EMPTY_MESSAGE: '未收到要发送的内容，请输入内容后再发送。',
   FACT_GATE_NOT_PASSED: '当前版本尚未通过事实核查，请先处理核查问题再导出。',
   EXPORT_SELECTION_CHANGED: '稿件或项目已变化，请查看当前版本后重新导出。',

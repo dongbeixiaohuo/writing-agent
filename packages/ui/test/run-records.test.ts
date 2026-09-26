@@ -38,6 +38,13 @@ test('internal loop protection is not presented as a user spending budget', () =
   assert.match(runStopReasonLabel('MODEL_QUOTA_EXHAUSTED'), /服务商账户/u);
 });
 
+test('a paused invalid-output stage does not look like an expert still running', () => {
+  const run = record({status:'waiting_user',stopReason:'STAGE_OUTPUT_NOT_SAVED'});
+  assert.match(progress.runDisplayStatus(run),/保存未完成.*暂停/);
+  assert.match(runProgressSummary(run),/保存校验/);
+  assert.doesNotMatch(runProgressSummary(run),/正在处理|外部请求结果未知/);
+});
+
 test('invalid model output is explained without an internal code or blaming the user configuration', () => {
   const message = runStopReasonLabel('MODEL_RESPONSE_INVALID');
   assert.match(message, /回复.*格式/u);

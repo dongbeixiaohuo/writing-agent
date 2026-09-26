@@ -33,9 +33,6 @@ import type {
   DesktopWorkspaceBackupResultView,
   DesktopWorkspaceRestorePreviewView,
   DesktopWorkspaceRestoreResultView,
-  DesktopProviderConnectionResultView,
-  DesktopProviderSetupInput,
-  DesktopProviderStatusView,
 } from '../../../client-bridge/src/desktop-bridge.ts'
 import { BrandMark } from '../brand/BrandMark.tsx'
 import {
@@ -85,15 +82,13 @@ import { publicationGateNotice } from './publication-gate.ts'
 import { ConversationExportCard } from './ConversationExportCard.tsx'
 import { ConversationRevisionCard } from './ConversationRevisionCard.tsx'
 import { projectNavigationTarget } from './project-navigation.ts'
-import { PROVIDER_PRESETS, applyProviderPreset, identifyProviderPreset } from '../../../client-bridge/src/provider-presets.ts'
+import { ProviderSettings } from './ProviderSettings.tsx'
 import {
   commandErrorMessage,
   dataActionErrorMessage,
   materialPatchFromFile,
   normalizeBriefUpdate,
   normalizeProjectSetup,
-  normalizeProviderSetup,
-  providerConnectionMessage,
   setupErrorMessage,
   styleReferenceFromFile,
   type BriefUpdateForm,
@@ -423,7 +418,10 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   const editorRef = useRef<HTMLDivElement>(null)
   const draftRef = useRef(initialDraft)
   const submittingRef = useRef(false)
-  const [draft, setDraft] = useState(initialDraft)
+  // The editable DOM owns the text and IME composition. React only needs the
+  // two button/placeholder flags, not a rerender for every character.
+  const [draftEmpty, setDraftEmpty] = useState(initialDraft.length === 0)
+  const [draftSendable, setDraftSendable] = useState(initialDraft.trim().length > 0)
   const [composing, setComposing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -458,7 +456,8 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
       else await bridge.sendMessage(submittedDraft)
       const pendingDraft = draftRef.current === submittedDraft ? '' : draftRef.current
       draftRef.current = pendingDraft
-      setDraft(pendingDraft)
+      setDraftEmpty(pendingDraft.length === 0)
+      setDraftSendable(pendingDraft.trim().length > 0)
       if (editorRef.current !== null && pendingDraft.length === 0) editorRef.current.textContent = ''
       const activeElement = document.activeElement
       const restoreFocus = editorWasFocused && (
@@ -481,7 +480,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === 'Enter' && !event.shiftKey && !composing) {
+    if (event.key === 'Enter' && !event.shiftKey && !composing && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
       event.preventDefault()
       void submit()
     }
@@ -516,11 +515,12 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
               onInput={event => {
                 const nextDraft = event.currentTarget.textContent ?? ''
                 draftRef.current = nextDraft
-                setDraft(nextDraft)
+                setDraftEmpty(nextDraft.length === 0)
+                setDraftSendable(nextDraft.trim().length > 0)
               }}
               onKeyDown={onKeyDown}
             />
-            {draft.length === 0 && <div className={inputCss.placeholder}>
+            {draftEmpty && <div className={inputCss.placeholder}>
               {!modelConfigured
                   ? '请先配置模型，再开始写作'
                   : !newProject && waitingForRecovery
@@ -541,13 +541,13 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
           </div>
           <div className={inputCss.trailing}>
             {modelConfigured
-              ? <span className={clsx(css.connectionPill, snapshot.connection === 'offline' && css.connectionOffline, running && css.connectionRunning)}>{snapshot.settings.providerLabel}</span>
+              ? <button type="button" aria-label={`切换模型，当前 ${snapshot.settings.providerLabel}`} onClick={onConfigureModel} className={clsx(css.connectionPill, css.connectionAction, snapshot.connection === 'offline' && css.connectionOffline, running && css.connectionRunning)}>{snapshot.settings.providerLabel}⌄</button>
               : <button className={clsx(css.connectionPill, css.connectionAction, css.connectionUnconfigured)} type="button" onClick={onConfigureModel}>模型未配置 · 去设置</button>}
             <button
               className={inputCss.primary}
               type="button"
               aria-label={running ? '停止生成' : submitting ? '正在启动写作' : '发送'}
-              disabled={!running && (submitting || draft.trim().length === 0 || !writable)}
+              disabled={!running && (submitting || !draftSendable || !writable)}
               onClick={() => running ? void stop() : void submit()}
             >
               {running ? <StopIcon /> : <ArrowUpIcon />}
@@ -990,23 +990,6 @@ function SettingsDialog({
   const snapshot = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot)
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const [settingsError, setSettingsError] = useState<string | null>(null)
-  const [providerStatus, setProviderStatus] = useState<DesktopProviderStatusView | null>(null)
-  const [providerSaving, setProviderSaving] = useState(false)
-  const [providerChecking, setProviderChecking] = useState(false)
-  const [providerSaved, setProviderSaved] = useState(false)
-  const [providerLoading, setProviderLoading] = useState(true)
-  const [providerPresetId, setProviderPresetId] = useState('')
-  const [providerConnection, setProviderConnection] = useState<DesktopProviderConnectionResultView | null>(null)
-  const [providerForm, setProviderForm] = useState<DesktopProviderSetupInput>({
-    kind: 'openai_compatible',
-    providerId: 'primary',
-    baseURL: '',
-    model: '',
-    tools: 'supported',
-    usage: 'reported',
-    apiKey: '',
-    persistence: 'system',
-  })
   const [diagnosticPreview, setDiagnosticPreview] = useState<DesktopDiagnosticPreviewView | null>(null)
   const [diagnosticResult, setDiagnosticResult] = useState<DesktopDiagnosticExportResultView | null>(null)
   const [diagnosticBusy, setDiagnosticBusy] = useState(false)
@@ -1026,29 +1009,6 @@ function SettingsDialog({
   const [aboutHandshake, setAboutHandshake] = useState<BridgeHandshake | null>(null)
   const [aboutError, setAboutError] = useState<string | null>(null)
   const dialogRef = useModalDialog(onClose)
-
-  useEffect(() => {
-    if (hostConfiguration === undefined) return
-    let active = true
-    void hostConfiguration.providerStatus().then(status => {
-      if (!active) return
-      setProviderStatus(status)
-      setProviderConnection(status.connectionTest)
-      setProviderPresetId(status.kind !== null && status.baseURL !== null
-        ? identifyProviderPreset({ kind: status.kind, baseURL: status.baseURL }) : '')
-      setProviderForm(current => ({
-        ...current,
-        kind: status.kind ?? current.kind,
-        providerId: status.providerId ?? current.providerId,
-        baseURL: status.baseURL ?? current.baseURL,
-        model: status.model ?? current.model,
-        tools: status.tools ?? current.tools,
-        usage: status.usage ?? current.usage,
-      }))
-    }).catch(() => { if (active) setSettingsError('模型配置读取失败，请关闭设置后重新打开。') })
-      .finally(() => { if (active) setProviderLoading(false) })
-    return () => { active = false }
-  }, [hostConfiguration])
 
   useEffect(() => {
     if (section !== 'about') return
@@ -1081,72 +1041,6 @@ function SettingsDialog({
       setSettingsError(reason instanceof Error ? reason.message : '外观设置保存失败')
     }
   }
-
-  const saveProvider = async (): Promise<void> => {
-    if (hostConfiguration === undefined) return
-    try {
-      setProviderSaving(true)
-      setProviderSaved(false)
-      setProviderConnection(null)
-      setSettingsError(null)
-      const status = await hostConfiguration.configureProvider(normalizeProviderSetup(providerForm))
-      setProviderStatus(status)
-      setProviderForm(current => ({ ...current, apiKey: '' }))
-      setProviderSaved(true)
-      setProviderChecking(true)
-      setProviderConnection(await hostConfiguration.testProviderConnection())
-    } catch (reason) {
-      const hostError = typeof reason === 'object' && reason !== null && 'code' in reason
-      setSettingsError(hostError
-        ? commandErrorMessage(reason, '模型配置保存或连接验证失败，请稍后重试。')
-        : setupErrorMessage(reason, '模型配置保存失败'))
-      if (reason instanceof Error) {
-        const field = dialogRef.current?.querySelector<HTMLElement>(`[data-error-code="${reason.message}"]`)
-        window.requestAnimationFrame(() => field?.focus())
-      }
-    } finally {
-      setProviderSaving(false)
-      setProviderChecking(false)
-    }
-  }
-
-  const testProviderConnection = async (): Promise<void> => {
-    if (hostConfiguration === undefined) return
-    try {
-      setProviderChecking(true)
-      setProviderConnection(null)
-      setSettingsError(null)
-      setProviderConnection(await hostConfiguration.testProviderConnection())
-    } catch (reason) {
-      setSettingsError(commandErrorMessage(reason, '连接验证未能完成，请稍后重试。'))
-    } finally {
-      setProviderChecking(false)
-    }
-  }
-
-  const updateProviderForm = (patch: Partial<DesktopProviderSetupInput>): void => {
-    setProviderForm(current => ({ ...current, ...patch,
-      ...((patch.baseURL !== undefined && patch.baseURL !== current.baseURL)
-        || (patch.kind !== undefined && patch.kind !== current.kind) ? { apiKey: '' } : {}),
-    }))
-    setProviderSaved(false)
-    setProviderConnection(null)
-    setSettingsError(null)
-  }
-
-  const selectProviderPreset = (id: string): void => {
-    setProviderForm(current => applyProviderPreset(current, id))
-    setProviderPresetId(id)
-    setProviderSaved(false)
-    setProviderConnection(null)
-    setSettingsError(null)
-  }
-  const selectedProviderPreset = PROVIDER_PRESETS.find(preset => preset.id === providerPresetId)
-  const providerDraftMatchesSaved = providerStatus?.configured === true
-    && providerStatus.kind === providerForm.kind && providerStatus.baseURL === providerForm.baseURL
-    && providerStatus.model === providerForm.model && providerStatus.providerId === providerForm.providerId
-    && providerStatus.tools === providerForm.tools && providerStatus.usage === providerForm.usage
-    && providerForm.apiKey.length === 0
 
   const previewDiagnostics = async (): Promise<void> => {
     if (hostConfiguration === undefined) return
@@ -1272,17 +1166,6 @@ function SettingsDialog({
     }
   }
 
-  const connectionCopy = providerConnection === null
-    ? null
-    : providerConnectionMessage(providerConnection)
-  const credentialLocation = providerStatus?.credentialPersistence === 'system'
-    ? 'Key 在 Windows'
-    : providerStatus?.credentialPersistence === 'session'
-      ? 'Key 仅本次可用'
-      : '环境凭据'
-  const providerStatusLabel = providerStatus?.configured === true
-    ? `${providerConnection?.ok === true ? '连接验证通过' : providerConnection?.ok === false ? '连接验证失败' : '连接未验证'} · ${credentialLocation}`
-    : snapshot.settings.credentialReference === null ? '尚未配置' : '未找到可用 Key'
   const selectedProjectForData = snapshot.projects.find(project => project.id === snapshot.selectedProjectId)
   const diagnosticFileLabels: Readonly<Record<string, string>> = {
     'application.json': '应用版本与运行平台',
@@ -1300,7 +1183,7 @@ function SettingsDialog({
   const aboutVersion = aboutHandshake === null ? null : aboutVersionView(aboutHandshake)
 
   return (
-    <div className={css.overlay} role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
+    <div className={clsx(css.overlay, css.settingsOverlay)} role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
       <section ref={dialogRef} className={css.settingsDialog} role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <nav className={css.settingsNav} aria-label="设置分类">
           <h2 className={css.settingsHeading} id="settings-title">设置</h2>
@@ -1352,56 +1235,7 @@ function SettingsDialog({
                 </select>
               </div>
             </>}
-            {section === 'models' && <>
-              <h3 className={css.settingsSectionTitle}>模型</h3>
-              <div className={css.settingRow}>
-                <div><div className={css.settingLabel}>{snapshot.settings.providerLabel}</div><div className={css.settingHint}>{snapshot.mode === 'mock' ? '演示环境不会调用模型' : '写作内容只会发往你在下方配置的模型服务'}</div></div>
-                <span className={css.credentialStatus}>{providerStatusLabel}</span>
-              </div>
-              {hostConfiguration === undefined
-                ? <p className={css.aboutCopy}>当前由本地 Web 启动参数管理模型配置；桌面版可在此直接保存 API 与 Key。</p>
-                : <fieldset className={css.providerForm} disabled={providerLoading || providerSaving || providerChecking}>
-                    <p className={clsx(css.providerIntro, css.formWide)}>选择供应商 → 填写 Key 和模型名称 → 保存并验证。已有配置不会自动更换；这里只修改当前使用的模型服务。</p>
-                    <label className={clsx(css.formField, css.formWide)}><span>模型供应商</span><select aria-label="模型供应商" value={providerPresetId} onChange={event => selectProviderPreset(event.target.value)}>
-                      <option value="" disabled>{providerLoading ? '正在读取配置…' : '请选择你的模型供应商'}</option>
-                      {(['国内服务', '国际服务', '聚合平台'] as const).map(group => <optgroup key={group} label={group}>
-                        {PROVIDER_PRESETS.filter(preset => preset.group === group).map(preset => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
-                      </optgroup>)}
-                      <option value="custom">自定义供应商 / 私有网关</option>
-                    </select></label>
-                    {selectedProviderPreset !== undefined && <div className={clsx(css.providerPresetInfo, css.formWide)}>
-                      <strong>连接地址与协议已填好</strong>
-                      <p>{selectedProviderPreset.note}</p>
-                      <div className={css.providerEndpoint}><span>{providerForm.kind === 'anthropic_compatible' ? 'Anthropic 兼容' : 'OpenAI 兼容'}</span><code>{providerForm.baseURL}</code></div>
-                      <button type="button" className={css.providerCustomize} onClick={() => selectProviderPreset('custom')}>需要修改地址或协议？转为自定义</button>
-                    </div>}
-                    {providerPresetId === 'custom' && <>
-                      <p className={clsx(css.providerIntro, css.formWide)}>自定义配置：保留当前地址和模型，可按服务商文档修改。修改地址或协议会清空尚未保存的 Key。</p>
-                      <label className={clsx(css.formField, css.formWide)}><span>服务类型</span><select aria-label="服务类型" value={providerForm.kind} onChange={event => updateProviderForm({ kind: event.target.value as DesktopProviderSetupInput['kind'] })}><option value="openai_compatible">OpenAI 兼容（Chat Completions）</option><option value="anthropic_compatible">Anthropic 兼容（Messages）</option></select></label>
-                      <label className={clsx(css.formField, css.formWide)}><span>API 地址（HTTPS）</span><input aria-label="API 地址（HTTPS）" aria-describedby="provider-url-help" data-error-code="PROVIDER_URL_REQUIRED" value={providerForm.baseURL} onChange={event => updateProviderForm({ baseURL: event.target.value })} placeholder="填写服务商提供的 API 基础地址" /><small id="provider-url-help" className={css.settingHint}>填写基础地址，不要包含 chat/completions 或 messages；版本路径需按服务商说明保留。</small></label>
-                    </>}
-                    {providerPresetId !== '' && <>
-                    <label className={clsx(css.formField, css.formWide)}><span>API Key</span><input data-error-code="PROVIDER_API_KEY_REQUIRED" type="password" autoComplete="new-password" value={providerForm.apiKey} onChange={event => updateProviderForm({ apiKey: event.target.value })} placeholder={providerStatus?.configured === true ? '如需更新配置，请重新输入 Key' : '输入 API Key'} /></label>
-                    <label className={clsx(css.formField, css.formWide)}><span>模型名称</span><input aria-label="模型名称" aria-describedby="provider-model-help" data-error-code="PROVIDER_MODEL_REQUIRED" value={providerForm.model} onChange={event => updateProviderForm({ model: event.target.value })} placeholder={selectedProviderPreset?.modelHint ?? '填写服务商给出的完整模型 ID'} /><small id="provider-model-help" className={css.settingHint}>从供应商控制台复制模型 ID（不是显示昵称），需支持工具调用。预设不代表该账号已开通所有模型。</small></label>
-                    <p className={clsx(css.providerIntro, css.formWide)}>Key 优先保存在本机 Windows 凭据管理器；不可用时仅在本次会话使用。切换供应商会清空未保存的 Key 和模型名称。</p>
-                    <details className={clsx(css.advancedSettings, css.formWide)}>
-                      <summary>高级设置</summary>
-                      <div className={css.advancedGrid}>
-                        <label className={css.formField}><span>配置名称</span><input data-error-code="PROVIDER_ID_REQUIRED" value={providerForm.providerId} onChange={event => updateProviderForm({ providerId: event.target.value })} /></label>
-                        <label className={css.formField}><span>服务是否支持工具调用</span><select value={providerForm.tools} onChange={event => updateProviderForm({ tools: event.target.value as DesktopProviderSetupInput['tools'] })}><option value="supported">支持</option><option value="unsupported">不支持</option></select></label>
-                      </div>
-                    </details>
-                    </>}
-                    {connectionCopy !== null && <div className={clsx(css.connectionResult, connectionCopy.tone === 'success' ? css.connectionSuccess : css.connectionFailure, css.formWide)} role={connectionCopy.tone === 'failure' ? 'alert' : 'status'}>{connectionCopy.text}</div>}
-                    <div className={clsx(css.setupActions, css.formWide)}>
-                      <span className={css.settingHint}>{providerSaved ? '配置已保存；连接验证结果显示在上方。' : '验证会发送一条最小测试请求，可能产生极少量模型费用。'}</span>
-                      <div className={css.connectionActions}>
-                        {providerStatus?.configured === true && <button type="button" className={css.secondaryAction} disabled={providerSaving || providerChecking || !providerDraftMatchesSaved} title={providerDraftMatchesSaved ? '验证当前已保存的配置' : '表单已有更改，请先保存并验证'} onClick={() => void testProviderConnection()}>{providerChecking && !providerSaving ? '验证中…' : '验证已保存配置'}</button>}
-                        <button type="button" className={css.primaryAction} disabled={providerSaving || providerChecking || providerPresetId === ''} onClick={() => void saveProvider()}>{providerChecking ? '正在验证…' : providerSaving ? '保存中…' : '保存并验证连接'}</button>
-                      </div>
-                    </div>
-                  </fieldset>}
-            </>}
+            <div hidden={section !== 'models'}><ProviderSettings host={hostConfiguration} /></div>
             {section === 'data' && <>
               <h3 className={css.settingsSectionTitle}>数据与诊断</h3>
               {hostConfiguration === undefined ? (

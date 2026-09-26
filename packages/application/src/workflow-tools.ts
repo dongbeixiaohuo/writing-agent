@@ -165,24 +165,39 @@ function artifactKind(stage: ContentStage): ArtifactKind {
   return "body";
 }
 
+/** Legacy body versions can contain an explicit postscript. Use only the article
+ * for shape comparison; never rewrite the stored version or drop prose silently. */
+export function bodyArticleBaseline(content: string): string {
+  const marker = /\n\s*\n(?:#{1,6}\s+|\*\*)(?:改动说明|修改说明|修订说明|润色说明|审校结论)(?:[（(:：\s]|\*\*|$)/u.exec(content);
+  return (marker ? content.slice(0, marker.index).replace(/\n\s*(?:---|\*\*\*)\s*$/u, '') : content).trim();
+}
+
 export function assertCleanBodyStageContent(stage: BodyStage, content: string, boundBody?: string): void {
   const normalized = content.trim();
-  if (stage === "language_review" && boundBody?.trim() === normalized) return;
+  const baseline = boundBody === undefined ? undefined : bodyArticleBaseline(boundBody);
+  const containsProcessPostscript = bodyArticleBaseline(normalized) !== normalized;
+  if (stage === "language_review" && baseline === normalized && !containsProcessPostscript) return;
   const firstLine = normalized.split(/\r?\n/u, 1)[0] ?? "";
   const startsWithProcessHeading = /^#{1,6}\s*(?:语言终审|语言审校|最终审校|集中修订说明|修订说明|编辑说明|初稿说明)(?:\s|$)/u.test(firstLine);
   const includesWrappedArticleMarker = /(?:终稿|正文)(?:与[^\n]{0,40})?(?:如下|如下所示)|以下(?:是|为)(?:最终)?(?:正文|终稿)/u.test(
     normalized.slice(0, 1_000),
   );
   const startsWithReviewAssessment = /^(?:#{1,6}\s*)?(?:本稿|该稿|此稿|当前稿件|原稿)(?:的)?(?:语言|结构|表达|节奏|文字|整体|底子)/u.test(firstLine);
+  const startsWithReviewStatus = /^(?:审校|润色|修订)(?:已)?完成[。！!\s]*$/u.test(firstLine);
   const containsReviewRecommendations = /建议优先处理|整体可保留|审校意见|修改建议|建议保留[：:]/u.test(normalized.slice(0, 1_000));
   const standaloneReviewConclusion = !normalized.includes("\n") && /^(?:无需(?:修改|调整)|整体表达|未发现明显问题|没有需要(?:修改|调整))/u.test(normalized);
   const headings = (text: string) => text.split(/\r?\n/u).filter((line) => /^#{1,6}\s/u.test(line)).map((line) => line.trim());
-  const changedArticleShape = stage === "language_review" && boundBody !== undefined && (
-    normalized.length < boundBody.trim().length * 0.65 ||
-    normalized.split(/\r?\n/u)[0]?.trim() !== boundBody.trim().split(/\r?\n/u)[0]?.trim() ||
-    JSON.stringify(headings(normalized)) !== JSON.stringify(headings(boundBody))
+  const changedArticleShape = stage === "language_review" && baseline !== undefined && (
+    normalized.length < baseline.length * 0.65 ||
+    JSON.stringify(headings(normalized)) !== JSON.stringify(headings(baseline))
   );
-  if (!startsWithProcessHeading && !includesWrappedArticleMarker && !(startsWithReviewAssessment && containsReviewRecommendations) && !standaloneReviewConclusion && !changedArticleShape) return;
+  if (!startsWithProcessHeading && !startsWithReviewStatus && !includesWrappedArticleMarker && !(startsWithReviewAssessment && containsReviewRecommendations) && !standaloneReviewConclusion && !containsProcessPostscript) {
+    if (!changedArticleShape) return;
+    throw new ToolExecutionFault('BODY_STAGE_STRUCTURE_MISMATCH', 'Return the complete article with its existing headings; the response removed a heading or too much article text', false, {
+      stage, requiredHeadings: headings(baseline!), minimumCharacters: Math.ceil(baseline!.length * 0.65),
+      correction: 'Preserve these exact Markdown headings and return the complete article, not just paragraphs. Remove any legacy postscript change notes; those notes are not part of article length. Do not rewrite an unchanged response.',
+    });
+  }
   throw new ToolExecutionFault(
     "BODY_STAGE_CONTAINS_PROCESS_NOTES",
     "Body stages must contain the complete article only, without review conclusions or process notes",

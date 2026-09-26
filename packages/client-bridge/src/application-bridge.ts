@@ -59,6 +59,8 @@ export interface ApplicationBridgeOptions {
   readonly pollIntervalMs?: number;
   readonly operationIdFactory?: () => string;
   readonly initialProjectId?: string;
+  readonly initialSessionId?: string;
+  readonly initialGeneration?: number;
   readonly uiSettingsPersistence?: UiSettingsPersistence;
 }
 
@@ -302,6 +304,7 @@ function modelFailureDetail(code: string | null): string {
     AUTH_FAILED: "API Key 无效或没有访问权限，请在“设置 → 模型”中更新 Key 并验证连接。",
     INVALID_REQUEST: "模型服务拒绝了请求，请检查服务类型、API 地址和模型 ID。",
     MODEL_RESPONSE_INVALID: "模型回复未通过格式校验，本轮未完成；你的输入仍保留，可以重试。若反复出现，请反馈运行记录，无需重新填写资料。",
+    STAGE_OUTPUT_NOT_SAVED: "这一阶段的内容反复未通过保存校验，已停止自动重写。上一版稿件仍保留；不是模型账户额度或网络故障。请反馈此阶段的运行记录，不必重新填写材料。",
     MODEL_OUTPUT_TRUNCATED: "模型回复达到单次输出长度上限而被截断，本阶段未完成；残缺内容没有写入稿件，已保存的阶段仍保留。请反馈这条运行记录，无需重新填写资料。",
     MODEL_UNSUPPORTED: "模型名称不可用，请检查服务商提供的模型 ID，并在“设置 → 模型”中验证连接。",
     NETWORK_ERROR: "无法连接模型服务，请检查 API 地址和网络后验证连接。",
@@ -548,6 +551,11 @@ function timelineForSession(
       }
       const reason = textPayload(event.payload, "stopReason");
       const stage = textPayload(event.payload, "stage");
+      if (reason === 'STAGE_OUTPUT_NOT_SAVED') {
+        items.push({ id:event.id, kind:'tool', audience:'conversation', label:'自动重写已暂停',
+          detail:'本阶段保存校验反复未通过；上一版稿件仍保留，可查看原因或重试这一步。', state:'failure' });
+        continue;
+      }
       if (reason === 'CO_CREATION_CHECKPOINT') {
         const question = stage === 'outline' ? '这个方向可以吗？确认后我继续写初稿，也可以直接告诉我怎么改。'
           : stage === 'draft' ? '初稿这样写可以吗？确认后我继续审校，也可以直接告诉我怎么改。'
@@ -925,8 +933,8 @@ export class ApplicationClientBridge implements ClientBridge {
     }
     this.#snapshot = this.#buildSnapshot(
       options.initialProjectId ?? "",
-      undefined,
-      1,
+      options.initialSessionId,
+      options.initialGeneration ?? 1,
       1,
       {
         theme: initialTheme,
@@ -1638,7 +1646,7 @@ export class ApplicationClientBridge implements ClientBridge {
           parameters: this.#model.parameters,
           // Retrying transport is not a new author instruction. A synthetic
           // instruction would invalidate the still-pending expert assignment.
-          ...((decision === 'retry_unknown' || run.stopReason === 'BUDGET_EXHAUSTED') && feedback.length === 0 ? {} : {
+          ...((decision === 'retry_unknown' || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED'].includes(run.stopReason ?? '')) && feedback.length === 0 ? {} : {
             userInstruction: feedback.length > 0
               ? feedback
               : run.stopReason === "CO_CREATION_CHECKPOINT"

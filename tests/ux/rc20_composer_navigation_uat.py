@@ -39,7 +39,19 @@ def main() -> int:
               const { WritingAgentShell } = await import(`${workspace}/packages/ui/src/shell/WritingAgentShell.tsx`);
               const { createDeterministicMockBridge } = await import(`${workspace}/packages/client-bridge/src/mock-bridge.ts`);
               const { createDefaultWritingUiRegistry } = await import(`${workspace}/packages/writing-ui/src/index.ts`);
-              const mock = createDeterministicMockBridge({ latencyMs: 450 });
+              // Explicit completion barriers: a fast 450ms timer made this test
+              // accidentally submit the next draft on slower Windows hosts.
+              const realTimeout = window.setTimeout.bind(window);
+              const completions = [];
+              window.setTimeout = (callback, delay, ...args) => {
+                if (delay !== 424242) return realTimeout(callback, delay, ...args);
+                const id = realTimeout(callback, delay, ...args);
+                completions.push(() => { clearTimeout(id); callback(...args); });
+                return id;
+              };
+              window.__finishWriting = () => completions.splice(0).forEach(f => f());
+              const mock = createDeterministicMockBridge({ latencyMs: 424242 });
+              window.__mock = mock;
               let sourceSnapshot;
               let configuredSnapshot;
               const bridge = {
@@ -54,7 +66,7 @@ def main() -> int:
                 },
                 startConversation: async (text) => {
                   const result = await mock.sendMessage(text);
-                  await new Promise(resolve => setTimeout(resolve, 120));
+                  await new Promise(resolve => { window.__releaseHandoff = resolve; });
                   return result;
                 },
               };
@@ -90,8 +102,12 @@ def main() -> int:
         new_project.click()
         hero_editor = page.get_by_role("textbox", name="写作指令")
         hero_editor.fill("从首页开始的输入")
+        hero_editor.dispatch_event('keydown', {'key':'Enter', 'code':'Enter', 'isComposing':True})
+        if page.get_by_role('button',name='停止生成',exact=True).count():
+            raise AssertionError('IME_ENTER_SUBMITTED_DRAFT')
         hero_editor.press("Enter")
         hero_editor.fill("首页提交等待期预写")
+        page.evaluate('window.__releaseHandoff()')
         conversation_editor = page.get_by_role("textbox", name="写作指令")
         page.wait_for_function("document.activeElement?.getAttribute('aria-label') === '写作指令'")
         page.wait_for_timeout(50)
@@ -102,7 +118,8 @@ def main() -> int:
         # clear it. Completion must leave both focus and text intact.
         conversation_editor.fill("生成中预写的下一条")
         conversation_editor.press("Enter")
-        page.wait_for_timeout(550)
+        page.evaluate('window.__finishWriting()')
+        page.get_by_role('button', name='发送', exact=True).wait_for()
         if conversation_editor.inner_text() != "生成中预写的下一条":
             raise AssertionError("PREFILLED_DRAFT_WAS_CLEARED")
         if conversation_editor.get_attribute("contenteditable") != "true":
@@ -116,7 +133,8 @@ def main() -> int:
         page.get_by_role("button", name="停止生成", exact=True).wait_for()
         runs_tab = page.get_by_role("button", name=re.compile(r"^运行记录"))
         runs_tab.click()
-        page.wait_for_timeout(550)
+        page.evaluate('window.__finishWriting()')
+        page.wait_for_function('window.__mock.getSnapshot().activeRunId === null')
         if page.evaluate("document.activeElement?.textContent?.trim().startsWith('运行记录')") is not True:
             raise AssertionError("RUN_COMPLETION_STOLE_USER_FOCUS")
 
@@ -128,6 +146,7 @@ def main() -> int:
             "heroRemountFocus": True,
             "prefillPreserved": True,
             "completionFocusPolicy": True,
+            "imeEnterDoesNotSubmit": True,
         }
         (args.output_dir / "rc20-composer-navigation.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"

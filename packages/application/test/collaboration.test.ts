@@ -452,8 +452,9 @@ for (const cancel of [false, true]) it(`desktop recovers a protected expert with
     looping = true;
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       if (collaborationState(request)?.actor === 'outline' && this.looping) {
-        yield { type: 'text_delta', delta: '正在整理' };
-        yield { type: 'completed', finishReason: 'stop' }; return;
+        // Exercise the general call allowance, not the text-save repetition guard.
+        yield { type: 'tool_call_delta', index: 0, id: `read-loop-${this.requests.length}`, name: 'read_artifact_version', argumentsDelta: JSON.stringify({versionId: collaborationState(request)!.inputVersionIds[0]}) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
       }
       yield* super.providerStream(request);
     }
@@ -488,6 +489,46 @@ for (const cancel of [false, true]) it(`desktop recovers a protected expert with
     assert.equal(events.filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.result?.collaboration?.actor === 'outline').length, 1);
     assert.equal(f.storage.listArtifactVersions('p', 'report', `workflow:${first.runId}:research`).length, 1);
   } finally { bridge.dispose(); f.close(); }
+});
+
+it('stops duplicate language output and explicitly retries only that expert, keeping saved stages', async () => {
+  class RejectedLanguage extends CollaborationProvider {
+    reject = true; actors: string[] = [];
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request)!; this.actors.push(state.actor);
+      if (state.actor === 'language_review' && this.reject) {
+        yield {type:'text_delta', delta:'审校完成。\n\n文章整体清晰，可以发布。'};
+        yield {type:'completed', finishReason:'stop'}; return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new RejectedLanguage(); const f = setup(provider);
+  const bridge = createApplicationBridge({ service:f.app, workspaceId:'text-save-retry', model:{model:'mock',providerLabel:'test',credentialReference:null,parameters:{},budget:f.input.budget} });
+  try {
+    const first = await f.app.runDraft(f.input);
+    assert.equal(f.storage.getRun(first.runId)?.stopReason, 'STAGE_OUTPUT_NOT_SAVED');
+    assert.equal(provider.actors.filter(a => a === 'language_review').length, 2);
+    const body = f.storage.inspectProject('p')!.latestBodyVersionId;
+    await bridge.selectSession('p',first.sessionId);
+    assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason,'STAGE_OUTPUT_NOT_SAVED');
+    const rows = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
+    assert.ok(rows.some(row=>row.kind==='tool' && row.label==='自动重写已暂停'));
+    assert.ok(!rows.some(row=>row.kind==='tool' && row.detail.includes('存在结果未知的外部请求')));
+    const resumedAt = provider.actors.length; provider.reject = false;
+    await bridge.resumeRun(first.runId,'resume',{operationId:'retry-text-save'});
+    const deadline = Date.now()+10000;
+    while(f.storage.getRun(first.runId)?.status === 'running') {
+      if(Date.now()>deadline) throw new Error('stage retry did not settle');
+      await new Promise(resolve=>setTimeout(resolve,5));
+    }
+    // Recovery may revalidate persisted inputs; it must not rerun saved experts.
+    assert.ok(provider.actors.slice(resumedAt).includes('language_review'));
+    assert.ok(!provider.actors.slice(resumedAt).some(a=>['research','outline','draft','review_editor','central_revision'].includes(a)));
+    assert.notEqual(f.storage.inspectProject('p')!.latestBodyVersionId,body);
+    assert.equal(f.storage.listArtifactVersions('p','report',`workflow:${first.runId}:research`).length,1);
+    assert.equal(f.storage.listRunEvents(first.runId).filter(e=>e.type==='tool.completed' && (e.payload.result as any)?.result?.collaboration?.actor==='language_review').length,1);
+  } finally {bridge.dispose();f.close();}
 });
 
 it('fact specialist contract explicitly separates uncertain evidence from schema status', async () => {

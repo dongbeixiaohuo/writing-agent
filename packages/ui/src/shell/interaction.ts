@@ -70,6 +70,11 @@ export function checkpointCopy(
   recovery: RecoverableRunSummary,
   run: RunRecordView | undefined,
 ): CheckpointCopy {
+  if (recovery.stopReason === 'STAGE_OUTPUT_NOT_SAVED') return {
+    role: '写作助手', eyebrow: '保存校验未通过 · 自动重写已停止', title: '这一步未能保存，上一版稿件仍在',
+    description: '同一阶段反复未通过保存校验，程序已停止继续生成，避免重复刷屏。不是连接或账户额度问题；无需重新提供材料。可查看运行记录中的具体校验原因，或主动重试当前步骤；重试会产生模型用量。',
+    feedbackPlaceholder: '', primaryAction: '重试这一步',
+  }
   if (recovery.stopReason === 'BUDGET_EXHAUSTED') {
     return { role: '写作助手', eyebrow: '自动处理已暂停 · 已保存内容保留', title: '这一步还没有完成，可以从这里继续',
       description: '本轮自动调用已达到保护上限，不是服务商账户额度不足。已保存稿件和已确认标题保留；继续时不重做已保存阶段，从未完成的步骤接着处理。会再次请求模型并产生用量。',

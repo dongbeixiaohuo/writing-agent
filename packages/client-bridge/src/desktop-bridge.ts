@@ -39,8 +39,11 @@ export type DesktopRpcMethod =
   | "revealPublication"
   | "refresh"
   | "providerStatus"
+  | "providerDetails"
   | "testProviderConnection"
   | "configureProvider"
+  | "selectProvider"
+  | "listProviderModels"
   | "previewDiagnostics"
   | "exportDiagnostics"
   | "selectLegacyMigrationSource"
@@ -77,8 +80,11 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "revealPublication",
   "refresh",
   "providerStatus",
+  "providerDetails",
   "testProviderConnection",
   "configureProvider",
+  "selectProvider",
+  "listProviderModels",
   "previewDiagnostics",
   "exportDiagnostics",
   "selectLegacyMigrationSource",
@@ -169,7 +175,10 @@ export interface DesktopWorkspaceRestoreResultView {
 }
 
 export interface DesktopProviderSetupInput {
-  readonly kind: "openai_compatible" | "anthropic_compatible";
+  readonly profileId?: string | null;
+  readonly displayName?: string;
+  readonly models?: readonly string[];
+  readonly kind: "openai_compatible" | "openai_responses" | "anthropic_compatible";
   readonly providerId: string;
   readonly baseURL: string;
   readonly model: string;
@@ -179,9 +188,27 @@ export interface DesktopProviderSetupInput {
   readonly persistence: "system" | "session";
 }
 
-export interface DesktopProviderStatusView {
+export interface DesktopSavedProviderView {
+  readonly credentialChecked?: boolean;
+  readonly profileId: string;
+  readonly displayName: string;
+  readonly kind: DesktopProviderSetupInput['kind'];
+  readonly providerId: string;
+  readonly baseURL: string;
+  readonly model: string;
+  readonly models: readonly string[];
+  readonly tools: DesktopProviderSetupInput['tools'];
+  readonly usage: DesktopProviderSetupInput['usage'];
   readonly configured: boolean;
-  readonly kind: "openai_compatible" | "anthropic_compatible" | null;
+  readonly credentialPersistence: DesktopProviderStatusView['credentialPersistence'];
+}
+
+export interface DesktopProviderStatusView {
+  readonly credentialChecked?: boolean;
+  readonly activeProfileId?: string | null;
+  readonly profiles?: readonly DesktopSavedProviderView[];
+  readonly configured: boolean;
+  readonly kind: "openai_compatible" | "openai_responses" | "anthropic_compatible" | null;
   readonly providerId: string | null;
   readonly baseURL: string | null;
   readonly model: string | null;
@@ -256,8 +283,11 @@ export type DesktopPublicationSaveResult =
 export interface DesktopHostConfiguration {
   savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult>;
   revealPublication(receiptId: string): Promise<void>;
-  providerStatus(): Promise<DesktopProviderStatusView>;
+  providerStatus(mode?: 'summary'): Promise<DesktopProviderStatusView>;
+  providerDetails(profileId: string): Promise<DesktopSavedProviderView>;
   configureProvider(input: DesktopProviderSetupInput): Promise<DesktopProviderStatusView>;
+  selectProvider(profileId: string, model: string): Promise<DesktopProviderStatusView>;
+  listProviderModels(input: DesktopProviderSetupInput): Promise<readonly string[]>;
   testProviderConnection(): Promise<DesktopProviderConnectionResultView>;
   previewDiagnostics(): Promise<DesktopDiagnosticPreviewView>;
   exportDiagnostics(confirmationHash: string): Promise<DesktopDiagnosticExportResultView>;

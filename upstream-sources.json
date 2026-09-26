@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "last_updated": "2026-09-18",
+  "last_updated": "2026-09-26",
   "purpose": "Machine-readable source audit and future port provenance. A component is not shipped until status is ported_unverified or ported_verified and copied_files is non-empty.",
   "status_values": [
     "audited_planned",
@@ -257,6 +257,46 @@
           ]
         }
       ]
+    },
+    {
+      "id": "cc-switch-provider-metadata",
+      "repository": "https://github.com/farion1231/cc-switch.git",
+      "commit": "da193d4f7a6ce3710623c312245c752376c0d036",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "notices_path": "THIRD_PARTY_NOTICES.md",
+      "distribution_included": true,
+      "components": [{
+        "id": "codex-api-provider-presets",
+        "status": "ported_verified",
+        "source_units": [{ "path": "src/config/codexProviderPresets.ts", "git_tree_oid": "de5a3f381c253ad36a6d9248f972b848feef20c3" }],
+        "target_paths": ["packages/client-bridge/src/cc-switch-codex-presets.ts"],
+        "copied_files": [{
+          "source_path": "src/config/codexProviderPresets.ts",
+          "target_path": "packages/client-bridge/src/cc-switch-codex-presets.ts",
+          "sha256": "6a5a3e8cd7eda157b27f54d09a65faa2a765e7bd691a7fa30d6342bd4178336c",
+          "exact_copy": false
+        }],
+        "excluded_features": ["OAuth login", "Azure resource templates", "affiliate links", "upstream runtime", "supplier system prompts", "automatic endpoint fallback"],
+        "required_tests": ["provider-presets.test.ts: source coverage and wire format", "provider_presets_browser.py: search and key isolation"],
+        "verification_scope": "Static configuration and local protocol mapping only, not real supplier account compatibility"
+      }, {
+        "id": "provider-offering-identities-and-plan-variants",
+        "status": "ported_verified",
+        "source_units": [
+          { "path": "src/config/codexProviderPresets.ts", "git_tree_oid": "de5a3f381c253ad36a6d9248f972b848feef20c3" },
+          { "path": "src/config/claudeProviderPresets.ts", "git_tree_oid": "3c09671ed889d0b346ac3203d368ba3ddbc8f684" },
+          { "path": "src/config/opencodeProviderPresets.ts", "git_tree_oid": "f51ba2d474814edb3bc4c29488a922d7a9625377" }
+        ],
+        "target_paths": ["packages/client-bridge/src/provider-presets.ts", "packages/client-bridge/src/provider-offerings.ts"],
+        "copied_files": [
+          { "source_path": "src/config/claudeProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-presets.ts", "sha256": "9ef5129890287e3c018920c8a89d464e34161f082b57e68be31810c282be7fb4", "exact_copy": false },
+          { "source_path": "src/config/codexProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-offerings.ts", "sha256": "f0c282c26e2b6a252bb8ebca6aa322a2bcbb2cd17f275e08bea6499de8a7fa26", "exact_copy": false }
+        ],
+        "excluded_features": ["dynamic KAT-Coder resource template", "guessed regions", "inferred billing entitlements", "endpoint-only plan merging", "automatic endpoint fallback"],
+        "required_tests": ["provider-presets.test.ts: explicit region/product/edition and ambiguous legacy matching", "provider-profile.test.ts: exact transport authentication and legacy preservation", "provider_presets_browser.py: filters and plan selection"],
+        "verification_scope": "Catalog identity and local request configuration; no claim of live provider compatibility or account billing verification"
+      }]
     }
   ]
 }

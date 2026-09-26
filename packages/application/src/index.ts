@@ -1152,7 +1152,7 @@ export class WritingApplicationService {
       expertMessage: [prompt.userMessage, userInstruction, originalInstructionBoundary, inputHistoryBoundary].filter(Boolean).join("\n\n"),
       materialIds: briefVersion.brief.materialIds,
       recoverPendingAssignment: recoveringRunId !== null && !input.userInstruction?.trim() &&
-        (('decision' in input && input.decision === 'retry_unknown') || this.#storage.getRun(recoveringRunId)?.stopReason === 'BUDGET_EXHAUSTED'),
+        (('decision' in input && input.decision === 'retry_unknown') || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED'].includes(this.#storage.getRun(recoveringRunId)?.stopReason ?? '')),
     });
     const tools = ToolRegistry.create([
       ...createBuiltinReadTools({
@@ -1566,7 +1566,7 @@ export class WritingApplicationService {
     try {
       this.#storage.resumeRun({
         refreshLoopAllowance: true,
-        preservePendingAssignment: run.stopReason === 'BUDGET_EXHAUSTED' && !input.userInstruction?.trim(),
+        preservePendingAssignment: ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED'].includes(run.stopReason ?? '') && !input.userInstruction?.trim(),
         projectId,
         runId: input.runId,
         operationId: input.operationId,

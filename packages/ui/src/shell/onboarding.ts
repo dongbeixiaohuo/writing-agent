@@ -115,6 +115,10 @@ export async function styleReferenceFromFile(file: {
 }
 
 const COMMAND_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  PROVIDER_API_KEY_REQUIRED: '请填写此供应商的 API Key；同一地址的已有配置可以留空沿用。',
+  PROVIDER_PROFILE_NOT_FOUND: '这项模型配置已变化，请重新打开模型设置。',
+  PROVIDER_SETTINGS_BUSY: '正在保存模型配置，请稍后重试。',
+  PROVIDER_CATALOG_UNAVAILABLE: '暂时无法获取模型目录，可以直接填写服务商提供的模型 ID。',
   INTAKE_PROPOSAL_CONFLICT: "写作方向已发生变化，请先看最新建议再确认。",
   UNKNOWN_OUTCOME_REQUIRES_CONFIRMATION: "上次模型请求的结果未知，请先选择“确认重试并继续”，系统不会自行重复请求。",
   MESSAGE_TOO_LONG: "这一段超过 20,000 字符，请分几次发送。",
@@ -317,7 +321,10 @@ export function normalizeProviderSetup(
     model: required(form.model, "PROVIDER_MODEL_REQUIRED"),
     tools: form.tools,
     usage: form.usage,
-    apiKey: required(form.apiKey, "PROVIDER_API_KEY_REQUIRED"),
+    apiKey: form.profileId ? form.apiKey.trim() : required(form.apiKey, "PROVIDER_API_KEY_REQUIRED"),
     persistence: form.persistence,
+    ...(form.profileId === undefined ? {} : { profileId: form.profileId }),
+    ...(form.displayName === undefined ? {} : { displayName: required(form.displayName, 'PROVIDER_ID_REQUIRED') }),
+    ...(form.models === undefined ? {} : { models: [...new Set(form.models.map(model => model.trim()).filter(Boolean))] }),
   };
 }

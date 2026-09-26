@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { AnthropicCompatibleProvider } from "../../../model-adapters/anthropic-compatible/src/index.js";
 import { OpenAICompatibleProvider } from "../../../model-adapters/openai-compatible/src/index.js";
+import { OpenAIResponsesProvider } from "../../../model-adapters/openai-responses/src/index.js";
 import {
   CredentialBroker,
   WindowsCredentialManagerBackend,
@@ -69,6 +70,7 @@ const AnthropicConfigSchema = z
 const ProviderConfigInputSchema = z.union([
   LegacyOpenAIConfigSchema,
   OpenAIConfigSchema,
+  OpenAIConfigSchema.extend({ kind: z.literal('openai_responses') }),
   AnthropicConfigSchema,
 ]);
 
@@ -87,6 +89,10 @@ export interface OpenAIProviderConfig extends NormalizedProviderConfigBase {
   readonly kind: "openai_compatible";
 }
 
+export interface OpenAIResponsesConfig extends NormalizedProviderConfigBase {
+  readonly kind: "openai_responses";
+}
+
 export interface AnthropicProviderConfig extends NormalizedProviderConfigBase {
   readonly kind: "anthropic_compatible";
   readonly anthropicVersion?: string;
@@ -96,6 +102,7 @@ export interface AnthropicProviderConfig extends NormalizedProviderConfigBase {
 
 export type NormalizedProviderConfig =
   | OpenAIProviderConfig
+  | OpenAIResponsesConfig
   | AnthropicProviderConfig;
 
 export class ProviderConfigError extends Error {
@@ -150,8 +157,8 @@ export function parseProviderConfig(input: unknown): NormalizedProviderConfig {
       ? {}
       : { allowInsecureHttp: config.allowInsecureHttp }),
   };
-  if (config.kind === "openai_compatible") {
-    return Object.freeze({ ...common, kind: "openai_compatible" as const });
+  if (config.kind === "openai_compatible" || config.kind === 'openai_responses') {
+    return Object.freeze({ ...common, kind: config.kind });
   }
   return Object.freeze({
     ...common,
@@ -198,6 +205,7 @@ export function createConfiguredProvider(
   if (config.kind === "openai_compatible") {
     return new OpenAICompatibleProvider(common);
   }
+  if (config.kind === 'openai_responses') return new OpenAIResponsesProvider(common);
   return new AnthropicCompatibleProvider({
     ...common,
     ...(config.anthropicVersion === undefined

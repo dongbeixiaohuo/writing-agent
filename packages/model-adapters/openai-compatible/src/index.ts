@@ -73,7 +73,7 @@ interface WireRequest {
 const ADAPTER_VERSION = "openai-chat-completions-v1";
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
-function validateBaseURL(raw: string, allowInsecureHttp: boolean): string {
+export function validateBaseURL(raw: string, allowInsecureHttp: boolean): string {
   let url: URL;
   try {
     url = new URL(raw);
@@ -97,7 +97,7 @@ function validateBaseURL(raw: string, allowInsecureHttp: boolean): string {
   return url.toString().replace(/\/$/, "");
 }
 
-function validateCredential(raw: string | undefined): string {
+export function validateCredential(raw: string | undefined): string {
   const value = raw?.trim();
   if (
     value === undefined ||
@@ -117,7 +117,7 @@ function providerFailure(error: ModelError): ModelProviderFailure {
   return new ModelProviderFailure(error);
 }
 
-function invalidRequest(message: string): ModelProviderFailure {
+export function invalidRequest(message: string): ModelProviderFailure {
   return providerFailure({
     code: "INVALID_REQUEST",
     message,
@@ -125,7 +125,7 @@ function invalidRequest(message: string): ModelProviderFailure {
   });
 }
 
-function invalidResponse(
+export function invalidResponse(
   message: string,
   providerRequestId?: string,
 ): ModelProviderFailure {
@@ -137,7 +137,7 @@ function invalidResponse(
   });
 }
 
-function serializeMessages(messages: readonly ModelMessage[]): WireMessage[] {
+export function serializeMessages(messages: readonly ModelMessage[]): WireMessage[] {
   const result: WireMessage[] = [];
   const awaitingResults = new Map<string, string>();
 
@@ -321,8 +321,9 @@ function nextSseLine(
   };
 }
 
-async function* parseSse(
+export async function* parseSse(
   body: ReadableStream<Uint8Array>,
+  requireDone = true,
 ): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -370,7 +371,7 @@ async function* parseSse(
     reader.releaseLock();
   }
 
-  if (!reachedDone) {
+  if (requireDone && !reachedDone) {
     throw invalidResponse("SSE 流在 [DONE] 前结束");
   }
 }
@@ -430,7 +431,7 @@ function responseFacts(response: Response): {
   };
 }
 
-async function mapHttpError(response: Response): Promise<ModelError> {
+export async function mapHttpError(response: Response, notFoundIsModel = true): Promise<ModelError> {
   const rawBody = await readLimitedErrorBody(response);
   let code = "";
   let type = "";
@@ -470,7 +471,7 @@ async function mapHttpError(response: Response): Promise<ModelError> {
     };
   }
   if (
-    response.status === 404 ||
+    (notFoundIsModel && response.status === 404) ||
     /model[_ -]?not[_ -]?found|unknown[_ -]?model/.test(detail)
   ) {
     return {
@@ -496,7 +497,7 @@ async function mapHttpError(response: Response): Promise<ModelError> {
       ...facts,
     };
   }
-  if (response.status === 400 || response.status === 422) {
+  if (response.status === 400 || response.status === 422 || response.status === 404) {
     return {
       code: "INVALID_REQUEST",
       message: "模型服务拒绝了请求参数",

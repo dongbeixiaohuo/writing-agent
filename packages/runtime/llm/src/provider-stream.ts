@@ -40,6 +40,7 @@ export type ProviderStreamEvent =
         | "max_tokens"
         | "content_filter";
       readonly providerRequestId?: string;
+      readonly toolContinuation?: CompletedToolCall['providerContinuation'];
     }
   | { readonly type: "error"; readonly error: ModelError };
 
@@ -376,7 +377,7 @@ export abstract class ModelProviderBase implements ModelProvider {
                 type: "tool_call_complete",
                 sequence: ++sequence,
                 index: call.index,
-                call: executable.call,
+                call: event.toolContinuation === undefined ? executable.call : { ...executable.call, providerContinuation: event.toolContinuation },
               };
             }
             yield {

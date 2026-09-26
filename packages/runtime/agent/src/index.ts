@@ -606,6 +606,8 @@ export class AgentRuntime {
     let schemaCorrectionCount = 0;
     let requireToolOnContinuation = false;
     let pendingOutputRecoveryAttempt = 0;
+    let textSaveFailures = 0;
+    const rejectedTextHashes = new Set<string>();
 
     executionLoop: for (;;) {
       if (this.#sessions.getRun(runId)?.status === "cancelled") {
@@ -619,6 +621,8 @@ export class AgentRuntime {
         schemaCorrectionCount = 0;
         requireToolOnContinuation = false;
         pendingOutputRecoveryAttempt = 0;
+        textSaveFailures = 0;
+        rejectedTextHashes.clear();
         messages = [{ role: "system", content: policy.systemPrompt }, { role: "user", content: policy.userMessage }];
       } else if (policy !== undefined) {
         // Refresh authoritative state after each tool without sharing another
@@ -947,6 +951,20 @@ export class AgentRuntime {
               ? { result: jsonValue(result) }
               : { error: jsonValue(result) }),
           });
+          if (harnessTextOutput && !result.ok) {
+            textSaveFailures++;
+            const failureKey = `${result.error.code}:${contentHash(attempt.text.trim())}`;
+            const repeated = rejectedTextHashes.has(failureKey);
+            rejectedTextHashes.add(failureKey);
+            // Local validation feedback is not a provider retry. Bound it per
+            // expert assignment, independently of the much larger run budget.
+            if (repeated || textSaveFailures >= 3) {
+              this.#sessions.pauseRun({ projectId, runId, operationId: this.#idFactory(), reason: 'STAGE_OUTPUT_NOT_SAVED',
+                payload: { actor: policy?.actor, validationCode: result.error.code, rejectedAttempts: textSaveFailures } });
+              return { ok: false, ...this.#facts(active), error: { code: 'STAGE_OUTPUT_NOT_SAVED',
+                message: 'Automatic regeneration stopped after repeated local save rejection; the saved manuscript is unchanged', retryable: true } };
+            }
+          }
           const pause = result.ok ? this.#pauseAfterTool(result) : null;
           if (pause !== null) {
             this.#sessions.pauseRun({

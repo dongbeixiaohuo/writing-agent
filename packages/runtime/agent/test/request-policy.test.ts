@@ -5,8 +5,42 @@ import { join } from "node:path";
 import { it } from "node:test";
 import { openWorkspaceStorage } from "../../../storage/src/index.js";
 import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from "../../llm/src/index.js";
-import { ToolRegistry } from "../../tools/src/index.js";
+import { ToolRegistry, ToolExecutionFault } from "../../tools/src/index.js";
 import { AgentRuntime } from "../src/index.js";
+
+for (const scenario of ['repeated', 'changing', 'corrected'] as const) {
+it(`bounds local text-save corrections without replaying a stage indefinitely: ${scenario}`, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'text-save-loop-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  let requests = 0; let saves = 0;
+  class Provider extends ModelProviderBase {
+    constructor() { super('loop', '1', { protocol:'mock', streaming:'supported', tools:'supported', usage:'unknown' }); }
+    protected async *providerStream(): AsyncIterable<ProviderStreamEvent> {
+      requests++;
+      yield {type:'text_delta', delta: scenario === 'corrected' && requests > 1 ? '# Correct article' : scenario === 'changing' ? `invalid ${requests}` : 'same invalid article'};
+      yield {type:'completed', finishReason:'stop'};
+    }
+  }
+  try {
+    storage.createProject({operationId:'p',projectId:'p',name:'fixture',mode:'quick',actor:{kind:'user',id:'u'}});
+    const tools = ToolRegistry.create([{ name:'save',version:'1.0.0',description:'save',effect:'local_idempotent',permissions:[],
+      inputSchema:{type:'object',properties:{content:{type:'string'}},required:['content']},
+      execute(args:any) { if (!args.content.startsWith('#')) throw new ToolExecutionFault('BODY_STAGE_STRUCTURE_MISMATCH','missing title',false,{requiredHeadings:['# Correct article']}); saves++; return {}; } }]);
+    const runtime = new AgentRuntime({provider:new Provider(),sessions:storage,tools,
+      requestPolicy:()=>({scopeId:'language',actor:'language_review',systemPrompt:'write',userMessage:'write',allowedTools:['save'],modelTools:[],textOutputTool:{name:'save',arguments:{},contentArgument:'content'}}),
+      completeAfterTool:result=>result.ok ? {artifactVersionId:'saved',content:'done'} : null});
+    const result = await runtime.run({projectId:'p',purpose:'test',model:'m',parameters:{},systemPrompt:'root',userMessage:'root',grantedPermissions:[],expectedBodyVersionId:null,budget:{maxModelRequests:12,maxToolCalls:12,maxRetriesPerRequest:0,maxMajorRevisions:0}});
+    assert.equal(requests, scenario === 'changing' ? 3 : 2);
+    assert.equal(saves, scenario === 'corrected' ? 1 : 0);
+    assert.equal(result.ok, scenario === 'corrected');
+    if (!result.ok) {
+      assert.equal(storage.getRun(result.runId)!.stopReason, 'STAGE_OUTPUT_NOT_SAVED');
+      assert.equal(storage.getRun(result.runId)!.status, 'waiting_user');
+      assert.equal(storage.listRunEvents(result.runId).at(-1)?.payload.rejectedAttempts, requests);
+    }
+  } finally {storage.close(); rmSync(dir,{recursive:true,force:true});}
+});
+}
 
 for (const scenario of ['save', 'cancel', 'truncated', 'timeout', 'revoked', 'permission', 'empty'] as const) {
 it(`harness text save retains tool safety boundaries: ${scenario}`, async () => {

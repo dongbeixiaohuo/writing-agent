@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, memo, type ReactNode } from 'react'
 import { marked, type Token, type Tokens } from 'marked'
 
 import css from './WritingAgentShell.module.css'
@@ -93,7 +93,9 @@ function blockTokens(tokens: readonly Token[], keyPrefix: string): ReactNode[] {
   })
 }
 
-export function MarkdownContent({ content, className }: { content: string; className?: string | undefined }) {
+// Live snapshots change frequently. Already-saved messages have immutable text;
+// do not reparse the entire conversation on every stream fragment or status tick.
+export const MarkdownContent = memo(function MarkdownContent({ content, className }: { content: string; className?: string | undefined }) {
   let tokens: readonly Token[]
   try {
     tokens = marked.lexer(content, { gfm: true, breaks: true })
@@ -103,4 +105,4 @@ export function MarkdownContent({ content, className }: { content: string; class
   return <div className={className === undefined ? css.markdownContent : `${css.markdownContent} ${className}`}>
     {blockTokens(tokens, 'markdown')}
   </div>
-}
+})

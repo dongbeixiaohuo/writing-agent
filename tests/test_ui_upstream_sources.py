@@ -39,6 +39,14 @@ class UiUpstreamSourceTests(unittest.TestCase):
         }
         self.assertEqual(actual_targets, registered_targets)
 
+    def test_provider_metadata_provenance_matches_shipped_files(self) -> None:
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        upstream = next(item for item in registry["upstreams"] if item["id"] == "cc-switch-provider-metadata")
+        for component in upstream["components"]:
+            for item in component["copied_files"]:
+                digest = hashlib.sha256((ROOT / item["target_path"]).read_bytes()).hexdigest()
+                self.assertEqual(digest, item["sha256"], item["target_path"])
+
     def test_derived_ui_does_not_import_legacy_or_external_dsh_runtime(self) -> None:
         roots = [
             ROOT / "apps" / "web" / "src",
@@ -63,7 +71,10 @@ class UiUpstreamSourceTests(unittest.TestCase):
                     continue
                 text = path.read_text(encoding="utf-8")
                 for marker in forbidden:
-                    if marker == "api.deepseek.com" and path == ROOT / "packages/client-bridge/src/provider-presets.ts":
+                    if marker == "api.deepseek.com" and path in {
+                        ROOT / "packages/client-bridge/src/provider-presets.ts",
+                        ROOT / "packages/client-bridge/src/cc-switch-codex-presets.ts",
+                    }:
                         continue  # User-selectable static catalog, not the DSH runtime.
                     self.assertNotIn(marker, text, f"{marker} in {path.relative_to(ROOT)}")
 

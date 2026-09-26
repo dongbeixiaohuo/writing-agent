@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -10,10 +10,13 @@ import {
 } from "../../../packages/runtime/credentials/src/index.js";
 import {
   ModelProviderBase,
+  type ModelRequest,
   type ProviderStreamEvent,
 } from "../../../packages/runtime/llm/src/index.js";
 import { DesktopApplicationHost } from "../src/application-host.js";
 import { openWorkspaceStorage } from "../../../packages/storage/src/index.js";
+import { DesktopClientBridge } from '../../../packages/client-bridge/src/desktop-bridge.js';
+import { dispatchDesktopRpc } from '../src/rpc-host.js';
 
 test("project deletion only guards executing runs in the target project, not waiting confirmations elsewhere", async () => {
   const root = mkdtempSync(join(tmpdir(), "wa-delete-checkpoint-"));
@@ -55,6 +58,165 @@ class MemoryCredentials implements SystemCredentialBackend {
   async write(id: string, secret: string): Promise<void> { this.values.set(id, secret); }
   async delete(id: string): Promise<void> { this.values.delete(id); }
 }
+
+test('settings summary does not inspect any credentials; editing inspects only that provider', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-lazy-'));
+  const reads: string[] = [];
+  let probes = 0;
+  const backend = new MemoryCredentials();
+  backend.isAvailable = async () => { probes++; return true; };
+  backend.read = async id => { reads.push(id); return 'test-only-secret'; };
+  const path = join(root, 'provider.json');
+  writeFileSync(path, JSON.stringify({ schemaVersion: 3, activeProfileId: 'p1', profiles: ['p1', 'p2'].map(id => ({
+    id, displayName: id, models: ['model'], config: { schemaVersion: 2, kind: 'openai_compatible', providerId: id,
+      baseURL: 'https://example.test/v1', model: 'model', tools: 'supported', usage: 'unknown', credentialRef: `managed:${id}` },
+  })) }));
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path,
+    credentials: new CredentialBroker({ systemBackend: backend, environment: {} }) });
+  try {
+    const summary = await host.providerStatus('summary');
+    assert.equal(summary.profiles?.length, 2);
+    assert.equal(probes, 0, 'listing must not spawn credential probes');
+    assert.deepEqual(reads, []);
+    assert.ok(summary.profiles?.every(profile => profile.credentialChecked === false));
+    const detail = await host.providerDetails('p2');
+    assert.equal(detail.configured, true);
+    assert.equal(detail.credentialChecked, true);
+    assert.deepEqual(reads, ['p2']);
+    assert.equal(JSON.stringify({ summary, detail }).includes('test-only-secret'), false);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("model changes keep a waiting project's session and publish a newer renderer snapshot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wa-provider-waiting-"));
+  const storage = openWorkspaceStorage({ workspacePath: root });
+  storage.createProject({ operationId: "p", projectId: "p", name: "旧项目", mode: "deep", actor: { kind: "user", id: "test" } });
+  storage.createSession({ projectId: "p", sessionId: "s-old", purpose: "draft" });
+  storage.createSession({ projectId: "p", sessionId: "s-new", purpose: "draft" });
+  storage.startRun({ projectId: "p", sessionId: "s-old", runId: "r", planVersion: "test" });
+  storage.pauseRun({ projectId: "p", runId: "r", operationId: "wait", reason: "CO_CREATION_CHECKPOINT", payload: { stage: "outline" } });
+  storage.close();
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: join(root, "provider.json"),
+    credentials: new CredentialBroker({ environment: {} }) });
+  const renderer = new DesktopClientBridge({ invoke: request => dispatchDesktopRpc(host.bridge, request), subscribe: listener => host.subscribe(listener) });
+  const unsubscribe = renderer.subscribe(() => undefined);
+  try {
+    await renderer.handshake();
+    await renderer.selectProject("p");
+    await renderer.selectSession("p", "s-old");
+    await renderer.refresh();
+    const before = host.bridge.getSnapshot();
+    await host.configureProvider({ kind: "openai_compatible", providerId: "new-provider", baseURL: "https://api.example.test/v1",
+      model: "new-model", tools: "supported", usage: "unknown", apiKey: "test-only-key", persistence: "session" });
+    const after = host.bridge.getSnapshot();
+    assert.equal(after.selectedProjectId, "p");
+    assert.equal(after.selectedSessionId, "s-old");
+    assert.ok(after.generation > before.generation);
+    assert.equal(after.settings.providerLabel, "new-provider · new-model");
+    assert.equal(renderer.getSnapshot().settings.providerLabel, "new-provider · new-model");
+    assert.equal(renderer.getSnapshot().selectedSessionId, "s-old");
+    const audit = openWorkspaceStorage({ workspacePath: root, readOnly: true });
+    try { assert.equal(audit.getRun("r")?.status, "waiting_user"); } finally { audit.close(); }
+  } finally { unsubscribe(); renderer.dispose(); host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an existing writing run resumes using the newly selected model without losing its session', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-resume-model-'));
+  const requests: { model: string; provider: string }[] = [];
+  class AskProvider extends ModelProviderBase {
+    constructor(id: string) { super(id, 'test', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push({ model: request.model, provider: this.id });
+      yield { type: 'tool_call_delta', index: 0, id: `ask-${request.requestId}`, name: 'assess_writing_readiness',
+        argumentsDelta: JSON.stringify({ status: 'needs_input', reason: '请补充你的看法。', questions: ['你最想表达什么？'] }) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: join(root, 'provider.json'),
+    credentials: new CredentialBroker({ environment: {} }), providerFactory: config => new AskProvider(config.providerId) });
+  const input = { kind: 'openai_compatible' as const, providerId: 'first-provider', baseURL: 'https://example.test/v1',
+    model: 'first-model', models: ['first-model', 'second-model'], tools: 'supported' as const, usage: 'unknown' as const, apiKey: 'test', persistence: 'session' as const };
+  const wait = async () => {
+    for (let i = 0; i < 200; i++) {
+      await host.bridge.refresh();
+      if (host.bridge.getSnapshot().recoverableRuns.some(run => run.status === 'waiting_user')) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error(`checkpoint timeout: ${JSON.stringify(host.bridge.getSnapshot().runRecords)}`);
+  };
+  try {
+    const config = await host.configureProvider(input);
+    const project = await host.bridge.createProject({ name: '已有项目', mode: 'quick', topic: '个人感想', genre: 'narrative_observation',
+      audience: '自己', targetCharacters: 800, constraints: ['不虚构'], interactionMode: 'co_creation', authorVoice: null,
+      styleReference: null, styleDecision: 'unspecified', directionDecision: 'user_confirmed', platform: null, publicationGoal: 'not_applicable',
+      materials: [{ name: '想法', content: '想记录最近的个人感想。', role: 'source_verified', sourceKind: 'pasted_text', sourceReference: null }] });
+    await host.bridge.confirmBrief();
+    const run = await host.bridge.sendMessage('开始');
+    await wait();
+    const before = host.bridge.getSnapshot();
+    const count = requests.length;
+    assert.ok(count > 0);
+    await host.selectProvider(config.activeProfileId!, 'second-model');
+    const resumed = await host.bridge.sendMessage('我最想表达的是放慢脚步后看到的新变化。');
+    assert.equal(resumed.runId, run.runId);
+    await wait();
+    assert.ok(requests.length > count);
+    assert.ok(requests.slice(count).every(request => request.model === 'second-model'));
+    assert.equal(host.bridge.getSnapshot().selectedProjectId, project.projectId);
+    assert.equal(host.bridge.getSnapshot().selectedSessionId, before.selectedSessionId);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('executing runs still prevent changing providers or models', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-active-'));
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: join(root, 'provider.json'),
+    credentials: new CredentialBroker({ environment: {} }) });
+  const input = { kind: 'openai_compatible' as const, providerId: 'test', baseURL: 'https://example.test/v1',
+    model: 'old', tools: 'supported' as const, usage: 'unknown' as const, apiKey: 'test', persistence: 'session' as const };
+  try {
+    const status = await host.configureProvider(input);
+    const storage = openWorkspaceStorage({ workspacePath: root });
+    storage.createProject({ operationId: 'p', projectId: 'p', name: '执行中', mode: 'quick', actor: { kind: 'user', id: 'test' } });
+    storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'draft' });
+    storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', planVersion: 'test' });
+    storage.close();
+    await assert.rejects(host.configureProvider({ ...input, model: 'new' }), /ACTIVE_RUNS_PRESENT/);
+    await assert.rejects(host.selectProvider(status.activeProfileId!, 'old'), /ACTIVE_RUNS_PRESENT/);
+    assert.equal((await host.providerStatus()).model, 'old');
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('model catalog is host-only, read-only and never sends a stored key to a changed endpoint', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-models-'));
+  const path = join(root, 'provider.json');
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path,
+    credentials: new CredentialBroker({ environment: {} }) });
+  const input = { kind: 'openai_compatible' as const, providerId: 'test', baseURL: 'https://example.test/v1',
+    model: 'old', tools: 'supported' as const, usage: 'unknown' as const, apiKey: 'catalog-test-key', persistence: 'session' as const };
+  let calls = 0;
+  let fail = false;
+  t.mock.method(globalThis, 'fetch', async (url: string, options: RequestInit) => {
+    calls++;
+    assert.equal(url, 'https://example.test/v1/models');
+    assert.equal(options.redirect, 'error');
+    assert.equal(new Headers(options.headers).get('authorization'), 'Bearer catalog-test-key');
+    if (fail) throw new Error('private-internal-error');
+    return new Response(JSON.stringify({ data: [{ id: 'new' }, { id: 'old' }, { id: 'new' }, { nope: true }] }));
+  });
+  try {
+    const status = await host.configureProvider(input);
+    const before = readFileSync(path, 'utf8');
+    const query = { ...input, profileId: status.activeProfileId!, apiKey: '' };
+    assert.deepEqual(await host.listProviderModels(query), ['new', 'old']);
+    assert.equal(readFileSync(path, 'utf8'), before);
+    await assert.rejects(host.listProviderModels({ ...query, baseURL: 'https://another.example.test/v1' }),
+      error => (error as { code?: string }).code === 'PROVIDER_API_KEY_REQUIRED');
+    assert.equal(calls, 1);
+    fail = true;
+    await assert.rejects(host.listProviderModels(query), /^Error: PROVIDER_CATALOG_UNAVAILABLE$/);
+    assert.equal(readFileSync(path, 'utf8'), before);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
 
 class UnsupportedProbeProvider extends ModelProviderBase {
   streamCalls = 0;

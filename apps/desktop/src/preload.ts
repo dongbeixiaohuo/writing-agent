@@ -17,6 +17,7 @@ import type {
   DesktopProviderConnectionResultView,
   DesktopProviderSetupInput,
   DesktopProviderStatusView,
+  DesktopSavedProviderView,
   DesktopRpcRequest,
   DesktopRpcResponse,
   DesktopPublicationSaveInput,
@@ -48,14 +49,19 @@ const api: DesktopHostApi = {
     ipcRenderer.on(DESKTOP_SNAPSHOT_CHANNEL, wrapped);
     return () => ipcRenderer.removeListener(DESKTOP_SNAPSHOT_CHANNEL, wrapped);
   },
-  async providerStatus(): Promise<DesktopProviderStatusView> {
+  async providerStatus(mode?: 'summary'): Promise<DesktopProviderStatusView> {
     const response = await invoke({
       protocolVersion: UI_BRIDGE_PROTOCOL_VERSION,
       method: "providerStatus",
-      args: [],
+      args: [mode],
     });
     if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
     return response.result as DesktopProviderStatusView;
+  },
+  async providerDetails(profileId: string): Promise<DesktopSavedProviderView> {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'providerDetails', args: [profileId] });
+    if (!response.ok) throw new Error(response.error.code);
+    return response.result as DesktopSavedProviderView;
   },
   async configureProvider(
     input: DesktopProviderSetupInput,
@@ -65,8 +71,18 @@ const api: DesktopHostApi = {
       method: "configureProvider",
       args: [input],
     });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+    if (!response.ok) throw new Error(response.error.code);
     return response.result as DesktopProviderStatusView;
+  },
+  async selectProvider(profileId: string, model: string): Promise<DesktopProviderStatusView> {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'selectProvider', args: [profileId, model] });
+    if (!response.ok) throw new Error(response.error.code);
+    return response.result as DesktopProviderStatusView;
+  },
+  async listProviderModels(input: DesktopProviderSetupInput): Promise<readonly string[]> {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'listProviderModels', args: [input] });
+    if (!response.ok) throw new Error(response.error.code);
+    return response.result as readonly string[];
   },
   async testProviderConnection(): Promise<DesktopProviderConnectionResultView> {
     const response = await invoke({
@@ -74,7 +90,7 @@ const api: DesktopHostApi = {
       method: "testProviderConnection",
       args: [],
     });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+    if (!response.ok) throw new Error(response.error.code);
     return response.result as DesktopProviderConnectionResultView;
   },
   async previewDiagnostics(): Promise<DesktopDiagnosticPreviewView> {

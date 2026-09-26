@@ -52,6 +52,8 @@
     "apps/web/server/**/*.ts",
     "packages/model-adapters/openai-compatible/src/**/*.ts",
     "packages/model-adapters/openai-compatible/test/**/*.ts",
+    "packages/model-adapters/openai-responses/src/**/*.ts",
+    "packages/model-adapters/openai-responses/test/**/*.ts",
     "packages/model-adapters/anthropic-compatible/src/**/*.ts",
     "packages/model-adapters/anthropic-compatible/test/**/*.ts"
   ]

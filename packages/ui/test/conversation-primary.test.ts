@@ -2,6 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { checkpointCopy } from '../src/shell/interaction.ts'
 
+test('repeated stage-save rejection offers one explicit retry without claiming a connection failure', () => {
+  const copy = checkpointCopy({ runId:'r', sessionId:'s', status:'waiting_user', stopReason:'STAGE_OUTPUT_NOT_SAVED', checkpointStage:null, nextStage:'language_review' }, undefined)
+  assert.equal(copy.primaryAction, '重试这一步')
+  assert.match(copy.title, /上一版稿件仍在/)
+  assert.match(copy.description, /保存校验/)
+  assert.doesNotMatch(copy.title, /超时|连接|额度/)
+})
+
 test('protected writing offers explicit continuation without asking for title confirmation again', () => {
   const copy = checkpointCopy({ runId: 'r', sessionId: 's', status: 'budget_exhausted', stopReason: 'BUDGET_EXHAUSTED', checkpointStage: null, nextStage: null }, undefined)
   assert.equal(copy.primaryAction, '继续未完成步骤')

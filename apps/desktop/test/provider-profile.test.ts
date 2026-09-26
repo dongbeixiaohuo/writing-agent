@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,9 +10,30 @@ import {
 } from "../../../packages/runtime/credentials/src/index.js";
 import {
   loadDesktopProviderProfile,
+  loadDesktopProviderCatalog,
+  selectDesktopProvider,
   parseDesktopProviderProfileInput,
+  providerConfigForInput,
   saveDesktopProviderProfile,
 } from "../src/provider-profile.js";
+import { PROVIDER_PRESETS } from '../../../packages/client-bridge/src/provider-presets.js';
+
+test('new Anthropic plan presets use source Bearer authentication only for their exact transport', () => {
+  for (const id of ['zhipu-coding-anthropic', 'zai-coding-anthropic', 'qwen-cn-coding-anthropic']) {
+    const preset = PROVIDER_PRESETS.find(p => p.id === id)!;
+    const input = { kind: preset.kind, providerId: id, baseURL: preset.baseURL, model: 'account-model',
+      tools: 'supported' as const, usage: 'reported' as const, apiKey: 'synthetic', persistence: 'session' as const };
+    const current = providerConfigForInput(input);
+    assert.equal(current.kind === 'anthropic_compatible' && current.authHeader, 'authorization');
+    const changed = providerConfigForInput({ ...input, baseURL: 'https://different.example.test/v1' });
+    assert.equal('authHeader' in changed, false);
+    const legacy = providerConfigForInput({ ...input, authHeader: 'x-api-key' });
+    const before = JSON.stringify(legacy);
+    const edited = providerConfigForInput({ ...input, model: 'replacement' }, legacy);
+    assert.equal(edited.kind === 'anthropic_compatible' && edited.authHeader, 'x-api-key');
+    assert.equal(JSON.stringify(legacy), before);
+  }
+});
 
 class MemoryCredentials implements SystemCredentialBackend {
   readonly values = new Map<string, string>();
@@ -21,6 +42,73 @@ class MemoryCredentials implements SystemCredentialBackend {
   async write(id: string, secret: string): Promise<void> { this.values.set(id, secret); }
   async delete(id: string): Promise<void> { this.values.delete(id); }
 }
+
+test("legacy config is read without mutation and upgrades with its existing credential", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-legacy-'));
+  const path = join(root, 'provider.json');
+  const broker = new CredentialBroker({ systemBackend: new MemoryCredentials(), environment: {} });
+  try {
+    await broker.saveManaged('desktop-primary', 'legacy-secret', 'system');
+    const legacy = { schemaVersion: 2, kind: 'anthropic_compatible', providerId: 'minimax',
+      baseURL: 'https://api.example.test/anthropic/v1', model: 'MiniMax-M3', tools: 'supported', usage: 'reported', credentialRef: 'managed:desktop-primary' };
+    const original = JSON.stringify(legacy);
+    writeFileSync(path, original);
+    assert.equal(loadDesktopProviderCatalog(path).activeProfileId, 'legacy-primary');
+    assert.equal(readFileSync(path, 'utf8'), original);
+    const saved = await saveDesktopProviderProfile(path, broker, parseDesktopProviderProfileInput({
+      profileId: 'legacy-primary', kind: legacy.kind, providerId: legacy.providerId,
+      baseURL: legacy.baseURL, model: 'replacement', models: ['MiniMax-M3', 'replacement'],
+      tools: legacy.tools, usage: legacy.usage, apiKey: '', persistence: 'system',
+    }));
+    assert.equal(saved.config.credentialRef, 'managed:desktop-primary');
+    assert.equal(await broker.resolve(saved.config.credentialRef), 'legacy-secret');
+    assert.equal(loadDesktopProviderCatalog(path).profiles.length, 1);
+    assert.equal(loadDesktopProviderProfile(path)?.model, 'replacement');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("multiple providers retain independent keys and model selection across reloads", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-catalog-'));
+  const path = join(root, 'provider.json');
+  const broker = new CredentialBroker({ systemBackend: new MemoryCredentials(), environment: {} });
+  const input = { profileId: null, kind: 'openai_compatible' as const, providerId: 'a', baseURL: 'https://a.example.test/v1',
+    model: 'one', models: ['one', 'two'], tools: 'supported' as const, usage: 'reported' as const, apiKey: 'secret-a', persistence: 'system' as const };
+  try {
+    const a = await saveDesktopProviderProfile(path, broker, input);
+    const aId = loadDesktopProviderCatalog(path).activeProfileId!;
+    const b = await saveDesktopProviderProfile(path, broker, { ...input, providerId: 'b', baseURL: 'https://b.example.test/v1', apiKey: 'secret-b' });
+    assert.notEqual(a.config.credentialRef, b.config.credentialRef);
+    const bId = loadDesktopProviderCatalog(path).activeProfileId!;
+    assert.equal(loadDesktopProviderCatalog(path).profiles.length, 2);
+    selectDesktopProvider(path, aId, 'two');
+    assert.equal(loadDesktopProviderProfile(path)?.model, 'two');
+    assert.equal(await broker.resolve(loadDesktopProviderProfile(path)!.credentialRef), 'secret-a');
+    selectDesktopProvider(path, bId, 'one');
+    assert.equal(await broker.resolve(loadDesktopProviderProfile(path)!.credentialRef), 'secret-b');
+    const before = readFileSync(path, 'utf8');
+    assert.throws(() => selectDesktopProvider(path, aId, 'not-in-catalog'));
+    assert.equal(readFileSync(path, 'utf8'), before);
+    assert.equal(before.includes('secret-a') || before.includes('secret-b'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("changing only the model reuses the saved key but a different endpoint cannot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wa-provider-edit-"));
+  const path = join(root, "provider.json");
+  const broker = new CredentialBroker({ systemBackend: new MemoryCredentials(), environment: {} });
+  const input = { kind: "anthropic_compatible" as const, providerId: "minimax", baseURL: "https://api.example.test/anthropic/v1",
+    model: "model-one", tools: "supported" as const, usage: "reported" as const, apiKey: "test-secret", persistence: "system" as const };
+  try {
+    const first = await saveDesktopProviderProfile(path, broker, input);
+    const updated = await saveDesktopProviderProfile(path, broker, parseDesktopProviderProfileInput({ ...input, model: "model-two", apiKey: "" }));
+    assert.equal(updated.config.model, "model-two");
+    assert.equal(updated.config.credentialRef, first.config.credentialRef);
+    assert.equal(await broker.resolve(updated.config.credentialRef), "test-secret");
+    await assert.rejects(saveDesktopProviderProfile(path, broker, { ...input, baseURL: "https://another.example.test/v1", apiKey: "" }),
+      (error: unknown) => (error as { code?: string }).code === "PROVIDER_API_KEY_REQUIRED");
+    assert.equal(loadDesktopProviderProfile(path)?.model, "model-two");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("desktop provider profile keeps API keys out of JSON and returns only credential metadata", async () => {
   const root = mkdtempSync(join(tmpdir(), "wa-provider-profile-"));
@@ -39,12 +127,12 @@ test("desktop provider profile keeps API keys out of JSON and returns only crede
       apiKey: secret,
       persistence: "system",
     });
-    assert.equal(saved.config.credentialRef, "managed:desktop-primary");
+    assert.match(saved.config.credentialRef, /^managed:desktop-/);
     assert.equal(saved.credential.configured, true);
     assert.equal(saved.credential.persistence, "system");
     assert.equal(JSON.stringify(saved).includes(secret), false);
     assert.equal(readFileSync(path, "utf8").includes(secret), false);
-    assert.equal(await broker.resolve("managed:desktop-primary"), secret);
+    assert.equal(await broker.resolve(saved.config.credentialRef), secret);
 
     const loaded = loadDesktopProviderProfile(path);
     assert.equal(loaded?.providerId, "example-provider");

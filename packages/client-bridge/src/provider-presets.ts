@@ -1,20 +1,34 @@
 import type { DesktopProviderSetupInput } from './desktop-bridge.js';
+import { CC_SWITCH_CODEX_PRESETS } from './cc-switch-codex-presets.js';
+import { providerOffering, providerProductLabel, providerRegionLabel, PROVIDER_CHANNELS, type ProviderOffering } from './provider-offerings.js';
+export { PROVIDER_REGIONS, PROVIDER_PRODUCTS, PROVIDER_CHANNELS, providerProductLabel, providerRegionLabel } from './provider-offerings.js';
+
+export const PROVIDER_PRESET_GROUPS = ['国内服务', '国际服务', '官方服务（不区分地区）', '套餐专用接口', 'API / 套餐共用入口', '聚合平台', '第三方中转'] as const;
+export const PROVIDER_PROTOCOL_LABELS = {
+  openai_compatible: 'OpenAI Chat Completions',
+  openai_responses: 'OpenAI Responses',
+  anthropic_compatible: 'Anthropic Messages',
+} as const;
 
 export interface ProviderPreset {
+  readonly offering: ProviderOffering;
   readonly id: string;
   readonly label: string;
-  readonly group: '国内服务' | '国际服务' | '聚合平台';
+  readonly group: typeof PROVIDER_PRESET_GROUPS[number];
   readonly kind: DesktopProviderSetupInput['kind'];
   readonly baseURL: string;
   readonly modelHint: string;
   readonly note: string;
+  readonly modelExamples?: readonly string[];
+  readonly sourceNames?: readonly string[];
+  readonly authHeader?: 'authorization' | 'x-api-key';
 }
 
 // Data only: these addresses never grant the renderer network access. The host
 // continues to own credentials, connection probes and all provider requests.
 // Checked 2026-09-21; sources and adapter path conventions are documented in
 // docs/implementation/PROVIDER_PRESETS.md. No affiliate links or SDK code copied.
-export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
+const EXISTING_PROVIDER_PRESETS: readonly Omit<ProviderPreset, 'offering'>[] = [
   { id: 'minimax-cn', label: 'MiniMax · 国内', group: '国内服务', kind: 'anthropic_compatible',
     baseURL: 'https://api.minimax.cn/anthropic/v1', modelHint: '例如 MiniMax-M3',
     note: '使用 MiniMax 国内开放平台的 Key。旧地址或专用网关可选择自定义配置，已有配置不会自动迁移。' },
@@ -29,7 +43,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: '使用国内开放平台 API Key；Kimi 网页会员和 Kimi Code 套餐不是这个通用 API 配置。' },
   { id: 'zhipu', label: '智谱 GLM · 通用 API', group: '国内服务', kind: 'openai_compatible',
     baseURL: 'https://open.bigmodel.cn/api/paas/v4', modelHint: '填写智谱控制台中的模型 ID',
-    note: '使用智谱开放平台通用 API Key；Coding Plan 的专用接口请按套餐说明使用自定义配置。' },
+    note: '这是智谱通用 API，不是 Coding Plan。套餐用户请选择明确标注 Coding Plan 的预设。' },
   { id: 'volcengine', label: '火山方舟 / 豆包 · 通用 API', group: '国内服务', kind: 'openai_compatible',
     baseURL: 'https://ark.cn-beijing.volces.com/api/v3', modelHint: '模型 ID 或推理接入点 ID（ep-…）',
     note: '从方舟控制台复制已开通的模型 ID 或推理接入点 ID；使用通用 API，不是 Coding / Agent Plan 专用地址。' },
@@ -53,7 +67,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: '使用 Kimi 国际开放平台 API Key，不是国内平台 Key 或 Kimi Code 套餐 Key。' },
   { id: 'zai', label: 'Z.AI / GLM · 国际通用 API', group: '国际服务', kind: 'openai_compatible',
     baseURL: 'https://api.z.ai/api/paas/v4', modelHint: '填写 Z.AI 控制台中的模型 ID',
-    note: '使用 Z.AI 通用 API Key；Coding Plan 专用接口请使用自定义配置。' },
+    note: '这是 Z.AI 国际站通用 API，不是 Coding Plan。套餐用户请选择国际站 Coding Plan 预设。' },
   { id: 'siliconflow', label: '硅基流动 SiliconFlow · 国内', group: '聚合平台', kind: 'openai_compatible',
     baseURL: 'https://api.siliconflow.cn/v1', modelHint: '复制完整模型 ID，保留组织名 / 前缀',
     note: '使用硅基流动国内平台 Key，不是模型原厂的 Key；模型 ID 须保留控制台提供的完整前缀。' },
@@ -61,6 +75,92 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseURL: 'https://openrouter.ai/api/v1', modelHint: '完整模型 ID：供应商/模型',
     note: '使用 OpenRouter 的 Key，不是模型原厂的 Key。选择支持工具调用的模型；费用与路由由该平台管理。' },
 ];
+
+// Supplemental protocol variants from the same pinned cc-switch revision:
+// OpenCode provides Chat bases; Claude provides SDK bases (append /v1 for our
+// /messages adapter). ANTHROPIC_AUTH_TOKEN means Bearer, not x-api-key.
+const PLAN_VARIANTS = [
+  { id: 'zhipu-coding-chat', kind: 'openai_compatible', baseURL: 'https://open.bigmodel.cn/api/coding/paas/v4', modelExamples: ['glm-5.3', 'glm-5-turbo'] },
+  { id: 'zai-coding-chat', kind: 'openai_compatible', baseURL: 'https://api.z.ai/api/coding/paas/v4', modelExamples: ['glm-5.3'] },
+  { id: 'zhipu-coding-anthropic', kind: 'anthropic_compatible', baseURL: 'https://open.bigmodel.cn/api/anthropic/v1', modelExamples: ['glm-5.3'], authHeader: 'authorization' },
+  { id: 'zai-coding-anthropic', kind: 'anthropic_compatible', baseURL: 'https://api.z.ai/api/anthropic/v1', modelExamples: ['glm-5.3'], authHeader: 'authorization' },
+  { id: 'qwen-cn-coding-anthropic', kind: 'anthropic_compatible', baseURL: 'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1', modelExamples: [], authHeader: 'authorization' },
+] as const;
+
+function describePreset(data: Omit<ProviderPreset, 'offering' | 'label' | 'group'>, offering: ProviderOffering): ProviderPreset {
+  const plan = ['coding', 'token', 'agent', 'step', 'subscription'].includes(offering.product);
+  const group: ProviderPreset['group'] = offering.product === 'shared' ? 'API / 套餐共用入口'
+    : plan ? '套餐专用接口' : offering.channel === 'aggregator' ? '聚合平台'
+    : offering.channel === 'relay' ? '第三方中转' : offering.region === 'cn' ? '国内服务'
+    : offering.region === 'international' ? '国际服务' : '官方服务（不区分地区）';
+  const productNote = offering.product === 'shared'
+    ? 'API 与套餐共用地址，按账号与 Key 的权益计费；选择此预设不会开通套餐，连接验证也不验证扣费方式。请确认套餐允许用于本写作应用。'
+    : plan ? '须使用对应套餐及地区的 Key，并确认套餐允许用于本写作应用；不等同于通用 API。共用地址的不同档位按账号权益区分，选择预设不会变更套餐。'
+    : '通用 API 与网页会员、编程订阅不等同；计费及可用模型以此平台的账号权益为准。';
+  const channelNote = offering.channel === 'direct' ? '' : '内容和 API Key 会发送到此平台。请使用该平台的 Key，不要填写其他平台或原厂的 Key。';
+  const regionNote = offering.region === 'unspecified' ? '目录不拆分国内 / 国际入口；实际可用地区和账号权益以服务商为准。' : '国内站与国际站的账号、Key 和套餐可能不通用。';
+  return { ...data, offering, group,
+    label: `${offering.provider} · ${providerRegionLabel(offering)} · ${providerProductLabel(offering)} · ${PROVIDER_PROTOCOL_LABELS[data.kind]}`,
+    note: [data.note, productNote, regionNote, channelNote].filter(Boolean).join(' ') };
+}
+
+function completeProviderCatalog(): readonly ProviderPreset[] {
+  // Keep legacy IDs/protocols and saved profiles untouched. Offering identity
+  // must NOT be coalesced by endpoint: multiple account plans share addresses.
+  const catalog: ProviderPreset[] = [...EXISTING_PROVIDER_PRESETS, {
+    id: 'openai-responses', label: 'OpenAI · Responses', group: '国际服务', kind: 'openai_responses' as const,
+    baseURL: 'https://api.openai.com/v1', modelHint: '填写支持 Responses 的模型 ID',
+    note: '使用 OpenAI API Key，不是 ChatGPT/Codex 订阅登录。已有 Chat Completions 配置不会自动改变。',
+  }].map(data => describePreset(data, providerOffering(data.id)));
+  for (const [id, name, apiFormat, baseURL, modelExamples, category] of CC_SWITCH_CODEX_PRESETS) {
+    const kind = apiFormat === 'openai_chat' ? 'openai_compatible' : 'openai_responses';
+    // The only reviewed alias: same supplier, region, product and wire format.
+    const index = id === 'cc-siliconflow' ? catalog.findIndex(item => item.id === 'siliconflow') : -1;
+    if (index >= 0) {
+      const previous = catalog[index]!;
+      catalog[index] = { ...previous,
+        modelExamples: [...new Set([...(previous.modelExamples ?? []), ...modelExamples])],
+        sourceNames: [...(previous.sourceNames ?? []), name] };
+      continue;
+    }
+    catalog.push(describePreset({ id, kind, baseURL, modelExamples, sourceNames: [name],
+      modelHint: `例如 ${modelExamples[0]}（以账号可用 ID 为准）`,
+      note: '配置资料来自 cc-switch，收录不代表连接已验证。' }, providerOffering(id, name, category)));
+  }
+  for (const data of PLAN_VARIANTS) catalog.push(describePreset({ ...data,
+    modelHint: '填写对应套餐控制台中的完整模型 ID',
+    note: '配置资料来自 cc-switch 的 Claude / OpenCode 预设，收录不代表连接已验证。' }, providerOffering(data.id)));
+  return catalog;
+}
+
+export const PROVIDER_PRESETS: readonly ProviderPreset[] = completeProviderCatalog();
+
+// Explicitly reviewed SAME-OFFERING pairs, not a brand-wide protocol upgrade.
+// Keep the complete registry for saved configs; simplify only new selections.
+// No credentials, endpoints or models are migrated by this preference.
+export const RESPONSES_PREFERRED_OVER_CHAT: Readonly<Record<string, string>> = {
+  deepseek: 'cc-deepseek', 'qwen-cn': 'cc-qianwenai', 'qwen-sg': 'cc-qwencloud',
+  'kimi-cn': 'cc-kimi', 'kimi-global': 'cc-kimi-global', volcengine: 'cc-doubaoseed',
+  openai: 'openai-responses', openrouter: 'cc-openrouter',
+  'zhipu-coding-chat': 'cc-zhipu-glm', 'zai-coding-chat': 'cc-zhipu-glm-en',
+};
+export const PREFERRED_PROVIDER_PRESETS = PROVIDER_PRESETS.filter(item => !Object.hasOwn(RESPONSES_PREFERRED_OVER_CHAT, item.id));
+
+const searchAliases: Readonly<Record<string, string>> = {
+  DeepSeek: '深度求索', '千问 / 阿里云百炼': '通义 Qwen', 'Qwen / 阿里云百炼': '通义 千问',
+  '千问AI平台': '通义 Qwen 百炼', QwenCloud: '通义 千问 百炼',
+  'Z.AI / GLM': '智谱 ZAI', 'Kimi / Moonshot': '月之暗面',
+};
+const searchIndex = new Map(PROVIDER_PRESETS.map(item => [item.id,
+  [item.label, item.id, PROVIDER_CHANNELS[item.offering.channel], searchAliases[item.offering.provider] ?? '',
+    ...(item.sourceNames ?? []), ...(item.modelExamples ?? [])].join(' ').toLocaleLowerCase()]));
+
+export function filterProviderPresets(query: string, filters: { region?: string; product?: string } = {}): readonly ProviderPreset[] {
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
+  return PREFERRED_PROVIDER_PRESETS.filter(item => (!filters.region || item.offering.region === filters.region)
+    && (!filters.product || item.offering.product === filters.product)
+    && terms.every(term => searchIndex.get(item.id)!.includes(term)));
+}
 
 export function applyProviderPreset(form: DesktopProviderSetupInput, id: string): DesktopProviderSetupInput {
   if (id === 'custom') return { ...form, apiKey: '' };
@@ -70,9 +170,15 @@ export function applyProviderPreset(form: DesktopProviderSetupInput, id: string)
     model: '', apiKey: '', tools: 'supported', usage: 'reported' };
 }
 
-export function identifyProviderPreset(config: Pick<DesktopProviderSetupInput, 'kind' | 'baseURL'>): string {
+export function identifyProviderPreset(config: Pick<DesktopProviderSetupInput, 'kind' | 'baseURL'> & { providerId?: string }): string {
   // Exact endpoint + protocol only: never infer a provider from its label or a
   // hostname substring. In particular, do not rewrite working legacy endpoints.
   const baseURL = config.baseURL.trim().replace(/\/+$/u, '');
-  return PROVIDER_PRESETS.find(preset => preset.kind === config.kind && preset.baseURL === baseURL)?.id ?? 'custom';
+  const matches = PROVIDER_PRESETS.filter(preset => preset.kind === config.kind && preset.baseURL === baseURL);
+  // A saved ID identifies the chosen preset, never the Key's verified billing
+  // entitlement. Without an explicit match, shared endpoints are ambiguous.
+  const chosen = matches.find(preset => preset.id === config.providerId);
+  if (chosen) return chosen.id;
+  if (matches.length > 1) return 'custom';
+  return matches[0]?.id ?? 'custom';
 }

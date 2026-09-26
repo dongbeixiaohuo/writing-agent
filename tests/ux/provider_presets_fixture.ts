@@ -14,8 +14,9 @@ const evidence = resolve('output/playwright/provider-presets');
 mkdirSync(evidence, { recursive: true });
 const root = mkdtempSync(join(evidence, 'workspace-'));
 const values = new Map<string, string>();
+let credentialReads = 0;
 const credentials = new CredentialBroker({ environment: {}, systemBackend: {
-  isAvailable: async () => true, read: async id => values.get(id) ?? null,
+  isAvailable: async () => true, read: async id => { credentialReads++; return values.get(id) ?? null; },
   write: async (id, secret) => { values.set(id, secret); }, delete: async id => { values.delete(id); },
 } });
 globalThis.fetch = async () => { throw new Error('EXTERNAL_NETWORK_FORBIDDEN_IN_FIXTURE'); };
@@ -31,10 +32,11 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (request.method === 'stop') break;
   let response;
   try {
-    if (request.method === 'testStats') response = { saves, probes, credentialCount: values.size };
+    if (request.method === 'testStats') response = { saves, probes, credentialCount: values.size, credentialReads };
     else if (request.method === 'testReadProfile') response = JSON.parse(readFileSync(profile, 'utf8'));
     else if (request.method === 'testFailProbe') { failProbe = true; response = { ok: true }; }
-    else if (request.method === 'providerStatus') response = { ok: true, result: await desktop.providerStatus() };
+    else if (request.method === 'providerStatus') response = { ok: true, result: await desktop.providerStatus(request.args?.[0]) };
+    else if (request.method === 'providerDetails') response = { ok: true, result: await desktop.providerDetails(request.args[0]) };
     else if (request.method === 'configureProvider') {
       const result = await desktop.configureProvider(parseDesktopProviderProfileInput(request.args[0]));
       saves += 1;
@@ -47,6 +49,10 @@ for await (const line of createInterface({ input: process.stdin })) {
         stage: 'authentication', errorCode: 'AUTH_FAILED', retryable: false,
       } : { ok: true, provider: config.providerId, model: config.model, adapterVersion: 'fixture-only',
         streaming: 'supported', tools: 'supported', usage: 'reported' } };
+    } else if (request.method === 'selectProvider') {
+      response = { ok: true, result: await desktop.selectProvider(request.args[0], request.args[1]) };
+    } else if (request.method === 'listProviderModels') {
+      response = { ok: true, result: await desktop.listProviderModels(parseDesktopProviderProfileInput(request.args[0])) };
     } else response = await dispatchDesktopRpc(desktop.bridge, request);
   } catch (error) { response = safeDesktopFailure(error); }
   process.stdout.write(`${JSON.stringify(response)}\n`);

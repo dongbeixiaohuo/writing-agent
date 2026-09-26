@@ -10,6 +10,7 @@ export interface ModelCapabilities {
   readonly protocol:
     | "mock"
     | "openai-chat-completions"
+    | "openai-responses"
     | "anthropic-messages";
   readonly streaming: CapabilitySupport;
   readonly tools: CapabilitySupport;
@@ -65,6 +66,8 @@ export interface ProviderRequestSnapshot {
 }
 
 export interface CompletedToolCall {
+  // Opaque adapter-owned continuation, never tool arguments or public reasoning.
+  readonly providerContinuation?: { readonly scope: string; readonly items: readonly JsonValue[] };
   readonly id: string;
   readonly name: string;
   readonly arguments: Readonly<Record<string, JsonValue>>;

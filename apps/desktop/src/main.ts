@@ -195,7 +195,12 @@ async function handleRpc(
       return { ok: true, result: null, snapshot: currentHost.bridge.getSnapshot() };
     }
     if (parsed.method === "providerStatus") {
-      return { ok: true, result: await currentHost.providerStatus(), snapshot: currentHost.bridge.getSnapshot() };
+      if (parsed.args[0] !== undefined && parsed.args[0] !== 'summary') throw new Error('INVALID_ARGUMENT');
+      return { ok: true, result: await currentHost.providerStatus(parsed.args[0]), snapshot: currentHost.bridge.getSnapshot() };
+    }
+    if (parsed.method === 'providerDetails') {
+      if (typeof parsed.args[0] !== 'string') throw new Error('INVALID_ARGUMENT');
+      return { ok: true, result: await currentHost.providerDetails(parsed.args[0]), snapshot: currentHost.bridge.getSnapshot() };
     }
     if (parsed.method === "testProviderConnection") {
       return { ok: true, result: await currentHost.testProviderConnection(), snapshot: currentHost.bridge.getSnapshot() };
@@ -203,6 +208,15 @@ async function handleRpc(
     if (parsed.method === "configureProvider") {
       const inputProfile: DesktopProviderProfileInput = parseDesktopProviderProfileInput(parsed.args[0]);
       const result = await currentHost.configureProvider(inputProfile);
+      return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
+    }
+    if (parsed.method === 'selectProvider') {
+      if (typeof parsed.args[0] !== 'string' || typeof parsed.args[1] !== 'string') throw new Error('DESKTOP_PROVIDER_INPUT_INVALID');
+      const result = await currentHost.selectProvider(parsed.args[0], parsed.args[1]);
+      return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
+    }
+    if (parsed.method === 'listProviderModels') {
+      const result = await currentHost.listProviderModels(parseDesktopProviderProfileInput(parsed.args[0]));
       return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
     }
     if (parsed.method === "previewDiagnostics") {

@@ -18,6 +18,8 @@ import type {
   DesktopLegacyMigrationResultView,
   DesktopPublicationSaveInput,
   DesktopPublicationSaveResult,
+  DesktopProviderStatusView,
+  DesktopSavedProviderView,
 } from "../../../packages/client-bridge/src/desktop-bridge.js";
 import {
   applyLegacyMigration,
@@ -45,13 +47,18 @@ import {
 import { openWorkspaceStorage } from "../../../packages/storage/src/index.js";
 import {
   loadDesktopProviderProfile,
+  loadDesktopProviderCatalog,
+  selectDesktopProvider,
+  previousProvider,
+  providerConfigForInput,
+  resolveProviderInputKey,
   saveDesktopProviderProfile,
   type DesktopProviderProfileInput,
 } from "./provider-profile.js";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running", "paused", "waiting_user"]);
 
-export interface DesktopProviderStatus {
+export interface DesktopProviderStatus extends DesktopProviderStatusView {
   readonly configured: boolean;
   readonly kind: NormalizedProviderConfig["kind"] | null;
   readonly providerId: string | null;
@@ -100,6 +107,7 @@ export class DesktopApplicationHost {
   #closed = false;
   readonly #savedPublications = new Map<string, string>();
   #savingPublication = false;
+  #providerChanging = false;
 
   constructor(options: DesktopApplicationHostOptions) {
     this.#workspacePath = resolve(options.workspacePath);
@@ -119,6 +127,7 @@ export class DesktopApplicationHost {
 
   get bridge(): ClientBridge {
     if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
+    if (this.#providerChanging) throw new Error("PROVIDER_SETTINGS_BUSY");
     return this.#bridge;
   }
 
@@ -128,10 +137,33 @@ export class DesktopApplicationHost {
     return () => this.#listeners.delete(listener);
   }
 
-  async providerStatus(): Promise<DesktopProviderStatus> {
+  async providerDetails(profileId: string): Promise<DesktopSavedProviderView> {
+    const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(p => p.id === profileId);
+    if (!profile) throw new Error('PROVIDER_PROFILE_NOT_FOUND');
+    const metadata = await this.#credentials.inspect(profile.config.credentialRef);
+    return { profileId: profile.id, displayName: profile.displayName, models: profile.models,
+      kind: profile.config.kind, providerId: profile.config.providerId, baseURL: profile.config.baseURL,
+      model: profile.config.model, tools: profile.config.tools, usage: profile.config.usage,
+      configured: metadata.configured, credentialPersistence: metadata.persistence, credentialChecked: true };
+  }
+
+  async providerStatus(mode?: 'summary' | 'active'): Promise<DesktopProviderStatus> {
     const config = this.#providerConfig;
+    const catalog = loadDesktopProviderCatalog(this.#providerProfilePath);
+    const metadataById = new Map<string, Awaited<ReturnType<CredentialBroker['inspect']>>>();
+    const profiles = await Promise.all(catalog.profiles.map(async profile => {
+      const checked = mode !== 'summary' && (mode !== 'active' || profile.id === catalog.activeProfileId);
+      const metadata = checked ? await this.#credentials.inspect(profile.config.credentialRef) : null;
+      if (metadata) metadataById.set(profile.id, metadata);
+      return { profileId: profile.id, displayName: profile.displayName, models: profile.models,
+        kind: profile.config.kind, providerId: profile.config.providerId, baseURL: profile.config.baseURL,
+        model: profile.config.model, tools: profile.config.tools, usage: profile.config.usage,
+        configured: metadata?.configured ?? false, credentialPersistence: metadata?.persistence ?? 'missing' as const,
+        credentialChecked: checked };
+    }));
     if (config === null) {
       return {
+        activeProfileId: catalog.activeProfileId, profiles,
         configured: false,
         kind: null,
         providerId: null,
@@ -145,9 +177,11 @@ export class DesktopApplicationHost {
         connectionTest: null,
       };
     }
-    const credential = await this.#credentials.inspect(config.credentialRef);
+    const credential = metadataById.get(catalog.activeProfileId ?? '');
     return {
-      configured: credential.configured,
+      activeProfileId: catalog.activeProfileId, profiles,
+      configured: credential?.configured ?? false,
+      credentialChecked: credential !== undefined,
       kind: config.kind,
       providerId: config.providerId,
       baseURL: config.baseURL,
@@ -155,8 +189,8 @@ export class DesktopApplicationHost {
       tools: config.tools,
       usage: config.usage,
       credentialReference: config.credentialRef,
-      credentialPersistence: credential.persistence,
-      fallbackReason: credential.fallbackReason,
+      credentialPersistence: credential?.persistence ?? 'missing',
+      fallbackReason: credential?.fallbackReason ?? null,
       connectionTest: this.#connectionTest,
     };
   }
@@ -164,29 +198,76 @@ export class DesktopApplicationHost {
   async configureProvider(
     input: DesktopProviderProfileInput,
   ): Promise<DesktopProviderStatus> {
-    if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
-    if (this.#hasActiveRun()) throw new Error("ACTIVE_RUNS_PRESENT");
-    const saved = await saveDesktopProviderProfile(
-      this.#providerProfilePath,
-      this.#credentials,
-      input,
-    );
-    const selectedProjectId = this.#bridge.getSnapshot().selectedProjectId;
-    this.#bridgeUnsubscribe?.();
-    this.#bridge.dispose();
-    this.#providerConfig = saved.config;
-    this.#connectionTest = null;
-    const runtime = this.#createRuntime(saved.config, selectedProjectId);
-    this.#service = runtime.service;
-    this.#bridge = runtime.bridge;
-    this.#attachBridgeEvents();
+    return this.#changeProvider(async () => (await saveDesktopProviderProfile(this.#providerProfilePath, this.#credentials, input)).config);
+  }
+
+  async selectProvider(profileId: string, model: string): Promise<DesktopProviderStatus> {
+    return this.#changeProvider(async () => {
+      const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(entry => entry.id === profileId);
+      if (!profile || !(await this.#credentials.inspect(profile.config.credentialRef)).configured) throw new Error('PROVIDER_API_KEY_REQUIRED');
+      return selectDesktopProvider(this.#providerProfilePath, profileId, model);
+    });
+  }
+
+  async #changeProvider(change: () => Promise<NormalizedProviderConfig>): Promise<DesktopProviderStatus> {
+    if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
+    if (this.#providerChanging) throw new Error('PROVIDER_SETTINGS_BUSY');
+    if (this.#hasExecutingRun()) throw new Error('ACTIVE_RUNS_PRESENT');
+    this.#providerChanging = true;
+    try {
+      const before = this.#bridge.getSnapshot();
+      const config = await change();
+      const runtime = this.#createRuntime(config, before.selectedProjectId, before);
+      this.#bridgeUnsubscribe?.();
+      this.#bridge.dispose();
+      this.#providerConfig = config;
+      this.#connectionTest = null;
+      this.#service = runtime.service;
+      this.#bridge = runtime.bridge;
+      this.#attachBridgeEvents();
+    } finally { this.#providerChanging = false; }
     this.#emit();
-    return this.providerStatus();
+    return this.providerStatus('active');
+  }
+
+  async listProviderModels(input: DesktopProviderProfileInput): Promise<readonly string[]> {
+    const previous = previousProvider(loadDesktopProviderCatalog(this.#providerProfilePath), input);
+    const config = providerConfigForInput(input, previous?.config);
+    const key = await resolveProviderInputKey(this.#credentials, input, config, previous?.config);
+    const headers: Record<string, string> = config.kind === 'anthropic_compatible'
+      ? { 'anthropic-version': config.anthropicVersion ?? '2023-06-01',
+          ...(config.authHeader === 'authorization' ? { authorization: `Bearer ${key}` } : { 'x-api-key': key }) }
+      : { authorization: `Bearer ${key}` };
+    try {
+      const response = await fetch(`${config.baseURL.replace(/\/+$/u, '')}/models`, {
+        headers, redirect: 'error', signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok || !response.body) throw new Error('CATALOG_UNAVAILABLE');
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          size += part.value.length;
+          if (size > 1_048_576) throw new Error('CATALOG_TOO_LARGE');
+          chunks.push(part.value);
+        }
+      } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+      const data: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (!data || typeof data !== 'object' || !('data' in data) || !Array.isArray(data.data)) throw new Error('CATALOG_INVALID');
+      const ids = data.data.flatMap((item: unknown) => item && typeof item === 'object' && 'id' in item &&
+        typeof item.id === 'string' && item.id.trim().length > 0 && item.id.length <= 256 ? [item.id.trim()] : []);
+      if (!ids.length) throw new Error('CATALOG_EMPTY');
+      return [...new Set(ids)].sort().slice(0, 500);
+    } catch { throw new Error('PROVIDER_CATALOG_UNAVAILABLE'); }
   }
 
   async testProviderConnection(): Promise<DesktopProviderConnectionResultView> {
     if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
-    if (this.#hasActiveRun()) throw new Error("ACTIVE_RUNS_PRESENT");
+    if (this.#providerChanging) throw new Error('PROVIDER_SETTINGS_BUSY');
+    if (this.#hasExecutingRun()) throw new Error("ACTIVE_RUNS_PRESENT");
     const config = this.#providerConfig;
     if (config === null) throw new Error("MODEL_PROVIDER_REQUIRED");
     const provider = this.#providerFactory(config, this.#credentials);
@@ -195,7 +276,7 @@ export class DesktopApplicationHost {
       model: config.model,
       testTools: true,
     });
-    this.#connectionTest = result.ok
+    const connectionTest: DesktopProviderConnectionResultView = result.ok
       ? {
           ok: true,
           provider: result.provider,
@@ -214,7 +295,8 @@ export class DesktopApplicationHost {
           errorCode: result.error.code,
           retryable: result.error.retryable,
         };
-    return this.#connectionTest;
+    if (config === this.#providerConfig) this.#connectionTest = connectionTest;
+    return connectionTest;
   }
 
   async previewDiagnostics(): Promise<DesktopDiagnosticPreviewView> {
@@ -491,6 +573,7 @@ export class DesktopApplicationHost {
   #createRuntime(
     config: NormalizedProviderConfig | null,
     initialProjectId: string,
+    previous?: BridgeSnapshot,
   ): { service: WritingApplicationService; bridge: ClientBridge } {
     const provider = config === null
       ? undefined
@@ -520,6 +603,7 @@ export class DesktopApplicationHost {
       clientBuild: `writing-agent-desktop@${this.#applicationVersion}`,
       runtimeBuild: "writing-agent-runtime-v1",
       initialProjectId,
+      ...(previous === undefined ? {} : { initialSessionId: previous.selectedSessionId, initialGeneration: previous.generation + 1 }),
       uiSettingsPersistence: createFileUiSettingsPersistence({
         filePath: join(this.#workspacePath, ".writing-agent", "ui-settings.json"),
       }),
@@ -542,5 +626,10 @@ export class DesktopApplicationHost {
         .getProjectProjection(project.id)
         .runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)),
     );
+  }
+
+  #hasExecutingRun(): boolean {
+    return this.#service.listProjects().some(project => this.#service.getProjectProjection(project.id).runs
+      .some(run => run.status === 'queued' || run.status === 'running' || run.status === 'paused'));
   }
 }

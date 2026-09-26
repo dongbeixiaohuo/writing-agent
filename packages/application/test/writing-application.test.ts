@@ -13,6 +13,15 @@ import { openWorkspaceStorage } from "../../storage/src/index.js";
 import type { WritingBrief } from "../../writing-core/src/index.js";
 import { ApplicationServiceError, WritingApplicationService } from "../src/index.js";
 import { assertCleanBodyStageContent } from "../src/workflow-tools.js";
+
+it('keeps postscript process notes out of body versions and accepts cleanup of legacy baselines', () => {
+  const article = '# 保留的标题\n\n我坐在窗边，看着晚风拂过树梢。\n\n屋里很安静，我把杯子放下。';
+  const legacy = article + '\n\n---\n\n**改动说明（三处）：**\n\n' + '减少冗余表达，保留作者原意。'.repeat(15);
+  assert.throws(() => assertCleanBodyStageContent('central_revision', legacy));
+  assert.doesNotThrow(() => assertCleanBodyStageContent('language_review', article.replace('很安静', '安静'), legacy));
+  assert.throws(() => assertCleanBodyStageContent('language_review', article.replace('# 保留的标题\n\n', ''), legacy), (error: any) => error.code === 'BODY_STAGE_STRUCTURE_MISMATCH' && error.details.requiredHeadings[0] === '# 保留的标题');
+  assert.doesNotThrow(() => assertCleanBodyStageContent('language_review', '窗边的风吹进屋里。\n\n我把杯子放下。', '我坐在窗边。\n\n我把杯子放下。'));
+});
 import { collaborationState, directorFixtureTurn, publicStageFixtureEvents } from "./collaboration-fixture.js";
 import { getPublicationCandidates, choosePublicationCandidate } from '../src/publication-choice.js';
 

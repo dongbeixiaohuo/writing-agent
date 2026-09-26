@@ -6,7 +6,7 @@ import type { JsonValue, StoragePort } from "../../writing-core/src/index.js";
 import { FactClaimStatusSchema, FactClaimTypeSchema } from "../../writing-core/src/index.js";
 import { workflowStageSequence, type WritingWorkflowStage } from "../../writing-pack/src/index.js";
 import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
-import { assertBusinessInputQuestions, evidenceIdsFromLedger, type WritingWorkflowTools } from "./workflow-tools.js";
+import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, type WritingWorkflowTools } from "./workflow-tools.js";
 import { getPublicationCandidates, savePublicationCandidates, isPublicationSelectionCurrent, isUsablePublicationTitle,
   PUBLICATION_SELECTION_WAIT_REASON, type PublicationCandidate } from './publication-choice.js';
 
@@ -200,12 +200,19 @@ export function createWritingCollaboration(options: {
       materialSlices.set(JSON.stringify([slice.materialId, slice.contentVersionId, slice.offset, slice.nextOffset]), slice);
     }
     const materials = [...materialSlices.values()];
+    const boundBody = artifacts.find(item => item.kind === 'body')?.content;
+    const articleBaseline = boundBody === undefined ? undefined : bodyArticleBaseline(boundBody);
     const summary = { actor, stage: assignment?.stage ?? null, nextStage: current.nextStage, inputVersionIds: inputs, ready: current.ready, finished: current.finished,
       unreadArtifactVersionIds: workflow.unreadReadinessArtifactIds(runId),
       ...(assignment?.stage === "fact_check" ? { currentBodyVersionId: storage.inspectProject(projectId)?.latestBodyVersionId ?? null,
         validEvidenceIds: evidenceIdsFromLedger(artifacts.find(item => item.kind === 'evidence')?.content ?? '') } : {}),
       ...(assignment?.stage ? { taskInstruction: assignment.reason, expectedArtifact: assignment.expectedArtifact ?? expectedArtifact(assignment.stage) } : {}),
       completedStages: workflow.progress(runId).completedStages, artifacts, materials: actor === 'title' ? [] : materials,
+      ...(assignment?.stage === 'language_review' && articleBaseline !== undefined ? { bodyOutputContract: {
+        requiredHeadings: articleBaseline.split(/\r?\n/u).filter(line => /^#{1,6}\s/u.test(line)),
+        articleCharacters: articleBaseline.length, legacyProcessPostscript: articleBaseline !== boundBody?.trim(),
+        output: 'complete_article_only',
+      } } : {}),
       ...(assignment?.stage === 'central_revision' ? { authorReviewDiscussion: options.authorReviewDiscussion ?? [] } : {}),
       ...(assignment?.stage === 'fact_check' ? { selectedPublication: (() => { const id = storage.inspectProject(projectId)?.currentTitleVersionId; return id ? storage.getArtifactVersion(id)?.content : null; })() } : {}),
       ...(actor === "director" ? { factCheck: storage.getFactCheckStatus(projectId) } : {}) };
@@ -237,6 +244,7 @@ export function createWritingCollaboration(options: {
       ? { id: `${runId}:preview:${scopeId}`, stage } : undefined;
     if (outputPreview) rolePrompt += '\n本次是纯文本成果生成：直接以普通回复逐步输出本阶段完整的 Markdown 提纲、文章或审校建议，不调用工具，不把全文包装为 JSON，不先写“正在整理”等开场说明。不输出私有推理、调度指令或内部字段。审校建议说明问题、阅读影响和修改建议，使用简短分段。程序会在完整响应结束后把这份原文交给 submit_writing_stage 校验保存，不需要你再次复制、调用或宣称保存成功。预览不代表已保存，也不代表作者已确认或事实核查已通过。';
     if (outputPreview) rolePrompt += '\n唯一例外：确实发现任务依赖的必要信息缺口时，不写成果或缺料说明，调用 assess_writing_readiness(status=needs_input) 提出最多两个具体问题并等待回答。当前 ready 已由程序按输入版本确认，不要重复提交 ready。';
+    if (assignment?.stage && ['draft', 'central_revision', 'language_review'].includes(assignment.stage)) rolePrompt += '\n正文交付契约由程序规定，优先于任务说明中的输出格式建议：只输出完整文章，不附改动说明、审校结论、版本号或“无需修改”等状态。没有修改时返回完整原文。语言润色必须保留 bodyOutputContract.requiredHeadings 的 Markdown 标题；不要因标题已确认而省略它。旧稿末尾如带明确的改动说明，说明不是文章，不复制进新正文，不把其字数算进正文基线。';
     if (actor === 'director' && !current.ready) rolePrompt += '\n当前尚未评估本轮信息，director_decide 暂不开放。先补齐必要读取，再用 assess_writing_readiness 评估：充分用 ready，缺少真实业务信息用 needs_input 向作者提问；评估通过后程序才开放调度。';
     return {
       scopeId,
