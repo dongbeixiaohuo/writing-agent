@@ -1,7 +1,0 @@
-/dist
-/node_modules
-/src-tauri/target
-/src-tauri/gen
-/runtime-bin
-.run
-.DS_Store

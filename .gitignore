@@ -31,8 +31,8 @@ output/
 docs/
 .env
 .claude/settings.local.json
-!writing-agent-app/docs/
-!writing-agent-app/docs/**
+# 老版本桌面客户端（0.1.0 Tauri 预览版）已退出主线，本地保留但不再跟踪
+writing-agent-app/
 
 # Python 缓存
 __pycache__/
