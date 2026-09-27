@@ -66,7 +66,7 @@ test("fact source tool refuses URLs that are not in the ledger instead of browsi
   try {
     const tool = createFactSourceTool({ storage: f.storage, projectId: "p", fetcher: fetcherWith("不应被读取", []) });
     await assert.rejects(
-      tool.execute({ url: "https://other.example.test/anything" }, { projectId: "p", runId: "r", operationId: "op" } as never),
+      async () => tool.execute({ url: "https://other.example.test/anything" }, { projectId: "p", runId: "r", operationId: "op" } as never),
       (error: unknown) => {
         assert.equal((error as { code?: string }).code, "FACT_SOURCE_NOT_IN_LEDGER");
         assert.match(String((error as Error).message), /NEEDS_USER_SOURCE/u);
@@ -81,7 +81,7 @@ test("fact source tool still enforces the network policy on ledger URLs", async 
   try {
     const tool = createFactSourceTool({ storage: f.storage, projectId: "p", fetcher: fetcherWith("不应被读取", []) });
     await assert.rejects(
-      tool.execute({ url: "https://127.0.0.1/internal" }, { projectId: "p", runId: "r", operationId: "op" } as never),
+      async () => tool.execute({ url: "https://127.0.0.1/internal" }, { projectId: "p", runId: "r", operationId: "op" } as never),
       (error: unknown) => {
         assert.ok(error instanceof Error);
         assert.ok("code" in (error as object), "policy errors carry a code");
@@ -96,7 +96,7 @@ test("fact source tool reports an empty ledger without fetching", async () => {
   try {
     const tool = createFactSourceTool({ storage: f.storage, projectId: "p", fetcher: fetcherWith("不应被读取", []) });
     await assert.rejects(
-      tool.execute({ url: LEDGER_URL }, { projectId: "p", runId: "r", operationId: "op" } as never),
+      async () => tool.execute({ url: LEDGER_URL }, { projectId: "p", runId: "r", operationId: "op" } as never),
       (error: unknown) => (error as { code?: string }).code === "FACT_SOURCE_NOT_IN_LEDGER",
     );
   } finally { f.close(); }

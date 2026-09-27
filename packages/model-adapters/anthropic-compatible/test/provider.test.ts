@@ -99,6 +99,28 @@ describe("Anthropic-compatible provider", () => {
     assert.deepEqual(create(2048).snapshotRequest({ ...request, parameters: { maxOutputTokens: 1024 } }).outputTokenLimit,
       { value: 1024, source: 'request' });
   });
+  it("merges vendor extraBody into the wire body without overriding protocol fields", () => {
+    const provider = new AnthropicCompatibleProvider({
+      id: "extra-body-test",
+      baseURL: "https://example.test/v1",
+      credentialRef: "test/key",
+      resolveCredential: async () => "k",
+      models: { "fixture-text-model": { tools: "supported", usage: "reported" } },
+      defaultMaxOutputTokens: 128,
+      extraBody: { thinking: { type: "disabled" }, model: "must-not-win", stream: false },
+    });
+    const snapshot = provider.snapshotRequest({
+      requestId: "request-extra-body",
+      model: "fixture-text-model",
+      messages: [{ role: "user", content: "连接测试" }],
+      parameters: {},
+    });
+    const payload = snapshot.normalizedPayload as Record<string, unknown>;
+    assert.deepEqual(payload.thinking, { type: "disabled" });
+    assert.equal(payload.model, "fixture-text-model");
+    assert.equal(payload.stream, true);
+  });
+
   it("round-trips streamed tool use/results without putting the key in snapshots", async () => {
     const bodies: Record<string, unknown>[] = [];
     const apiKeyHeaders: Array<string | undefined> = [];

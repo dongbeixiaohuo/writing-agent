@@ -36,6 +36,10 @@ export interface AnthropicCompatibleProviderOptions {
   readonly anthropicVersion?: string;
   readonly authHeader?: "x-api-key" | "authorization";
   readonly allowInsecureHttp?: boolean;
+  // Vendor-specific extra request fields (e.g. DeepSeek's thinking toggle).
+  // Added to the request body before protocol fields, so these can never
+  // override model/messages/stream/tools or other adapter-owned keys.
+  readonly extraBody?: Readonly<Record<string, unknown>>;
 }
 
 type WireContentBlock =
@@ -621,6 +625,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
   private readonly defaultMaxOutputTokens: number | undefined;
   private readonly anthropicVersion: string;
   private readonly authHeader: "x-api-key" | "authorization";
+  private readonly extraBody: AnthropicCompatibleProviderOptions["extraBody"];
 
   constructor(options: AnthropicCompatibleProviderOptions) {
     if (options.id.trim().length === 0) throw new Error("provider id 不能为空");
@@ -664,6 +669,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
     this.defaultMaxOutputTokens = defaultMaxOutputTokens;
     this.anthropicVersion = anthropicVersion;
     this.authHeader = options.authHeader ?? "x-api-key";
+    this.extraBody = options.extraBody;
   }
 
   override capabilitiesFor(model: string): ModelCapabilities {
@@ -680,13 +686,18 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
     const outputTokenLimit = this.outputTokenLimit(request);
     return {
       normalizedPayload: JSON.parse(
-        JSON.stringify(serializeRequest(request, outputTokenLimit.value)),
+        JSON.stringify(this.wireBody(request, outputTokenLimit.value)),
       ) as ProviderRequestSnapshot["normalizedPayload"],
       serializationVersion: this.adapterVersion,
       redactions: [this.authHeader],
       unreconstructableFields: [this.authHeader],
       outputTokenLimit,
     };
+  }
+
+  private wireBody(request: ModelRequest, outputTokenLimit: number): WireRequest {
+    const body = serializeRequest(request, outputTokenLimit);
+    return this.extraBody === undefined ? body : { ...this.extraBody, ...body } as WireRequest;
   }
 
   private outputTokenLimit(request: ModelRequest): NonNullable<ProviderRequestSnapshot["outputTokenLimit"]> {
@@ -732,7 +743,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
         });
       }
       const credential = validateCredential(rawCredential);
-      const body = serializeRequest(request, this.outputTokenLimit(request).value);
+      const body = this.wireBody(request, this.outputTokenLimit(request).value);
       let encoded: string;
       try {
         encoded = JSON.stringify(body);

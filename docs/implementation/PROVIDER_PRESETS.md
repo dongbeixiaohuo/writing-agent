@@ -17,12 +17,19 @@
 
 ## 参考来源与适配
 
+### rc.49：Anthropic Messages 统一默认与截断修复（当前规则）
+
+- **统一体验**：DeepSeek、Kimi 国内/国际、智谱 GLM 国内/国际（Z.AI）、千问国内/国际、火山豆包、SiliconFlow 国内/国际新增 Anthropic Messages 协议变体（端点取自同一固定 commit 的 `claudeProviderPresets.ts`，认证按源 `ANTHROPIC_AUTH_TOKEN` 使用 Bearer）。这些家族的选择界面默认只显示 Anthropic 变体——用户只填 Key，不再选择协议和地址；Chat/Responses 变体保留在完整目录中用于存量配置识别，但从新选择中隐藏。OpenAI、Gemini 和聚合平台没有 Anthropic 端点，保持原有默认。MiniMax 国内/国际本来就是这个协议，无需变体。
+- **截断根因与三连修复**：DeepSeek Anthropic 端点默认开启 thinking，推理会把 `max_tokens` 预算烧光（实测两次 `MODEL_OUTPUT_TRUNCATED` 且 `partialTextLength=0`，即零可见文本）；且截断恢复重试当时不提升输出上限（`nextOutputTokenLimit` 等于原限），同预算重试必然再次截断。修复：anthropic 适配器同样消费 `extraBody`；`deepseek-anthropic` 变体及 DeepSeek 全协议预设声明 `thinking: {type: 'disabled'}`；`withPresetExtraBody` 匹配放宽为"规范化端点"（覆盖用户手工保存的 Anthropic 配置，端点 `/v1` 后缀归一）；截断恢复重试把输出上限一次性 ×2（封顶 65536），并把升级后的值记入事件。
+- `RESPONSES_PREFERRED_OVER_CHAT` 收缩为 OpenAI / OpenRouter 两组；其余家族的偏好由 `ANTHROPIC_PREFERRED_PRESETS` 接管（含 Zhipu Coding 的 Chat → Coding Anthropic）。目录 120 项，新选择可见 99 项。
+- 未验证边界：除 DeepSeek（用户实测工作中）与 MiniMax（生产使用中）外，其余 Anthropic 端点均为配置元数据收录，未逐账号验证；DeepSeek Anthropic 端点对 `thinking: {type: 'disabled'}` 参数的接受依据是其跨 API 的统一 thinking 开关文档与用户现象的端点级推断，若端点不认该参数会以明确上游错误呈现。
+
 ### rc.43：DeepSeek 改回 Chat Completions（真实账号证伪）
 
 - cc-switch 资料声称 DeepSeek 官方端点原生支持 Responses（`apiFormat: openai_responses`），rc.38/41 明确标注未经过真实账号验证。2026-09-26 首次真实账号使用即被证伪：本应用 Responses 请求体在有效 Key 下被 `api.deepseek.com` 以 **HTTP 400** 连续拒绝两次（工作区 `request_snapshots` + `request.failed` 事件留证），连接测试同样失败。
 - `cc-deepseek` 的 `apiFormat` 更正为 `openai_chat`，目录标签自动变为 Chat Completions；Chat 是 DeepSeek 主力文档 API，属于可验证路径。模型示例沿用源资料（`deepseek-flash`、`deepseek-v4-pro`），示例不代表账号已开通。
 - `RESPONSES_PREFERRED_OVER_CHAT` 的 `deepseek → cc-deepseek` 配对保留，但语义变为"同身份去重"：隐藏无模型示例的旧 `deepseek` 条目，新选项只显示 cc 版 Chat 条目；其余 9 组仍为 Responses 偏好。存量 Responses 协议配置不自动迁移，按自定义连接显示，用户可手动改协议（改协议需重填 Key）。
-- 教训：目录中"收录不代表连接已验证"的声明是真实的；任何 Responses 预设首次被真实账号证伪时，按同样方式更正 `apiFormat` 并在本文件留证，不做无法验证的静默兼容。
+- 教训：目录中"收录不代表连接已验证"的声明是真实的；任何 Responses 预设首次被真实账号证伪时，按同样方式更正 `apiFormat` 并在本文件留证，不做无法验证的静默兼容。（rc.45 补充：证伪的真实原因是 thinking 模式拒绝 `tool_choice="required"`，不是端点不支持 Responses；rc.49 起该家族默认进一步切换为 Anthropic Messages 变体。）
 
 ### rc.41：搜索反馈、性能和双协议选择（身份规则保留，DeepSeek 例外见 rc.43）
 

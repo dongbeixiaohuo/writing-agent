@@ -90,6 +90,40 @@ const PLAN_VARIANTS = [
   { id: 'qwen-cn-coding-anthropic', kind: 'anthropic_compatible', baseURL: 'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1', modelExamples: [], authHeader: 'authorization' },
 ] as const;
 
+// General-API Anthropic Messages variants from the same pinned cc-switch
+// revision (claudeProviderPresets.ts): the user only fills a Key; protocol
+// and endpoint come from the preset. These are the DEFAULT choices for their
+// provider families (see ANTHROPIC_PREFERRED_PRESETS); the Chat/Responses
+// variants stay registered for existing configs but are hidden from new
+// selections. ANTHROPIC_AUTH_TOKEN means Bearer. The adapter appends /v1 to
+// these bases; endpoints are configuration metadata, not verified accounts.
+const ANTHROPIC_VARIANTS = [
+  { id: 'deepseek-anthropic', kind: 'anthropic_compatible', baseURL: 'https://api.deepseek.com/anthropic',
+    modelExamples: ['deepseek-flash', 'deepseek-v4-pro'], authHeader: 'authorization',
+    // Endpoint-level evidence (user's own truncation + upstream tool_choice
+    // rejection): DeepSeek thinking must be disabled for this app's required
+    // tool calls, on every wire protocol.
+    extraBody: { thinking: { type: 'disabled' } } },
+  { id: 'kimi-cn-anthropic', kind: 'anthropic_compatible', baseURL: 'https://api.moonshot.cn/anthropic',
+    modelExamples: ['kimi-k2.7-code'], authHeader: 'authorization' },
+  { id: 'kimi-global-anthropic', kind: 'anthropic_compatible', baseURL: 'https://api.moonshot.ai/anthropic',
+    modelExamples: ['kimi-k2.7-code'], authHeader: 'authorization' },
+  { id: 'zhipu-anthropic', kind: 'anthropic_compatible', baseURL: 'https://open.bigmodel.cn/api/anthropic',
+    modelExamples: ['glm-5.3'], authHeader: 'authorization' },
+  { id: 'zai-anthropic', kind: 'anthropic_compatible', baseURL: 'https://api.z.ai/api/anthropic',
+    modelExamples: ['glm-5.3'], authHeader: 'authorization' },
+  { id: 'qwen-cn-anthropic', kind: 'anthropic_compatible', baseURL: 'https://dashscope.aliyuncs.com/apps/anthropic',
+    modelExamples: ['qwen3.8-max', 'qwen3.8-flash'], authHeader: 'authorization' },
+  { id: 'qwen-sg-anthropic', kind: 'anthropic_compatible', baseURL: 'https://dashscope-intl.aliyuncs.com/apps/anthropic',
+    modelExamples: ['qwen3.8-max', 'qwen3.8-flash'], authHeader: 'authorization' },
+  { id: 'doubao-anthropic', kind: 'anthropic_compatible', baseURL: 'https://ark.cn-beijing.volces.com/api/compatible',
+    modelExamples: ['doubao-seed-2-1-pro-260628'], authHeader: 'authorization' },
+  { id: 'siliconflow-anthropic', kind: 'anthropic_compatible', baseURL: 'https://api.siliconflow.cn',
+    modelExamples: ['Pro/MiniMaxAI/MiniMax-M2.5'], authHeader: 'authorization' },
+  { id: 'siliconflow-en-anthropic', kind: 'anthropic_compatible', baseURL: 'https://api.siliconflow.com',
+    modelExamples: ['MiniMaxAI/MiniMax-M3'], authHeader: 'authorization' },
+] as const;
+
 // Reviewed vendor-specific request fields per preset (adapter merges them
 // additively into every request body; protocol fields win on collision).
 const PRESET_EXTRA_BODY: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
@@ -146,6 +180,9 @@ function completeProviderCatalog(): readonly ProviderPreset[] {
   for (const data of PLAN_VARIANTS) catalog.push(describePreset({ ...data,
     modelHint: '填写对应套餐控制台中的完整模型 ID',
     note: '配置资料来自 cc-switch 的 Claude / OpenCode 预设，收录不代表连接已验证。' }, providerOffering(data.id)));
+  for (const data of ANTHROPIC_VARIANTS) catalog.push(describePreset({ ...data,
+    modelHint: `例如 ${data.modelExamples[0]}（以账号可用 ID 为准）`,
+    note: 'Anthropic Messages 协议变体，配置资料来自 cc-switch 的 Claude 预设，收录不代表连接已验证。' }, providerOffering(data.id)));
   return catalog;
 }
 
@@ -154,19 +191,33 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = completeProviderCatal
 // Explicitly reviewed SAME-OFFERING pairs, not a brand-wide protocol upgrade.
 // Keep the complete registry for saved configs; simplify only new selections.
 // No credentials, endpoints or models are migrated by this preference.
-// Every mapped target is Responses EXCEPT cc-deepseek: the source claims
-// native Responses for DeepSeek's official endpoint, but on 2026-09-26 that
-// endpoint rejected this app's Responses payload with HTTP 400 twice on a
-// verified-valid key, so DeepSeek prefers the verifiable Chat Completions path
-// (the cc entry is kept for its model examples; the legacy Chat entry stays
-// hidden to avoid a duplicate same-endpoint choice).
+// Every mapped target is Responses. (Pairs whose family gained an Anthropic
+// default in rc.49 — DeepSeek, Kimi, GLM, Qwen, Doubao, Zhipu Coding — were
+// retired from this map and are governed by ANTHROPIC_PREFERRED_PRESETS.)
 export const RESPONSES_PREFERRED_OVER_CHAT: Readonly<Record<string, string>> = {
-  deepseek: 'cc-deepseek', 'qwen-cn': 'cc-qianwenai', 'qwen-sg': 'cc-qwencloud',
-  'kimi-cn': 'cc-kimi', 'kimi-global': 'cc-kimi-global', volcengine: 'cc-doubaoseed',
   openai: 'openai-responses', openrouter: 'cc-openrouter',
-  'zhipu-coding-chat': 'cc-zhipu-glm', 'zai-coding-chat': 'cc-zhipu-glm-en',
 };
-export const PREFERRED_PROVIDER_PRESETS = PROVIDER_PRESETS.filter(item => !Object.hasOwn(RESPONSES_PREFERRED_OVER_CHAT, item.id));
+
+// Unified-experience preference (rc.49): for provider families that have an
+// Anthropic Messages variant, the Anthropic variant is THE default preset —
+// users only fill a Key and never pick a protocol or endpoint. The Chat and
+// Responses variants of the same families stay registered for existing
+// configs but are hidden from new selections. Providers without an Anthropic
+// endpoint (OpenAI, Gemini, aggregators) keep their existing defaults.
+export const ANTHROPIC_PREFERRED_PRESETS: Readonly<Record<string, string>> = {
+  'deepseek': 'deepseek-anthropic', 'cc-deepseek': 'deepseek-anthropic',
+  'kimi-cn': 'kimi-cn-anthropic', 'cc-kimi': 'kimi-cn-anthropic',
+  'kimi-global': 'kimi-global-anthropic', 'cc-kimi-global': 'kimi-global-anthropic',
+  'zhipu': 'zhipu-anthropic', 'cc-zhipu-glm': 'zhipu-anthropic',
+  'zai': 'zai-anthropic', 'cc-zhipu-glm-en': 'zai-anthropic',
+  'zhipu-coding-chat': 'zhipu-coding-anthropic', 'zai-coding-chat': 'zai-coding-anthropic',
+  'qwen-cn': 'qwen-cn-anthropic', 'cc-qianwenai': 'qwen-cn-anthropic',
+  'qwen-sg': 'qwen-sg-anthropic', 'cc-qwencloud': 'qwen-sg-anthropic',
+  'volcengine': 'doubao-anthropic', 'cc-doubaoseed': 'doubao-anthropic',
+  'siliconflow': 'siliconflow-anthropic',
+};
+export const PREFERRED_PROVIDER_PRESETS = PROVIDER_PRESETS.filter(item =>
+  !Object.hasOwn(RESPONSES_PREFERRED_OVER_CHAT, item.id) && !Object.hasOwn(ANTHROPIC_PREFERRED_PRESETS, item.id));
 
 const searchAliases: Readonly<Record<string, string>> = {
   DeepSeek: '深度求索', '千问 / 阿里云百炼': '通义 Qwen', 'Qwen / 阿里云百炼': '通义 千问',

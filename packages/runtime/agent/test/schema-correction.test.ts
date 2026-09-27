@@ -101,8 +101,9 @@ for (const scenario of ['recovers', 'always-truncates', 'request-limit', 'config
         grantedPermissions: [], expectedBodyVersionId: null,
         budget: { maxModelRequests: scenario === 'one-request' ? 1 : 10, maxToolCalls: 10, maxRetriesPerRequest: scenario === 'no-retries' ? 0 : 2, maxMajorRevisions: 0 },
       });
-      const expected = scenario === 'mixed-retries' ? [4096,4096,4096] : scenario === 'scope-switch' ? [4096,4096,4096,4096] : scenario === 'request-limit' ? [2048,2048] : ['recovers', 'always-truncates', 'configured-limit'].includes(scenario) ? [4096,4096] : [4096];
-      assert.deepEqual(requests.map(request => request.parameters.maxOutputTokens ?? 4096), expected);
+      const expected = scenario === 'mixed-retries' ? [4096,4096,8192] : scenario === 'scope-switch' ? [4096,8192,4096,8192] : scenario === 'request-limit' ? [2048,4096] : ['recovers', 'always-truncates', 'configured-limit'].includes(scenario) ? [4096,8192] : [4096];
+      assert.deepEqual(requests.map(request => request.parameters.maxOutputTokens ?? 4096), expected,
+        `a truncation recovery must escalate the output cap once (x2, capped), not retry with the same exhausted budget (${scenario})`);
       assert.equal(result.ok, ['recovers', 'scope-switch'].includes(scenario));
       assert.equal(writes, scenario === 'scope-switch' ? 2 : scenario === 'recovers' ? 1 : 0);
       assert.equal(storage.listRuns('p').length, 1);
@@ -114,7 +115,8 @@ for (const scenario of ['recovers', 'always-truncates', 'request-limit', 'config
       if (scenario === 'cancel' && !result.ok) assert.equal(result.error.code, 'CANCELLED');
       const failed = storage.listRunEvents(result.runId).filter(event => event.type === 'request.failed');
       if (scenario === 'recovers') {
-        assert.equal((failed[0]?.payload.recovery as any)?.nextOutputTokenLimit, 4096);
+        assert.equal((failed[0]?.payload.recovery as any)?.nextOutputTokenLimit, 8192,
+          'the recorded next limit must be the escalated one, not the exhausted budget');
         assert.equal(storage.getRun(result.runId)?.usage.retries, 1);
       }
     } finally { storage.close(); }

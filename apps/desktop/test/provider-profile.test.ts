@@ -71,6 +71,10 @@ test('DeepSeek preset supplies thinking-disabled vendor fields and fills matchin
         schemaVersion: 2, kind: 'openai_responses', providerId: 'cc-deepseek',
         baseURL: 'https://api.deepseek.com', model: 'deepseek-flash', tools: 'supported', usage: 'reported',
         credentialRef: 'managed:desktop-z' } },
+      { id: 'p4', displayName: 'DeepSeek Anthropic', models: ['deepseek-flash'], config: {
+        schemaVersion: 2, kind: 'anthropic_compatible', providerId: 'cc-deepseek',
+        baseURL: 'https://api.deepseek.com/anthropic/v1', model: 'deepseek-flash', tools: 'supported', usage: 'reported',
+        credentialRef: 'managed:desktop-w' } },
     ] };
     const original = JSON.stringify(stored);
     writeFileSync(path, original);
@@ -79,6 +83,9 @@ test('DeepSeek preset supplies thinking-disabled vendor fields and fills matchin
     assert.equal('extraBody' in catalog.profiles.find(p => p.id === 'p2')!.config, false);
     assert.deepEqual(catalog.profiles.find(p => p.id === 'p3')!.config.extraBody, { thinking: { type: 'disabled' } },
       'Responses-protocol DeepSeek profiles get the same thinking adaptation');
+    const p4 = catalog.profiles.find(p => p.id === 'p4')!.config;
+    assert.deepEqual(p4.kind === 'anthropic_compatible' && p4.extraBody, { thinking: { type: 'disabled' } },
+      'Anthropic-protocol DeepSeek profiles at the official endpoint also get it');
     assert.equal(readFileSync(path, 'utf8'), original);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

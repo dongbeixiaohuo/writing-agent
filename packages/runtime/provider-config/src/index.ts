@@ -67,6 +67,9 @@ const AnthropicConfigSchema = z
       .optional(),
     authHeader: z.enum(["x-api-key", "authorization"]).optional(),
     defaultMaxOutputTokens: z.number().int().positive().max(1_000_000).optional(),
+    // Vendor-specific extra request fields (e.g. DeepSeek thinking toggle).
+    // Additive only; protocol fields always win on key collision.
+    extraBody: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -223,6 +226,7 @@ export function createConfiguredProvider(
   }
   return new AnthropicCompatibleProvider({
     ...common,
+    ...(config.extraBody === undefined ? {} : { extraBody: config.extraBody }),
     ...(config.anthropicVersion === undefined
       ? {}
       : { anthropicVersion: config.anthropicVersion }),

@@ -606,6 +606,7 @@ export class AgentRuntime {
     let schemaCorrectionCount = 0;
     let requireToolOnContinuation = false;
     let pendingOutputRecoveryAttempt = 0;
+    let pendingOutputTokenLimit: number | null = null;
     let textSaveFailures = 0;
     const rejectedTextHashes = new Set<string>();
 
@@ -621,6 +622,7 @@ export class AgentRuntime {
         schemaCorrectionCount = 0;
         requireToolOnContinuation = false;
         pendingOutputRecoveryAttempt = 0;
+        pendingOutputTokenLimit = null;
         textSaveFailures = 0;
         rejectedTextHashes.clear();
         messages = [{ role: "system", content: policy.systemPrompt }, { role: "user", content: policy.userMessage }];
@@ -633,12 +635,17 @@ export class AgentRuntime {
       const offeredTools = policy?.modelTools ?? policy?.allowedTools;
       const toolSchemas = this.#tools.schemaSnapshots().filter((tool) => offeredTools === undefined || offeredTools.includes(tool.name));
       const tools = modelTools(this.#tools).filter((tool) => offeredTools === undefined || offeredTools.includes(tool.name));
+      // A truncation recovery escalates the output cap once (x2, capped);
+      // retrying with the same exhausted budget can only truncate again.
+      const escalatedOutputTokens = pendingOutputTokenLimit;
+      pendingOutputTokenLimit = null;
       const request: ModelRequest = {
         requestId,
         model: input.model,
         messages: structuredClone(messages),
         ...(tools.length === 0 ? {} : { tools }),
         parameters: { ...structuredClone(input.parameters),
+          ...(escalatedOutputTokens === null ? {} : { maxOutputTokens: escalatedOutputTokens }),
           ...(policy?.toolChoice === undefined ? {} : { toolChoice: policy.toolChoice }),
           ...(requireToolOnContinuation && tools.length > 0 ? { toolChoice: 'required' as const } : {}),
         },
@@ -742,7 +749,7 @@ export class AgentRuntime {
               partialTextLength: attempt.text.length, partialTextHash: contentHash(attempt.text),
             } : {}),
             ...(recoverOutput ? { recovery: { kind: "output_truncation", attempt: outputRecoveryCount + 1,
-              nextOutputTokenLimit: providerSnapshot.outputTokenLimit?.value ?? input.parameters.maxOutputTokens ?? null } } : {}),
+              nextOutputTokenLimit: (() => { const current = providerSnapshot.outputTokenLimit?.value ?? input.parameters.maxOutputTokens ?? null; return current === null ? null : Math.min(current * 2, 65536); })() } } : {}),
             ...(attempt.error.toolSchemaFeedback === undefined ? {} : { toolSchemaFeedback: attempt.error.toolSchemaFeedback }),
             ...usagePayload(attempt.usage),
           };
@@ -772,6 +779,8 @@ export class AgentRuntime {
           if (recoverOutput) {
             outputRecoveryCount += 1;
             pendingOutputRecoveryAttempt = attemptIndex + outputRecoveryAttempt + 1;
+            const currentOutputLimit = providerSnapshot.outputTokenLimit?.value ?? input.parameters.maxOutputTokens ?? null;
+            pendingOutputTokenLimit = currentOutputLimit === null ? null : Math.min(currentOutputLimit * 2, 65536);
             messages.push({ role: "user", content: "上次回复达到单次输出长度上限而被截断，本批工具全部未执行，残缺文本没有保存。请重新完整提交当前任务结果，不续接残缺JSON，不重复已完成的阶段。保持要求的正文、研究和事实完整；工具内容直接放入参数，不先在聊天中重复全文，省略重复过程说明。不要为了精简删掉必要事实或伪称任务完成；真实业务缺口仍按原规则提问。" });
             continue executionLoop;
           }

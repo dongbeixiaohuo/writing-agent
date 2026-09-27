@@ -116,7 +116,7 @@ test('search exposes protocols and Chinese names; third-party and plan entries s
   assert.ok(presets.filterProviderPresets('Responses').every(p => p.kind === 'openai_responses'));
   assert.equal(presets.filterProviderPresets('no-such-provider-123').length, 0);
   assert.equal(presets.filterProviderPresets('').length, presets.PREFERRED_PROVIDER_PRESETS.length);
-  assert.equal(presets.PROVIDER_PRESETS.length, 110);
+  assert.equal(presets.PROVIDER_PRESETS.length, 120);
   for (const p of presets.PROVIDER_PRESETS) {
     if (p.group === '第三方中转') assert.match(p.note, /内容和 API Key 会发送到此平台/);
     if (p.group === '套餐专用接口') assert.match(p.note, /确认套餐允许用于本写作应用/);
@@ -176,7 +176,9 @@ test('shared Tencent endpoints retain all six account editions and never combine
 });
 
 test('search and region/product filters do not silently change selection or conflate plans', () => {
-  assert.equal(presets.filterProviderPresets('智谱 国内 Coding').length, 2);
+  // rc.49: Zhipu Coding's Anthropic variant is the only visible Coding choice;
+  // its Chat and Responses variants stay registered but hidden from new selections.
+  assert.equal(presets.filterProviderPresets('智谱 国内 Coding').length, 1);
   assert.equal(presets.filterProviderPresets('腾讯', { region: 'international', product: 'token' }).length, 3);
   assert.equal(presets.filterProviderPresets('Qwen', { region: 'international', product: 'api' }).length, 1);
   assert.equal(presets.filterProviderPresets('MiniMax', { product: 'shared' }).length, 4);
@@ -192,35 +194,38 @@ test('new choices prefer Responses only within the same region and account offer
     const previous = presets.PROVIDER_PRESETS.find(p => p.id === chat)!;
     const next = presets.PROVIDER_PRESETS.find(p => p.id === responses)!;
     assert.deepEqual(previous.offering, next.offering);
-    if (responses === 'cc-deepseek') {
-      // Reviewed exception: DeepSeek's official endpoint rejected this app's
-      // Responses payload with HTTP 400 on a verified-valid key (2026-09-26),
-      // so its preferred new selection is the verifiable Chat Completions path.
-      assert.equal(next.kind, 'openai_compatible');
-    } else {
-      assert.equal(next.kind, 'openai_responses');
-    }
+    assert.equal(next.kind, 'openai_responses');
     const oldForm = { ...existing, ...previous, providerId: previous.id };
     const before = JSON.stringify(oldForm);
     assert.equal(presets.identifyProviderPreset(oldForm), previous.id);
     assert.equal(JSON.stringify(oldForm), before);
   }
-  // A provider's Responses Coding Plan does not replace its paid general API.
-  for (const id of ['zhipu', 'zai', 'cc-tencent-token-plan', 'cc-qwencloud-coding', 'gemini', 'siliconflow']) assert.ok(ids.has(id), id);
-  assert.equal(choices.length, 100);
+  // rc.49: for every family with an Anthropic variant, the Anthropic variant
+  // is the only visible choice; Chat and Responses variants stay registered
+  // but hidden from new selections, never migrated or rewritten.
+  for (const [hidden, preferred] of Object.entries(presets.ANTHROPIC_PREFERRED_PRESETS)) {
+    assert.ok(!ids.has(hidden), hidden);
+    assert.ok(ids.has(preferred), preferred);
+    const winner = presets.PROVIDER_PRESETS.find(p => p.id === preferred)!;
+    assert.equal(winner.kind, 'anthropic_compatible');
+    assert.equal(winner.authHeader, 'authorization');
+  }
+  // A provider's Anthropic Coding Plan does not replace its paid general API.
+  for (const id of ['zhipu-anthropic', 'zai-anthropic', 'cc-tencent-token-plan', 'cc-qwencloud-coding', 'gemini', 'siliconflow-anthropic']) assert.ok(ids.has(id), id);
+  assert.equal(choices.length, 99);
 });
 
 test('DeepSeek presets carry the reviewed thinking-disabled adaptation after real-account falsification', () => {
-  for (const id of ['cc-deepseek', 'deepseek']) {
+  for (const [id, kind] of [['cc-deepseek', 'openai_compatible'], ['deepseek', 'openai_compatible'], ['deepseek-anthropic', 'anthropic_compatible']] as const) {
     const preset = presets.PROVIDER_PRESETS.find(p => p.id === id)!;
-    assert.equal(preset.kind, 'openai_compatible');
+    assert.equal(preset.kind, kind);
     assert.deepEqual(preset.extraBody, { thinking: { type: 'disabled' } }, id);
   }
 });
 
 test('unified region wording and Chinese provider aliases are searchable', () => {
   assert.equal(presets.PROVIDER_REGIONS.unspecified, '不区分国内 / 国际');
-  assert.ok(presets.filterProviderPresets('深度求索').some(p => p.id === 'cc-deepseek'));
-  assert.ok(presets.filterProviderPresets('通义 国际').some(p => p.id === 'cc-qwencloud'));
-  assert.ok(presets.filterProviderPresets('智谱 国际').some(p => p.id === 'cc-zhipu-glm-en'));
+  assert.ok(presets.filterProviderPresets('深度求索').some(p => p.id === 'deepseek-anthropic'));
+  assert.ok(presets.filterProviderPresets('通义 国际').some(p => p.id === 'qwen-sg-anthropic'));
+  assert.ok(presets.filterProviderPresets('智谱 国际').some(p => p.id === 'zai-anthropic'));
 });
