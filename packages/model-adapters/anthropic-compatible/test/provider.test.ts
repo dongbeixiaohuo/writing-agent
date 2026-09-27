@@ -94,7 +94,8 @@ describe("Anthropic-compatible provider", () => {
     assert.equal((automatic.normalizedPayload as any).max_tokens, 131072);
     assert.deepEqual(automatic.outputTokenLimit, { value: 131072, source: 'model_default' });
     assert.equal((create().snapshotRequest({ ...request, model: 'MiniMax-M2.7' }).normalizedPayload as any).max_tokens, 65536);
-    assert.equal((create().snapshotRequest({ ...request, model: 'unknown-model' }).normalizedPayload as any).max_tokens, 4096);
+    assert.equal((create().snapshotRequest({ ...request, model: 'unknown-model' }).normalizedPayload as any).max_tokens, 32768,
+      'unknown models get the shared modern floor (rc.50), not the legacy 4096 that truncated full-article stages');
     assert.deepEqual(create(2048).snapshotRequest(request).outputTokenLimit, { value: 2048, source: 'configuration' });
     assert.deepEqual(create(2048).snapshotRequest({ ...request, parameters: { maxOutputTokens: 1024 } }).outputTokenLimit,
       { value: 1024, source: 'request' });

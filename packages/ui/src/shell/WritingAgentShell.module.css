@@ -2467,6 +2467,9 @@
 .providerModelRow { display: flex; align-items: center; gap: 10px; }
 .providerModelRow input[type="radio"] { accent-color: var(--dsw-alias-brand-primary); }
 .providerModelRow input:not([type="radio"]) { flex: 1; min-width: 0; padding: 12px; font: inherit; border: 1px solid var(--dsw-alias-border-l3); border-radius: 10px; background: var(--dsw-specific-input-major); color: var(--dsw-alias-label-primary); }
+.providerModelChips { display: flex; flex-wrap: wrap; gap: 8px; }
+.providerModelChip { padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 999px; background: var(--dsw-specific-popover); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; cursor: pointer; overflow-wrap: anywhere; }
+.providerModelChip:hover { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); }
 .providerAddModel { display: flex; align-items: center; gap: 8px; justify-self: start; }
 .providerEditorActions { justify-content: flex-end; padding-top: 12px; }
 .providerEditor .formField { font-size: 13px; }

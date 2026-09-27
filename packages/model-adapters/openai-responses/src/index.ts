@@ -5,7 +5,7 @@ import {
 import { TransportDeadline } from '../../../runtime/llm/src/transport-deadline.js';
 import {
   validateBaseURL, validateCredential, serializeMessages, invalidRequest, invalidResponse,
-  mapHttpError, parseSse, sanitizeProviderErrorDetail, type OpenAICompatibleProviderOptions,
+  mapHttpError, parseSse, sanitizeProviderErrorDetail, DEFAULT_MAX_OUTPUT_TOKENS, type OpenAICompatibleProviderOptions,
 } from '../../openai-compatible/src/index.js';
 
 const VERSION = 'openai-responses-v1';
@@ -36,7 +36,7 @@ function serialize(request: ModelRequest, scope: string) {
     model: request.model, input, stream: true, store: false, include: ['reasoning.encrypted_content'],
     ...(request.tools?.length ? { tools: request.tools.map(tool => ({ type: 'function', name: tool.name,
       description: tool.description, parameters: tool.inputSchema, strict: false })) } : {}),
-    ...(request.parameters.maxOutputTokens === undefined ? {} : { max_output_tokens: request.parameters.maxOutputTokens }),
+    ...(request.parameters.maxOutputTokens === undefined ? { max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS } : { max_output_tokens: request.parameters.maxOutputTokens }),
     ...(request.parameters.toolChoice === undefined ? {} : { tool_choice: request.parameters.toolChoice }),
     // Responses uses model-default sampling: reasoning models can reject the runtime's temperature=0.
   };

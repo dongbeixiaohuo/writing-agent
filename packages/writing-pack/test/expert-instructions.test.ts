@@ -90,7 +90,7 @@ describe("expert instruction migration", () => {
     assert.match(reader, /朋友圈.*熟人.*转发/u);
     assert.match(reader, /模拟读者.*即时感受/u);
     assert.match(reader, /点开.*继续.*弃读.*读完.*转发/u);
-    assert.match(buildExpertInstructions('fact_check'), /用户.*原话.*主观感受.*外部证明/u);
+    assert.match(buildExpertInstructions('fact_check'), /可被外部世界证伪[\s\S]*第一人称亲历叙事[\s\S]*不生成 C 编号/u);
     assert.match(editor, /写作工艺.*结构.*作者声音/u);
     assert.doesNotMatch(editor, /CTR|完读率/u);
     assert.match(publish, /读者价值.*全文承诺.*发布风险/u);
@@ -104,7 +104,7 @@ describe("expert instruction migration", () => {
     assert.match(buildExpertInstructions("position"), /推翻.*最强反例.*适用边界/u);
     assert.match(buildExpertInstructions("draft"), /作者声音.*禁止第一人称亲历/u);
     assert.match(buildExpertInstructions("language_review"), /只有在收益明确.*局部最小修改/u);
-    assert.match(buildExpertInstructions("fact_check"), /完整最终正文.*最终标题.*分发文案/u);
+    assert.match(buildExpertInstructions("fact_check"), /完整正文.*最终标题.*分发文案/u);
     assert.match(buildExpertInstructions("style_modeler"), /至少三组独立.*盲测/u);
     assert.match(buildExpertInstructions("style_modeler"), /超过 30% 不得验证通过/u);
     assert.match(buildExpertInstructions("memory"), /只有.*user_edit.*用户偏好/u);

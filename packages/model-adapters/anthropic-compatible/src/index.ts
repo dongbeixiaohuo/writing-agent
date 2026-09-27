@@ -12,7 +12,7 @@ import {
   type ProviderTokenUsage,
 } from "../../../runtime/llm/src/index.js";
 import { TransportDeadline } from "../../../runtime/llm/src/transport-deadline.js";
-import { sanitizeProviderErrorDetail } from "../../openai-compatible/src/index.js";
+import { sanitizeProviderErrorDetail, DEFAULT_MAX_OUTPUT_TOKENS } from "../../openai-compatible/src/index.js";
 
 export interface AnthropicCompatibleModelCapabilities {
   readonly tools: CapabilitySupport;
@@ -718,7 +718,9 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
     if (["claude-haiku-4-5", "claude-haiku-4-5-20251001"].includes(request.model)) {
       return { value: 65_536, source: "model_default" };
     }
-    return { value: 4_096, source: "adapter_default" };
+    // Unknown models get the shared modern floor instead of the legacy 4096:
+    // omitting or under-sizing this truncated full-article stages outright.
+    return { value: DEFAULT_MAX_OUTPUT_TOKENS, source: "adapter_default" };
   }
 
   protected async *providerStream(

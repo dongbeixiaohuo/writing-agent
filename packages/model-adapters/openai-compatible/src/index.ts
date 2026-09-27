@@ -230,9 +230,7 @@ function serializeRequest(request: ModelRequest): WireRequest {
     ...(request.parameters.temperature === undefined
       ? {}
       : { temperature: request.parameters.temperature }),
-    ...(request.parameters.maxOutputTokens === undefined
-      ? {}
-      : { max_tokens: request.parameters.maxOutputTokens }),
+    max_tokens: request.parameters.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     ...(request.parameters.stop === undefined
       ? {}
       : { stop: [...request.parameters.stop] }),
@@ -436,6 +434,11 @@ function responseFacts(response: Response): {
 }
 
 const MAX_PROVIDER_DETAIL_CHARS = 240;
+
+// 2026-era floor for generated output. Omitting a limit silently fell back
+// to server defaults as low as 4096 tokens (DeepSeek), truncating
+// full-article stages; per-request and per-configuration limits still win.
+export const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
 
 // Extract a user-presentable reason from an upstream error body field. The
 // raw body never leaves the adapter: control characters are stripped,

@@ -97,9 +97,12 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
       setNotice(`已使用 ${saved.model}。已有项目的下一次消息、确认或重试都会使用此模型。正在验证连接…`)
       const result = await host.testProviderConnection()
       setStatus(current => current ? { ...current, connectionTest: result } : current)
-      const copy = providerConnectionMessage(result)
-      setNotice(`已使用 ${saved.model}。已有项目下次继续时生效。`)
-      if (!result.ok) setError(`配置已保存。${copy.text}`)
+      if (result.ok) {
+        setNotice(`已保存并验证通过：${saved.model} 已可用。已有项目下次继续时生效。`)
+      } else {
+        setNotice(`已保存 ${saved.model}，但连接验证未通过。已有项目下次继续时会使用此模型。`)
+        setError(`配置已保存。${providerConnectionMessage(result).text}`)
+      }
     } catch (reason) { setError(explain(reason, '模型配置未保存')) }
     finally { setBusy(false) }
   }
@@ -132,7 +135,16 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
     try {
       const items = await host.listProviderModels({ ...form, model: models[selectedModel]?.trim() || 'catalog-probe' })
       setCatalog(items)
-      setNotice(`已获取 ${items.length} 个模型。可以在模型 ID 输入框中选择，或手动填写。目录不代表已验证工具调用能力。`)
+      const first = items[0]
+      if (first === undefined) {
+        setNotice('服务商没有返回可用模型列表，请手动填写模型 ID。')
+      } else {
+        const autoFill = !models[selectedModel]?.trim()
+        if (autoFill) setModels(current => current.map((value, i) => i === selectedModel ? first : value))
+        setNotice(autoFill
+          ? `已获取 ${items.length} 个模型，已填入 ${first}。点击下方模型标签可直接换用。`
+          : `已获取 ${items.length} 个模型。点击下方模型标签可填入当前选中的模型行，也可以手动填写。`)
+      }
     } catch (reason) { setError(explain(reason, '模型目录读取失败，可以手动填写模型 ID。')) }
     finally { setBusy(false) }
   }
@@ -236,6 +248,10 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
           <div className={css.providerModelsHeader}><div><strong>模型目录</strong><p className={css.settingHint}>填写服务商提供的完整模型 ID，并选择要使用的模型。</p></div>
             <button type="button" className={css.providerCustomize} disabled={!form.baseURL || (!canReuseKey && !form.apiKey)} onClick={() => void loadModels()}>获取可用模型</button></div>
           {presetModels.length > 0 && <p className={css.settingHint}>输入框提供收录时的模型 ID 示例，可直接填写其他 ID；示例不代表你的账号已开通，不会自动选中。</p>}
+          {catalog.length > 0 && <div className={css.providerModelChips} aria-label="服务商返回的可用模型">
+            {catalog.slice(0, 8).map(id => <button type="button" key={id} className={css.providerModelChip}
+              onClick={() => { setModels(current => current.map((value, i) => i === selectedModel ? id : value)); setError(null) }}>{id}</button>)}
+          </div>}
           <datalist id="provider-model-catalog">{suggestedModels.map(id => <option key={id} value={id} />)}</datalist>
           <div className={css.providerModelRows}>{models.map((id, index) => <div className={css.providerModelRow} key={index}>
             <input type="radio" name="provider-current-model" aria-label={`使用第 ${index + 1} 个模型`} checked={selectedModel === index} onChange={() => setSelectedModel(index)} />
@@ -247,8 +263,9 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
           </div>)}</div>
           <button type="button" className={clsx(css.secondaryAction, css.providerAddModel)} onClick={() => setModels(current => [...current, ''])} disabled={models.length >= 100}><PlusIcon />添加模型</button>
           <p className={css.settingHint}>保存后会发送一条最小请求来验证连接，可能产生少量模型费用。正在生成回复时，请先停止或等本轮结束再切换。</p>
+          {checkingKey && !form.apiKey && <p className={css.settingHint} role="status">正在检查已保存的 Key，完成后才能保存；输入新 Key 可立即保存。</p>}
           <div className={css.providerEditorActions}><button type="button" className={css.secondaryAction} onClick={() => { editRequest.current++; setCheckingKey(false); setEditing(false); setForm(emptyForm()); setError(null) }}>取消</button>
-            <button type="button" className={css.primaryAction} disabled={checkingKey && !form.apiKey} onClick={() => void save()}>{busy ? '处理中…' : '保存并验证连接'}</button></div>
+            <button type="button" className={css.primaryAction} disabled={checkingKey && !form.apiKey} onClick={() => void save()}>{busy ? '正在保存并验证连接…' : '保存并验证连接'}</button></div>
         </fieldset></>}
       {busy && <p className={css.settingHint} role="status">正在处理模型配置，请稍候…</p>}
     </>}
