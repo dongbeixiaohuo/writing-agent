@@ -28,6 +28,7 @@ export interface SessionSummary {
 }
 export interface ChatMessage {
     stage?: WritingWorkflowStageId;
+    actorLabel?: string;
     streaming?: 'generating' | 'saving';
     audience?: 'diagnostic';
     id: string;

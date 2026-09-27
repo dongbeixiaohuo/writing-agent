@@ -48,6 +48,7 @@ import { openWorkspaceStorage } from "../../../packages/storage/src/index.js";
 import {
   loadDesktopProviderProfile,
   loadDesktopProviderCatalog,
+  markDesktopProviderVerified,
   selectDesktopProvider,
   previousProvider,
   providerConfigForInput,
@@ -144,7 +145,8 @@ export class DesktopApplicationHost {
     return { profileId: profile.id, displayName: profile.displayName, models: profile.models,
       kind: profile.config.kind, providerId: profile.config.providerId, baseURL: profile.config.baseURL,
       model: profile.config.model, tools: profile.config.tools, usage: profile.config.usage,
-      configured: metadata.configured, credentialPersistence: metadata.persistence, credentialChecked: true };
+      configured: metadata.configured, credentialPersistence: metadata.persistence, credentialChecked: true,
+      verifiedAt: profile.verifiedAt ?? null };
   }
 
   async providerStatus(mode?: 'summary' | 'active'): Promise<DesktopProviderStatus> {
@@ -159,7 +161,7 @@ export class DesktopApplicationHost {
         kind: profile.config.kind, providerId: profile.config.providerId, baseURL: profile.config.baseURL,
         model: profile.config.model, tools: profile.config.tools, usage: profile.config.usage,
         configured: metadata?.configured ?? false, credentialPersistence: metadata?.persistence ?? 'missing' as const,
-        credentialChecked: checked };
+        credentialChecked: checked, verifiedAt: profile.verifiedAt ?? null };
     }));
     if (config === null) {
       return {
@@ -297,6 +299,12 @@ export class DesktopApplicationHost {
           ...(result.error.providerDetail === undefined ? {} : { providerDetail: result.error.providerDetail }),
         };
     if (config === this.#providerConfig) this.#connectionTest = connectionTest;
+    if (connectionTest.ok) {
+      const activeProfileId = loadDesktopProviderCatalog(this.#providerProfilePath).activeProfileId;
+      if (activeProfileId !== null) {
+        try { markDesktopProviderVerified(this.#providerProfilePath, activeProfileId); } catch { /* keep the test result even if the stamp fails */ }
+      }
+    }
     return connectionTest;
   }
 
@@ -443,6 +451,11 @@ export class DesktopApplicationHost {
     const path = this.#savedPublications.get(receiptId);
     if (path === undefined || !existsSync(path)) throw new Error('EXPORT_RECEIPT_NOT_FOUND');
     return path;
+  }
+
+  providerConfigPath(): string {
+    if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
+    return this.#providerProfilePath;
   }
 
   async writeDiagnostics(

@@ -42,6 +42,10 @@ const api: DesktopHostApi = {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'revealPublication', args: [receiptId] });
     if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
   },
+  async revealProviderConfig(): Promise<void> {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'revealProviderConfig', args: [] });
+    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+  },
   subscribe(listener: (snapshot: BridgeSnapshot) => void): () => void {
     const wrapped = (_event: Electron.IpcRendererEvent, snapshot: BridgeSnapshot): void => {
       listener(snapshot);

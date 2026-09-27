@@ -104,6 +104,36 @@ const WORKFLOW_STAGE_LABELS: Readonly<Record<WritingWorkflowStage, string>> = {
   fact_check: "事实核查",
 };
 
+// Author-facing labels for whichever expert wrote a conversation reply.
+const AUTHOR_ACTOR_LABELS: Readonly<Record<string, string>> = {
+  director: "写作助手",
+  research: "资料研究",
+  outline: "选题策划",
+  draft: "内容主笔",
+  review_editor: "编辑审校",
+  review_publish: "发布审校",
+  review_reader: "读者审校",
+  central_revision: "修订主笔",
+  language_review: "语言终审",
+  fact_check: "事实核查",
+  topic_generator: "选题策划",
+  topic_research: "选题研究",
+  position: "立场辨析",
+  concretizer: "具象化",
+  empathy: "共情",
+  title: "标题策划",
+  opening: "开头",
+  style_modeler: "风格建模",
+  illustrator: "配图策划",
+  memory: "记忆",
+  retrospective: "复盘",
+};
+
+function authorActorLabel(payload: Readonly<Record<string, unknown>>): string | null {
+  const role = textPayload(payload, "role");
+  return role === null ? null : AUTHOR_ACTOR_LABELS[role] ?? null;
+}
+
 function budgetForProject(
   budget: RunDraftInput["budget"],
   mode: WritingProjectProjection["project"]["mode"],
@@ -428,9 +458,11 @@ function timelineForSession(
       const reply = intake ? successfulToolResult(event.payload)?.reply : null;
       if (typeof reply === 'string') {
         savedIntakeReplyRunIds.add(event.runId);
-        const replyStage = workflowStagePayload(successfulToolResult(event.payload) ?? {}, 'expertStage');
+        const replyResult = successfulToolResult(event.payload) ?? {};
+        const replyStage = workflowStagePayload(replyResult, 'expertStage');
+        const actorLabel = authorActorLabel(replyResult);
         items.push({ id: `${event.id}:reply`, kind: 'message', role: 'assistant', body: reply, createdAt,
-          ...(replyStage ? { stage: replyStage } : {}) });
+          ...(replyStage ? { stage: replyStage } : {}), ...(actorLabel === null ? {} : { actorLabel }) });
       }
       const collaboration = collaborationResult(event.payload);
       if (collaboration !== null && typeof collaboration.reason === 'string') {

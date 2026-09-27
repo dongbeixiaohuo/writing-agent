@@ -212,8 +212,12 @@ function Timeline({ items, brand, footer, diagnostic = false }: { items: readonl
             <span className={css.expertBadge} aria-hidden="true">{stageRoleCopy(item.stage).role.slice(0, 1)}</span>
             <div><strong>{stageRoleCopy(item.stage).role}专家</strong><span>{stageRoleCopy(item.stage).action}</span></div>
           </header>}
+          {item.role === 'assistant' && !item.stage && item.actorLabel && <header className={css.expertHeading} data-actor-label={item.actorLabel}>
+            <span className={css.expertBadge} aria-hidden="true">{item.actorLabel.slice(0, 1)}</span>
+            <div><strong>{item.actorLabel}</strong></div>
+          </header>}
           <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
-          <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleCopy(item.stage).role + '专家' : brand.assistantName} · ${item.createdAt}`}</div>
+          <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleCopy(item.stage).role + '专家' : item.actorLabel ?? brand.assistantName} · ${item.createdAt}`}</div>
         </article>
       ) : (
         <div className={css.toolRow} key={item.id}>

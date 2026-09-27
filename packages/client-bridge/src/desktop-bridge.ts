@@ -37,6 +37,7 @@ export type DesktopRpcMethod =
   | "exportPublication"
   | "savePublicationAs"
   | "revealPublication"
+  | "revealProviderConfig"
   | "refresh"
   | "providerStatus"
   | "providerDetails"
@@ -78,6 +79,7 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "exportPublication",
   "savePublicationAs",
   "revealPublication",
+  "revealProviderConfig",
   "refresh",
   "providerStatus",
   "providerDetails",
@@ -201,6 +203,8 @@ export interface DesktopSavedProviderView {
   readonly usage: DesktopProviderSetupInput['usage'];
   readonly configured: boolean;
   readonly credentialPersistence: DesktopProviderStatusView['credentialPersistence'];
+  // Set when a connection test passed for this profile; survives restarts.
+  readonly verifiedAt?: string | null;
 }
 
 export interface DesktopProviderStatusView {
@@ -285,6 +289,7 @@ export type DesktopPublicationSaveResult =
 export interface DesktopHostConfiguration {
   savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult>;
   revealPublication(receiptId: string): Promise<void>;
+  revealProviderConfig(): Promise<void>;
   providerStatus(mode?: 'summary'): Promise<DesktopProviderStatusView>;
   providerDetails(profileId: string): Promise<DesktopSavedProviderView>;
   configureProvider(input: DesktopProviderSetupInput): Promise<DesktopProviderStatusView>;

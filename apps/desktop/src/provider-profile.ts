@@ -102,6 +102,8 @@ export interface SavedProviderEntry {
   readonly displayName: string;
   readonly models: readonly string[];
   readonly config: NormalizedProviderConfig;
+  // Last successful connection test; cleared when the profile is re-saved.
+  readonly verifiedAt?: string | undefined;
 }
 
 export interface DesktopProviderCatalog {
@@ -115,6 +117,7 @@ const catalogSchema = z.object({
   profiles: z.array(z.object({
     id: z.string().min(1).max(128), displayName: z.string().min(1).max(128),
     models: z.array(z.string().min(1).max(256)).min(1).max(100), config: z.unknown(),
+    verifiedAt: z.string().max(64).optional(),
   }).strict()).max(50),
 }).strict();
 
@@ -179,6 +182,27 @@ function writeCatalog(filePathInput: string, catalog: DesktopProviderCatalog): v
     writeFileSync(temporaryPath, `${JSON.stringify(catalog, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     renameSync(temporaryPath, filePath);
   } finally { rmSync(temporaryPath, { force: true }); }
+}
+
+// Stamp a profile as connection-verified without touching its stored config;
+// preset extraBody fill-in stays a read-time concern (see withPresetExtraBody).
+export function markDesktopProviderVerified(filePathInput: string, profileId: string): void {
+  const filePath = resolve(filePathInput);
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return;
+  }
+  if (typeof value !== 'object' || value === null || !('schemaVersion' in value) || value.schemaVersion !== 3) return;
+  const catalog = value as DesktopProviderCatalog;
+  if (!catalog.profiles.some(profile => profile.id === profileId)) return;
+  writeCatalog(filePath, {
+    ...catalog,
+    profiles: catalog.profiles.map(profile => profile.id === profileId
+      ? { ...profile, verifiedAt: new Date().toISOString() }
+      : profile),
+  });
 }
 
 export function previousProvider(catalog: DesktopProviderCatalog, input: DesktopProviderSetupInput): SavedProviderEntry | undefined {

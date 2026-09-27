@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { DesktopHostConfiguration, DesktopProviderSetupInput, DesktopProviderStatusView, DesktopSavedProviderView } from '../../../client-bridge/src/desktop-bridge.ts'
-import { PROVIDER_PRESETS, PROVIDER_PROTOCOL_LABELS, PROVIDER_CHANNELS, providerRegionLabel, providerProductLabel, applyProviderPreset, identifyProviderPreset, RESPONSES_PREFERRED_OVER_CHAT } from '../../../client-bridge/src/provider-presets.ts'
-import { ProviderPresetPicker } from './ProviderPresetPicker.tsx'
+import { PROVIDER_PRESETS, PREFERRED_PROVIDER_PRESETS, PROVIDER_PROTOCOL_LABELS, PROVIDER_CHANNELS, providerRegionLabel, providerProductLabel, applyProviderPreset, identifyProviderPreset, RESPONSES_PREFERRED_OVER_CHAT, type ProviderPreset } from '../../../client-bridge/src/provider-presets.ts'
 import { commandErrorMessage, normalizeProviderSetup, providerConnectionMessage, setupErrorMessage } from './onboarding.ts'
 import { PlusIcon, TrashIcon } from './Icons.tsx'
 import css from './WritingAgentShell.module.css'
@@ -10,6 +9,14 @@ import css from './WritingAgentShell.module.css'
 const emptyForm = (): DesktopProviderSetupInput => ({ profileId: null, displayName: '',
   kind: 'openai_compatible', providerId: 'custom', baseURL: '', model: '', tools: 'supported',
   usage: 'reported', apiKey: '', persistence: 'system' })
+
+// Static catalog grouping for the provider dropdown; never depends on state.
+const presetGroups: [string, ProviderPreset[]][] = []
+for (const item of PREFERRED_PROVIDER_PRESETS) {
+  const existing = presetGroups.find(group => group[0] === item.offering.provider)
+  if (existing) existing[1].push(item)
+  else presetGroups.push([item.offering.provider, [item]])
+}
 
 export function ProviderSettings({ host }: { host: DesktopHostConfiguration | undefined }) {
   const [status, setStatus] = useState<DesktopProviderStatusView | null>(null)
@@ -28,6 +35,7 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
   const [checkingKey, setCheckingKey] = useState(false)
   const [changePreset, setChangePreset] = useState(false)
   const editRequest = useRef(0)
+  const editorRef = useRef<HTMLFieldSetElement>(null)
 
   useEffect(() => {
     let active = true
@@ -37,6 +45,11 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false; editRequest.current++ }
   }, [host])
+
+  // The editor renders inline below the saved-profile list; bring it into view.
+  useEffect(() => {
+    if (editing) editorRef.current?.scrollIntoView({ block: 'start' })
+  }, [editing])
 
   const profiles = status?.profiles ?? []
   const existing = profiles.find(profile => profile.profileId === form.profileId)
@@ -150,24 +163,26 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
   }
 
   return <div className={css.providerSettings}>
-    <h3 className={css.settingsSectionTitle}>模型</h3>
+    <div className={css.providerTitleRow}><h3 className={css.settingsSectionTitle}>模型</h3>
+      {host && <button type="button" className={css.secondaryAction} onClick={() => { void host.revealProviderConfig().catch(() => setError('无法打开配置文件位置')) }}>打开配置文件</button>}
+    </div>
     <p className={css.providerLead}>{editing
       ? (existing ? `编辑 ${existing.displayName} 的连接、Key 和模型。` : '添加供应商和 API 密钥，选择本次写作使用的模型。')
       : '添加供应商和 API 密钥，选择本次写作使用的模型。'}</p>
-    {!editing && <p className={css.settingHint}>模型选择对所有项目生效，包括已有对话；从下一次请求开始使用。</p>}
+    <p className={css.settingHint}>模型选择对所有项目生效，包括已有对话；从下一次请求开始使用。</p>
     {!host ? <p className={css.aboutCopy}>请在桌面版中添加和切换模型。</p> : <>
       {loading && <p role="status">正在读取模型配置…</p>}
-      {!editing && <>
       <div className={css.providerList} aria-label="已保存的模型供应商">
         {profiles.map(profile => {
           const identity = PROVIDER_PRESETS.find(item => item.id === identifyProviderPreset(profile))
           const active = status?.activeProfileId === profile.profileId
           const model = choices[profile.profileId] ?? profile.model
           const selected = active && model === status?.model
+          const verified = Boolean(profile.verifiedAt) || (active && status?.connectionTest?.ok === true)
           return <section className={css.providerCard} key={profile.profileId}>
             <div className={css.providerCardHeading}>
               <div className={css.providerIdentity}><strong>{profile.displayName}</strong>
-                <span className={clsx(css.providerDot, profile.configured && css.providerDotReady)} aria-label={profile.credentialChecked === false ? '配置已保存，Key 尚未检查' : profile.configured ? '已保存 Key' : '需要填写 Key'} />
+                <span className={clsx(css.providerDot, verified && css.providerDotReady)} aria-label={verified ? '连接已验证' : profile.credentialChecked === false ? '配置已保存，Key 尚未检查' : profile.configured ? '已保存 Key' : '需要填写 Key'} />
                 {active && <span className={css.providerCurrent}>当前使用</span>}
               </div>
               <button type="button" className={css.secondaryAction} disabled={busy} onClick={() => openEditor(profile)} aria-label={`编辑 ${profile.displayName}`}>编辑</button>
@@ -190,12 +205,11 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
         })}
       </div>
       {notice && <p className={css.providerNotice} role="status">{notice}</p>}
-      {error && <div className={css.editorError} role="alert">{error}</div>}
-      <button type="button" className={css.addProviderButton} disabled={busy || loading} onClick={() => openEditor()}><PlusIcon />添加模型供应商</button>
-      </>}
+      {error && !editing && <div className={css.editorError} role="alert">{error}</div>}
+      {!editing && <button type="button" className={css.addProviderButton} disabled={busy || loading} onClick={() => openEditor()}><PlusIcon />添加模型供应商</button>}
       {editing && <>
         {error && <div className={css.editorError} role="alert">{error}</div>}
-        <fieldset className={css.providerEditor} disabled={busy}>
+        <fieldset ref={editorRef} className={css.providerEditor} disabled={busy}>
           <legend className={css.srOnly}>{existing ? '编辑模型供应商' : '添加模型供应商'}</legend>
           <div className={css.providerTabs} role="tablist" aria-label="供应商配置方式">
             <button type="button" role="tab" aria-selected={mode === 'preset'} onClick={() => setMode('preset')}>预置模型供应商</button>
@@ -208,9 +222,15 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
                 <p className={css.settingHint}>正在编辑已保存的配置，直接修改下面的 Key、模型和显示名称即可；只有更换供应商时才需要展开预设目录。</p>
                 <button type="button" className={css.secondaryAction} onClick={() => setChangePreset(true)}>更换供应商预设</button>
               </div>
-            : <ProviderPresetPicker key={form.profileId ?? 'new'} selectedId={presetId} onSelect={choosePreset} />}
+            : <label className={css.formField}><span>供应商</span>
+                <select aria-label="选择预置供应商" value={presetId} onChange={event => { if (event.target.value !== '') choosePreset(event.target.value) }}>
+                  <option value="" disabled={presetId !== ''}>请选择供应商…</option>
+                  {presetGroups.map(([provider, items]) => <optgroup key={provider} label={provider}>
+                    {items.map(item => <option key={item.id} value={item.id}>{item.label} · {PROVIDER_PROTOCOL_LABELS[item.kind]}</option>)}
+                  </optgroup>)}
+                </select></label>}
           {preset && <div className={css.providerPresetInfo} aria-label="预设连接信息">
-            <p className={css.settingHint}>当前配置 · 搜索不会更改下面的配置，点击结果才会切换。</p>
+            <p className={css.settingHint}>当前配置 · 切换上面的供应商下拉框才会更改下面的配置。</p>
             {Object.hasOwn(RESPONSES_PREFERRED_OVER_CHAT, preset.id) && <p className={css.settingHint}>此配置使用已保存的 Chat Completions 协议，继续保留；不会自动迁移到 Responses。</p>}
             {matchesPreset ? <><strong>{preset.offering.provider}</strong><dl>
               <div><dt>账号地区</dt><dd>{providerRegionLabel(preset.offering)}</dd></div>

@@ -94,6 +94,8 @@ let mainWindow: BrowserWindow | null = null;
 let host: DesktopApplicationHost | null = null;
 let hostUnsubscribe: (() => void) | null = null;
 let quitting = false;
+// The window close button asks first; app.quit() paths set this to skip the prompt.
+let allowClose = false;
 let rendererHandshakeResolve: (() => void) | null = null;
 const rendererHandshakeCompleted = new Promise<void>((resolve) => {
   rendererHandshakeResolve = resolve;
@@ -192,6 +194,10 @@ async function handleRpc(
     if (parsed.method === 'revealPublication') {
       if (typeof parsed.args[0] !== 'string') throw new Error('EXPORT_RECEIPT_NOT_FOUND');
       shell.showItemInFolder(currentHost.publicationSavedPath(parsed.args[0]));
+      return { ok: true, result: null, snapshot: currentHost.bridge.getSnapshot() };
+    }
+    if (parsed.method === 'revealProviderConfig') {
+      shell.showItemInFolder(currentHost.providerConfigPath());
       return { ok: true, result: null, snapshot: currentHost.bridge.getSnapshot() };
     }
     if (parsed.method === "providerStatus") {
@@ -475,6 +481,26 @@ function createWindow(): BrowserWindow {
     window.on('page-title-updated', (event) => {
       event.preventDefault();
       window.setTitle(testTitle);
+    });
+  }
+  if (runEnvironment.mode === 'production') {
+    window.on('close', (event) => {
+      if (allowClose) return;
+      event.preventDefault();
+      void dialog.showMessageBox(window, {
+        type: 'question',
+        buttons: ['最小化', '退出程序', '取消'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+        title: '关闭 Writing Agent',
+        message: '最小化窗口，还是退出程序？',
+        detail: '最小化后程序留在任务栏继续运行；退出会结束当前写作运行，已保存的内容仍保留。',
+      }).then(({ response }) => {
+        if (window.isDestroyed()) return;
+        if (response === 0) window.minimize();
+        if (response === 1) { allowClose = true; window.close(); }
+      }).catch(() => undefined);
     });
   }
   void window.loadURL(`${DESKTOP_APP_ORIGIN}/index.html`);
