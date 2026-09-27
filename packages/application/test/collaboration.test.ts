@@ -1182,3 +1182,35 @@ it("reconstructs a legacy run baseline from pre-start history, not the resumed c
   } finally { f.close(); }
   }
 });
+
+it('rejects an invalid evidence ledger at research commit and stops the blind retry loop', async () => {
+  class InvalidLedger extends CollaborationProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request)!;
+      if (state.actor === 'research') {
+        yield { type: 'tool_call_delta', index: 0, id: `invalid-ledger-${this.requests.length}`, name: 'submit_writing_stage',
+          argumentsDelta: JSON.stringify({ stage: 'research', content: '{"claims":[{"evidence_id":"E001","claim_type":"other","claim_text":"无引句的事实","source_title":"材料","source_publisher":"用户提供","source_quote":"","accessed_at":"本次运行","reliability":"high","use_boundary":"无","verification_status":"user_provided"}]}' }) };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+        return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new InvalidLedger();
+  const f = setup(provider);
+  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'ledger-gate-loop', model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {}, budget: f.input.budget } });
+  try {
+    const first = await f.app.runDraft(f.input);
+    const run = f.storage.getRun(first.runId)!;
+    assert.equal(run.status, 'waiting_user');
+    assert.equal(run.stopReason, 'TOOL_FAILURE_LOOP');
+    const failures = f.storage.listRunEvents(first.runId)
+      .filter((event) => event.type === 'tool.failed' && JSON.stringify(event.payload).includes('EVIDENCE_LEDGER_INVALID'));
+    assert.equal(failures.length, 3, 'the breaker stops the loop after three identical gate rejections');
+    assert.equal(f.storage.inspectProject('p')!.currentEvidenceVersionId, null, 'invalid ledger must not persist');
+    await bridge.selectSession('p', first.sessionId);
+    assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason, 'TOOL_FAILURE_LOOP');
+    const rows = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
+    assert.ok(rows.some((row) => row.kind === 'tool' && row.label === '自动重试已暂停'));
+  } finally { bridge.dispose(); f.close(); }
+});

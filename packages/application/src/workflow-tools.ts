@@ -26,7 +26,7 @@ type WorkflowStorage = StoragePort & {
 };
 
 type ContentStage = Exclude<WritingWorkflowStage, "fact_check">;
-import { FactClaimStatusSchema, FactClaimTypeSchema } from '../../writing-core/src/index.js';
+import { FactClaimStatusSchema, FactClaimTypeSchema, parseEvidenceLedger } from '../../writing-core/src/index.js';
 import { isPublicationSelectionCurrent } from './publication-choice.js';
 type BodyStage = Extract<ContentStage, "draft" | "central_revision" | "language_review">;
 
@@ -226,14 +226,29 @@ function evidenceLedgerContent(content: string): string {
       typeof parsed === "object" &&
       Array.isArray((parsed as { claims?: unknown }).claims)
     ) {
+      // Persist only what the fact-check gate can later accept; rejecting here
+      // lets the research expert fix the ledger while it still owns it.
+      parseEvidenceLedger(JSON.stringify(parsed));
       return JSON.stringify(parsed);
     }
-  } catch {
-    // Free-form research notes remain useful, but they do not become evidence
-    // claims implicitly. The fact gate will therefore reject any unsupported
-    // factual claims instead of treating prose notes as verified evidence.
+    return JSON.stringify({ claims: [], notes: content.trim() });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      // Free-form research notes remain useful, but they do not become evidence
+      // claims implicitly. The fact gate will therefore reject any unsupported
+      // factual claims instead of treating prose notes as verified evidence.
+      return JSON.stringify({ claims: [], notes: content.trim() });
+    }
+    throw new ToolExecutionFault(
+      "EVIDENCE_LEDGER_INVALID",
+      "The evidence ledger does not satisfy the persisted contract",
+      true,
+      {
+        correction:
+          "Every claim needs all required fields as non-empty strings: evidence_id (unique E001/E002...), claim_type, claim_text, source_title, source_publisher, source_quote, accessed_at, reliability (high/medium/low), use_boundary, verification_status. Only entries marked verification_status='illustrative' may leave source_quote as an empty string. source_url, when present, must be an http(s) URL. Resubmit the complete corrected ledger JSON.",
+      },
+    );
   }
-  return JSON.stringify({ claims: [], notes: content.trim() });
 }
 
 export function evidenceIdsFromLedger(content: string): readonly string[] {

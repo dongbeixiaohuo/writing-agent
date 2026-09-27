@@ -999,7 +999,7 @@ const EVIDENCE_REQUIRED_FIELDS = [
   "verification_status",
 ] as const;
 
-function parseEvidenceLedger(content: string): { evidenceIds: ReadonlySet<string> } {
+export function parseEvidenceLedger(content: string): { evidenceIds: ReadonlySet<string> } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content) as unknown;
@@ -1056,8 +1056,12 @@ function parseEvidenceLedger(content: string): { evidenceIds: ReadonlySet<string
       throw new Error("FACT_EVIDENCE_INVALID");
     }
     const record = item as Record<string, unknown>;
+    // Illustrative derivations have no source text to quote; their
+    // use_boundary already restricts them to conditional reasoning.
+    const allowEmptyQuote = record.verification_status === "illustrative";
     for (const field of EVIDENCE_REQUIRED_FIELDS) {
       if (typeof record[field] !== "string" || record[field].trim().length === 0) {
+        if (field === "source_quote" && typeof record[field] === "string" && allowEmptyQuote) continue;
         throw new Error("FACT_EVIDENCE_INVALID");
       }
     }

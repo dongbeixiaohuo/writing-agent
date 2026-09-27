@@ -26,7 +26,7 @@ function expectedArtifact(stage: CollaborationStage): ArtifactExpectation {
 }
 
 function stageInstruction(stage: WritingWorkflowStage, basePrompt: string): string {
-  if (stage === "research") return '只提交研究证据账本：content必须为JSON字符串，格式 {"claims":[{"evidence_id":"E001","claim_type":"other","claim_text":"材料直接支持的事实","source_title":"材料名","source_publisher":"用户提供","source_quote":"原文直接引句","accessed_at":"本次运行","reliability":"high","use_boundary":"准确支持范围","verification_status":"user_provided"}],"notes":"缺口和适用边界"}。编号依次E001/E002，不可编造证据。没有事实用空claims并说明原因。';
+  if (stage === "research") return '只提交研究证据账本：content必须为JSON字符串，格式 {"claims":[{"evidence_id":"E001","claim_type":"other","claim_text":"材料直接支持的事实","source_title":"材料名","source_publisher":"用户提供","source_quote":"原文直接引句","accessed_at":"本次运行","reliability":"high","use_boundary":"准确支持范围","verification_status":"user_provided"}],"notes":"缺口和适用边界"}。编号依次E001/E002，不可编造证据。推演或无原文可引的条目必须把verification_status设为illustrative且source_quote留空字符串，其余条目的source_quote必须是原文直接引句，否则账本会被保存校验拒绝。没有事实用空claims并说明原因。';
   if (stage === "outline") return "只提交可供确认的文体化提纲，体现用户要求和材料边界，不要提前写正文。提纲是写给作者看的确认稿：禁止出现 E001/E002 这类证据编号和 use_boundary、illustrative 等内部字段名；证据与观点的对应关系由研究账本承担，不在提纲里标注；需要说明来源性质时用自然语言（如「这是作者的亲历观察」「这一点按既有事实写」）。";
   if (stage.startsWith("review_")) return "你是只读独立评审。只审阅绑定的同一初稿，不得读取其他初审意见，不得提交正文或重写文章。面向普通作者交流，不交一份冗长内部报告：先用1—2句给结论，再按‘优先讨论的问题’‘可选优化’‘建议保留’分段；优先列最多3个最重要的讨论点，每点用短句说明位置、影响和建议。确有更多重要风险不能省略，但不要为凑条目逐段复述全文、重复夸赞或展开后台检查清单。不得显示正文UUID、review_publish等内部字段。不要声称已交接下一位；共创模式会由程序在你保存后等待作者讨论和确认。";
   if (stage === "language_review") return "你是主笔的最终语言润色环节，不是撰写评审报告的审稿人。只对绑定的集中修订稿作有收益的最小语言润色，不做第二次结构重写，不增删事实或改变文意。submit_writing_stage.content必须是可直接交付的完整文章正文；无修改也须逐字提交原文。禁止交付‘本稿语言良好、修改建议、建议优先处理、整体可保留’等评审意见或过程说明。保留真实标题（Markdown或纯文本均可）及全部正文。";

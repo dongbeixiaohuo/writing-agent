@@ -28,6 +28,7 @@ export function runStopReasonLabel(reason: string): string {
     MODEL_UNSUPPORTED: '当前模型不可用，请检查模型 ID 或重新验证连接',
     MODEL_RESPONSE_INVALID: '模型回复未通过格式校验，本轮未完成；你的输入仍保留，可以重试，反复出现请反馈运行记录',
     STAGE_OUTPUT_NOT_SAVED: '本阶段生成结果反复未通过保存校验，已停止自动重写；上一版稿件保留。这是阶段输出问题，不是账户额度或连接问题',
+    TOOL_FAILURE_LOOP: '程序提交反复被同一门禁拒绝，已停止自动重试；已保存内容保留。这是内容校验问题，不是账户额度或连接问题',
     MODEL_OUTPUT_TRUNCATED: '模型回复达到单次输出长度上限而被截断，本阶段未完成；残缺内容未保存，已有阶段仍保留，无需重填资料',
     MODEL_AUTHENTICATION_FAILED: '模型鉴权失败，请检查 API Key',
     MODEL_RATE_LIMITED: '服务商限流，请稍后重试',
@@ -39,7 +40,7 @@ export function runStopReasonLabel(reason: string): string {
 }
 
 export function runProgressSummary(run: RunRecordView): string {
-  if (run.stopReason === 'STAGE_OUTPUT_NOT_SAVED') return runStopReasonLabel(run.stopReason);
+  if (run.stopReason === 'STAGE_OUTPUT_NOT_SAVED' || run.stopReason === 'TOOL_FAILURE_LOOP') return runStopReasonLabel(run.stopReason);
   if (run.status === 'waiting_user' && run.waitingFor === 'publication_selection') return '等待你选择标题 · 确认后继续核查，正文不重写';
   if (run.purpose === 'writing-pack:author-conversation') return run.status === 'completed'
     ? run.replyPreview || '这轮交流已保存，请在主对话中查看回复和下一步'
@@ -73,6 +74,7 @@ export function runProgressSummary(run: RunRecordView): string {
 
 export function runDisplayStatus(run: RunRecordView): string {
   if (run.stopReason === 'STAGE_OUTPUT_NOT_SAVED') return '保存未完成 · 自动重写已暂停';
+  if (run.stopReason === 'TOOL_FAILURE_LOOP') return '提交未通过 · 自动重试已暂停';
   if (run.status === 'waiting_user' && run.waitingFor === 'publication_selection') return '等待你选择标题';
   if (['writing-pack:intake', 'writing-pack:author-conversation'].includes(run.purpose ?? '') && run.status === 'completed') return '本轮交流已保存';
   if (run.status === 'completed' && !run.publicationReady) return '尚未完成交付'

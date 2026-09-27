@@ -609,6 +609,7 @@ export class AgentRuntime {
     let pendingOutputTokenLimit: number | null = null;
     let textSaveFailures = 0;
     const rejectedTextHashes = new Set<string>();
+    const toolFailureCounts = new Map<string, number>();
 
     executionLoop: for (;;) {
       if (this.#sessions.getRun(runId)?.status === "cancelled") {
@@ -625,6 +626,7 @@ export class AgentRuntime {
         pendingOutputTokenLimit = null;
         textSaveFailures = 0;
         rejectedTextHashes.clear();
+        toolFailureCounts.clear();
         messages = [{ role: "system", content: policy.systemPrompt }, { role: "user", content: policy.userMessage }];
       } else if (policy !== undefined) {
         // Refresh authoritative state after each tool without sharing another
@@ -973,6 +975,19 @@ export class AgentRuntime {
                 payload: { actor: policy?.actor, validationCode: result.error.code, rejectedAttempts: textSaveFailures } });
               return { ok: false, ...this.#facts(active), error: { code: 'STAGE_OUTPUT_NOT_SAVED',
                 message: 'Automatic regeneration stopped after repeated local save rejection; the saved manuscript is unchanged', retryable: true } };
+            }
+          }
+          if (!harnessTextOutput && !result.ok) {
+            const failureKey = `${call.name}:${result.error.code}`;
+            const failures = (toolFailureCounts.get(failureKey) ?? 0) + 1;
+            toolFailureCounts.set(failureKey, failures);
+            // A gate rejection that keeps repeating cannot be fixed by another
+            // blind resubmit; pause instead of burning more model round-trips.
+            if (failures >= 3) {
+              this.#sessions.pauseRun({ projectId, runId, operationId: this.#idFactory(), reason: 'TOOL_FAILURE_LOOP',
+                payload: { actor: policy?.actor, tool: call.name, validationCode: result.error.code, attempts: failures } });
+              return { ok: false, ...this.#facts(active), error: { code: 'TOOL_FAILURE_LOOP',
+                message: `${call.name} failed ${failures} times with ${result.error.code}; automatic retry stopped`, retryable: true } };
             }
           }
           const pause = result.ok ? this.#pauseAfterTool(result) : null;

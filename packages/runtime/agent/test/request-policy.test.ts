@@ -42,6 +42,35 @@ it(`bounds local text-save corrections without replaying a stage indefinitely: $
 });
 }
 
+it('stops resubmitting after the same tool gate rejection repeats', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tool-failure-loop-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  let requests = 0; let submissions = 0;
+  class Provider extends ModelProviderBase {
+    constructor() { super('gate-loop', '1', { protocol:'mock', streaming:'supported', tools:'supported', usage:'unknown' }); }
+    protected async *providerStream(): AsyncIterable<ProviderStreamEvent> {
+      requests++;
+      yield { type:'tool_call_delta', index:0, id:`call-${requests}`, name:'submit_fact_check', argumentsDelta:'{"claims":[]}' };
+      yield { type:'completed', finishReason:'tool_calls' };
+    }
+  }
+  try {
+    storage.createProject({operationId:'p',projectId:'p',name:'fixture',mode:'quick',actor:{kind:'user',id:'u'}});
+    const tools = ToolRegistry.create([{ name:'submit_fact_check',version:'1.0.0',description:'submit',effect:'local_idempotent',permissions:[],
+      inputSchema:{type:'object',properties:{claims:{type:'array'}},required:['claims']},
+      execute() { submissions++; throw new ToolExecutionFault('FACT_EVIDENCE_INVALID','saved ledger violates the gate contract',false,{}); } }]);
+    const runtime = new AgentRuntime({provider:new Provider(),sessions:storage,tools,
+      requestPolicy:()=>({scopeId:'fact',actor:'fact_check',systemPrompt:'check',userMessage:'check',allowedTools:['submit_fact_check']})});
+    const result = await runtime.run({projectId:'p',purpose:'test',model:'m',parameters:{},systemPrompt:'root',userMessage:'root',grantedPermissions:[],expectedBodyVersionId:null,budget:{maxModelRequests:12,maxToolCalls:12,maxRetriesPerRequest:0,maxMajorRevisions:0}});
+    assert.equal(result.ok, false);
+    assert.equal(requests, 3);
+    assert.equal(submissions, 3);
+    assert.equal(storage.getRun(result.runId)!.stopReason, 'TOOL_FAILURE_LOOP');
+    assert.equal(storage.getRun(result.runId)!.status, 'waiting_user');
+    assert.equal(storage.listRunEvents(result.runId).at(-1)?.payload.attempts, 3);
+  } finally {storage.close(); rmSync(dir,{recursive:true,force:true});}
+});
+
 for (const scenario of ['save', 'cancel', 'truncated', 'timeout', 'revoked', 'permission', 'empty'] as const) {
 it(`harness text save retains tool safety boundaries: ${scenario}`, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'text-save-policy-'));

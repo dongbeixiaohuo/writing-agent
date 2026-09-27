@@ -207,6 +207,72 @@ describe("fact-check-v2 domain policy", () => {
     assert.equal(passed.status, "passed");
   });
 
+  it("accepts illustrative ledger entries with empty source quotes but rejects empty quotes otherwise", () => {
+    const api = factApi();
+    const ledger = (quote: string, status: string) => JSON.stringify({
+      claims: [{
+        evidence_id: "E001",
+        claim_type: "other",
+        claim_text: "概念间的通行区分",
+        source_title: "条件式推演（无外部来源核实）",
+        source_publisher: "推演",
+        source_quote: quote,
+        accessed_at: "本次运行",
+        reliability: "low",
+        use_boundary: "只作条件式论证，不得写成权威定义",
+        verification_status: status,
+      }],
+      notes: "含推演条目",
+    });
+    const snapshot = api.createFactCheckInputSnapshot({
+      snapshotId: "snapshot-illustrative",
+      bodyVersionId: "body-v1",
+      bodyContent,
+      titleVersionId: "title-v1",
+      titleContent,
+      evidenceVersionId: "evidence-v1",
+      evidenceContent: ledger("", "illustrative"),
+    });
+    const passed = api.evaluateFactCheck(
+      snapshot,
+      { bodyContent, titleContent, evidenceContent: ledger("", "illustrative") },
+      {
+        schemaVersion: "fact-check-v2",
+        snapshotId: "snapshot-illustrative",
+        bodyVersionId: "body-v1",
+        titleVersionId: "title-v1",
+        coverage: { body: true, title: true, distributionCopy: true },
+        claims: [{
+          claimId: "C001",
+          claimText: "一项被支持的说法",
+          claimType: "other",
+          location: "正文第 1 段",
+          status: "SUPPORTED",
+          risk: "green",
+          supportScope: "full",
+          matchedEvidenceId: "E001",
+          sourceReference: null,
+          evidenceSummary: "推演条目支持条件式表述",
+          recommendedAction: "保留",
+        }],
+        noFactualClaimsReason: "",
+      },
+    );
+    assert.equal(passed.status, "passed");
+    assert.throws(
+      () => api.createFactCheckInputSnapshot({
+        snapshotId: "snapshot-empty-quote",
+        bodyVersionId: "body-v1",
+        bodyContent,
+        titleVersionId: "title-v1",
+        titleContent,
+        evidenceVersionId: "evidence-v1",
+        evidenceContent: ledger("", "user_provided"),
+      }),
+      /FACT_EVIDENCE_INVALID/u,
+    );
+  });
+
   it("locks declared distribution copy and rejects stale or wrongly bound inputs", () => {
     const api = factApi();
     const titleWithDistribution = [
