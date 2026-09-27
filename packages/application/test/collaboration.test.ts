@@ -101,6 +101,22 @@ it('requires a separate author decision after each independent review, including
   } finally { f.close(); }
 });
 
+it('treats a short affirmative outline reply as confirmation, not a rework request', async () => {
+  const provider = new CollaborationProvider();
+  const f = setup(provider, 'co_creation');
+  try {
+    const first = await f.app.runDraft(f.input);
+    const outlineWait = f.storage.listRunEvents(first.runId).filter(e => e.type === 'run.waiting_user').at(-1);
+    assert.equal(outlineWait?.payload.stage, 'outline');
+    await f.app.resumeDraft({ ...f.input, runId: first.runId, operationId: 'confirm-outline-naturally',
+      decision: 'resume', userInstruction: '方向可以', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main').length, 1,
+      '短确认语（"方向可以"）不得触发提纲返工重写');
+    const nextWait = f.storage.listRunEvents(first.runId).filter(e => e.type === 'run.waiting_user').at(-1);
+    assert.equal(nextWait?.payload.stage, 'draft', '确认提纲后应进入初稿确认点');
+  } finally { f.close(); }
+});
+
 it('carries a dead run\'s contiguous completed stages into the next run of the same session', async () => {
   const provider = new CollaborationProvider();
   const f = setup(provider, 'co_creation');

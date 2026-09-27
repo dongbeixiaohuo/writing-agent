@@ -12,6 +12,18 @@ import { getPublicationCandidates, savePublicationCandidates, isPublicationSelec
 import { createFactSourceTool } from './fact-web.js';
 
 type Decision = { action: "dispatch" | "ask" | "rework" | "finish"; stage: WritingWorkflowStage | null; reason: string; questions: string[]; inputVersionIds?: string[] };
+
+const OUTLINE_APPROVAL_EXACT = /^(?:确认|确认提纲|按此提纲继续|同意|继续|继续写|可以|好的|ok|认可当前阶段，继续下一步|确认[，,]\s*继续)[。！!\s]*$/iu;
+const OUTLINE_CHANGE_INTENT = /(?:改|换|调整|重写|重新|不要|不用|别|不行|不好|不对|但|不过|然而|删|去掉|增|加|补)/u;
+
+// A short affirmative reply ("方向可以", "这样可以，继续") confirms the outline;
+// only an explicit change-intent word sends it back for rework. The previous
+// exact-allowlist misread "方向可以" as a change request and looped the outline.
+function outlineApproved(instruction: string): boolean {
+  const text = instruction.trim();
+  if (OUTLINE_APPROVAL_EXACT.test(text)) return true;
+  return text.length <= 30 && /(?:可以|确认|同意|认可|继续|没问题|好|行|ok)/iu.test(text) && !OUTLINE_CHANGE_INTENT.test(text);
+}
 type CollaborationStage = WritingWorkflowStage | "title";
 type ArtifactExpectation = { kind: "evidence" | "outline" | "body" | "review" | "fact_assessment" | "publication_candidates"; mayCommitBody: boolean };
 type Assignment = { actor: string; stage: CollaborationStage | null; decisionId: string; inputVersionIds: string[]; reason: string; status: string; invalidatedStages: readonly string[]; expectedArtifact: ArtifactExpectation | null; expectedBodyVersionId?: string | null };
@@ -142,7 +154,7 @@ export function createWritingCollaboration(options: {
         const wait = current.events.filter((event) => event.type === "run.waiting_user").at(-1);
         const reply = current.events.filter((event) => event.type === "run.resumed").at(-1);
         if (args.stage === "draft" && wait?.payload.stage === "outline" && reply !== undefined &&
-          !/^(?:确认|确认提纲|按此提纲继续|同意|继续|继续写|可以|好的|ok|认可当前阶段，继续下一步|确认[，,]\s*继续)[。！!\s]*$/iu.test(String(reply.payload.displayInstruction ?? ""))) {
+          !outlineApproved(String(reply.payload.displayInstruction ?? ""))) {
           throw new ToolExecutionFault("OUTLINE_REWORK_REQUIRED", "The user requested an outline change: rework outline and obtain confirmation before drafting");
         }
       }

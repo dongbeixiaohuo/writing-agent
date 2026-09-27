@@ -1751,9 +1751,6 @@ export function WritingAgentShell({
             <PlusIcon /><span className={sidebarCss.newSessionLabel}>新建项目</span>
           </button>
           <div className={sidebarCss.panelList}>
-            <button className={clsx(sidebarCss.panelRow, sidebarCss.panelActive)} type="button">
-              <span className={sidebarCss.panelGlyph}><FolderIcon /></span>{!sidebarCollapsed && <span className={sidebarCss.panelTitle}>写作项目</span>}
-            </button>
             {extensions.listLaunchers('sidebar.primary').map(launcher => (
               <button
                 className={sidebarCss.panelRow}

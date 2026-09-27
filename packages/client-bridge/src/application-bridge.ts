@@ -969,6 +969,8 @@ export class ApplicationClientBridge implements ClientBridge {
   #snapshot: BridgeSnapshot;
   #pollTimer: ReturnType<typeof setInterval> | null = null;
   readonly #eventSeqByProject = new Map<string, number>();
+  #lastLiveFingerprint: string | null = null;
+  #lastLiveRefreshAt = 0;
   #disposed = false;
   #handoffError: { projectId: string; error: NonNullable<BridgeSnapshot['lastError']> } | null = null;
 
@@ -1066,6 +1068,21 @@ export class ApplicationClientBridge implements ClientBridge {
   // must not pay it: rebuild only when some project recorded a newer event
   // (or the project set itself changed). Probe errors fail open into a full
   // refresh, preserving the existing offline reporting path.
+  //
+  // Streaming deltas never persist events, so the dirty check alone would
+  // leave a growing live reply invisible until the request finished. Track a
+  // fingerprint of the ephemeral stream state and rebuild (throttled) while
+  // it changes.
+  #liveFingerprint(): string | null {
+    const snapshot = this.#snapshot;
+    const runId = snapshot.activeRunId;
+    if (runId === null || snapshot.selectedProjectId === "" || snapshot.selectedSessionId === "") return null;
+    const reply = this.#service.getLiveReply(snapshot.selectedProjectId, snapshot.selectedSessionId, runId);
+    const activity = this.#service.getLiveActivity(snapshot.selectedProjectId, snapshot.selectedSessionId, runId);
+    if (reply === null && activity === null) return null;
+    return `${reply?.text.length ?? 0}:${reply?.phase ?? ""}:${activity?.phase ?? ""}:${activity?.requestOrdinal ?? 0}:${activity?.workPreview?.text.length ?? 0}`;
+  }
+
   async #refreshWhenDirty(): Promise<void> {
     if (this.#disposed) return;
     try {
@@ -1076,7 +1093,16 @@ export class ApplicationClientBridge implements ClientBridge {
           const known = this.#eventSeqByProject.get(project.id);
           return known === undefined || this.#service.hasProjectEventsAfter(project.id, known);
         });
-      if (dirty) await this.refresh();
+      const fingerprint = this.#liveFingerprint();
+      const liveChanged = fingerprint !== null && fingerprint !== this.#lastLiveFingerprint;
+      const liveDue = Date.now() - this.#lastLiveRefreshAt >= 200;
+      if (dirty || (liveChanged && liveDue)) {
+        this.#lastLiveFingerprint = fingerprint;
+        if (liveChanged) this.#lastLiveRefreshAt = Date.now();
+        await this.refresh();
+      } else if (fingerprint === null) {
+        this.#lastLiveFingerprint = null;
+      }
     } catch {
       await this.refresh();
     }
