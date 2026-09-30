@@ -1,6 +1,6 @@
 # Writing Agent 桌面版：Release 文案草稿
 
-**公开 RC 文案草稿：1.0.0-rc.58 / Windows x64。** 维护者已授权公开 Pre-release 并接受未签名风险；最终源码 SHA、安装与升级记录及资产哈希仍待构建流程填写。签收前不把本页当作已发布声明。
+**1.0.0-rc.58 / Windows x64 已公开发布为 Pre-release。** 本文件保留发布文案来源，实际下载与资产说明以 [GitHub Release](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58) 为准；维护者已接受未签名风险。最终源码为 `cdfe876df1d275b617189d1408217227877d6699`，验证详情见 [执行记录](RC58_RELEASE_EXECUTION.md)。
 
 ## 这是什么
 
@@ -18,7 +18,7 @@ Writing Agent 是通过对话逐步完成文章的写作助手。无需安装 Cl
 
 ## 下载和使用
 
-发布后，本页 Assets 中的 `Writing-Agent-Setup-1.0.0-rc.58-x64.exe` 是 Windows 安装包，`SHA256SUMS.txt` 用于校验，`Source code.zip` 是源码。普通用户无需安装 Node.js、Python 或 Claude Code。本次只分发 Windows x64，不宣称支持尚未提供产物的平台。
+Release 页 Assets 中的 `Writing-Agent-Setup-1.0.0-rc.58-x64.exe` 是 Windows 安装包，`SHA256SUMS.txt` 用于校验，`Source code.zip` 是源码。普通用户无需安装 Node.js、Python 或 Claude Code。本次只分发 Windows x64，不宣称支持尚未提供产物的平台。
 
 **本次 RC 未签名**，Windows 可能显示“未知发布者”或 SmartScreen 提醒。请核对本仓库来源与 SHA-256；不要求关闭杀毒软件或系统安全防护。建议使用默认本地安装目录，不安装到 OneDrive 等云同步目录。
 
@@ -26,7 +26,7 @@ Writing Agent 是通过对话逐步完成文章的写作助手。无需安装 Cl
 
 ## 升级与费用
 
-先备份工作区并退出旧程序，再安装新包。安装器设计为保留项目与设置；该候选安装和升级实测证据在发布前填写，不引用旧 RC 代替。当前没有自动更新。
+先备份工作区并退出旧程序，再安装新包。最终候选在 Windows Runner 完成安装、启动、卸载与 rc.57→rc.58 升级验证，检查旧程序移除、单一安装项、快捷方式和数据目录哨兵文件保留；不代表所有历史数据库迁移都已经验收。当前没有自动更新。
 
 模型及 Tavily 用量由自己的服务商账户计费。项目保存在本机，但模型/外部搜索会接收必要请求内容。不开外部搜索时是未联网的模型复核，仍可能有事实错误；开启搜索也不保证绝对正确。
 
