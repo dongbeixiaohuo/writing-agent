@@ -129,7 +129,10 @@ class ClaudeRuntimeSyncTests(unittest.TestCase):
                             "version": "1.2.3",
                             "dependencies": {"cheerio": "1.0.0"},
                             "devDependencies": {"tsx": "^4.20.3"},
-                        }
+                        },
+                        "node_modules/cheerio": {"version": "1.0.0"},
+                        "node_modules/desktop-only": {"version": "9.9.9", "dev": True},
+                        "node_modules/tsx": {"version": "4.20.3"},
                     },
                 }
             ),
@@ -305,6 +308,9 @@ class ClaudeRuntimeSyncTests(unittest.TestCase):
         self.assertEqual("1.2.3", plugin_lock["version"])
         self.assertEqual("^4.20.3", plugin_lock["packages"][""]["dependencies"]["tsx"])
         self.assertNotIn("devDependencies", plugin_lock["packages"][""])
+        self.assertIn("node_modules/cheerio", plugin_lock["packages"])
+        self.assertIn("node_modules/tsx", plugin_lock["packages"])
+        self.assertNotIn("node_modules/desktop-only", plugin_lock["packages"])
 
     def test_check_reports_package_lock_version_mismatch(self) -> None:
         write(
@@ -360,6 +366,13 @@ class PackageMetadataTests(unittest.TestCase):
 
         self.assertIn("npm audit --omit=dev --audit-level=high", workflow)
         self.assertIn("RUN_PLUGIN_INSTALL_TEST", workflow)
+        self.assertIn('npm_config_offline: "true"', workflow)
+        self.assertIn("desktop-pr:", workflow)
+        self.assertIn("npm run check:ui", workflow)
+        self.assertIn("npm run test:desktop", workflow)
+        self.assertIn("npm run desktop:package", workflow)
+        self.assertIn("apps/desktop/scripts/test_desktop_installer.ps1", workflow)
+        self.assertIn("writing-agent-pr-desktop-validation", workflow)
 
     def test_package_and_lock_versions_match(self) -> None:
         package = json.loads((self.repository_root / "package.json").read_text(encoding="utf-8"))

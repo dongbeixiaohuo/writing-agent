@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -33,13 +33,35 @@ export class SearchSettingsStore {
       const parsed = inputSchema.safeParse(input);
       if (!parsed.success) throw new Error('SEARCH_SETTINGS_INVALID');
       const key = parsed.data.tavilyApiKey?.trim();
-      if (parsed.data.tavilyEnabled && !key && !(await this.credentials.resolve(`managed:${this.#credentialId}`))) throw new Error('SEARCH_API_KEY_REQUIRED');
-      if (key) await this.credentials.saveManaged(this.#credentialId, key, 'system');
+      const credentialRef = `managed:${this.#credentialId}`;
+      if (parsed.data.tavilyEnabled && !key && !(await this.credentials.resolve(credentialRef))) throw new Error('SEARCH_API_KEY_REQUIRED');
       const value = { parallelEnabled: parsed.data.parallelEnabled, tavilyEnabled: parsed.data.tavilyEnabled };
       mkdirSync(dirname(this.path), { recursive: true });
       const temp = `${this.path}.${randomUUID()}.tmp`;
       writeFileSync(temp, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 });
-      renameSync(temp, this.path);
+      let previousKey: string | undefined;
+      let previousPersistence: 'system' | 'session' = 'system';
+      let keyChanged = false;
+      try {
+        if (key) {
+          previousKey = await this.credentials.resolve(credentialRef);
+          if (previousKey !== undefined) {
+            const metadata = await this.credentials.inspect(credentialRef);
+            if (metadata.persistence === 'session') previousPersistence = 'session';
+          }
+          await this.credentials.saveManaged(this.#credentialId, key, 'system');
+          keyChanged = true;
+        }
+        renameSync(temp, this.path);
+      } catch (error) {
+        if (keyChanged) {
+          if (previousKey === undefined) await this.credentials.deleteManaged(this.#credentialId);
+          else await this.credentials.saveManaged(this.#credentialId, previousKey, previousPersistence);
+        }
+        throw error;
+      } finally {
+        try { unlinkSync(temp); } catch { /* renamed or never created */ }
+      }
       this.#flags = value;
       return await this.status();
     } finally { this.#saving = false; }

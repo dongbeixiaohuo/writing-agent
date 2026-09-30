@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { SearchSettingsStore } from './search-settings.js';
+import type { FactSearchConfiguration } from '../../../packages/application/src/fact-search.js';
 import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -85,6 +86,7 @@ export interface DesktopApplicationHostOptions {
   ) => ModelProvider;
   readonly applicationVersion?: string;
   readonly applicationBuild?: string;
+  readonly authorizeFactSearchQuery?: FactSearchConfiguration['authorizeQuery'];
 }
 
 function workspaceId(path: string): string {
@@ -112,11 +114,13 @@ export class DesktopApplicationHost {
   #savingPublication = false;
   #providerChanging = false;
   readonly #searchSettings: SearchSettingsStore;
+  readonly #authorizeFactSearchQuery: FactSearchConfiguration['authorizeQuery'];
 
   constructor(options: DesktopApplicationHostOptions) {
     this.#workspacePath = resolve(options.workspacePath);
     this.#providerProfilePath = resolve(options.providerProfilePath);
     this.#credentials = options.credentials ?? createDefaultCredentialBroker();
+    this.#authorizeFactSearchQuery = options.authorizeFactSearchQuery;
     this.#searchSettings = new SearchSettingsStore(join(dirname(this.#providerProfilePath), 'search-settings.json'), this.#credentials);
     this.#providerFactory = options.providerFactory ?? createConfiguredProvider;
     this.#applicationVersion = options.applicationVersion ?? "development";
@@ -601,7 +605,8 @@ export class DesktopApplicationHost {
       : this.#providerFactory(config, this.#credentials);
     const service = new WritingApplicationService({
       storage: this.#storage,
-      factSearchConfiguration: () => this.#searchSettings.configuration(),
+      factSearchConfiguration: () => ({ ...this.#searchSettings.configuration(),
+        ...(this.#authorizeFactSearchQuery ? { authorizeQuery: this.#authorizeFactSearchQuery } : {}) }),
       ...(provider === undefined ? {} : { provider }),
     });
     const bridge = createApplicationBridge({

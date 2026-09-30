@@ -78,6 +78,10 @@ test('main conversation links to the current manuscript while export settings li
     assert.doesNotMatch(checkpoint, /aria-label="共创决策"|本阶段成果|已自动展开|打开稿件与过程/);
     assert.equal((checkpoint.match(/aria-label="写作指令"/gu) ?? []).length, 1);
     assert.match(checkpoint, />结束本轮</);
+    const staleCheckpoint = render('stale', 'ready', 'CO_CREATION_CHECKPOINT', null, null, true);
+    assert.match(staleCheckpoint, /这个方向可以吗/);
+    assert.doesNotMatch(staleCheckpoint, /当前稿件的核查结果已失效/);
+    assert.match(render('stale'), /当前稿件的核查结果已失效/);
     const timeout = render('not_checked', 'ready', 'UNKNOWN_EXTERNAL_OUTCOME', null, {source:'model',cause:'timeout',replyAccepted:true});
     assert.match(timeout, /已收到你的回复/u);
     assert.match(timeout, /模型响应超时/u);

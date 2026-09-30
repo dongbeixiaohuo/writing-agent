@@ -38,6 +38,7 @@ const dependencyManifest = JSON.parse(await readFile(resolve(stageRoot, 'SOURCE_
 const sourcePackage = JSON.parse(await readFile(resolve('apps/desktop/package.json'), 'utf8'))
 assert.equal(packageMetadata.version, sourcePackage.version)
 assert.equal(dependencyManifest.version, packageMetadata.version)
+assert.match(dependencyManifest.sourceRevision, /^[a-f0-9]{40}$/u)
 assert.equal(/require\(["']node:/u.test(preloadText), false, 'sandbox preload imports a Node built-in')
 for (const marker of [
   '@tauri-apps',

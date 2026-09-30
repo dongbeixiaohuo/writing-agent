@@ -8,6 +8,21 @@ import { openWorkspaceStorage } from "../../storage/src/index.js";
 import type { SecureWebFetchResult } from "../../runtime/tools/src/index.js";
 import { createFactSourceTool, type FactSourceFetcher } from "../src/fact-web.js";
 
+test('source transport failure is classified without leaking URL credentials or provider text', async () => {
+  const f = setup(LEDGER_URL);
+  try {
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p', fetcher: {
+      fetchText: async () => { throw new Error('socket failed secret-private-provider-diagnostics'); },
+    } });
+    await assert.rejects(async () => tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never), (error: any) => {
+      assert.equal(error.code, 'FACT_SOURCE_FETCH_UNAVAILABLE');
+      assert.match(error.message, /摘录/);
+      assert.doesNotMatch(error.message, /secret-private/);
+      return true;
+    });
+  } finally { f.close(); }
+});
+
 const actor = { kind: "user", id: "fact-web-test" } as const;
 const LEDGER_URL = "https://93.184.216.34/report-2026";
 

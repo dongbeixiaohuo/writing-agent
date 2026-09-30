@@ -758,6 +758,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
           : { "x-api-key": credential };
       const response = await fetch(`${this.baseURL}/messages`, {
         method: "POST",
+        redirect: "error",
         headers: {
           accept: "text/event-stream",
           "anthropic-version": this.anthropicVersion,

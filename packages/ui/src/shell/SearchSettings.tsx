@@ -89,7 +89,7 @@ export function SearchSettings({ host }: { host: DesktopHostConfiguration | unde
       </div>
 
       {settings.parallelEnabled && settings.tavilyEnabled && <div className={css.searchRouteNotice} role="status"><strong>搜索顺序</strong><span>Parallel 优先 → 失败时自动切换 Tavily</span></div>}
-      <p className={css.settingHint}>开启后，公开事实检索词会发送给所选搜索服务；不默认上传整篇稿件。设置会用于下一步事实核查，已保存的历史核查结果不会自动更新。</p>
+      <p className={css.settingHint}>开启后，桌面端会先展示具体检索词和搜索服务，得到你的确认后才发送；请勿同意发送私人或客户机密。不发送则本轮仅使用已有材料与模型复核。设置会用于下一步事实核查，已保存的历史核查结果不会自动更新。</p>
       {!settings.parallelEnabled && !settings.tavilyEnabled && <div className={css.searchWarning} role="status"><strong>未启用外部搜索</strong><span>仅由大模型结合已有材料和自身知识再做一次事实性核查，未联网验证。文章仍可能存在事实性错误，请注意核对重要信息。</span></div>}
       {settings.credentialPersistence === 'session' && settings.tavilyKeyConfigured && <div className={css.searchWarning} role="status"><strong>Key 仅本次启动可用</strong><span>系统凭据存储不可用，重启桌面应用后需重新填写 Tavily API Key。</span></div>}
       {validation !== null && <p className={css.searchValidation} role="alert">{validation}</p>}

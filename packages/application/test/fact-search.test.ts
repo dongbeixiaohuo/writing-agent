@@ -2,6 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as search from '../src/fact-search.js';
 
+test('external search is fail-closed without host authorization, including short private queries', async () => {
+  let requests = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: false }),
+    fetch: async () => { requests++; throw new Error('must not send'); } });
+  for (const query of ['客户张先生的未公开合同金额', 'account private@example.test', '公开事实问题']) {
+    const result = await scope.search(query);
+    assert.equal(result.mode, 'unavailable');
+    assert.match(result.notice, /未获.*授权/);
+  }
+  assert.equal(requests, 0);
+});
+
 test('disabled search never makes a network request', async () => {
   assert.equal(typeof search.createFactSearchTools, 'function');
   let requests = 0;
@@ -13,8 +25,28 @@ test('disabled search never makes a network request', async () => {
   assert.match(scope.instructions(), /未联网/);
 });
 
+test('host sees exact query and enabled destinations; refusal stops this run without network or retry prompts', async () => {
+  const approvals: unknown[] = []; let requests = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: true,
+    authorizeQuery: async request => { approvals.push(request); return false; } }),
+    fetch: async () => { requests++; throw new Error('must not send'); } });
+  await scope.search('  私人合同摘录  ', undefined, 'r');
+  await scope.search('改写后的同一个私人问题', undefined, 'r');
+  assert.deepEqual(approvals, [{ query: '私人合同摘录', providers: ['parallel', 'tavily'], runId: 'r' }]);
+  assert.equal(requests, 0);
+});
+
+test('cancelling while author approval is pending prevents all network calls', async () => {
+  const controller = new AbortController(); let calls = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
+    authorizeQuery: async () => { controller.abort(); return true; } }),
+    fetch: async () => { calls++; return Response.json({ results: [] }); } });
+  await assert.rejects(scope.search('公开问题', controller.signal));
+  assert.equal(calls, 0);
+});
+
 test('Tavily uses an authorization header and returns bounded untrusted evidence', async () => {
-  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, getTavilyKey: async () => 'private-test-key' }),
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, authorizeQuery: async () => true, getTavilyKey: async () => 'private-test-key' }),
     fetch: async (url, init) => {
       assert.equal(String(url), 'https://api.tavily.com/search');
       assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer private-test-key');
@@ -32,13 +64,13 @@ test('Tavily uses an authorization header and returns bounded untrusted evidence
 
 test('Parallel failure falls back only to enabled Tavily, failures never imply verification', async () => {
   const urls: string[] = [];
-  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: true, getTavilyKey: async () => 'test-key' }),
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: true, authorizeQuery: async () => true, getTavilyKey: async () => 'test-key' }),
     fetch: async url => { urls.push(String(url)); return String(url).includes('parallel') ? new Response('no', { status: 429 }) : Response.json({ results: [] }); } });
   const result = await scope.search('public fact');
   assert.equal(result.provider, 'tavily');
   assert.equal(urls.length, 2);
   assert.match(result.notice, /Parallel/);
-  const failed = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: false }),
+  const failed = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: false, authorizeQuery: async () => true }),
     fetch: async () => { throw new Error('private-provider-error'); } });
   const outcome = await failed.search('public fact');
   assert.equal(outcome.mode, 'unavailable');
@@ -47,7 +79,7 @@ test('Parallel failure falls back only to enabled Tavily, failures never imply v
 
 test('Parallel MCP handshake and SSE tool response produce evidence; repeated queries use cache', async () => {
   const methods: string[] = [];
-  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: false }),
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: false, authorizeQuery: async () => true }),
     fetch: async (_url, init) => {
       const body = JSON.parse(String(init?.body)); methods.push(body.method);
       if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 'fixture', version: '1' } } });
@@ -70,7 +102,7 @@ test('model-only instructions distinguish knowledge review from external evidenc
 
 test('search is bounded per run, cancellation does not trigger paid fallback', async () => {
   let calls = 0;
-  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, getTavilyKey: async () => 'test' }),
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, authorizeQuery: async () => true, getTavilyKey: async () => 'test' }),
     fetch: async () => { calls++; return Response.json({ results: [] }); } });
   for (let i = 0; i < 7; i++) await scope.search(`query ${i}`);
   assert.equal(calls, 6);

@@ -25,7 +25,7 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
   assert.deepEqual(packageJson, {
     ...packageJson,
     name: "writing-agent-desktop",
-    version: "1.0.0-rc.57",
+    version: "1.0.0-rc.58",
     productName: "Writing Agent",
     main: "dist/main.cjs",
   });
@@ -80,6 +80,7 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
   const workflow = readFileSync(resolve(".github/workflows/desktop-rc.yml"), "utf8");
   for (const required of [
     "workflow_dispatch:",
+    "previous_ref:",
     "contents: read",
     "npm run check:runtime",
     "npm run check:ui",
@@ -89,6 +90,7 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
     "npm audit --omit=dev --audit-level=high",
     "check_document_pack.py",
     "apps/desktop/scripts/test_desktop_installer.ps1",
+    "-PreviousInstallerPath",
     "actions/upload-artifact@v4",
   ]) assert.equal(workflow.includes(required), true, required);
   for (const forbidden of ["contents: write", "actions/create-release", "softprops/action-gh-release"])
@@ -107,6 +109,7 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
     "existingShortcutsPreserved = 'PASS'",
     "SimulateOrphanedPreviousInstall",
     "orphanedPreviousInstallRecovered",
+    "Previous and current installer versions must differ",
     "Remove-Item -LiteralPath $shortcutPath -Force",
     "Refusing to run the isolated upgrade test while a real Writing Agent shortcut is visible",
     "Start-Process -FilePath $FileName -ArgumentList $Arguments -PassThru",
@@ -136,13 +139,26 @@ test("release checksum helper is self-contained under Windows PowerShell", {
   assert.match(checksumScript, /System\.Security\.Cryptography\.SHA256/u);
   assert.match(installerScript, /System\.Security\.Cryptography\.SHA256/u);
   assert.match(installerScript, /Get-ExistingWritingAgentShortcutTargets/u);
+  assert.match(installerScript, /\[string\]\$PreviousInstallerPath/u);
+  assert.match(installerScript, /test_desktop_upgrade\.ps1/u);
+  assert.match(installerScript, /中文 安装/u);
 
   const directory = mkdtempSync(join(tmpdir(), "wa-checksum-"));
   try {
-    const installer = join(directory, "Writing-Agent-Setup-test.exe");
+    const installer = join(directory, "Writing-Agent-Setup-1.0.0-rc.58-x64.exe");
     const blockmap = `${installer}.blockmap`;
+    const historicalInstaller = join(directory, "Writing-Agent-Setup-1.0.0-rc.57-x64.exe");
+    const historicalBlockmap = `${historicalInstaller}.blockmap`;
+    const sourceManifest = join(directory, "source-manifest.json");
     writeFileSync(installer, "installer", "utf8");
     writeFileSync(blockmap, "blockmap", "utf8");
+    writeFileSync(historicalInstaller, "historical-installer", "utf8");
+    writeFileSync(historicalBlockmap, "historical-blockmap", "utf8");
+    writeFileSync(sourceManifest, JSON.stringify({
+      product: "Writing Agent",
+      version: "1.0.0-rc.58",
+      sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+    }), "utf8");
     const result = spawnSync("powershell.exe", [
       "-NoProfile",
       "-ExecutionPolicy",
@@ -151,13 +167,33 @@ test("release checksum helper is self-contained under Windows PowerShell", {
       script,
       "-ArtifactDirectory",
       directory,
+      "-Version",
+      "1.0.0-rc.58",
+      "-SourceManifestPath",
+      sourceManifest,
     ], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     const sums = readFileSync(join(directory, "SHA256SUMS.txt"), "utf8");
-    for (const [path, name] of [[installer, "Writing-Agent-Setup-test.exe"], [blockmap, "Writing-Agent-Setup-test.exe.blockmap"]] as const) {
+    for (const [path, name] of [[installer, "Writing-Agent-Setup-1.0.0-rc.58-x64.exe"], [blockmap, "Writing-Agent-Setup-1.0.0-rc.58-x64.exe.blockmap"]] as const) {
       const expected = createHash("sha256").update(readFileSync(path)).digest("hex");
       assert.match(sums, new RegExp(`${expected}  ${name.replaceAll(".", "\\.")}`, "u"));
     }
+    assert.equal(sums.includes("1.0.0-rc.57"), false, "historical artifacts leaked into current checksum set");
+    const buildManifest = JSON.parse(readFileSync(join(directory, "build-manifest.json"), "utf8")) as {
+      version: string;
+      sourceRevision: string;
+      artifacts: string[];
+      checksumFile: string;
+    };
+    assert.deepEqual(buildManifest, {
+      version: "1.0.0-rc.58",
+      sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+      artifacts: [
+        "Writing-Agent-Setup-1.0.0-rc.58-x64.exe",
+        "Writing-Agent-Setup-1.0.0-rc.58-x64.exe.blockmap",
+      ],
+      checksumFile: "SHA256SUMS.txt",
+    });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

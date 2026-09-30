@@ -1,6 +1,6 @@
 # 桌面版发布操作手册（维护者）
 
-本文件是操作说明，不是发布授权。当前 [Release Gate](../testing/RELEASE_GATE.md) 为 CLOSED；只允许整理、审查和隔离测试，不创建公开发布。首次优先评估公开 Pre-release，达到稳定版标准后再去掉 RC。
+本文件是操作说明。2026-09-30 维护者已授权完成公开 RC 收尾与发布，并接受未签名 RC；按 [Release Gate](../testing/RELEASE_GATE.md)验证最终候选后发布 Pre-release，不按稳定版宣传，不改变全仓库 latest。
 
 ## 1. 源码范围：先审查，后精确提交
 
@@ -8,7 +8,7 @@
 2. 对这次 rc.54–57，特别核对 `conversation-intent.ts`、`fact-search.ts`、桌面与 UI 的 `search-settings.ts` 和相关测试是否都纳入，不能只提交引用它们的文件。
 3. 精确 `git add -- <逐个已审查路径>`，再看 `git diff --cached --stat` 和 `git diff --cached --check`。不要 `git add .`。
 4. 提交前审查新增历史教程与测试脚本是否包含个人路径、私人内容、内网地址或凭据。自动模式扫描只是辅助，不能代替人工审查；已有 Git 历史也需考虑。
-5. 本轮只准备文件。后续取得提交/同步批准后，提交到已确认的工作分支，创建 PR 合并到 main；不要绕过分支保护、强推或移动旧 Tag。
+5. 提交到已确认的工作分支，通过 PR 合并到 main；不要绕过分支保护、强推或移动旧 Tag。
 
 ## 2. 文档与版本
 
@@ -45,7 +45,7 @@ npm run desktop:package
 
 ## 5. 只整理本版本资产与校验值
 
-用户指定本地输出为 `output/desktop`。当前校验脚本会扫描该目录中的所有历史包，不直接将它生成的历史汇总当成本次 Release 校验文件。
+用户指定本地输出为 `output/desktop`。rc.58 校验脚本只收录当前桌面版本，不把历代安装包汇总上传到本次 Release。
 
 以下 PowerShell 示例仅整理当前桌面版本，使用全新子目录，不删除旧安装包：
 
@@ -73,7 +73,7 @@ Get-AuthenticodeSignature -LiteralPath $releaseAsset | Select-Object Status
 
 1. 从最终验收 commit 创建不可随意移动的桌面 Tag。
 2. GitHub → Releases → Draft a new release，选择对应 Tag，标题标注“Writing Agent 桌面版 + 版本 + Windows x64”。
-3. 根据 [Release 草稿](DESKTOP_RELEASE_DRAFT.md)填写内容；公开测试版勾选 Pre-release。不要未经决定设置为仓库 latest。
+3. 根据 [Release 草稿](DESKTOP_RELEASE_DRAFT.md)填写内容；发布正文中的文档链接改为锁定 Tag 下的 GitHub 完整链接，不把仓库相对路径原样粘到 Release。公开测试版勾选 Pre-release，不设置为仓库 latest。
 4. 上传 **本版本** `.exe` 与 `SHA256SUMS.txt`，核对文件名、大小、签名、哈希；不要上传整个 output 或用户测试数据库。
 5. 草稿状态下完成维护者签收。批准后 Publish release，再以未登录视角核对资产可访问，重新下载验证哈希。
 6. 将 README 桌面入口改为该 Release 的真实固定链接，或提供真实资产直链；链接只有在公开后才可供普通用户访问。

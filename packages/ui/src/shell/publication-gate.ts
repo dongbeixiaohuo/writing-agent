@@ -1,5 +1,15 @@
 import type { FactCheckWorkspace } from '../../../client-bridge/src/protocol.ts'
 
+/** Describe persisted claim evidence, never infer an old report's coverage from today's settings. */
+export function factVerificationNotice(workspace: FactCheckWorkspace): string {
+  const claims = workspace.assessment?.claims ?? []
+  const modelOnly = claims.some(claim => claim.sourceReference?.includes('model-knowledge:unverified') || /模型知识复核|仅模型复核|未联网验证/u.test(claim.evidenceSummary))
+  const hasReferences = claims.some(claim => /^https?:\/\//u.test(claim.sourceReference ?? ''))
+  if (modelOnly) return `${hasReferences ? '部分主张' : ''}仅模型复核，未联网验证；重要事实请自行核实。`
+  if (hasReferences) return '核查报告包含来源引用，不代表事实绝对正确；重要事实请结合原始来源核对。'
+  return '本报告未记录外部事实查证依据；基于已有材料与模型复核，重要事实请自行核实。'
+}
+
 export interface PublicationGateNoticeItem {
   readonly id: string
   readonly summary: string

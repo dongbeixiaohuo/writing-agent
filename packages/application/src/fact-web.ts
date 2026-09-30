@@ -1,6 +1,8 @@
 import {
   NetworkAccessPolicy,
+  NetworkPolicyError,
   SecureWebFetcher,
+  SecureWebFetchError,
   ToolExecutionFault,
   type SecureWebFetchResult,
   type ToolDefinition,
@@ -63,8 +65,16 @@ export function createFactSourceTool(
           "Only ledger URLs or URLs returned by this run's search may be read. Search first when enabled; if it requires the author's private evidence use NEEDS_USER_SOURCE.",
         );
       }
-      const target = await policy.assertAllowed(args.url);
-      const fetched = await fetcher.fetchText(target.url);
+      let fetched: SecureWebFetchResult;
+      try {
+        const target = await policy.assertAllowed(args.url);
+        fetched = await fetcher.fetchText(target.url);
+      } catch (error) {
+        // Keep the security denial, but never echo transport diagnostics or URL secrets.
+        const code = error instanceof NetworkPolicyError || error instanceof SecureWebFetchError
+          ? error.code : 'FACT_SOURCE_FETCH_UNAVAILABLE';
+        throw new ToolExecutionFault(code, '来源原文未能读取。可以使用已取得的搜索摘录并明确说明限制；不得声称已核对原文，不要反复重试同一来源。');
+      }
       const text = fetched.content.text;
       return {
         finalUrl: fetched.finalUrl,

@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 $previousInstaller = (Resolve-Path -LiteralPath $PreviousInstallerPath).Path
 $currentInstaller = (Resolve-Path -LiteralPath $CurrentInstallerPath).Path
 $nonce = ([Guid]::NewGuid().ToString('N')).Substring(0, 12)
-$installRoot = Join-Path $env:LOCALAPPDATA "Temp\writing-agent-upgrade-test-$nonce"
+$installRoot = Join-Path $env:LOCALAPPDATA "Temp\writing-agent-upgrade-test-$nonce 中文 安装"
 $appDataRoot = Join-Path $env:APPDATA 'Writing Agent'
 $appDataRootExisted = Test-Path -LiteralPath $appDataRoot
 $appDataSentinel = Join-Path $appDataRoot "upgrade-preservation-$nonce.txt"
@@ -133,6 +133,9 @@ function Assert-SingleRegistration {
 
 $previousVersion = Get-VersionFromInstallerName -LiteralPath $previousInstaller
 $currentVersion = Get-VersionFromInstallerName -LiteralPath $currentInstaller
+if ($previousVersion -eq $currentVersion) {
+    throw 'Previous and current installer versions must differ; same-version reinstall is not upgrade evidence'
+}
 if ([System.Version]::Parse(($previousVersion -replace '-.*$', '')) -gt [System.Version]::Parse(($currentVersion -replace '-.*$', ''))) {
     throw "Previous installer version is newer than current installer version"
 }

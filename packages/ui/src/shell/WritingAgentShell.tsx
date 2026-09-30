@@ -81,7 +81,7 @@ import { conversationFollowTarget, CONVERSATION_FOLLOW_THRESHOLD } from './conve
 import { checkpointCopy, composerRecoveryMode, stageRoleCopy, runRecordsTabLabel } from './interaction.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import { runProgressSummary, runDisplayStatus, runSavedStageLabel, runStopReasonLabel } from './run-records.ts'
-import { publicationGateNotice } from './publication-gate.ts'
+import { publicationGateNotice, factVerificationNotice } from './publication-gate.ts'
 import { ConversationExportCard } from './ConversationExportCard.tsx'
 import { ConversationRevisionCard } from './ConversationRevisionCard.tsx'
 import { projectNavigationTarget } from './project-navigation.ts'
@@ -362,7 +362,7 @@ function PublicationGateNoticeCard({
   onInspect: () => void
 }) {
   if (snapshot.previewDocument.status === 'empty') return null
-  const hasQuestion = snapshot.recoverableRuns.some(run => run.sessionId === snapshot.selectedSessionId && run.status === 'waiting_user' && run.stopReason === 'WRITING_INPUT_REQUIRED')
+  const hasQuestion = snapshot.recoverableRuns.some(run => run.sessionId === snapshot.selectedSessionId && run.status === 'waiting_user' && (run.stopReason === 'WRITING_INPUT_REQUIRED' || run.stopReason === 'CO_CREATION_CHECKPOINT'))
   const notice = publicationGateNotice(snapshot.factCheckWorkspace, snapshot.connection === 'running' ? 'agent_handling' : hasQuestion ? 'author_question' : 'idle')
   if (notice === null) return null
   return <section
@@ -1909,7 +1909,7 @@ export function WritingAgentShell({
             }} />
             <ConversationRevisionCard key={`${snapshot.selectedProjectId}:${snapshot.selectedSessionId}:revisions`} bridge={bridge} snapshot={snapshot} onContentChange={forceFollowLatest} />
             {snapshot.deliveryWorkspace.bodyVersionId !== null && snapshot.previewDocument.body.trim().length > 0 && <section className={css.manuscriptLink} aria-label="当前稿件">
-              <div><strong>当前稿件</strong><p>{snapshot.deliveryWorkspace.gateStatus === 'passed' ? '已通过核查 · 可阅读或导出' : '工作稿已保存 · 尚未完成核查'}</p></div>
+              <div><strong>当前稿件</strong><p>{snapshot.deliveryWorkspace.gateStatus === 'passed' ? '已通过核查流程 · 可阅读或导出' : '工作稿已保存 · 尚未完成核查'}</p>{snapshot.deliveryWorkspace.gateStatus === 'passed' && <p>{factVerificationNotice(snapshot.factCheckWorkspace)}</p>}</div>
               <button className={css.primaryAction} type="button" onClick={() => {
                 const launcher = extensions.listLaunchers('conversation.actions')[0]
                 if (launcher !== undefined) openWritingPanel(launcher.panelId, 'read')

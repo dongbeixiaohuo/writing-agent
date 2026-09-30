@@ -3,14 +3,23 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$InstallerPath,
+    [string]$PreviousInstallerPath,
     [string]$EvidencePath = 'output/desktop-installer-test.json',
     [int]$TimeoutSeconds = 120
 )
 
 $ErrorActionPreference = 'Stop'
+if ($PreviousInstallerPath) {
+    & (Join-Path $PSScriptRoot 'test_desktop_upgrade.ps1') `
+        -PreviousInstallerPath $PreviousInstallerPath `
+        -CurrentInstallerPath $InstallerPath `
+        -EvidencePath $EvidencePath `
+        -TimeoutSeconds $TimeoutSeconds
+    return
+}
 $resolvedInstaller = (Resolve-Path -LiteralPath $InstallerPath).Path
 $nonce = ([Guid]::NewGuid().ToString('N')).Substring(0, 12)
-$installRoot = Join-Path $env:LOCALAPPDATA "Temp\writing-agent-installer-test-$nonce"
+$installRoot = Join-Path $env:LOCALAPPDATA "Temp\writing-agent-installer-test-$nonce 中文 安装"
 if (Test-Path -LiteralPath $installRoot) {
     throw "Refusing to reuse installer test directory: $installRoot"
 }

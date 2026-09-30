@@ -649,6 +649,7 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
 
       const response = await fetch(`${this.baseURL}/chat/completions`, {
         method: "POST",
+        redirect: "error",
         headers: {
           accept: "text/event-stream",
           authorization: `Bearer ${validateCredential(rawCredential)}`,

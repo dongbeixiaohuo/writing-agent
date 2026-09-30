@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 
@@ -9,6 +10,15 @@ const desktopRoot = resolve(repositoryRoot, 'apps/desktop')
 const stageRoot = resolve(desktopRoot, 'dist/package')
 const rendererSource = resolve(repositoryRoot, 'apps/web/dist/production')
 const rendererTarget = resolve(stageRoot, 'renderer')
+
+function sourceRevision() {
+  const revision = process.env.GITHUB_SHA
+    ?? execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim()
+  if (!/^[a-f0-9]{40}$/u.test(revision)) {
+    throw new Error(`Build source revision must be a full lowercase Git SHA, received: ${revision}`)
+  }
+  return revision
+}
 
 async function copyRenderer(source, destination) {
   await mkdir(destination, { recursive: true })
@@ -80,6 +90,7 @@ const manifest = {
   schemaVersion: 1,
   product: 'Writing Agent',
   version: desktopPackage.version,
+  sourceRevision: sourceRevision(),
   electron: '44.0.0',
   renderer: 'apps/web production build',
   runtime: 'bundled Writing Agent Application Service',

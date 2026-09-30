@@ -32,6 +32,7 @@ import type {
 import { DESKTOP_RPC_METHODS } from "../../../packages/client-bridge/src/desktop-bridge.js";
 import { inspectWorkspaceBackupFile } from "../../../packages/storage/src/index.js";
 import { DesktopApplicationHost } from "./application-host.js";
+import { searchApprovalOptions } from './search-approval.js';
 import { parseDesktopProviderProfileInput } from "./provider-profile.js";
 import { dispatchDesktopRpc, safeDesktopFailure } from "./rpc-host.js";
 import { resolveDesktopRunEnvironment } from "./run-environment.js";
@@ -571,6 +572,11 @@ async function start(): Promise<void> {
     providerProfilePath,
     applicationVersion: app.getVersion(),
     applicationBuild: "writing-agent-desktop-v1",
+    authorizeFactSearchQuery: async (request) => {
+      if (!mainWindow || mainWindow.isDestroyed() || request.signal?.aborted) return false;
+      const result = await dialog.showMessageBox(mainWindow, searchApprovalOptions(request));
+      return result.response === 1 && !request.signal?.aborted;
+    },
   });
   hostUnsubscribe = host.subscribe(broadcast);
   ipcMain.handle(DESKTOP_BRIDGE_CHANNEL, handleRpc);

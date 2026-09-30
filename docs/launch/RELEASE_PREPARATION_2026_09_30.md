@@ -2,7 +2,7 @@
 
 ## 结论与授权边界
 
-当前分支 `next/runtime`，本轮开始 HEAD `25ca1d3`，桌面候选 `1.0.0-rc.57`，根包/Skill `0.11.0`。本轮准备文档和发布检查，不将既有未提交修改视为已审查通过。不推送、不合并、不打 Tag、不创建公开 Release、不覆盖安装。当前发布决定仍为 [CLOSED](../testing/RELEASE_GATE.md)。
+本页保留最初准备阶段记录：起点 `next/runtime` / `25ca1d3` / 桌面 `1.0.0-rc.57`，根包/Skill `0.11.0`。随后维护者已授权完成公开 RC 收尾与发布，并接受未签名 RC；最新范围与结果见 [rc.58 收尾记录](RC58_RELEASE_EXECUTION.md)及[发布门禁](../testing/RELEASE_GATE.md)。下方历史未验收事项不自动等同最新状态。
 
 ## 提交范围分类
 

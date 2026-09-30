@@ -29,7 +29,7 @@ import type {
   ProjectSummary,
   SessionSummary,
 } from '../../client-bridge/src/protocol.ts'
-import { publicationGateNotice } from '../src/shell/publication-gate.ts'
+import { publicationGateNotice, factVerificationNotice } from '../src/shell/publication-gate.ts'
 import {
   projectNavigationTarget,
   resumeSessionForProject,
@@ -117,4 +117,16 @@ test('stale and passed gates are distinguished without a false blocker', () => {
     /核查结果已失效/u,
   )
   assert.equal(publicationGateNotice(factWorkspace({ status: 'passed', assessment: { ...factWorkspace().assessment!, status: 'passed', blockers: [] } })), null)
+})
+
+test('verification disclosure comes from saved evidence, not current search settings', () => {
+  const workspace = factWorkspace({ status: 'passed' })
+  const claim = workspace.assessment!.claims[0]!
+  workspace.assessment = { ...workspace.assessment!, claims: [{ ...claim, sourceReference: 'model-knowledge:unverified' }] }
+  assert.match(factVerificationNotice(workspace), /仅模型复核，未联网验证/)
+  workspace.assessment = { ...workspace.assessment!, claims: [{ ...claim, sourceReference: 'https://example.com/source' }] }
+  assert.match(factVerificationNotice(workspace), /来源引用/)
+  assert.doesNotMatch(factVerificationNotice(workspace), /联网验证通过/)
+  workspace.assessment = { ...workspace.assessment!, claims: [] }
+  assert.match(factVerificationNotice(workspace), /未记录外部事实查证依据/)
 })

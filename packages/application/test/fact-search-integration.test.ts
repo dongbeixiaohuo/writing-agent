@@ -86,7 +86,7 @@ async function runFactSearchCase(enabled: boolean) {
   const provider = new FactSearchInspectionProvider(seeded.bodyVersionId, seeded.evidenceVersionId, enabled)
   const service = new WritingApplicationService({
     storage, provider,
-    factSearchConfiguration: () => ({ parallelEnabled: enabled, tavilyEnabled: false }),
+    factSearchConfiguration: () => ({ parallelEnabled: enabled, tavilyEnabled: false, authorizeQuery: async () => true }),
   })
   try {
     const result = await service.runFactCheck({

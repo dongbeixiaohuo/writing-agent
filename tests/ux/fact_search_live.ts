@@ -17,7 +17,7 @@ if (tavilyOnly) {
   assert.ok(tavilyKey, 'Set WA_TAVILY_TEST_KEY in the test process environment');
   const requests: Array<{ status: number; elapsedMs: number }> = [];
   const probe = createFactSearchTools({
-    configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, getTavilyKey: async () => tavilyKey }),
+    configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, authorizeQuery: async ({ query }) => /国庆|中华人民共和国|成立/.test(query), getTavilyKey: async () => tavilyKey }),
     fetch: async (url, init) => {
       const start = Date.now();
       const response = await fetch(url, init);
@@ -60,6 +60,8 @@ for (const parallelEnabled of tavilyOnly ? [false] : process.argv.includes('--pa
     assert.equal(committed.ok, true);
   }
   const searchConfiguration: FactSearchConfiguration = { parallelEnabled, tavilyEnabled: tavilyOnly,
+    // Explicit test-harness approval, synthetic public topic only; no private materials are loaded.
+    authorizeQuery: async ({ query }) => /国庆|中华人民共和国|成立/.test(query),
     ...(tavilyOnly ? { getTavilyKey: async () => tavilyKey } : {}) };
   const app = new WritingApplicationService({ storage, provider, factSearchConfiguration: () => searchConfiguration });
   try {

@@ -472,6 +472,41 @@ describe("OpenAI-compatible provider", () => {
     });
   });
 
+  it("rejects 307 redirects without forwarding the authorization secret", async () => {
+    let redirectedRequests = 0;
+    let redirectedAuthorization: string | undefined;
+    let terminalCode: string | undefined;
+    await withLocalServer((request, response) => {
+      redirectedRequests += 1;
+      redirectedAuthorization = request.headers.authorization;
+      request.resume();
+      response.writeHead(204);
+      response.end();
+    }, async (redirectTarget) => {
+      await withLocalServer((_request, response) => {
+        response.writeHead(307, { location: `${redirectTarget}/redirect-capture` });
+        response.end();
+      }, async (baseURL) => {
+        const events = await collectModelEvents(
+          createProvider(baseURL).stream({
+            requestId: "request-redirect-1",
+            model: "mock-text-model",
+            messages: [{ role: "user", content: "连接测试" }],
+            parameters: {},
+          }),
+        );
+
+        const terminal = events.at(-1);
+        assert.equal(terminal?.type, "error");
+        if (terminal?.type === "error") terminalCode = terminal.error.code;
+      });
+    });
+
+    assert.equal(redirectedRequests, 0);
+    assert.equal(redirectedAuthorization, undefined);
+    assert.equal(terminalCode, "NETWORK_ERROR");
+  });
+
   it("fails closed when the credential reference cannot be resolved", async () => {
     const provider = new OpenAICompatibleProvider({
       id: "missing-key",

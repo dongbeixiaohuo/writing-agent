@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { BridgeSnapshot, ClientBridge, PublicationLayoutPreset } from '../../../client-bridge/src/protocol.ts'
 import type { DesktopHostConfiguration, DesktopPublicationSaveResult } from '../../../client-bridge/src/desktop-bridge.ts'
 import { deliveryActionState } from './delivery.ts'
+import { factVerificationNotice } from './publication-gate.ts'
 import css from './WritingAgentShell.module.css'
 
 const exportErrors: Record<string, string> = {
@@ -84,6 +85,7 @@ export function ConversationExportCard({ bridge, snapshot, hostConfiguration, on
     <span className={css.exportEyebrow}>{ready ? '✓ 可以交付' : '稿件已在本机保存'}</span>
     <h2>{ready ? '当前版本可以正式导出' : '正式导出尚未就绪'}</h2>
     <p>{description}</p>
+    {ready && <p role="note">{factVerificationNotice(snapshot.factCheckWorkspace)}</p>}
     <div className={css.exportActions}>
       <label>文件格式<select aria-label="导出文件格式" value={format} disabled={busy || !ready} onChange={event => setFormat(event.target.value as 'html' | 'txt')}>
         <option value="html">排版文章 · HTML（推荐）</option>

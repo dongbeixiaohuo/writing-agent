@@ -6,6 +6,8 @@ export interface FactSearchConfiguration {
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;
   readonly getTavilyKey?: () => Promise<string | undefined>;
+  /** Host/user authority only: never exposed in model tool arguments. Missing authorization denies egress. */
+  readonly authorizeQuery?: (request: { query: string; providers: readonly ('parallel' | 'tavily')[]; runId: string; signal?: AbortSignal }) => Promise<boolean>;
 }
 export interface FactSearchResult {
   mode: 'external' | 'model_only' | 'unavailable';
@@ -23,6 +25,7 @@ export function createFactSearchTools(options: { configuration: () => FactSearch
   const cache = new Map<string, FactSearchResult>();
   const counts = new Map<string, number>();
   const discovered = new Map<string, Set<string>>();
+  const deniedRuns = new Set<string>();
   const sessionId = randomUUID();
   const enabled = () => { const c = options.configuration(); return c.parallelEnabled || c.tavilyEnabled; };
   const instructions = () => enabled()
@@ -100,9 +103,22 @@ export function createFactSearchTools(options: { configuration: () => FactSearch
     if (!normalized || normalized.length > 500) return { ...base, mode: 'unavailable', notice: '只搜索简短的公开事实问题，最多 500 字，不发送完整稿件。' };
     const cacheKey = `${runId}:${config.parallelEnabled}:${config.tavilyEnabled}:${normalized}`;
     const previous = cache.get(cacheKey); if (previous) return previous;
+    signal?.throwIfAborted();
+    const notAuthorized = { ...base, mode: 'unavailable' as const,
+      notice: '本轮外部搜索未获用户授权，没有发送检索词；请仅基于已有材料复核并说明未联网验证，不要改写检索词反复请求。' };
+    if (deniedRuns.has(runId)) return notAuthorized;
     const count = counts.get(runId) ?? 0;
     if (count >= 6) return { ...base, mode: 'unavailable', notice: '本轮已完成 6 次事实检索，请利用已有结果完成核查，不再重复请求。未证实不等于错误。' };
     counts.set(runId, count + 1);
+    // A prompt cannot authorize private data leaving the machine. The trusted host must approve the exact text.
+    const providers = (['parallel', 'tavily'] as const).filter(provider => provider === 'parallel' ? config.parallelEnabled : config.tavilyEnabled);
+    let approved = false;
+    try { approved = await config.authorizeQuery?.({ query: normalized, providers, runId, ...(signal ? { signal } : {}) }) === true; }
+    catch { signal?.throwIfAborted(); }
+    signal?.throwIfAborted();
+    if (!approved) { deniedRuns.add(runId); return notAuthorized; }
+    const current = options.configuration();
+    if (current.parallelEnabled !== config.parallelEnabled || current.tavilyEnabled !== config.tavilyEnabled) return notAuthorized;
     const failures: string[] = [];
     for (const provider of ['parallel', 'tavily'] as const) {
       if (!(provider === 'parallel' ? config.parallelEnabled : config.tavilyEnabled)) continue;

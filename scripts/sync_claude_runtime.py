@@ -197,7 +197,16 @@ def build_plugin_lock(project_root: Path) -> dict:
     package = build_plugin_package(project_root)
     lock["name"] = package["name"]
     lock["version"] = package["version"]
-    lock.setdefault("packages", {})[""] = {
+    packages = lock.setdefault("packages", {})
+    # The plugin installs production dependencies only. Keeping the root
+    # desktop/UI dev graph in this lock makes an otherwise isolated bootstrap
+    # parse and resolve hundreds of packages it can never install.
+    lock["packages"] = {
+        path: metadata
+        for path, metadata in packages.items()
+        if path == "" or not metadata.get("dev", False)
+    }
+    lock["packages"][""] = {
         "name": package["name"],
         "version": package["version"],
         "dependencies": package["dependencies"],
