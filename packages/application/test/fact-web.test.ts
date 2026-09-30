@@ -61,6 +61,19 @@ test("fact source tool re-reads only URLs recorded in the evidence ledger and re
   } finally { f.close(); }
 });
 
+test('fact source tool permits discovered URLs only in the searching run and respects disabled search', async () => {
+  const f = setup('{"claims":[]}');
+  try {
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p', fetcher: fetcherWith('网页原文', []),
+      isDiscoveredSource: (url, runId) => url === LEDGER_URL && runId === 'searched' });
+    await tool.execute({ url: LEDGER_URL }, { runId: 'searched' } as never);
+    await assert.rejects(async () => tool.execute({ url: LEDGER_URL }, { runId: 'other' } as never));
+    const off = createFactSourceTool({ storage: f.storage, projectId: 'p', searchEnabled: () => false,
+      isDiscoveredSource: () => true, fetcher: fetcherWith('must not fetch', []) });
+    await assert.rejects(async () => off.execute({ url: LEDGER_URL }, { runId: 'searched' } as never), /disabled/);
+  } finally { f.close(); }
+});
+
 test("fact source tool refuses URLs that are not in the ledger instead of browsing", async () => {
   const f = setup(`{"claims":[{"evidence_id":"E001","source_url":"${LEDGER_URL}"}]}`);
   try {

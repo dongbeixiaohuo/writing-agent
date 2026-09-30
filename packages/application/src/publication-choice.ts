@@ -83,10 +83,15 @@ export function savePublicationCandidates(storage: StoragePort, projectId: strin
 }
 
 /** The model chooses a proposed index; only the actual user operation can authorize it. */
-export function choosePublicationCandidate(storage: StoragePort, projectId: string, operationId: string, userText: string, candidateVersionId: string | undefined, index: number) {
+export function choosePublicationCandidate(storage: StoragePort, projectId: string, operationId: string, userText: string, candidateVersionId: string | undefined, index: number,
+  interpreted?: { sourceQuote: string; candidateVersionId: string; index: number | null }) {
   const saved = getPublicationCandidates(storage, projectId);
   const project = storage.inspectProject(projectId)!;
-  if (!saved || saved.bodyVersionId !== project.latestBodyVersionId) throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE', 'Candidate version or article changed; ask for a fresh selection');
+  if (!saved) throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE', 'No saved candidates are available');
+  // A body edit invalidates verification, not the author's choice of a displayed
+  // title. Bind the choice to today's body; the independent fact gate must still
+  // check that body, title and distribution copy. A replaced candidate batch is
+  // different: its index cannot be silently reused (validated below).
   // The article body id is far more salient than the candidates id; a wrong
   // id must hand the caller the exact correction instead of a loop of guesses.
   const expected = candidateVersionId ?? saved.id;
@@ -102,11 +107,13 @@ export function choosePublicationCandidate(storage: StoragePort, projectId: stri
   const text = userText.trim().replace(/[。！!\s]+$/u, '');
   const chosenIndex = publicationSelectionIndex(userText, saved);
   const exact = candidate && [`确认标题：${candidate.title}`, `确认标题:${candidate.title}`, `选用标题：${candidate.title}`].includes(text);
-  if (!exact && chosenIndex !== index) throw new ToolExecutionFault('USER_SELECTION_REQUIRED', '用户尚未明确选定这个方案。请先回应其疑问或修改意见；只有明确选择才能锁定，不能把讨论、否定或修改要求当成同意。');
-  const content = `- 选择状态：已锁定\n- 最终标题：「${candidate.title}」\n- 选择来源：用户明确选择\n- 候选版本：${saved.id}\n- 对应正文：${saved.bodyVersionId}\n` +
+  const semanticSelection = interpreted && interpreted.sourceQuote === userText && interpreted.candidateVersionId === saved.id && interpreted.index === index;
+  if (interpreted ? !semanticSelection : !exact && chosenIndex !== index) throw new ToolExecutionFault('USER_SELECTION_REQUIRED', '用户尚未明确选定这个方案。请先回应其疑问或修改意见；只有明确选择才能锁定，不能把讨论、否定或修改要求当成同意。');
+  const content = `- 选择状态：已锁定\n- 最终标题：「${candidate.title}」\n- 选择来源：用户明确选择\n- 候选版本：${saved.id}\n- 对应正文：${body.id}\n` +
     (candidate.distributionCopy === null ? '- 分发文案范围：本次不包含分发文案\n' : `- 分发文案选择：随所选方案确认\n- 最终分发文案：${candidate.distributionCopy}\n`);
   const result = value(storage.commitArtifactVersion({ projectId, operationId, expectedProjectRevision: project.revision, kind: 'title', logicalKey: 'main',
     baseVersionId: project.currentTitleVersionId, content, reason: 'author-publication-selection', actor: { kind: 'user', id: 'conversation-user' } }));
   return { titleVersionId: result.versionId, title: candidate.title, distributionCopy: candidate.distributionCopy, bodyUnchanged: true,
+    bodyChangedSinceCandidates: saved.bodyVersionId !== body.id,
     openingRequiresSeparateRevisionAcceptance: candidate.opening !== null };
 }

@@ -37,7 +37,12 @@ it('keeps candidates separate, binds user choice to exact version, and preserves
     assert.throws(() => choosePublicationCandidate(storage, 'p', 'mismatch', '我选第一个', candidate.id, 2), { code: 'USER_SELECTION_REQUIRED' });
     storage.commitArtifactVersion({ projectId: 'p', operationId: 'changed', expectedProjectRevision: storage.inspectProject('p')!.revision, kind: 'body', logicalKey: 'main', baseVersionId: bodyId, content: '# 新稿\n\n正文已变。', reason: 'test', actor });
     assert.equal(isPublicationSelectionCurrent(storage, 'p'), true, 'editing body invalidates fact results, not the author\'s chosen title');
-    assert.throws(() => choosePublicationCandidate(storage, 'p', 'stale', '我选第二个', candidate.id, 2), { code: 'PUBLICATION_CANDIDATES_STALE' });
+    const reselected = choosePublicationCandidate(storage, 'p', 'edited', '我选第二个', candidate.id, 2);
+    assert.equal(reselected.bodyChangedSinceCandidates, true, 'body edits require fresh verification, not another selection');
+    assert.notEqual(storage.getFactCheckStatus('p').status, 'passed');
+    const newBodyId = storage.inspectProject('p')!.latestBodyVersionId!;
+    savePublicationCandidates(storage, 'p', 'replacement', newBodyId, [{ title: '另一种安静', opening: null, distributionCopy: null, rationale: '新方案' }]);
+    assert.throws(() => choosePublicationCandidate(storage, 'p', 'stale-batch', '我选第二个', candidate.id, 2), { code: 'PUBLICATION_CANDIDATES_STALE' }, 'a replaced candidate batch still cannot reuse an old ordinal');
     assert.throws(() => savePublicationCandidates(storage, 'p', 'ambiguous', storage.inspectProject('p')!.latestBodyVersionId!, [
       { title: '同名', opening: null, distributionCopy: 'A', rationale: 'A' },
       { title: '同名', opening: null, distributionCopy: 'B', rationale: 'B' },

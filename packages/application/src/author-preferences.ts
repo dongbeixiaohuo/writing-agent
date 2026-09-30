@@ -21,10 +21,12 @@ interface StoredPreferencePayload {
   readonly status: "approved" | "cleared";
   readonly sourceProjectId: string;
   readonly sourceUserText: string;
+  readonly authorizationArtifactId?: string;
   readonly rules: readonly string[];
   readonly ruleSources: readonly {
     readonly text: string;
     readonly sourceUserText: string;
+    readonly authorizationArtifactId?: string;
   }[];
   readonly scope: "writing_preference_only";
   readonly instructionAuthority: "none";
@@ -108,7 +110,23 @@ function parseUserOperation(userText: string):
   return { status: "approved", rule };
 }
 
-function parseStored(version: ArtifactVersion): StoredPreferencePayload | null {
+function authorizedOperation(storage: StoragePort, projectId: string, userText: string, receiptId?: string): ReturnType<typeof parseUserOperation> {
+  if (!receiptId) return parseUserOperation(userText); // Compatibility for explicit typed legacy commands.
+  const receipt = storage.getArtifactVersion(receiptId);
+  const data = receipt && JSON.parse(receipt.content);
+  if (!receipt || receipt.projectId !== projectId || receipt.reason !== 'contextual-author-intent' ||
+    data.userMessage !== userText || data.sourceQuote.trim() !== userText.trim() ||
+    !['remember_preference', 'forget_preferences'].includes(data.intent)) {
+    throw new AuthorPreferenceError('AUTHOR_PREFERENCE_EXPLICIT_APPROVAL_REQUIRED', 'A current, source-bound preference decision is required');
+  }
+  if (data.intent === 'forget_preferences') return { status: 'cleared' };
+  // Store the author's own wording, not a rule invented by a model. It remains reference data only.
+  required(userText, 'userText');
+  if (userText.length > MAX_TOTAL_CHARS) throw new AuthorPreferenceError('AUTHOR_PREFERENCE_TOO_LONG', 'Preference exceeds limit');
+  return { status: 'approved', rule: userText };
+}
+
+function parseStored(storage: StoragePort, version: ArtifactVersion): StoredPreferencePayload | null {
   if (version.kind !== "report" || version.logicalKey !== LOGICAL_KEY) return null;
   if (version.actor.kind !== "user") return null;
   let candidate: unknown;
@@ -129,10 +147,10 @@ function parseStored(version: ArtifactVersion): StoredPreferencePayload | null {
     payload.rules.some((rule) => typeof rule !== "string" || rule.trim().length === 0) ||
     payload.ruleSources.some((source) => {
       if (source === null || typeof source !== "object" || Array.isArray(source)) return true;
-      const entry = source as { readonly text?: unknown; readonly sourceUserText?: unknown };
+      const entry = source as { readonly text?: unknown; readonly sourceUserText?: unknown; readonly authorizationArtifactId?: string };
       if (typeof entry.text !== "string" || typeof entry.sourceUserText !== "string") return true;
       try {
-        const parsed = parseUserOperation(entry.sourceUserText);
+        const parsed = authorizedOperation(storage, version.projectId, entry.sourceUserText, entry.authorizationArtifactId);
         return parsed.status !== "approved" || parsed.rule !== entry.text;
       } catch {
         return true;
@@ -149,7 +167,7 @@ function parseStored(version: ArtifactVersion): StoredPreferencePayload | null {
   ) return null;
   const operation = (() => {
     try {
-      return parseUserOperation(payload.sourceUserText);
+      return authorizedOperation(storage, version.projectId, payload.sourceUserText, payload.authorizationArtifactId);
     } catch {
       return null;
     }
@@ -186,7 +204,7 @@ export function getApprovedAuthorPreferences(
   for (const project of storage.listProjects()) {
     const latest = storage.listArtifactVersions(project.id, "report", LOGICAL_KEY).at(-1);
     if (latest === undefined) continue;
-    const payload = parseStored(latest);
+    const payload = parseStored(storage, latest);
     if (payload === null || payload.status === "cleared") continue;
     for (let index = payload.ruleSources.length - 1; index >= 0; index -= 1) {
       const source = payload.ruleSources[index];
@@ -218,10 +236,11 @@ export function setAuthorPreferenceFromUserText(
   projectId: string,
   operationId: string,
   userText: string,
+  authorizationArtifactId?: string,
 ): SetAuthorPreferenceResult {
   required(projectId, "projectId");
   required(operationId, "operationId");
-  const operation = parseUserOperation(userText);
+  const operation = authorizedOperation(storage, projectId, userText, authorizationArtifactId);
   const project = storage.inspectProject(projectId);
   if (project === null) {
     throw new AuthorPreferenceError("PROJECT_NOT_FOUND", "Project does not exist");
@@ -229,7 +248,7 @@ export function setAuthorPreferenceFromUserText(
   const history = storage.listArtifactVersions(projectId, "report", LOGICAL_KEY);
   const replay = history.find((version) => version.operationId === operationId);
   if (replay !== undefined) {
-    const payload = parseStored(replay);
+    const payload = parseStored(storage, replay);
     if (payload === null || payload.sourceUserText !== userText) {
       throw new AuthorPreferenceError(
         "IDEMPOTENCY_KEY_REUSED",
@@ -240,7 +259,7 @@ export function setAuthorPreferenceFromUserText(
   }
 
   const latest = history.at(-1);
-  const latestPayload = latest === undefined ? null : parseStored(latest);
+  const latestPayload = latest === undefined ? null : parseStored(storage, latest);
   let rules: readonly string[] = [];
   let ruleSources: StoredPreferencePayload["ruleSources"] = [];
   if (operation.status === "approved") {
@@ -251,6 +270,7 @@ export function setAuthorPreferenceFromUserText(
       existingSources.find((source) => source.text === rule) ?? {
         text: rule,
         sourceUserText: userText,
+        ...(authorizationArtifactId ? { authorizationArtifactId } : {}),
       },
     );
     const totalChars = rules.reduce((sum, rule) => sum + rule.length, 0);
@@ -266,6 +286,7 @@ export function setAuthorPreferenceFromUserText(
     status: operation.status,
     sourceProjectId: projectId,
     sourceUserText: userText,
+    ...(authorizationArtifactId ? { authorizationArtifactId } : {}),
     rules,
     ruleSources,
     scope: "writing_preference_only",

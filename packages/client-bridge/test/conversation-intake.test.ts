@@ -8,6 +8,7 @@ import { openWorkspaceStorage } from '../../storage/src/index.js';
 import type { ModelRequest, ProviderStreamEvent } from '../../runtime/llm/src/index.js';
 import { createApplicationBridge } from '../src/application-bridge.js';
 import { ImmediateWorkflowProvider } from './helpers/workflow-provider.js';
+import { intentFixtureEvents } from '../../application/test/intent-fixture.js';
 
 const proposal = {
   reply: '可以写成关于夜跑的个人观察。建议面向初学者、约 1200 字，不编造经历；你觉得这个方向怎样？',
@@ -23,6 +24,8 @@ class ConversationalProvider extends ImmediateWorkflowProvider {
   next: Record<string, unknown> = { reply: '可以一起想想。你想从个人感受聊起，还是先找一个观察角度？', summary: '夜跑，角度还未确定', questions: ['你想从个人感受聊起，还是先找一个观察角度？'] };
   readonly requests: ModelRequest[] = [];
   protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+    const intent = intentFixtureEvents(request);
+    if (intent) { yield* intent; return; }
     this.requests.push(request);
     if (request.tools.some(tool => tool.name === 'respond_writing_intake')) {
       if (request.messages.some(message => message.role === 'tool')) {

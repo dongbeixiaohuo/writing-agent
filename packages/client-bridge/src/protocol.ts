@@ -342,6 +342,7 @@ export interface RecoverableRunSummary {
   stopReason: string | null
   checkpointStage: WritingWorkflowStageId | null
   nextStage: WritingWorkflowStageId | null
+  validationFailure?: { code: string; tool: string; explanation: string }
   interruption?: { source: 'model' | 'tool'; cause: 'timeout' | 'unknown'; replyAccepted: boolean; timeoutPhase?: 'first_response' | 'stream_idle'; timeoutMs?: number }
   inputRequest?: { reason: string; questions: readonly string[]; kind?: 'publication_selection';
     candidates?: readonly { title: string; rationale: string; distributionCopy: string | null }[] }

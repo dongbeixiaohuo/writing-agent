@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { SearchSettingsStore } from './search-settings.js';
+import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
@@ -109,11 +111,13 @@ export class DesktopApplicationHost {
   readonly #savedPublications = new Map<string, string>();
   #savingPublication = false;
   #providerChanging = false;
+  readonly #searchSettings: SearchSettingsStore;
 
   constructor(options: DesktopApplicationHostOptions) {
     this.#workspacePath = resolve(options.workspacePath);
     this.#providerProfilePath = resolve(options.providerProfilePath);
     this.#credentials = options.credentials ?? createDefaultCredentialBroker();
+    this.#searchSettings = new SearchSettingsStore(join(dirname(this.#providerProfilePath), 'search-settings.json'), this.#credentials);
     this.#providerFactory = options.providerFactory ?? createConfiguredProvider;
     this.#applicationVersion = options.applicationVersion ?? "development";
     this.#applicationBuild = options.applicationBuild ?? "writing-agent-desktop-v1";
@@ -137,6 +141,9 @@ export class DesktopApplicationHost {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
+
+  async searchStatus() { return this.#searchSettings.status(); }
+  async configureSearch(input: SearchSettingsInput) { return this.#searchSettings.save(input); }
 
   async providerDetails(profileId: string): Promise<DesktopSavedProviderView> {
     const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(p => p.id === profileId);
@@ -594,6 +601,7 @@ export class DesktopApplicationHost {
       : this.#providerFactory(config, this.#credentials);
     const service = new WritingApplicationService({
       storage: this.#storage,
+      factSearchConfiguration: () => this.#searchSettings.configuration(),
       ...(provider === undefined ? {} : { provider }),
     });
     const bridge = createApplicationBridge({

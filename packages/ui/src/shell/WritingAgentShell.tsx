@@ -68,6 +68,7 @@ import {
   MoonIcon,
   PanelIcon,
   PlusIcon,
+  SearchIcon,
   SettingsIcon,
   StopIcon,
   SunIcon,
@@ -85,6 +86,7 @@ import { ConversationExportCard } from './ConversationExportCard.tsx'
 import { ConversationRevisionCard } from './ConversationRevisionCard.tsx'
 import { projectNavigationTarget } from './project-navigation.ts'
 import { ProviderSettings } from './ProviderSettings.tsx'
+import { SearchSettings } from './SearchSettings.tsx'
 import {
   commandErrorMessage,
   dataActionErrorMessage,
@@ -106,7 +108,7 @@ export interface WritingAgentShellProps {
   hostConfiguration?: DesktopHostConfiguration
 }
 
-type SettingsSection = 'general' | 'models' | 'data' | 'about'
+type SettingsSection = 'general' | 'models' | 'search' | 'data' | 'about'
 
 function useFrameWidth(ref: RefObject<HTMLElement>): number {
   const [width, setWidth] = useState(() => typeof window === 'undefined' ? 1280 : window.innerWidth)
@@ -1356,14 +1358,14 @@ function SettingsDialog({
       <section ref={dialogRef} className={css.settingsDialog} role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <nav className={css.settingsNav} aria-label="设置分类">
           <h2 className={css.settingsHeading} id="settings-title">设置</h2>
-          {([['general', '通用'], ['models', '模型'], ['data', '数据与诊断'], ['about', '关于']] as const).map(([value, label]) => (
+          {([['general', '通用'], ['models', '模型'], ['search', '搜索'], ['data', '数据与诊断'], ['about', '关于']] as const).map(([value, label]) => (
             <button
               className={clsx(css.settingsNavButton, section === value && css.settingsNavActive)}
               key={value}
               type="button"
               onClick={() => setSection(value)}
             >
-              {value === 'general' ? <SettingsIcon /> : value === 'models' ? <ToolIcon /> : value === 'data' ? <FolderIcon /> : <BrandMark size={16} />}
+              {value === 'general' ? <SettingsIcon /> : value === 'models' ? <ToolIcon /> : value === 'search' ? <SearchIcon /> : value === 'data' ? <FolderIcon /> : <BrandMark size={16} />}
               {label}
             </button>
           ))}
@@ -1405,6 +1407,7 @@ function SettingsDialog({
               </div>
             </>}
             <div hidden={section !== 'models'}><ProviderSettings host={hostConfiguration} /></div>
+            {section === 'search' && <SearchSettings host={hostConfiguration} />}
             {section === 'data' && <>
               <h3 className={css.settingsSectionTitle}>数据与诊断</h3>
               {hostConfiguration === undefined ? (

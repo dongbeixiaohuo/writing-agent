@@ -2,6 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { checkpointCopy } from '../src/shell/interaction.ts'
 
+test('version permission failures are explained as program conflicts, not missing user evidence', () => {
+  const copy = checkpointCopy({ runId: 'r', sessionId: 's', status: 'waiting_user', stopReason: 'TOOL_FAILURE_LOOP', checkpointStage: null, nextStage: null,
+    validationFailure: { code: 'TOOL_PERMISSION_DENIED', tool: 'read_artifact_version', explanation: '调度读取版本与权限冲突。这不是文章事实核查不通过，也不是你缺少材料。' } }, undefined)
+  assert.match(copy.title, /读取版本.*程序冲突/)
+  assert.match(copy.description, /不是文章事实核查不通过/)
+  assert.equal(copy.primaryAction, '重试这一步')
+})
+
 test('repeated stage-save rejection offers one explicit retry without claiming a connection failure', () => {
   const copy = checkpointCopy({ runId:'r', sessionId:'s', status:'waiting_user', stopReason:'STAGE_OUTPUT_NOT_SAVED', checkpointStage:null, nextStage:'language_review' }, undefined)
   assert.equal(copy.primaryAction, '重试这一步')

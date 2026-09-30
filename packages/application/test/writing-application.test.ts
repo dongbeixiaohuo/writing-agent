@@ -603,11 +603,11 @@ class CheckpointWorkflowProvider extends ModelProviderBase {
     const recoveryContextMatch = userMessage?.role === "user"
       ? userMessage.content.match(/恢复必读上下文：(\[[^\n]+\])/u)
       : null;
-    if (continuation !== undefined && recoveryContextMatch === null) {
+    if (continuation !== undefined && recoveryContextMatch === null && collaboration === null) {
       throw new Error("resumed workflow did not identify its persisted context artifacts");
     }
     const recoveryContext = recoveryContextMatch === null
-      ? []
+      ? (collaboration?.unreadArtifactVersionIds ?? []).map(artifactVersionId => ({ stage: 'current', artifactVersionId }))
       : JSON.parse(recoveryContextMatch[1] ?? "[]") as Array<{
           stage: string;
           artifactVersionId: string;
@@ -827,7 +827,7 @@ describe("WritingApplicationService draft closure", () => {
     }
   });
 
-  it("rejects an empty or trivial answer before mutating an input-waiting run", async () => {
+  it("rejects an empty answer before mutating an input-waiting run; nonempty replies belong to readiness assessment", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "writing-input-answer-required-"));
     const storage = openWorkspaceStorage({ workspacePath });
     const bootstrap = new WritingApplicationService({
@@ -856,17 +856,7 @@ describe("WritingApplicationService draft closure", () => {
 
       for (const [index, answer] of [
         "",
-        "继续",
-        "继续吧",
-        "开始吧",
-        "继续下一步",
-        "请继续",
-        "继续写吧",
-        "那就继续",
-        "ok",
-        "好的",
-        "可以",
-        "没问题",
+        "   ",
       ].entries()) {
         assert.throws(
           () => service.resumeDraft({
@@ -883,7 +873,7 @@ describe("WritingApplicationService draft closure", () => {
           (error: unknown) =>
             error instanceof ApplicationServiceError &&
             error.code === "WRITING_INPUT_ANSWER_REQUIRED",
-          `expected acknowledgement-only answer to be rejected: ${answer}`,
+          `expected empty answer to be rejected: ${answer}`,
         );
       }
       assert.equal(storage.getRun(waiting.runId)?.status, "waiting_user");
@@ -927,7 +917,7 @@ describe("WritingApplicationService draft closure", () => {
       const reopenedService = new WritingApplicationService({ storage, provider });
       const project = storage.inspectProject("project-1")!;
       const answer = "发生在去年，但我还没有选定要写哪一件事。";
-      const second = await reopenedService.resumeDraft({
+      const second = await reopenedService.resumeDraft(withCheckpointIntent(storage, {
         projectId: "project-1",
         runId,
         operationId: "resume-with-inadequate-answer",
@@ -937,7 +927,7 @@ describe("WritingApplicationService draft closure", () => {
         model: "mock-writing-model",
         userInstruction: answer,
         parameters: { temperature: 0, toolChoice: "auto" },
-      }).result;
+      })).result;
 
       assert.equal(second.runId, runId);
       assert.equal(second.ok, false);
@@ -1037,7 +1027,7 @@ describe("WritingApplicationService draft closure", () => {
       const service = new WritingApplicationService({ storage, provider });
       const project = storage.inspectProject("project-1")!;
       const answer = "围绕去年冬天那次下班散步展开。";
-      const resumed = await service.resumeDraft({
+      const resumed = await service.resumeDraft(withCheckpointIntent(storage, {
         projectId: "project-1",
         runId,
         operationId: "resume-edit-after-input",
@@ -1047,7 +1037,7 @@ describe("WritingApplicationService draft closure", () => {
         model: "mock-writing-model",
         userInstruction: answer,
         parameters: { temperature: 0, toolChoice: "auto" },
-      }).result;
+      })).result;
       assert.equal(resumed.ok, false);
       const failed = storage.listRunEvents(runId)
         .filter((event) => event.type === "tool.failed")
@@ -1133,7 +1123,7 @@ describe("WritingApplicationService draft closure", () => {
     const service = new WritingApplicationService({ storage, provider });
     const project = storage.inspectProject("project-1")!;
     try {
-      const resumed = await service.resumeDraft({
+      const resumed = await service.resumeDraft(withCheckpointIntent(storage, {
         projectId: "project-1",
         runId,
         operationId: "resume-after-start-crash",
@@ -1143,7 +1133,7 @@ describe("WritingApplicationService draft closure", () => {
         model: "mock-writing-model",
         userInstruction: "继续围绕原稿的河边场景收束。",
         parameters: { temperature: 0, toolChoice: "auto" },
-      }).result;
+      })).result;
       assert.equal(resumed.ok, false);
       const failed = storage.listRunEvents(runId)
         .filter((event) => event.type === "tool.failed")
@@ -1228,7 +1218,7 @@ describe("WritingApplicationService draft closure", () => {
           seeded.contentVersionId,
         ),
       });
-      const resumed = await resumedService.resumeDraft({
+      const resumed = await resumedService.resumeDraft(withCheckpointIntent(storage, {
         projectId: "project-1",
         runId: first.runId,
         operationId: "resume-outline-without-baseline",
@@ -1243,7 +1233,7 @@ describe("WritingApplicationService draft closure", () => {
           maxRetriesPerRequest: 0,
           maxMajorRevisions: 1,
         },
-      }).result;
+      })).result;
       assert.equal(resumed.ok, false);
       const failed = storage.listRunEvents(first.runId)
         .filter((event) => event.type === "tool.failed")
@@ -1265,7 +1255,7 @@ describe("WritingApplicationService draft closure", () => {
         storage,
         provider: new CheckpointWorkflowProvider("material-1", seeded.contentVersionId),
       });
-      const afterDraft = await draftingService.resumeDraft({
+      const afterDraft = await draftingService.resumeDraft(withCheckpointIntent(storage, {
         projectId: "project-1",
         runId: first.runId,
         operationId: "resume-outline-with-baseline",
@@ -1281,7 +1271,7 @@ describe("WritingApplicationService draft closure", () => {
           maxRetriesPerRequest: 0,
           maxMajorRevisions: 1,
         },
-      }).result;
+      })).result;
       assert.equal(afterDraft.ok, false);
       assert.equal(storage.getRun(first.runId)?.stopReason, "CO_CREATION_CHECKPOINT");
       const latestWait = storage.listRunEvents(first.runId)
@@ -1439,7 +1429,7 @@ describe("WritingApplicationService draft closure", () => {
           seeded.contentVersionId,
         ),
       });
-      const resumed = await resumedService.resumeDraft({
+      const resumed = await resumedService.resumeDraft(withCheckpointIntent(storage, {
         projectId: "project-1",
         runId: first.runId,
         operationId: "resume-before-reading-context",
@@ -1449,7 +1439,7 @@ describe("WritingApplicationService draft closure", () => {
         model: "mock-writing-model",
         parameters: { temperature: 0, toolChoice: "auto" },
         budget,
-      }).result;
+      })).result;
       assert.equal(resumed.ok, false);
       const failed = storage.listRunEvents(first.runId)
         .filter((event) => event.type === "tool.failed")
@@ -1548,7 +1538,7 @@ describe("WritingApplicationService draft closure", () => {
       const resume = async (operationId: string) => {
         await Promise.resolve();
         const project = storage.inspectProject("project-1")!;
-        return service.resumeDraft({
+        return service.resumeDraft(withCheckpointIntent(storage, {
           projectId: "project-1",
           runId: first.runId,
           operationId,
@@ -1559,7 +1549,7 @@ describe("WritingApplicationService draft closure", () => {
           model: "mock-writing-model",
           parameters: { temperature: 0, toolChoice: "auto" },
           budget,
-        }).result;
+        })).result;
       };
 
       const afterOutline = await resume("resume-after-outline");
@@ -1578,7 +1568,11 @@ describe("WritingApplicationService draft closure", () => {
       assert.equal(afterEditor.ok, false);
       assert.equal(storage.listArtifactVersions("project-1", "review", `review_reader:${first.runId}`).length, 1);
 
-      const awaitingTitle = await resume("resume-after-reviews");
+      await resume("resume-after-reviews");
+      assert.equal(storage.listRunEvents(first.runId).findLast(e => e.type === 'run.waiting_user')?.payload.stage, 'central_revision');
+      await resume("resume-after-revision");
+      assert.equal(storage.listRunEvents(first.runId).findLast(e => e.type === 'run.waiting_user')?.payload.stage, 'language_review');
+      const awaitingTitle = await resume("resume-after-language");
       assert.equal(awaitingTitle.ok, false);
       assert.equal(storage.inspectProject('project-1')!.currentTitleVersionId, null);
       const publication = getPublicationCandidates(storage, 'project-1')!;
@@ -1594,7 +1588,7 @@ describe("WritingApplicationService draft closure", () => {
         return typeof execution === "object" && execution !== null && !Array.isArray(execution) &&
           (execution as Readonly<Record<string, unknown>>).toolName === "read_artifact_version";
       });
-      assert.equal(restoredContextReads.length, 12, 'the additional editor confirmation restores its two bound input artifacts');
+      assert.equal(restoredContextReads.length, 16, 'each review/revision/language confirmation restores only its currently bound inputs');
       const repeatedMaterialReads = storage.listRunEvents(first.runId).filter((event) => {
         if (event.type !== "tool.completed") return false;
         const execution = event.payload.result;
@@ -1960,3 +1954,4 @@ describe("WritingApplicationService draft closure", () => {
     }
   });
 });
+import { withCheckpointIntent } from './intent-fixture.js';

@@ -11,12 +11,23 @@ import { collaborationState } from "./collaboration-fixture.js";
 import { getPublicationCandidates, choosePublicationCandidate } from '../src/publication-choice.js';
 import { createApplicationBridge } from '../../client-bridge/src/application-bridge.js';
 import { publicStageFixtureEvents } from './collaboration-fixture.js';
+import { withCheckpointIntent, withIntentFixture } from './intent-fixture.js';
 
 export class CollaborationProvider extends ModelProviderBase {
   requests: ModelRequest[] = [];
   constructor(readonly blocked = false) { super("collaboration-mock", "1.0.0", { protocol: "mock", tools: "supported", streaming: "supported", usage: "unknown" }); }
   protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
     this.requests.push(structuredClone(request));
+    if (!request.messages.some(m => m.content.includes('COLLABORATION_STATE='))) {
+      if (request.tools?.some(t => t.name === 'respond_author')) {
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'respond_author', argumentsDelta: JSON.stringify({ reply: '我们先讨论当前这一条，不交接下一位。' }) };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      } else {
+        yield { type: 'text_delta', delta: '我们先讨论当前这一条，不交接下一位。' };
+        yield { type: 'completed', finishReason: 'stop' };
+      }
+      return;
+    }
     const raw = request.messages.find((message) => message.role === "user")?.content ?? "";
     const state = JSON.parse(raw.split("\nCOLLABORATION_STATE=")[1]!) as { actor: string; nextStage: string | null; stage: string | null; inputVersionIds: string[]; unreadArtifactVersionIds: string[]; factCheck?: { status: string }; finished: boolean; ready: boolean };
     let name: string; let args: unknown;
@@ -56,10 +67,29 @@ export class CollaborationProvider extends ModelProviderBase {
   }
 }
 
+for (const parallelEnabled of [false, true]) it(`full workflow scopes external fact tools to checker only (enabled=${parallelEnabled})`, async () => {
+  const provider = new CollaborationProvider();
+  const f = setup(provider);
+  try {
+    const app = new WritingApplicationService({ storage: f.storage, provider,
+      factSearchConfiguration: () => ({ parallelEnabled, tavilyEnabled: false }) });
+    const result = await app.runDraft(f.input);
+    assert.equal(result.ok, true);
+    const checks = provider.requests.filter(request => collaborationState(request)?.stage === 'fact_check');
+    assert.ok(checks.length > 0);
+    for (const request of provider.requests) {
+      const expected = parallelEnabled && collaborationState(request)?.stage === 'fact_check';
+      assert.equal(request.tools?.some(tool => tool.name === 'search_fact_sources') ?? false, expected);
+      assert.equal(request.tools?.some(tool => tool.name === 'read_fact_source') ?? false, expected);
+    }
+    assert.match(checks[0]!.messages[0]!.content, parallelEnabled ? /外部事实搜索已启用/ : /仅由大模型.*未联网验证/);
+  } finally { f.close(); }
+});
+
 function setup(provider: CollaborationProvider, interactionMode: "autonomous" | "co_creation" = "autonomous", materialCount = 0, mode: 'quick' | 'deep' = 'quick') {
   const path = mkdtempSync(join(tmpdir(), "writing-collaboration-"));
   const storage = openWorkspaceStorage({ workspacePath: path });
-  const app = new WritingApplicationService({ storage, provider });
+  const app = new WritingApplicationService({ storage, provider: withIntentFixture(provider) });
   const actor = { kind: "user", id: "u" } as const;
   app.createProject({ operationId: "project", projectId: "p", name: "test", mode, actor });
   for (let i = 0; i < materialCount; i++) {
@@ -78,23 +108,23 @@ it('requires a separate author decision after each independent review, including
   const f = setup(provider, 'co_creation', 0, 'deep');
   try {
     const first = await f.app.runDraft(f.input);
-    const stages = ['outline', 'draft', 'review_editor', 'review_publish', 'review_reader'];
+    const stages = ['outline', 'draft', 'review_editor', 'review_publish', 'review_reader', 'central_revision', 'language_review'];
     for (let index = 0; index < stages.length; index++) {
       if (index > 0) {
         const restarted = new WritingApplicationService({ storage: f.storage, provider });
-        await restarted.resumeDraft({ ...f.input, runId: first.runId, operationId: `stepwise-${index}`,
-          decision: 'resume', userInstruction: 'ok', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+        await restarted.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: `stepwise-${index}`,
+          decision: 'resume', userInstruction: 'ok', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
       }
       const wait = f.storage.listRunEvents(first.runId).filter(e => e.type === 'run.waiting_user').at(-1);
       assert.equal(wait?.payload.stage, stages[index]);
       assert.equal(f.storage.getRun(first.runId)?.stopReason, 'CO_CREATION_CHECKPOINT');
-      const next = stages[index + 1] ?? 'central_revision';
+      const next = stages[index + 1] ?? 'fact_check';
       assert.equal(f.storage.listArtifactVersions('p', 'report', `workflow:${first.runId}:${next}`).length, 0,
         `must not execute ${next} before the current expert is accepted`);
       if (stages[index]!.startsWith('review_')) {
         assert.throws(() => f.app.resumeDraft({ ...f.input, runId: first.runId, operationId: `not-confirmed-${index}`,
           decision: 'resume', userInstruction: '我不同意第二条，先解释一下', expectedProjectRevision: f.storage.inspectProject('p')!.revision }),
-          /confirm|confirmation/i);
+          /CHECKPOINT_DECISION_REQUIRED|checkpoint/i);
         assert.equal(f.storage.getRun(first.runId)?.status, 'waiting_user');
       }
     }
@@ -108,12 +138,133 @@ it('treats a short affirmative outline reply as confirmation, not a rework reque
     const first = await f.app.runDraft(f.input);
     const outlineWait = f.storage.listRunEvents(first.runId).filter(e => e.type === 'run.waiting_user').at(-1);
     assert.equal(outlineWait?.payload.stage, 'outline');
-    await f.app.resumeDraft({ ...f.input, runId: first.runId, operationId: 'confirm-outline-naturally',
-      decision: 'resume', userInstruction: '方向可以', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: 'confirm-outline-naturally',
+      decision: 'resume', userInstruction: '方向可以', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
     assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main').length, 1,
       '短确认语（"方向可以"）不得触发提纲返工重写');
     const nextWait = f.storage.listRunEvents(first.runId).filter(e => e.type === 'run.waiting_user').at(-1);
     assert.equal(nextWait?.payload.stage, 'draft', '确认提纲后应进入初稿确认点');
+  } finally { f.close(); }
+});
+
+for (const phrase of ['认同', '认可；', '我觉得你说的这些都挺对的，往下做吧']) it(`reader approval through the real bridge resumes the same saved workflow: ${phrase}`, async () => {
+  const provider = new CollaborationProvider();
+  const f = setup(provider, 'co_creation');
+  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'semantic-reader', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: null } });
+  try {
+    const first = await f.app.runDraft(f.input);
+    for (let n = 0; n < 3; n++) await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId,
+      operationId: `semantic-prep-${n}`, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
+    assert.equal(f.storage.listRunEvents(first.runId).filter(e => e.type === 'run.waiting_user').at(-1)?.payload.stage, 'review_reader');
+    const savedReview = f.storage.listArtifactVersions('p', 'report', `workflow:${first.runId}:review_reader`).map(v => v.id);
+    await bridge.selectSession('p', first.sessionId);
+    const turn = await bridge.sendMessage(phrase);
+    const deadline = Date.now() + 10000;
+    while (!f.storage.listArtifactVersions('p', 'report', `workflow:${first.runId}:central_revision`).length || f.storage.getRun(first.runId)?.status === 'running') {
+      assert.ok(Date.now() < deadline, JSON.stringify(f.storage.listRunEvents(turn.runId).slice(-3)));
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(f.storage.getRun(turn.runId)?.status, 'completed');
+    assert.deepEqual(f.storage.listArtifactVersions('p', 'report', `workflow:${first.runId}:review_reader`).map(v => v.id), savedReview, 'accepted review must not be replayed');
+    assert.equal(f.storage.listRunEvents(first.runId).filter(e => e.type === 'run.resumed').at(-1)?.payload.displayInstruction, phrase);
+    const report = JSON.parse(f.storage.listArtifactVersions('p', 'report', `author-turn:${turn.runId}`)[0]!.content);
+    assert.equal(report.requestedAction, 'resume_checkpoint');
+    assert.doesNotMatch(report.reply, /明确认可后|这样调整可以吗/);
+  } finally { bridge.dispose(); f.close(); }
+});
+
+for (const phrase of ['不同意', '还没确认', '认可第一点，但第二点为什么要改？', '先别交给下一位，解释一下']) it(`semantic objections never advance or rewrite a pending stage: ${phrase}`, async () => {
+  const f = setup(new CollaborationProvider(), 'co_creation');
+  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'semantic-objection', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: null } });
+  try {
+    const first = await f.app.runDraft(f.input);
+    const before = f.storage.listRunEvents(first.runId).length;
+    await bridge.selectSession('p', first.sessionId);
+    const turn = await bridge.sendMessage(phrase);
+    const deadline = Date.now() + 5000;
+    while (f.storage.getRun(turn.runId)?.status === 'running') {
+      assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(f.storage.getRun(turn.runId)?.status, 'completed');
+    assert.equal(f.storage.listRunEvents(first.runId).length, before);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, null);
+  } finally { bridge.dispose(); f.close(); }
+});
+
+it('does not accept a receipt after its checkpoint or body changes', async () => {
+  const f = setup(new CollaborationProvider(), 'co_creation');
+  try {
+    const first = await f.app.runDraft(f.input);
+    const approved = withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: 'stale-intent', decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision });
+    f.storage.resumeRun({ projectId: 'p', runId: first.runId, operationId: 'change-question', decision: 'resume' });
+    f.storage.pauseRun({ projectId: 'p', runId: first.runId, operationId: 'new-question', reason: 'CO_CREATION_CHECKPOINT', payload: { stage: 'outline', nextStage: 'draft' } });
+    assert.throws(() => f.app.resumeDraft(approved), /checkpoint/i);
+    assert.equal(f.storage.getRun(first.runId)?.status, 'waiting_user');
+  } finally { f.close(); }
+});
+
+it('does not reuse a prior approval after a newer objection in the same conversation', async () => {
+  const f = setup(new CollaborationProvider(), 'co_creation');
+  try {
+    const first = await f.app.runDraft(f.input);
+    const approved = withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: 'old-approval', decision: 'resume', userInstruction: '继续' });
+    f.storage.startRun({ projectId: 'p', sessionId: first.sessionId, runId: 'new-objection', planVersion: 'test', displayInstruction: '等等，我还没同意' });
+    f.storage.finishRun({ projectId: 'p', runId: 'new-objection', operationId: 'new-objection-saved', status: 'completed', stopReason: null });
+    assert.throws(() => f.app.resumeDraft(approved), /checkpoint/i);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, null);
+  } finally { f.close(); }
+});
+
+it('retires resume-time read instructions when later stages replace their input versions', async () => {
+  class PauseBeforeRevision extends CollaborationProvider {
+    paused = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request);
+      if (!this.paused && state?.actor === 'director' && state.nextStage === 'central_revision') {
+        this.paused = true;
+        yield { type: 'tool_call_delta', index: 0, id: 'pause-before-revision', name: 'assess_writing_readiness', argumentsDelta: JSON.stringify({ status: 'needs_input', reason: '请确认集中修订范围', questions: ['是否按这些意见修订？'] }) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new PauseBeforeRevision(), f = setup(provider);
+  try {
+    const first = await f.app.runDraft(f.input);
+    assert.equal(f.storage.getRun(first.runId)?.status, 'waiting_user');
+    const oldBody = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    await f.app.resumeDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, runId: first.runId, operationId: 'resume-version-scope', decision: 'resume', userInstruction: '按审校意见继续修订' }).result;
+    const late = provider.requests.filter(r => { const s = collaborationState(r); return s?.actor === 'director' && s.nextStage === 'fact_check'; });
+    assert.ok(late.length);
+    for (const request of late) {
+      assert.equal(JSON.stringify(request.messages).includes(oldBody), false, 'the old body must not be advertised to an actor forbidden to read it');
+      assert.equal(JSON.stringify(request.messages).includes('恢复必读上下文'), false, 'read obligations must follow current stage inputs, not the frozen resume snapshot');
+    }
+  } finally { f.close(); }
+});
+
+it('recovers a legacy missing language checkpoint without rerunning saved experts or starting fact check', async () => {
+  const provider = new CollaborationProvider(), f = setup(provider, 'co_creation');
+  try {
+    const first = await f.app.runDraft(f.input);
+    for (let n = 0; n < 5; n++) await f.app.resumeDraft(withCheckpointIntent(f.storage, {
+      ...f.input, runId: first.runId, operationId: `legacy-prep-${n}`, decision: 'resume', userInstruction: '可以',
+      expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+    })).result;
+    const events = f.storage.listRunEvents.bind(f.storage);
+    const missing = events(first.runId).findLast(e => e.type === 'run.waiting_user')!;
+    assert.equal(missing.payload.stage, 'language_review');
+    // Emulate rc54: the language result exists, but no corresponding wait event.
+    f.storage.listRunEvents = id => events(id).filter(e => e.id !== missing.id);
+    f.storage.resumeRun({ projectId: 'p', runId: first.runId, operationId: 'legacy-resume', decision: 'resume' });
+    f.storage.pauseRun({ projectId: 'p', runId: first.runId, operationId: 'legacy-failure', reason: 'TOOL_FAILURE_LOOP', payload: { tool: 'read_artifact_version', validationCode: 'TOOL_PERMISSION_DENIED' } });
+    const bodies = f.storage.listArtifactVersions('p', 'body', 'main').map(v => v.id);
+    const result = await f.app.resumeDraft({ ...f.input, runId: first.runId, operationId: 'legacy-retry', decision: 'resume',
+      expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    assert.equal(f.storage.getRun(first.runId)?.stopReason, 'CO_CREATION_CHECKPOINT', JSON.stringify(result));
+    assert.equal(f.storage.listRunEvents(first.runId).findLast(e => e.type === 'run.waiting_user')?.payload.stage, 'language_review');
+    assert.deepEqual(f.storage.listArtifactVersions('p', 'body', 'main').map(v => v.id), bodies);
+    assert.equal(getPublicationCandidates(f.storage, 'p'), null);
   } finally { f.close(); }
 });
 
@@ -362,7 +513,7 @@ it('only advertises director dispatch after readiness including resumed segments
   const f = setup(provider, 'co_creation');
   try {
     const run = await f.app.runDraft(f.input);
-    await f.app.resumeDraft({ ...f.input, runId: run.runId, operationId: 'ready-resume', decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: run.runId, operationId: 'ready-resume', decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
     let pending = 0, ready = 0;
     for (const request of provider.requests) {
       const state = collaborationState(request);
@@ -380,8 +531,8 @@ it('continues a multi-confirmation workflow beyond its cumulative limit without 
   const input = { ...f.input, budget: { ...f.input.budget, maxModelRequests: 15 } };
   try {
     const run = await f.app.runDraft(input);
-    for (let i = 0; i < 4; i++) {
-      await f.app.resumeDraft({ ...input, runId: run.runId, operationId: 'segment-' + i, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    for (let i = 0; i < 6; i++) {
+      await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...input, runId: run.runId, operationId: 'segment-' + i, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
       assert.equal(f.storage.getRun(run.runId)!.status, 'waiting_user');
     }
     assert.ok(f.storage.getRun(run.runId)!.usage.modelRequests > 15);
@@ -396,8 +547,8 @@ it('asks for each co-creation confirmation once at the end of the saved result, 
   try {
     const result = await f.app.runDraft(f.input);
     await bridge.selectSession('p', result.sessionId);
-    for (const [index, phrase] of ['这个方向可以吗？', '初稿这样写可以吗？', '编辑审校的建议你认可吗？', '读者审校的建议你认可吗？'].entries()) {
-      if (index > 0) await f.app.resumeDraft({ ...f.input, runId: result.runId, operationId: `inline-confirm-${index}`, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    for (const [index, phrase] of ['这个方向可以吗？', '初稿这样写可以吗？', '编辑审校的建议你认可吗？', '读者审校的建议你认可吗？', '集中修订后的全文这样可以吗？', '润色后的这一版你认可吗？'].entries()) {
+      if (index > 0) await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: result.runId, operationId: `inline-confirm-${index}`, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
       await bridge.refresh();
       const check = () => {
         const timeline = bridge.getSnapshot().timelineBySession[result.sessionId]!;
@@ -437,9 +588,9 @@ it('reuses version-bound material reads across confirmations without exhausting 
   provider.materials = f.storage.listMaterials('p');
   try {
     const first = await f.app.runDraft(f.input);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 6; i++) {
       assert.equal(f.storage.getRun(first.runId)!.status, 'waiting_user', JSON.stringify(f.storage.listRunEvents(first.runId).slice(-3)));
-      await f.app.resumeDraft({ ...f.input, runId: first.runId, operationId: `material-resume-${i}`, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+      await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: `material-resume-${i}`, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
     }
     assert.equal(f.storage.getRun(first.runId)!.status, 'waiting_user');
     assert.ok(getPublicationCandidates(f.storage, 'p'), 'reached title selection without increasing budget');
@@ -468,7 +619,7 @@ it('retains an unfinished expert assignment after transport-only retry instead o
   try {
     const first = await f.app.runDraft(f.input);
     assert.ok(f.storage.listRunEvents(first.runId).some(e => e.type === 'request.outcome_unknown'));
-    const result = await f.app.resumeDraft({ ...f.input, runId: first.runId, operationId: 'transport-retry', decision: 'retry_unknown', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    const result = await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: 'transport-retry', decision: 'retry_unknown', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
     assert.equal(result.ok, true, JSON.stringify(result));
     const assignments = f.storage.listRunEvents(first.runId).filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.result?.collaboration?.actor === 'review_editor');
     assert.equal(assignments.length, 1, 'transport recovery must retain the committed task assignment and its bound inputs');
@@ -649,9 +800,9 @@ it('waits for co-author title selection before fact-checking and preserves that 
   const f = setup(new CollaborationProvider(), 'co_creation');
   try {
     const first = await f.app.runDraft(f.input);
-    for (let index = 0; index < 4; index++) {
+    for (let index = 0; index < 6; index++) {
       const project = f.storage.inspectProject('p')!;
-      await f.app.resumeDraft({ ...f.input, expectedProjectRevision: project.revision, runId: first.runId, operationId: `continue-${index}`, decision: 'resume', userInstruction: '继续' }).result;
+      await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: project.revision, runId: first.runId, operationId: `continue-${index}`, decision: 'resume', userInstruction: '继续' })).result;
     }
     assert.equal(f.storage.getRun(first.runId)!.status, 'waiting_user');
     assert.equal(f.storage.inspectProject('p')!.currentTitleVersionId, null, 'a generated heading is not a user selection');
@@ -659,7 +810,7 @@ it('waits for co-author title selection before fact-checking and preserves that 
     const candidate = getPublicationCandidates(f.storage, 'p')!;
     choosePublicationCandidate(f.storage, 'p', 'choose', '确认标题：安静', candidate.id, 1);
     const titleVersion = f.storage.inspectProject('p')!.currentTitleVersionId;
-    const result = await f.app.resumeDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, runId: first.runId, operationId: 'after-title', decision: 'resume', userInstruction: '标题已确认，请继续核查' }).result;
+    const result = await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, runId: first.runId, operationId: 'after-title', decision: 'resume', userInstruction: '标题已确认，请继续核查' })).result;
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(f.storage.inspectProject('p')!.currentTitleVersionId, titleVersion, 'fact checking must not replace selected title');
   } finally { f.close(); }
@@ -695,9 +846,9 @@ it('uses an isolated title expert when the final body has no explicit title inst
   const f = setup(provider, 'co_creation');
   try {
     const first = await f.app.runDraft(f.input);
-    for (let index = 0; index < 4; index++) {
-      await f.app.resumeDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision,
-        runId: first.runId, operationId: `missing-title-${index}`, decision: 'resume', userInstruction: '继续' }).result;
+    for (let index = 0; index < 6; index++) {
+      await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+        runId: first.runId, operationId: `missing-title-${index}`, decision: 'resume', userInstruction: '继续' })).result;
     }
     const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId!;
     const body = f.storage.getArtifactVersion(bodyId)!.content;
@@ -729,8 +880,8 @@ it('continues the same waiting workflow after the user selects the publication t
   let bridge: ReturnType<typeof createApplicationBridge> | undefined;
   try {
     const first = await f.app.runDraft(f.input);
-    for (let n = 0; n < 4; n++) await f.app.resumeDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision,
-      runId: first.runId, operationId: `advance-${n}`, decision: 'resume', userInstruction: '继续' }).result;
+    for (let n = 0; n < 6; n++) await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+      runId: first.runId, operationId: `advance-${n}`, decision: 'resume', userInstruction: '继续' })).result;
     candidateId = getPublicationCandidates(f.storage, 'p')!.id;
     bridge = createApplicationBridge({ service: f.app, workspaceId: 'title-handoff', initialProjectId: 'p', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: 'test' }, pollIntervalMs: 10 });
     assert.equal(bridge.getSnapshot().selectedSessionId, first.sessionId);
@@ -830,7 +981,7 @@ it("reworks an outline on the same resumed run and asks for confirmation before 
     assert.equal(f.storage.getRun(first.runId)?.status, "waiting_user");
     const serviceAfterRestart = new WritingApplicationService({ storage: f.storage, provider });
     const project = f.storage.inspectProject("p")!;
-    const resumed = await serviceAfterRestart.resumeDraft({ ...f.input, expectedProjectRevision: project.revision, runId: first.runId, operationId: "resume-rework", decision: "resume", userInstruction: "提纲改成对比结构" }).result;
+    const resumed = await serviceAfterRestart.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: project.revision, runId: first.runId, operationId: "resume-rework", decision: "resume", userInstruction: "提纲改成对比结构" })).result;
     assert.equal(resumed.runId, first.runId);
     assert.equal(f.storage.getRun(first.runId)?.status, "waiting_user", JSON.stringify(resumed));
     assert.equal(f.storage.listArtifactVersions("p", "outline", "main").length, 2);
@@ -933,7 +1084,7 @@ it("reworks the blocked current body with its fact findings after authorized use
     blockedBody = f.storage.inspectProject("p")!.latestBodyVersionId!;
     oldDraft = f.storage.listArtifactVersions("p", "body", "main")[0]!.id;
     resumed = true;
-    const next = await f.app.resumeDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject("p")!.revision, runId: first.runId, operationId: "authorize-fact-edit", decision: "resume", userInstruction: "请删去增长99%的句子，先修改正文后重新核查，无需再问同一授权。" }).result;
+    const next = await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: f.storage.inspectProject("p")!.revision, runId: first.runId, operationId: "authorize-fact-edit", decision: "resume", userInstruction: "请删去增长99%的句子，先修改正文后重新核查，无需再问同一授权。" })).result;
     assert.equal(next.ok, true, JSON.stringify({ next, failures: f.storage.listRunEvents(first.runId).filter((event) => event.type === "tool.failed").slice(-3).map((event) => event.payload) }));
     assert.equal(next.runId, first.runId);
     assert.equal(f.storage.getRun(first.runId)?.usage.majorRevisions, 1);
@@ -1185,7 +1336,7 @@ it("reconstructs a legacy run baseline from pre-start history, not the resumed c
     f.storage.startRun({ runId: "legacy-run", sessionId: "legacy-session", projectId: "p", planVersion: "writing-pack-v1", budget: f.input.budget });
     if (changedAfterStart) assert.equal(f.app.saveBody({ operationId: "legacy-later-edit", projectId: "p", expectedProjectRevision: f.storage.inspectProject("p")!.revision, baseBodyVersionId: prior.result.versionId, content: "# 用户新正文\n\n这个新版本未经旧run授权。", reason: "manual edit", actor: { kind: "user", id: "u" } }).ok, true);
     f.storage.pauseRun({ projectId: "p", runId: "legacy-run", operationId: "pause-legacy", reason: "CO_CREATION_CHECKPOINT" });
-    const result = await f.app.resumeDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject("p")!.revision, runId: "legacy-run", operationId: "resume-legacy", decision: "resume", userInstruction: "基于中断前的稿件继续完善。" }).result;
+    const result = await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: f.storage.inspectProject("p")!.revision, runId: "legacy-run", operationId: "resume-legacy", decision: "resume", userInstruction: "基于中断前的稿件继续完善。" })).result;
     if (changedAfterStart) {
       assert.equal(result.ok, false);
       assert.equal(f.storage.getRun("legacy-run")!.status, "waiting_user");

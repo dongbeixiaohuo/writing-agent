@@ -9,6 +9,12 @@ import { UI_BRIDGE_PROTOCOL_VERSION } from '../../../packages/client-bridge/src/
 
 const root = resolve("apps/desktop");
 
+test("candidate validation includes search safety and conversation rendering regressions", () => {
+  const { scripts } = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.match(scripts["check:runtime"]!, /npm run test:fact-search(?:\s|$)/u);
+  assert.match(scripts["test:ui"]!, /packages\/ui\/test\/conversation-readability\.test\.ts/u);
+});
+
 test("desktop package owns its identity and produces an explicit unsigned NSIS artifact", async () => {
   const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
     name: string;
@@ -19,7 +25,7 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
   assert.deepEqual(packageJson, {
     ...packageJson,
     name: "writing-agent-desktop",
-    version: "1.0.0-rc.53",
+    version: "1.0.0-rc.57",
     productName: "Writing Agent",
     main: "dist/main.cjs",
   });

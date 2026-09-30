@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { BridgeSnapshot, ClientBridge } from '../../../client-bridge/src/protocol.ts'
 import css from './WritingAgentShell.module.css'
 
@@ -7,6 +7,9 @@ export function ConversationRevisionCard({ bridge, snapshot, onContentChange }: 
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // A previous revision receipt must not look like the result of a later title
+  // selection or survive switching to another conversation.
+  useEffect(() => { setNotice(null) }, [snapshot.selectedSessionId, snapshot.activeRunId])
   const proposals = snapshot.revisionWorkspace.proposals.filter(proposal => proposal.status === 'proposed')
   const disabled = busy !== null || snapshot.mode !== 'application' || snapshot.connection === 'offline' || snapshot.activeRunId !== null
   async function resolve(id: string, accept: boolean) {

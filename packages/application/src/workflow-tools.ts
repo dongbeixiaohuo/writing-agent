@@ -84,6 +84,8 @@ const CO_CREATION_CHECKPOINT_STAGES = new Set<ContentStage>([
   "review_editor",
   "review_publish",
   "review_reader",
+  "central_revision",
+  "language_review",
 ]);
 
 function value<T>(result: MutationResult<T>): T {

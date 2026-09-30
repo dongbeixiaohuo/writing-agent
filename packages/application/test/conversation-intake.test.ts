@@ -16,6 +16,7 @@ import {
   WritingApplicationService,
 } from "../src/index.js";
 import { confirmConversationBriefState } from "../src/conversation-intake.js";
+import { intentFixtureEvents } from './intent-fixture.js';
 
 type ToolArgs = Readonly<Record<string, unknown>>;
 
@@ -37,6 +38,8 @@ class IntakeProvider extends ModelProviderBase {
   protected async *providerStream(
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
+    const intent = intentFixtureEvents(request);
+    if (intent) { yield* intent; return; }
     this.requests.push(structuredClone(request));
     const hasToolResult = request.messages.some((message) => message.role === "tool");
     if (hasToolResult) {

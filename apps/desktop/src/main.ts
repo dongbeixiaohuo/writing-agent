@@ -178,6 +178,11 @@ async function handleRpc(
     return { ok: false, error: { code: "DESKTOP_HOST_NOT_READY", message: "Desktop host is not ready" } };
   }
   try {
+    if (parsed.method === 'searchStatus' || parsed.method === 'configureSearch') {
+      const result = parsed.method === 'searchStatus' ? await currentHost.searchStatus()
+        : await currentHost.configureSearch(parsed.args[0] as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsInput);
+      return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
+    }
     if (parsed.method === 'savePublicationAs') {
       const input = parsed.args[0] as DesktopPublicationSaveInput;
       const result = await currentHost.savePublicationAs(input, async fileName => {

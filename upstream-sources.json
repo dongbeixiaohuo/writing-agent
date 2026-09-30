@@ -290,8 +290,8 @@
         ],
         "target_paths": ["packages/client-bridge/src/provider-presets.ts", "packages/client-bridge/src/provider-offerings.ts"],
         "copied_files": [
-          { "source_path": "src/config/claudeProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-presets.ts", "sha256": "35e137a674be70b0fdc68eccd76a659054bb94bc1fe91992ab2f9fc6428be884", "exact_copy": false },
-          { "source_path": "src/config/codexProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-offerings.ts", "sha256": "f0c282c26e2b6a252bb8ebca6aa322a2bcbb2cd17f275e08bea6499de8a7fa26", "exact_copy": false }
+          { "source_path": "src/config/claudeProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-presets.ts", "sha256": "b3945494c4f1b86d0faf67cbc948d5164d6bd44c6e2ee2445934ce83affd9c5b", "exact_copy": false },
+          { "source_path": "src/config/codexProviderPresets.ts", "target_path": "packages/client-bridge/src/provider-offerings.ts", "sha256": "7bf50fd7bd96b04e67a6127cb9adddd881950cbcb44499884fd5c28b0c3408b1", "exact_copy": false }
         ],
         "excluded_features": ["dynamic KAT-Coder resource template", "guessed regions", "inferred billing entitlements", "endpoint-only plan merging", "automatic endpoint fallback"],
         "required_tests": ["provider-presets.test.ts: explicit region/product/edition and ambiguous legacy matching", "provider-profile.test.ts: exact transport authentication and legacy preservation", "provider_presets_browser.py: filters and plan selection"],

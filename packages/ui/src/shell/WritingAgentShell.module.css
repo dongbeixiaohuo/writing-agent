@@ -2946,6 +2946,44 @@
   font-size: 12px;
 }
 
+.searchSettings {
+  display: grid;
+  gap: 16px;
+  max-width: 720px;
+}
+
+.searchHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.searchHeading .settingsSectionTitle { margin-bottom: 6px; }
+.searchHeading p { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.6; }
+.searchPrivacyBadge { flex-shrink: 0; padding: 5px 9px; border-radius: 999px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-active); font-size: 11px; }
+.searchProviderList { display: grid; gap: 12px; }
+.searchProviderCard { display: grid; gap: 16px; padding: 16px 18px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 14px; background: var(--dsw-specific-popover); }
+label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(0, 1fr) max-content; align-items: center; cursor: pointer; }
+.searchProviderToggle { display: grid; gap: 16px; }
+.searchProviderCopy { display: grid; gap: 5px; }
+.searchProviderCopy strong { color: var(--dsw-alias-label-primary); font-size: 15px; }
+.searchProviderCopy small { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.5; }
+.searchProviderCard input[type='checkbox'] { width: 34px; height: 18px; accent-color: var(--dsw-alias-brand-primary); cursor: pointer; }
+.searchRouteNotice, .searchWarning { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px; padding: 12px 14px; border-radius: 10px; font-size: 12px; line-height: 1.5; }
+.searchRouteNotice { color: var(--dsw-alias-brand-primary); background: var(--dsw-alias-interactive-bg-active); }
+.searchWarning { color: var(--dsw-alias-label-primary); background: color-mix(in srgb, var(--dsw-static-amber-500) 12%, transparent); }
+.searchValidation { margin: 0; color: var(--dsw-static-red-500); font-size: 12px; }
+.searchActions { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-top: 4px; }
+.searchActions .settingHint { max-width: 440px; }
+.searchActions button { flex-shrink: 0; }
+
+@media (max-width: 640px) {
+  .searchHeading, .searchActions { align-items: stretch; flex-direction: column; }
+  .searchPrivacyBadge { align-self: flex-start; }
+  .searchRouteNotice, .searchWarning { grid-template-columns: 1fr; gap: 3px; }
+}
+
 .dataTools {
   display: grid;
   gap: 16px;

@@ -13,6 +13,8 @@ import {
 } from "./protocol.js";
 
 export type DesktopRpcMethod =
+  | 'searchStatus'
+  | 'configureSearch'
   | "handshake"
   | "getSnapshot"
   | "selectProject"
@@ -55,6 +57,8 @@ export type DesktopRpcMethod =
   | "deleteProject";
 
 export const DESKTOP_RPC_METHODS = Object.freeze([
+  'searchStatus',
+  'configureSearch',
   "handshake",
   "getSnapshot",
   "selectProject",
@@ -286,7 +290,20 @@ export type DesktopPublicationSaveResult =
   | { readonly cancelled: true }
   | { readonly cancelled: false; readonly receiptId: string; readonly savedPath: string; readonly fileName: string };
 
+export interface SearchSettingsInput {
+  readonly parallelEnabled: boolean;
+  readonly tavilyEnabled: boolean;
+  readonly tavilyApiKey?: string;
+}
+export interface SearchSettingsView {
+  readonly parallelEnabled: boolean;
+  readonly tavilyEnabled: boolean;
+  readonly tavilyKeyConfigured: boolean;
+  readonly credentialPersistence: 'system' | 'session' | 'environment' | 'missing';
+}
 export interface DesktopHostConfiguration {
+  searchStatus?(): Promise<SearchSettingsView>;
+  configureSearch?(input: SearchSettingsInput): Promise<SearchSettingsView>;
   savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult>;
   revealPublication(receiptId: string): Promise<void>;
   revealProviderConfig(): Promise<void>;

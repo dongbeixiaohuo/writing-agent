@@ -4,21 +4,67 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { readFileSync, readdirSync } from 'node:fs';
+import ts from 'typescript';
 import { TOOL_PRESENTATION, recordedActorLabel } from '../src/tool-presentation.js';
 import { WritingApplicationService } from '../../application/src/index.js';
 import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { createApplicationBridge } from '../src/application-bridge.js';
+import { savePublicationCandidates } from '../../application/src/publication-choice.js';
+
+test('body edits keep displayed title choices available with unchanged ordinals and a fresh-check explanation', async () => {
+  const f = await fixture();
+  try {
+    const actor = { kind: 'user', id: 'test' } as const;
+    f.storage.commitArtifactVersion({ projectId: 'project', operationId: 'body', expectedProjectRevision: f.storage.inspectProject('project')!.revision,
+      kind: 'body', logicalKey: 'main', baseVersionId: null, content: '# 旧稿\n\n文章。', reason: 'test', actor });
+    const oldBody = f.storage.inspectProject('project')!.latestBodyVersionId!;
+    savePublicationCandidates(f.storage, 'project', 'choices', oldBody, ['慢一点', '窗边的安静'].map(title => ({ title, opening: null, distributionCopy: null, rationale: '观察' })));
+    f.storage.commitArtifactVersion({ projectId: 'project', operationId: 'edit', expectedProjectRevision: f.storage.inspectProject('project')!.revision,
+      kind: 'body', logicalKey: 'main', baseVersionId: oldBody, content: '# 新稿\n\n修改后的文章。', reason: 'test', actor });
+    f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'wait', reason: 'WRITING_INPUT_REQUIRED',
+      payload: { kind: 'publication_selection', nextStage: 'fact_check', reason: '请选择标题', questions: [] } });
+    const request = (await f.snapshot()).recoverableRuns.find(r => r.runId === 'run')?.inputRequest;
+    assert.deepEqual(request?.candidates?.map(c => c.title), ['慢一点', '窗边的安静']);
+    assert.match(request?.reason ?? '', /正文已更新.*按当前稿件核查/u);
+  } finally { f.close(); }
+});
+
+function declaredWritingTools(source: string): string[] {
+  const names: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isObjectLiteralExpression(node)) {
+      const fields = new Map(node.properties.filter(ts.isPropertyAssignment)
+        .map(property => [property.name.getText().replace(/^['"]|['"]$/g, ''), property.initializer]));
+      const name = fields.get('name');
+      if (name && ts.isStringLiteral(name) && fields.has('inputSchema') && fields.has('permissions') && fields.has('effect')) names.push(name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ts.createSourceFile('tools.ts', source, ts.ScriptTarget.Latest, true));
+  return names;
+}
+
+test('tool inventory distinguishes registered definitions from upstream MCP calls and output references', () => {
+  assert.deepEqual(declaredWritingTools(`
+    const definition = { name: 'search_fact_sources', inputSchema: {}, permissions: [], effect: 'read_only', execute: async () => null };
+    const request = { method: 'tools/call', params: { name: 'web_search', arguments: {} } };
+    const preview = { name: 'submit_writing_stage', arguments: {}, contentArgument: 'content' };
+  `), ['search_fact_sources']);
+});
 
 test('every declared writing tool has display documentation, while caller names are a fixed allowlist', () => {
+  const declared = new Set<string>();
   for (const base of ['packages/application/src', 'packages/runtime/tools/src']) {
     for (const file of readdirSync(base).filter(file => file.endsWith('.ts'))) {
       const source = readFileSync(join(base, file), 'utf8');
-      for (const match of source.matchAll(/\bname:\s*['"]([a-z][a-z_]+)['"]/gu)) {
-        const info = TOOL_PRESENTATION[match[1]!];
-        assert.ok(info?.description && info.label && info.category, `Missing display metadata for ${match[1]}`);
+      for (const name of declaredWritingTools(source)) {
+        declared.add(name);
+        const info = TOOL_PRESENTATION[name];
+        assert.ok(info?.description && info.label && info.category, `Missing display metadata for ${name}`);
       }
     }
   }
+  for (const name of ['search_fact_sources', 'read_fact_source', 'read_material', 'submit_writing_stage', 'interpret_author_reply']) assert.ok(declared.has(name), name);
   for (const role of ['intake', 'director', 'research', 'outline', 'draft', 'review_editor', 'review_publish', 'review_reader', 'central_revision', 'language_review', 'fact_check', 'title']) assert.ok(recordedActorLabel(role), role);
   assert.equal(recordedActorLabel('constructor'), null);
 });
@@ -41,6 +87,24 @@ async function fixture(purpose = 'writing-pack:draft') {
     close() { bridge.dispose(); storage.close(); rmSync(path, { recursive: true, force: true }); },
   };
 }
+
+test('permission-loop diagnostics survive later waits and explain the concrete cause in main chat', async () => {
+  const f = await fixture();
+  try {
+    f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'permission-loop', reason: 'TOOL_FAILURE_LOOP',
+      payload: { tool: 'read_artifact_version', validationCode: 'TOOL_PERMISSION_DENIED', attempts: 3 } });
+    const snapshot = await f.snapshot();
+    const recovery = snapshot.recoverableRuns.find(r => r.runId === 'run');
+    assert.equal(recovery?.validationFailure?.code, 'TOOL_PERMISSION_DENIED');
+    assert.match(recovery!.validationFailure!.explanation, /不是文章事实核查不通过/);
+    f.storage.resumeRun({ projectId: 'project', runId: 'run', operationId: 'retry', decision: 'resume' });
+    f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'checkpoint', reason: 'CO_CREATION_CHECKPOINT', payload: { stage: 'language_review', nextStage: 'fact_check' } });
+    const later = await f.snapshot();
+    const error = later.timelineBySession.session.find(item => item.kind === 'tool' && item.label === '自动重试已暂停');
+    assert.ok(error?.kind === 'tool');
+    assert.match(error.detail, /当前阶段权限之外/);
+  } finally { f.close(); }
+});
 
 test('a paused question already covered by the reason is shown once, not twice', async () => {
   const f = await fixture();

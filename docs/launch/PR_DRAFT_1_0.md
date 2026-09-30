@@ -1,47 +1,34 @@
-# PR 草稿：Writing Agent 独立运行时与桌面 RC
+# PR 草稿：桌面交互式写作与搜索核查
 
-> 本地草稿；未创建远程 PR。
-
-## 关联
-
-- 计划：WA-001–WA-021（WA-018/019/021 外部签收未完成）
-- 目标分支：`next/runtime` → `main`
-- 发布候选：`1.0.0-rc.5`
+> 2026-09-30 发布准备 PR 文案，拟以 Draft 提交。来源分支 `next/runtime`，目标 `main`；不是公开安装包发布批准，不自动合并。
 
 ## 用户结果
 
-把材料、模型工具调用、稿件版本、局部修改、事实门禁、恢复、迁移和 Windows 桌面分发收进 Writing Agent 自有 runtime。普通用户不需要安装 DSH、Claude Code、Python 或旧 Tauri 应用。
+同一仓库保留 Claude Code Skill 与独立桌面两种入口。桌面用户安装后配置模型即可对话写作，不需要 Claude Code、Python 或旧 Tauri 应用。当前桌面候选为 `1.0.0-rc.57`，Skill 为 `0.11.0`；不将候选版称为稳定版。
 
-## 主要变化
+## 变更范围
 
-- Node 24 + `node:sqlite` 的领域/存储/Application Service。
-- OpenAI-compatible 与 Anthropic-compatible adapter、系统凭据、预算/取消/恢复。
-- 固定 DSH commit 的同源 UI 切片、Writing Agent 品牌/主题/Slot 和真实 Client Bridge。
-- 块级版本/锁/冲突、事实门禁、工作备份和带三种排版的 TXT/HTML 正式导出。
-- 四步引导建稿、角色化共创检查点、自由文本反馈续跑和基于当前稿的连续修改。
-- 主对话优先的信息架构：历史项目可直接恢复对话，当前选中态明确，阶段成果/Markdown/事实阻断/完整稿件在对话内可见，工作台仅承担历史追溯和精细调整。
-- legacy manifest/SQLite 的只读迁移、幂等重试和精确回退。
-- Electron 44 sandbox 容器、明确展示“移除旧版 → 安装新版”的 NSIS 安装包、异常登记恢复、可读版本页、来源/依赖/校验和与安装卸载测试。
+- 独立写作 runtime、版本化本地存储、模型协议适配、Electron/NSIS 桌面分发与设置。
+- 主对话沟通需求，独立专家按阶段协作；自然语言确认、逐阶段交接、标题选择、改稿与恢复持续修复。
+- 事实核查绑定当前稿件版本；可选 Parallel 免费搜索与 Tavily，均关闭时明确仅做模型复核，不保证消除事实错误。
+- 模型配置与主对话切换，预置供应商、地区/套餐/协议标注；兼容范围以实测为准。
+- 本次发布准备更新双入口 README、用户指南、功能差异、演示和 Release 流程，补齐搜索专项和对话可读性测试的自动执行入口。
 
-## 来源与许可
+整体分支差异较大，不能仅凭此摘要合并；新文件、历史产品改动及测试脚本需按[提交范围](RELEASE_PREPARATION_2026_09_30.md)审查。无关业务文件、运行日志、私人稿件、工作区数据库、凭据及安装包不进入源码提交。
 
-复用 DeepSeek Harness 固定 commit `0d1f50007f9bca3f52b06e1c3074fa14d5fb0720` 的已登记 UI 源码和单实例 helper；完整路径、tree/hash、修改边界与 MIT notice 见 `upstream-sources.json` 和 `THIRD_PARTY_NOTICES.md`。不包含上游 runtime host、账户、遥测、更新、插件市场或官方品牌。
+## 验证与已知缺口
 
-## 验证
+- 本地 Runtime、Desktop 检查通过；UI 84/84、Bridge 66/66、搜索专项 17/17、Python 242 项（跳过 1 项安装专用测试），构建/分发边界、来源登记、文档契约、插件与镜像检查通过。最终远端 CI 待提交后执行。
+- 发布预检修正了工具清单测试误把 Parallel 内部 MCP 名称算成写作工具的问题；补齐 rc.49 供应商预设变更的来源登记哈希，升级 undici 兼容版本后生产依赖审计为 0 漏洞。
+- rc.57 复制成品至本机 TEMP 短路径启动成功；此前 OneDrive 路径 GPU 崩溃的具体原因仍未确定。
+- 历史真实模型专项见 [rc.54](../testing/RC54_CONTEXTUAL_CONFIRMATION.md)、[rc.55](../testing/RC55_STAGE_CONFIRMATION_RECOVERY.md)、[rc.56](../testing/RC56_TITLE_SELECTION_CONTINUITY.md)、[搜索记录](../testing/FACT_SEARCH_SETTINGS.md)。
+- 干净机安装/升级、最终候选完整写作、Parallel 整篇联网核查、最终提交 CI 与安全审查未完成；Tavily 真实搜索与模型核查保存专项已通过，但来源正文读取及桌面设置/重启凭据验收仍有缺口。
+- 核查失效提醒与正常确认同时出现的体验问题仍待处理。稳定版所需质量评测与用户上手实验不得使用历史工程测试替代。
+- 搜索外发查询仍依赖模型遵守脱敏指令，缺少程序级边界；Tavily Key 替换后若设置文件写入失败，尚无凭据一致性恢复。两项风险阻止公开安装包，本 PR 保持 Draft。
+- [发布门禁](../testing/RELEASE_GATE.md)仍为 CLOSED；合并代码与批准公开 Release 是不同动作。
 
-- runtime 142 项 + migration 15 项；最终数字仍以 PR 当次 CI 为准。
-- UI/Bridge/Desktop 单测、production/mock/extension builds 与分发扫描。
-- Windows NSIS 安装、打包应用握手、卸载与 SHA-256。
-- legacy Python/工作流/插件回归与 production audit。
-- 详情：`docs/testing/RC_RESULTS.md`、`WA017_RESULTS.md`、`RELEASE_GATE.md`。
+## 来源、数据与回退
 
-## 未完成/不在本 PR 冒充完成
+复用代码来源及许可按根目录 `upstream-sources.json`、`THIRD_PARTY_NOTICES.md` 登记；不表示是 DeepSeek 或其他服务商官方产品。
 
-- 独立干净 Windows 机全旅程。
-- 经授权的两个协议真实商业 provider 调用。
-- 12 例三组人工盲评和 5 人上手实验。
-- 代码签名、维护者签收、tag、Release 和 `latest`。
-
-## Schema 与回退
-
-新 workspace schema 通过逐版备份迁移；旧源只读。出现 RC 问题时不强推、不移动旧 tag，保留 0.11.x 入口，从新 commit 发布下一个 RC。卸载默认不删用户 Workspace。
+数据库迁移、旧源只读、卸载保留数据及备份恢复需按最终候选验收。程序降级不等于数据库可以降级；回退使用兼容备份，不移动历史 Tag、不强推 main。安装包作为 Release Assets 发布，不加入 Git。

@@ -76,8 +76,11 @@ export function checkpointCopy(
     feedbackPlaceholder: '', primaryAction: '重试这一步',
   }
   if (recovery.stopReason === 'TOOL_FAILURE_LOOP') return {
-    role: '写作助手', eyebrow: '门禁校验未通过 · 自动重试已停止', title: '这一步的提交反复未通过，已保存内容仍在',
-    description: '程序提交反复被同一保存/核查门禁拒绝，已停止继续请求模型，避免长时间空转。不是连接或账户额度问题；无需重新提供材料。可查看运行记录中的具体原因，或主动重试当前步骤；重试会产生模型用量。',
+    role: '写作助手', eyebrow: '程序操作未通过 · 自动重试已停止', title: recovery.validationFailure?.code === 'TOOL_PERMISSION_DENIED'
+      ? '读取版本时发生程序冲突，稿件仍在' : '这一步操作未能完成，已保存内容仍在',
+    description: recovery.validationFailure
+      ? `${recovery.validationFailure.explanation} 已停止自动重试，避免空转。修复后可重试这一步，不重做已保存内容；重试会产生模型用量。`
+      : '程序操作连续未通过校验，已停止自动重试，避免空转。已保存内容保留。请查看运行记录中的错误原因；这不一定是文章事实问题，不必先重新提供材料。',
     feedbackPlaceholder: '', primaryAction: '重试这一步',
   }
   if (recovery.stopReason === 'BUDGET_EXHAUSTED') {

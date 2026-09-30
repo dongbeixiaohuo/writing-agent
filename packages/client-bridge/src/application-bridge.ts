@@ -1,4 +1,3 @@
-import { isReviewConfirmation, isReviewStage } from '../../application/src/review-checkpoint.js';
 import type {
   ResumeDraftInput,
   RunDraftInput,
@@ -176,10 +175,19 @@ function workflowStagePayload(
     : null;
 }
 
+function toolFailureExplanation(payload: Readonly<Record<string, unknown>>) {
+  return {
+    code: String(payload.validationCode ?? 'UNKNOWN'), tool: String(payload.tool ?? 'unknown'),
+    explanation: payload.validationCode === 'TOOL_PERMISSION_DENIED' && payload.tool === 'read_artifact_version'
+      ? '调度请求读取了当前阶段权限之外的稿件或历史版本，程序已拦下。这不是文章事实核查不通过，也不是你缺少材料；已保存稿件不受影响。'
+      : `「${toolDisplayLabel(String(payload.tool ?? ''), {})}」连续未通过程序校验（${String(payload.validationCode ?? 'UNKNOWN')}）。已保存内容保留；这不是连接或账户额度问题。`,
+  };
+}
+
 function checkpointStages(
   projection: WritingProjectProjection,
   runId: string,
-): Pick<RecoverableRunSummary, 'checkpointStage' | 'nextStage' | 'inputRequest'> {
+): Pick<RecoverableRunSummary, 'checkpointStage' | 'nextStage' | 'inputRequest' | 'validationFailure'> {
   const event = [...projection.events].reverse().find(
     (candidate) => candidate.runId === runId && candidate.type === "run.waiting_user",
   );
@@ -187,21 +195,25 @@ function checkpointStages(
     const saved = projection.publicationCandidates;
     // Keep displayed ordinals identical to the persisted choices. A partly
     // invalid legacy batch needs regeneration, not filtering and renumbering.
-    const candidates = saved?.bodyVersionId === projection.project.latestBodyVersionId &&
+    const candidates = saved &&
       saved.candidates.every(candidate => isUsablePublicationTitle(candidate.title, projection.currentBody?.content))
       ? saved.candidates : [];
     return { checkpointStage: null, nextStage: 'fact_check', inputRequest: {
       kind: 'publication_selection',
-      reason: candidates.length ? '正文已保存，接下来一起确定发布标题。可以选择，也可以直接说哪里不满意。'
+      reason: candidates.length ? (saved?.bodyVersionId !== projection.project.latestBodyVersionId
+        ? '正文已更新，仍可选择这些标题。选定后会按当前稿件核查标题和分发文案，不会重写正文。'
+        : '正文已保存，接下来一起确定发布标题。可以选择，也可以直接说哪里不满意。')
         : '正文已保存，但还没有合适的标题候选。可以直接告诉我想要的方向，标题专家会重新拟题。',
       questions: candidates.length ? [] : ['这一步只讨论标题，不会改动正文或直接开始核查。'], candidates,
     } };
   }
+  const validationFailure = event?.payload.stopReason === 'TOOL_FAILURE_LOOP' ? toolFailureExplanation(event.payload) : undefined;
   return event === undefined
     ? { checkpointStage: null, nextStage: null }
     : {
         checkpointStage: workflowStagePayload(event.payload, "stage"),
         nextStage: workflowStagePayload(event.payload, "nextStage"),
+        ...(validationFailure ? { validationFailure } : {}),
         ...(writingInputRequest(event.payload) === null ? {} : { inputRequest: writingInputRequest(event.payload)! }),
       };
 }
@@ -226,6 +238,8 @@ function toolDisplayLabel(
   if (toolName === "director_decide") return "写作导演 · 安排下一步";
   if (toolName === "submit_publication_candidates") return "准备标题候选";
   if (toolName === "respond_writing_intake") return "整理本轮回复";
+  if (toolName === 'interpret_author_reply') return '理解你的回复';
+  if (toolName === 'resume_author_checkpoint') return '继续已确认阶段';
   const authorLabels: Record<string, string> = { delegate_author_expert: '安排专项专家', respond_author: '整理回复', attach_author_material: '保存补充材料',
     read_author_web: '读取你提供的网页', read_legacy_style: '读取风格档案', read_style_methodology: '参考风格分析方法',
     propose_author_revision: '准备改稿对比', propose_publication_choices: '准备标题与分发候选', choose_publication: '保存你的标题选择',
@@ -612,7 +626,7 @@ function timelineForSession(
       }
       if (reason === 'TOOL_FAILURE_LOOP') {
         items.push({ id:event.id, kind:'tool', audience:'conversation', label:'自动重试已暂停',
-          detail:'程序提交反复被同一门禁拒绝；已保存内容仍保留，可查看原因或重试这一步。', state:'failure' });
+          detail:toolFailureExplanation(event.payload).explanation, state:'failure' });
         continue;
       }
       if (reason === 'CO_CREATION_CHECKPOINT') {
@@ -621,6 +635,8 @@ function timelineForSession(
           : stage === 'review_editor' ? `编辑审校的建议你认可吗？可以先讨论、调整；确认后才交给${textPayload(event.payload, 'nextStage') === 'review_publish' ? '发布' : '读者'}审校专家。`
           : stage === 'review_publish' ? '发布审校的建议你认可吗？可以先讨论、调整；确认后才交给读者审校专家。'
           : stage === 'review_reader' ? '读者审校的建议你认可吗？可以先讨论、调整；确认后主笔才按已确认的意见修订。'
+          : stage === 'central_revision' ? '集中修订后的全文这样可以吗？确认后才交给去 AI 味与语言润色专家；也可以直接提出修改。'
+          : stage === 'language_review' ? '润色后的这一版你认可吗？确认后再继续标题与事实核查；需要调整可以直接说。'
           : '这一阶段的结果可以吗？确认后我继续下一步，也可以直接告诉我怎么改。';
         const row = stageMessageRows.get(`${event.runId}:${stage}`);
         const message = row === undefined ? undefined : items[row];
@@ -1513,19 +1529,17 @@ export class ApplicationClientBridge implements ClientBridge {
         if (projection.brief?.brief.confirmationStatus !== 'confirmed') {
           return this.#startIntake(projectId, this.#snapshot.selectedSessionId || undefined, body, operationId);
         }
-        // Explicit full-writing commands remain available. Ordinary feedback is
-        // a bounded conversation, never implicit permission to rewrite the work.
-        const explicitlyWrite = /^(?:请)?(?:开始(?:吧|写作)?|继续(?:写作)?|按已确认简报生成草稿|先生成完整稿件|按确认方向开始完整写作|基于同一简报重新生成一版)[。！!\s]*$/u.test(body);
-        const discussion = /(?:先别|先不|不要(?:改|写)|讨论|解释|建议|选题|标题|开头|风格|配图|核查|核验|补充材料|来源原文|亲身经历|https:\/\/)|^(?:我)?(?:选|选择|采用|确认)(?:第)?[1-6一二三四五六]/u.test(body);
         const waitingTitle = projection.runs.find(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user' &&
           isPublicationSelectionWait(projection.events.filter(event => event.runId === run.id && event.type === 'run.waiting_user').at(-1)?.payload));
-        const waiting = projection.runs.some(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user');
-        const waitingReview = projection.runs.find(run => run.sessionId === this.#snapshot.selectedSessionId &&
-          run.status === 'waiting_user' && run.stopReason === 'CO_CREATION_CHECKPOINT' &&
-          isReviewStage(checkpointStages(projection, run.id).checkpointStage));
-        const reviewDiscussion = waitingReview !== undefined && !isReviewConfirmation(body);
-        if (reviewDiscussion || (waitingTitle && !projection.publicationSelectionCurrent) ||
-          (!waitingReview && !explicitlyWrite && (!waiting || discussion))) {
+        const waitingForMaterial = projection.runs.some(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user' && run.stopReason === 'WRITING_INPUT_REQUIRED');
+        // Backward-compatible start shortcuts used by existing clients. These
+        // never confirm a pending checkpoint; every other wording has the same
+        // semantic route below instead of being rejected by a whitelist.
+        const startShortcut = !projection.runs.some(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user') &&
+          /^(?:请)?(?:开始(?:吧|写作)?|按已确认简报生成草稿|先生成完整稿件|按确认方向开始完整写作|基于同一简报重新生成一版)[。！!\s]*$/u.test(body);
+        // No language whitelist here. The contextual intent tool interprets all
+        // stage approvals, title choices, objections and requests to write.
+        if (!startShortcut && (!waitingForMaterial || (waitingTitle && !projection.publicationSelectionCurrent))) {
           const handle = this.#service.startAuthorTurn({ projectId,
             ...(this.#snapshot.selectedSessionId ? { sessionId: this.#snapshot.selectedSessionId } : {}),
             model: this.#model.model, parameters: this.#model.parameters, userInstruction: body, operationId });
@@ -1535,19 +1549,33 @@ export class ApplicationClientBridge implements ClientBridge {
             if (!result.ok || this.#disposed || this.#snapshot.selectedProjectId !== projectId || this.#snapshot.selectedSessionId !== handle.sessionId) return;
             const latest = this.#service.getProjectProjection(projectId);
             const action = latest.events.filter(event => event.runId === handle.runId && event.type === 'tool.completed')
-              .map(event => successfulToolResult(event.payload)).find(value => value?.requestedAction === 'fact_check' || value?.requestedAction === 'full_writing');
+              .map(event => successfulToolResult(event.payload)).find(value => ['fact_check', 'full_writing', 'resume_checkpoint'].includes(String(value?.requestedAction)));
             if (action && action.bodyVersionId === latest.project.latestBodyVersionId) {
               if (action.requestedAction === 'fact_check') await this.runFactCheck({ operationId: `${operationId}:fact-check` });
-              else await this.sendMessage('按已确认简报生成草稿', { operationId: `${operationId}:full-writing` });
+              else if (action.requestedAction === 'full_writing') this.#startConfirmedWriting(projectId, handle.sessionId, body, `${operationId}:full-writing`);
+              else if (typeof action.checkpointRunId === 'string' && typeof action.intentReceiptId === 'string' && latest.brief) {
+                const resumed = this.#service.resumeDraft({ projectId, runId: action.checkpointRunId, sessionId: handle.sessionId,
+                  operationId: `${operationId}:checkpoint`, decision: 'resume', intentReceiptId: action.intentReceiptId,
+                  expectedProjectRevision: latest.project.revision, expectedBriefVersionId: latest.brief.id,
+                  model: this.#model.model, parameters: this.#model.parameters, userInstruction: body });
+                this.#refreshStartedRun(projectId, resumed.sessionId);
+                void resumed.result.finally(() => this.refresh()).catch(() => undefined);
+              }
             } else {
               const selected = latest.events.filter(event => event.runId === handle.runId && event.type === 'tool.completed')
                 .map(event => successfulToolResult(event.payload)).find(value => typeof value?.titleVersionId === 'string' && value.titleVersionId === latest.project.currentTitleVersionId);
               const awaitingTitle = latest.runs.find(run => run.sessionId === handle.sessionId && run.status === 'waiting_user' &&
                 isPublicationSelectionWait(latest.events.filter(event => event.runId === run.id && event.type === 'run.waiting_user').at(-1)?.payload));
-              if (selected && awaitingTitle) await this.resumeRun(awaitingTitle.id, 'resume', { feedback: '标题已确认，请继续核查当前稿件', operationId: `${operationId}:continue-after-title` });
+              if (selected && awaitingTitle) {
+                const lastBody = latest.bodyVersions.filter(artifact => artifact.actor.kind === 'agent' && artifact.actor.runId === awaitingTitle.id).at(-1);
+                if (selected.bodyChangedSinceCandidates === true || (lastBody && lastBody.id !== latest.project.latestBodyVersionId)) {
+                  await this.runFactCheck({ operationId: `${operationId}:check-selected-title` });
+                  this.#service.cancelDraft({ projectId, runId: awaitingTitle.id, operationId: `${operationId}:retire-old-title-wait`, reason: 'current_body_fact_check_started' });
+                } else await this.resumeRun(awaitingTitle.id, 'resume', { feedback: '标题已确认，请继续核查当前稿件', operationId: `${operationId}:continue-after-title` });
+              }
             }
           }).catch(error => {
-            if (!this.#disposed && this.#snapshot.selectedProjectId === projectId) this.#handoffError = { projectId, error: { code: 'AUTHOR_ACTION_FAILED', message: '专项操作尚未开始，请先确认发布标题及证据材料，再使用下方“重新核查”。稿件未被改写。' } };
+            if (!this.#disposed && this.#snapshot.selectedProjectId === projectId) this.#handoffError = { projectId, error: { code: 'AUTHOR_ACTION_FAILED', message: '已收到你的意见，但后续阶段尚未启动。已保存内容不受影响；请重试本步。' } };
           }).finally(() => this.refresh());
           return { runId: handle.runId };
         }
@@ -1692,6 +1720,11 @@ export class ApplicationClientBridge implements ClientBridge {
         const run = projection.runs.find((candidate) => candidate.id === runId);
         if (run === undefined) throw new Error("RUN_SCOPE_INVALID");
         const waitingEvent = projection.events.filter(event => event.runId === runId && event.type === 'run.waiting_user').at(-1);
+        if (run.status === 'waiting_user' && run.stopReason === 'CO_CREATION_CHECKPOINT') {
+          await this.selectSession(projectId, run.sessionId);
+          await this.sendMessage(feedback || '继续下一步', { operationId: `${operationId}:checkpoint-reply` });
+          return;
+        }
         if (run.status === 'waiting_user' && isPublicationSelectionWait(waitingEvent?.payload) && !projection.publicationSelectionCurrent) {
           if (!feedback) throw new Error('EMPTY_MESSAGE');
           if (projection.runs.some(candidate => ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');

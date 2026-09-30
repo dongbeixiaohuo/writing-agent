@@ -9,12 +9,8 @@ import { WritingApplicationService } from '../src/index.js';
 import { createApplicationBridge } from '../../client-bridge/src/application-bridge.js';
 import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
 import { savePublicationCandidates, choosePublicationCandidate, publicationSelectionIndex } from '../src/publication-choice.js';
-import { isReviewConfirmation } from '../src/review-checkpoint.js';
-
-it('accepts ordinary review approvals but not mixed objections or questions', () => {
-  for (const text of ['ok了', '可以，继续', '好的', '继续', '这些建议我都认可', '按建议修订', '都不动，就这样']) assert.equal(isReviewConfirmation(text), true, text);
-  for (const text of ['不同意', '可以但第二条别改', '继续解释第二条', '建议是什么？', '第二条不改，其他同意']) assert.equal(isReviewConfirmation(text), false, text);
-});
+import { withIntentFixture } from './intent-fixture.js';
+import { getApprovedAuthorPreferences } from '../src/author-preferences.js';
 
 class AuthorProvider extends ModelProviderBase {
   requests: ModelRequest[] = [];
@@ -55,7 +51,7 @@ it('asks which title after a general acknowledgement without repeating proposals
 function setup(provider: AuthorProvider) {
   const directory = mkdtempSync(join(tmpdir(), 'author-conversation-'));
   const storage = openWorkspaceStorage({ workspacePath: directory });
-  const service = new WritingApplicationService({ storage, provider });
+  const service = new WritingApplicationService({ storage, provider: withIntentFixture(provider) });
   const actor = { kind: 'user', id: 'tester' } as const;
   storage.createProject({ projectId: 'p', operationId: 'project', name: '安静', mode: 'quick', actor });
   storage.saveWritingBrief({ operationId: 'brief', projectId: 'p', expectedProjectRevision: storage.inspectProject('p')!.revision,
@@ -98,7 +94,7 @@ it('does not let a title selection delegate to an expert unable to save the requ
     const result = await f.service.startAuthorTurn(input('1')).result;
     assert.equal(result.ok, true);
     assert.deepEqual(provider.requests[0]!.tools?.map(t=>t.name), ['choose_publication']);
-    assert.equal(provider.requests.length, 3);
+    assert.equal(provider.requests.length, 2, 'selection saves its acknowledgement without another generative reply');
   } finally { f.close(); }
 });
 
@@ -165,6 +161,63 @@ it('keeps an already chosen title after body correction without a second selecti
     assert.equal(f.storage.listArtifactVersions('p','title','main').length, 1);
     assert.notEqual(f.storage.getFactCheckStatus('p').status, 'passed');
   } finally { f.close(); }
+});
+
+it('preserves an explicit title choice after a body edit instead of discarding the author decision', () => {
+  const f = setup(new AuthorProvider([]));
+  try {
+    const oldBody = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    const candidates = savePublicationCandidates(f.storage, 'p', 'choices', oldBody,
+      [{ title: '窗边的安静', opening: null, distributionCopy: '留下一刻安静。', rationale: '观察' }]);
+    const saved = f.storage.commitArtifactVersion({ projectId: 'p', operationId: 'edit-body', expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+      kind: 'body', logicalKey: 'main', baseVersionId: oldBody, content: '# 安静\n\n修订后的文章。', reason: 'author edit', actor: { kind: 'user', id: 'u' } });
+    assert.equal(saved.ok, true);
+    const currentBody = f.storage.inspectProject('p')!.latestBodyVersionId;
+    const choice = choosePublicationCandidate(f.storage, 'p', 'choose-edited', '窗边的安静', candidates.id, 1,
+      { sourceQuote: '窗边的安静', candidateVersionId: candidates.id, index: 1 });
+    assert.equal(choice.title, '窗边的安静');
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, currentBody);
+    assert.equal(f.storage.listArtifactVersions('p', 'report', 'author-publication-candidates').length, 1);
+    assert.notEqual(f.storage.getFactCheckStatus('p').status, 'passed');
+  } finally { f.close(); }
+});
+
+for (const freshBatch of [false, true]) it(`hands a title selected after manual editing to current-body fact check, not the obsolete writing run (freshBatch=${freshBatch})`, async () => {
+  class SelectionThenCheck extends AuthorProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      if (request.tools?.some(t => t.name === 'choose_publication')) { yield* super.providerStream(request); return; }
+      this.requests.push(structuredClone(request));
+      yield { type: 'error', error: { code: 'PROVIDER_UNAVAILABLE', message: 'TEST_CHECK_BOUNDARY: stop after observing the independent fact-check request', retryable: false } };
+    }
+  }
+  const provider = new SelectionThenCheck([{ name: 'choose_publication', args: { index: 1 } }]), f = setup(provider);
+  const bridge = createApplicationBridge({ service: f.service, workspaceId: 'edited-title', initialProjectId: 'p', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: null } });
+  try {
+    f.storage.createSession({ projectId: 'p', sessionId: 'conversation', purpose: 'writing-pack:draft' });
+    f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'old-writing', planVersion: 'test', purpose: 'writing-pack:draft' });
+    f.storage.pauseRun({ projectId: 'p', runId: 'old-writing', operationId: 'wait-title', reason: 'WRITING_INPUT_REQUIRED', payload: { kind: 'publication_selection', reason: '确认标题', nextStage: 'fact_check', questions: [] } });
+    f.storage.commitArtifactVersion({ projectId: 'p', operationId: 'old-language', expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+      kind: 'body', logicalKey: 'main', baseVersionId: f.storage.inspectProject('p')!.latestBodyVersionId, content: '# 安静\n\n旧润色稿。', reason: 'workflow:language_review', actor: { kind: 'agent', id: 'language_review', runId: 'old-writing' } });
+    const oldBody = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    savePublicationCandidates(f.storage, 'p', 'choices', oldBody, [{ title: '窗边', opening: null, distributionCopy: null, rationale: '观察' }]);
+    f.storage.commitArtifactVersion({ projectId: 'p', operationId: 'manual-edit', expectedProjectRevision: f.storage.inspectProject('p')!.revision, kind: 'body', logicalKey: 'main', baseVersionId: oldBody,
+      content: '# 安静\n\n我喜欢窗边。', reason: 'user edit', actor: { kind: 'user', id: 'u' } });
+    const currentBody = f.storage.inspectProject('p')!.latestBodyVersionId;
+    if (freshBatch) savePublicationCandidates(f.storage, 'p', 'fresh-choices', currentBody!, [{ title: '窗边', opening: null, distributionCopy: null, rationale: '新稿观察' }]);
+    f.storage.commitArtifactVersion({ projectId: 'p', operationId: 'evidence', expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+      kind: 'evidence', logicalKey: 'main', baseVersionId: null, content: JSON.stringify({ claims: [], notes: '作者的主观感受' }), reason: 'fixture', actor: { kind: 'user', id: 'u' } });
+    await bridge.selectSession('p', 'conversation');
+    await bridge.sendMessage('就用第一个吧');
+    const deadline = Date.now() + 5000;
+    while (f.storage.getRun('old-writing')?.status !== 'cancelled') {
+      assert.ok(Date.now() < deadline, 'must hand off instead of asking for another title selection');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, currentBody);
+    assert.equal(f.storage.listArtifactVersions('p', 'title', 'main').length, 1);
+    assert.ok(provider.requests.some(r => JSON.stringify(r.messages).includes(currentBody!)));
+    assert.equal(f.storage.listArtifactVersions('p', 'report', 'author-publication-candidates').length, freshBatch ? 2 : 1);
+  } finally { bridge.dispose(); f.close(); }
 });
 
 it('keeps review objections with the current expert and leaves the original handoff waiting', async () => {
@@ -515,7 +568,7 @@ it('saves and explicitly confirms an illustration plan without image files or an
   } finally { f.close(); }
 });
 
-it('reads actual migrated style references and remembers only the exact approved preference', async () => {
+it('reads actual migrated style references and remembers only the explicitly approved preference', async () => {
   const provider = new AuthorProvider([
     { name: 'read_legacy_style', args: { name: 'jiubian' } }, { name: 'respond_author', args: { reply: '档案可作为参考，尚不能视为本稿验证通过。' } },
     { name: 'save_author_preference', args: {} }, { name: 'respond_author', args: { reply: '已保存你的明确偏好。' } },
@@ -529,5 +582,22 @@ it('reads actual migrated style references and remembers only the exact approved
     assert.equal((await f.service.startAuthorTurn(input('记住我的写作偏好：开头不要套话')).result).ok, true);
     assert.equal((await f.service.startAuthorTurn(input('继续聊一下开头')).result).ok, true);
     assert.match(provider.requests.at(-1)!.messages[1]!.content, /approvedAuthorPreferences.*开头不要套话/u);
+  } finally { f.close(); }
+});
+
+it('remembers and forgets preferences from contextual decisions without a magic prefix', async () => {
+  const f = setup(new AuthorProvider([
+    { name: 'save_author_preference', args: {} }, { name: 'respond_author', args: { reply: '已记住，以后写作参考这项偏好。' } },
+    { name: 'save_author_preference', args: {} }, { name: 'respond_author', args: { reply: '已忘记本项目保存的偏好，稿件保持不变。' } },
+  ]));
+  try {
+    const text = '以后写东西都别用套话开头，这点帮我一直记着';
+    assert.equal((await f.service.startAuthorTurn(input(text)).result).ok, true);
+    const remembered = getApprovedAuthorPreferences(f.storage);
+    assert.equal(remembered.rules.at(-1)?.sourceUserText, text);
+    assert.equal(remembered.rules.at(-1)?.text, text);
+    assert.equal(remembered.mayExpandPermissions, false);
+    assert.equal((await f.service.startAuthorTurn(input('之前让你记的写作习惯不用了，忘掉吧')).result).ok, true);
+    assert.equal(getApprovedAuthorPreferences(f.storage).rules.length, 0);
   } finally { f.close(); }
 });

@@ -33,6 +33,16 @@ const invoke = (request: DesktopRpcRequest): Promise<DesktopRpcResponse> =>
 
 const api: DesktopHostApi = {
   invoke,
+  async searchStatus() {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'searchStatus', args: [] });
+    if (!response.ok) throw new Error(response.error.message);
+    return response.result as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsView;
+  },
+  async configureSearch(input) {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'configureSearch', args: [input] });
+    if (!response.ok) throw new Error(response.error.message);
+    return response.result as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsView;
+  },
   async savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult> {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'savePublicationAs', args: [input] });
     if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });

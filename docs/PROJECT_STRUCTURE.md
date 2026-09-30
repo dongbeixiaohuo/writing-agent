@@ -2,7 +2,9 @@
 
 ## 顶层目录
 
-仓库目前有两条明确分离的产品线：legacy `0.11.x` 工作流，以及 `next/runtime` 上的 1.0 独立运行时。不要把 `.claude/` 工作流镜像与新桌面 runtime 混成同一启动链。
+仓库目前有两条明确分离的产品线：Claude Code Skill `0.11.x` 工作流，以及 1.0 独立桌面运行时。不要把 `.claude/` 工作流镜像与新桌面 runtime 混成同一启动链。普通用户入口见 [README](../README.md)，功能对应见[能力与差异](DESKTOP_SKILL_COMPARISON.md)。
+
+Skill 的唯一源为 `claude-runtime/`，同步到 `.claude/`、兼容脚本与 `plugins/writing-agent/`；桌面使用 `apps/desktop`、`apps/web` 和 `packages/*`。旧 `writing-agent-app/` 已不在当前跟踪范围，源码在历史 Tag 中保留。安装包只保存在本地 `output/desktop` 并作为 Release 附件发布，不提交到 Git 源码历史。
 
 ```text
 写稿Agent/
@@ -23,7 +25,7 @@
 │   ├── writing-core/           # 领域、版本、门禁、导出合同
 │   ├── storage/                # SQLite schema、事务、恢复
 │   ├── runtime/                # LLM、agent loop、工具、凭据、诊断
-│   ├── model-adapters/         # OpenAI/Anthropic-compatible
+│   ├── model-adapters/         # Chat Completions / Responses / Anthropic adapters
 │   ├── client-bridge/          # Web/Desktop/Mock 版本化桥接
 │   ├── ui/、writing-ui/        # DSH 派生壳和写作 Slot
 │   └── legacy-migration/       # 旧 manifest/SQLite 只读迁移

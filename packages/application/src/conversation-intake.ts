@@ -839,25 +839,6 @@ function proposalPreferences(brief: WritingBrief): Readonly<Record<string, JsonV
     platform: brief.platform, publicationGoal: brief.publicationGoal };
 }
 
-function confirmedByCurrentUser(sourceQuote: string, currentMessage: string): boolean {
-  const quote = sourceQuote.trim();
-  const message = currentMessage.trim();
-  if (quote !== message) return false;
-  if (
-    /(?:不要|不确认|不同意|不可以|先不|别|修改|改成|调整|等等|但是|不过|否|not|don['’]?t|do not|change|instead|wait)/iu.test(message)
-  ) {
-    return false;
-  }
-  const compact = message
-    .toLocaleLowerCase()
-    .replace(/[\s，,。.!！、;；:："“”'‘’]/gu, "");
-  return /^(?:我)?(?:好(?:的)?|行|可以|没问题|确认|同意|确认就按这个方案|就按这个方案|按这个方案(?:来|执行)?|可以开始(?:吧|写|写了|写吧)?|开始写(?:吧)?|定了|ok(?:ay)?|confirm|approved?|looksgood|goahead|proceed)$/iu.test(compact);
-}
-
-export function isUnambiguousConversationConfirmation(message: string): boolean {
-  return confirmedByCurrentUser(message, message);
-}
-
 export function invalidatePendingConversationProposal(input: {
   readonly storage: StoragePort;
   readonly projectId: string;
@@ -931,6 +912,7 @@ export function createConversationIntakeTool(input: {
   readonly currentUserMessage: string;
   readonly expectedStateArtifactVersionId: string | null;
   readonly expectedProposalVersionId: string | null;
+  readonly interpretedIntent?: () => string | null;
 }): ConversationIntakeTool {
   const responses = new Map<string, IntakeToolResponse>();
   const definition: ToolDefinition<RespondWritingIntakeArgs, JsonValue> = {
@@ -1118,7 +1100,7 @@ export function createConversationIntakeTool(input: {
             "Confirmation does not match the current proposal",
           );
         }
-        if (!confirmedByCurrentUser(args.confirmation.sourceQuote, input.currentUserMessage)) {
+        if (args.confirmation.sourceQuote.trim() !== input.currentUserMessage.trim() || input.interpretedIntent?.() !== 'confirm_direction') {
           throw new ToolExecutionFault(
             "INTAKE_CONFIRMATION_SOURCE_INVALID",
             "Confirmation must quote the current user's affirmative message exactly",
@@ -1174,7 +1156,7 @@ export function createConversationIntakeTool(input: {
         pendingAuthorization = null;
         phase = "confirmed";
         effectiveSummary = stableBriefSummary(input.storage, context.projectId, confirmedBrief);
-      } else if (args.invalidateProposal === true) {
+      } else if (args.invalidateProposal === true || input.interpretedIntent?.() === 'revise_direction') {
         invalidatedProposalVersionId =
           previous.proposalVersionId ?? previous.invalidatedProposalVersionId;
         proposalVersionId = null;
@@ -1250,7 +1232,7 @@ export function buildConversationIntakePrompt(
       "对用户只给简短、可读的自然语言摘要，不输出 JSON 字段清单。没有事实材料时可以讨论方向，但不得编造事实、来源、亲历经历或授权。",
       "普通方案的来源由程序直接绑定已保存的完整用户原文，不要填写 sourceQuotes，也不要重新抄写用户原话来证明来源。材料绑定、版本号、共创模式、亲历授权和确认状态都由程序管理，不要生成 schemaVersion、materialIds、interactionMode、authorAuthorization 或 confirmationStatus 等内部字段。不得把你生成或改写的文字当成用户原文、核实材料或亲历材料。方案建议始终待用户确认，程序会在回复中明确标注暂定状态。",
       "用户明确说某条完整消息是本人亲历、明确选定或授权你决定风格、明确选择自主推进或逐步共创时，可以在 proposal.authorization 中提交待确认授权。每项必须提供该消息的 sourceMaterialId 和完整逐字 sourceQuote；不得截取第三方引文、不得用你的概括、不得把建议当授权。它们只有在用户随后确认整个方案后才生效。用户没有明确原话时省略 authorization。",
-      "你不能在首次方案中自行确认。只有已有待确认 proposalVersionId，且当前用户整条消息只是明确、无否定和无修改的简短确认时，才能用 confirmation 绑定该版本；sourceQuote 必须等于当前消息全文。同一轮不能同时修改方案和确认。",
+      "你不能在首次方案中自行确认。只有已有待确认 proposalVersionId，且本轮语义判断为confirm_direction，才能用 confirmation 绑定该版本；不要求固定措辞或短句，sourceQuote 必须等于当前消息全文。同一轮不能同时修改方案和确认。",
       "如果用户改变、否定或要求修改待确认方向，而本轮还不能形成替代方案，必须设置 invalidateProposal=true，使旧确认按钮立即失效；不能继续保留旧 proposalVersionId。",
       "每轮必须且只能成功调用一次 respond_writing_intake，成功后本轮由程序结束。",
     ].join("\n"),

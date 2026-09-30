@@ -45,6 +45,8 @@ docs/*
 !docs/WORKFLOW_QUICK_REFERENCE.md
 !docs/PROJECT_STRUCTURE.md
 !docs/QUICKSTART_1_0.md
+!docs/CLAUDE_CODE_GUIDE.md
+!docs/DESKTOP_SKILL_COMPARISON.md
 !docs/architecture/
 !docs/architecture/**
 !docs/implementation/

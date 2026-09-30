@@ -9,6 +9,9 @@ function rpcError(code: string, message: string): DesktopRpcResponse {
 }
 
 const publicMessages: Readonly<Record<string, string>> = {
+  SEARCH_API_KEY_REQUIRED: '启用 Tavily 前请填写 API Key。',
+  SEARCH_SETTINGS_INVALID: '搜索配置格式无效，请检查后重新保存。',
+  SEARCH_SETTINGS_BUSY: '正在保存搜索配置，请稍后重试。',
   PROVIDER_API_KEY_REQUIRED: '请填写此供应商的 API Key；同一地址的已有配置可以留空沿用。',
   PROVIDER_PROFILE_NOT_FOUND: '这项模型配置已变化，请重新打开模型设置。',
   PROVIDER_SETTINGS_BUSY: '正在保存模型配置，请稍后重试。',
