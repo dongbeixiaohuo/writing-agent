@@ -1,10 +1,10 @@
 # Writing Agent 桌面版快速开始
 
-更新：2026-09-30。当前候选为 **1.0.0-rc.58**，正在完成公开 RC 发布检查。以下是当前实现的操作说明，不代表稳定版承诺。[已知限制与发布门禁](testing/RELEASE_GATE.md)
+更新：2026-09-30。**1.0.0-rc.58 已公开发布为 Pre-release**。以下是当前实现的操作说明，不代表稳定版承诺。[已知限制与发布门禁](testing/RELEASE_GATE.md)
 
 ## 1. 下载、安装与升级
 
-公开批准后，安装包会放在[本仓库 Releases](https://github.com/dongbeixiaohuo/writing-agent/releases)中，标题明确标注“桌面版”和支持平台。下载 Windows x64 的 `Writing-Agent-Setup-版本号-x64.exe`，不要下载 `Source code.zip` 当作软件，也不要误装旧 `app-preview-0.1.0`。
+进入 [rc.58 下载页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58)，下载 Windows x64 的 `Writing-Agent-Setup-1.0.0-rc.58-x64.exe`。不要下载 `Source code.zip` 当作软件，也不要误装旧 `app-preview-0.1.0`。附件 `SHA256SUMS.txt` 提供本版本校验值。
 
 维护者本地安装包统一放 `output/desktop`；这不是互联网下载地址。本次 RC 未签名，Windows 可能显示未知发布者提示。核对仓库来源与 SHA-256，不要关闭安全软件来强行安装。建议使用默认本地安装目录，不安装到 OneDrive 等云同步目录。
 
@@ -62,7 +62,7 @@ Key 优先放在系统凭据存储，不会明文写入模型配置。系统保�
 - **通过**：可从稿件工作台导出正式 TXT/HTML；导出不会自动发布到公众号或其他平台。
 - **工作备份**：用于保留未完成内容，不等于正式交付。
 
-已知体验问题：等待阶段确认时，旧报告失效提醒仍可能与确认提示同时出现。当前应先按主对话确认或提出修改，不必重新建项目；此提示层次仍待优化。
+rc.58 已修正阶段确认与旧报告失效警告重复显示的问题：等待阶段确认时，先在主对话认可或提出修改；进入核查环节后再处理当前版本的事实问题，无需重新建项目。
 
 ## 6. 数据和隐私
 

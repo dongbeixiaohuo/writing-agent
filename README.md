@@ -4,7 +4,7 @@
 
 从一个模糊想法出发，与写作导演、主笔、审校和去 AI 味专家一起把文章写出来。你可以在过程中补充材料、改变方向、选择标题，而不只是等着接收最终结果。
 
-[了解新版 App](#desktop-app) · [下载与上手（待发布）](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
+[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
 
 ## 老朋友，这个项目正在发生什么变化？
 
@@ -20,7 +20,7 @@
 
 > **当前状态 · 2026-09-30**
 >
-> 桌面版处于 **RC（Release Candidate，候选测试版）** 阶段，当前候选为 `1.0.0-rc.58`，正在完成公开发布检查，**尚未公开提供新版安装包，不是稳定正式版**。
+> 桌面版 **[1.0.0-rc.58 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58)**，提供 Windows x64 安装包。它是 **RC（候选测试版），不是稳定正式版**；未签名，欢迎用独立测试项目体验并反馈。
 >
 > 原版 Skill 版本线仍为 `v0.11.x`。Releases 中的 `v0.11.0` 是 Skill 版本，`app-preview-0.1.0` 是早期桌面预览，两者都不是这次重构的新 App。公开下载以本仓库标注“桌面版”的 Release 为准。
 
@@ -98,7 +98,9 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端发送�
 
 ## 下载与第一次使用
 
-**公开发布后，安装包会放在本仓库的 [GitHub Releases](https://github.com/dongbeixiaohuo/writing-agent/releases) 附件中。当前新版仍在发布准备，请勿将旧预览包当成新版。**
+**[查看 rc.58 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.58/Writing-Agent-Setup-1.0.0-rc.58-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.58/SHA256SUMS.txt)
+
+此包未签名，Windows 可能显示“未知发布者”或 SmartScreen 提醒。请核对仓库来源和校验值，不要关闭安全防护。不要把旧 `app-preview-0.1.0` 当作这次新版。
 
 1. 找到明确标注“桌面版”的 Release，阅读 RC 限制，下载 Windows x64 的 `Writing-Agent-Setup-版本号-x64.exe`。GitHub 自动附带的 `Source code.zip` 是源码，不是安装包。
 2. 安装后进入“设置 → 模型”，选择供应商，填写 Key 与模型 ID，验证连接。
@@ -108,7 +110,7 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端发送�
 
 普通安装包用户**不需要另装 Claude Code、Node.js 或 Python**，也不必克隆源码。模型访问费用由自己的服务商账户承担。
 
-完整步骤、备份和常见问题见[桌面快速开始](docs/QUICKSTART_1_0.md)。当前准备分发 Windows x64；不把源码可跨平台构建等同于已有 macOS / Linux 安装包。
+完整步骤、备份和常见问题见[桌面快速开始](docs/QUICKSTART_1_0.md)。当前提供 Windows x64；不把源码可跨平台构建等同于已有 macOS / Linux 安装包。
 
 <a id="rc-status"></a>
 
@@ -135,13 +137,13 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端发送�
 ## 本地保存、费用与升级
 
 - **本地保存 ≠ 离线写作**：稿件与项目保存在本机 SQLite 工作区，写作相关上下文仍会发送给你配置的模型服务。
-- **搜索是可选外部请求**：启用后，模型生成的事实检索词会发送给搜索服务。当前 RC 尚无发送前逐条确认或可靠的自动脱敏保证；敏感材料请先脱敏，未处理的客户资料不要开启外部搜索。此边界仍属公开发布前待处理事项。
+- **搜索是可选外部请求**：桌面端会先展示确切检索词与目标服务，经你同意才发送；拒绝后本轮使用已有材料与模型复核，不反复询问。确认不是自动脱敏保证，请勿同意外发私人信息或客户机密。
 - **免费搜索 ≠ 免费模型**：模型请求由你的供应商账户计费；多专家、修改与重试会产生调用用量。
 - **保护凭据**：Key 优先存入系统凭据存储，不支持持久存储时界面会提示仅会话有效。不要向 Issue 上传 Key、私人稿件、数据库或未脱敏日志。
 - **当前没有自动下载安装更新**：升级需下载新安装包。安装器设计为保留项目与设置，升级前仍需备份，以对应 Release 实测说明为准；新数据库不保证能被旧程序打开。
-- **当前候选未签名**：公开时会说明签名状态与 Windows 风险提示，不要求关闭系统安全防护。
+- **本次 RC 未签名**：发布页已说明签名状态与 Windows 风险提示，不要求关闭系统安全防护。
 
-桌面与 Skill 独立管理版本，计划使用 `desktop-v版本号` 标记桌面发布，Skill 保留 `v0.x`。旧项目不会因为安装 App 自动变成桌面项目；需要迁移时先备份，再参考[迁移指南](docs/implementation/LEGACY_MIGRATION_GUIDE.md)，不要直接覆盖或混用工作区。
+桌面与 Skill 独立管理版本，使用 `desktop-v版本号` 标记桌面发布，Skill 保留 `v0.x`。旧项目不会因为安装 App 自动变成桌面项目；需要迁移时先备份，再参考[迁移指南](docs/implementation/LEGACY_MIGRATION_GUIDE.md)，不要直接覆盖或混用工作区。
 
 ## 开发、反馈与致谢
 
