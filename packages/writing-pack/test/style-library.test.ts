@@ -34,6 +34,12 @@ function frontMatter(content: string, field: string): string | number | null {
 }
 
 describe("legacy style library", () => {
+  it("stores canonical LF text so archive hashes survive a clean cross-platform checkout", () => {
+    for (const source of [archive.registrySource, ...archive.profiles, archive.methodology]) {
+      assert.equal(source.content.includes("\r"), false, source.sourcePath);
+    }
+  });
+
   it("keeps the source registry as importable inert archive data", () => {
     const registryBytes = readFileSync(sourceRegistryPath);
     assert.deepEqual(archive.registrySource, {

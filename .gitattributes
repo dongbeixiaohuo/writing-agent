@@ -1,0 +1,15 @@
+# These files are verified byte-for-byte. Keep identical checkout bytes on Windows/Linux.
+packages/ui/src/upstream/** text eol=lf
+apps/desktop/src/single-instance.ts text eol=lf
+packages/client-bridge/src/cc-switch-codex-presets.ts text eol=lf
+packages/client-bridge/src/provider-presets.ts text eol=lf
+packages/client-bridge/src/provider-offerings.ts text eol=lf
+
+# Style source snapshots and their legacy consumers share the same LF contract.
+claude-runtime/styles/** text eol=lf
+.claude/styles/** text eol=lf
+plugins/writing-agent/styles/** text eol=lf
+claude-runtime/skills/style-modeler/references/15-dimensions.md text eol=lf
+.claude/skills/style-modeler/references/15-dimensions.md text eol=lf
+plugins/writing-agent/skills/style-modeler/references/15-dimensions.md text eol=lf
+packages/writing-pack/src/legacy-style-data.json text eol=lf

@@ -3,6 +3,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -40,7 +41,8 @@ describe("authorized file boundary", () => {
       const policy = AuthorizedPathPolicy.create({ workspaceRoot: workspace });
       const allowed = policy.resolveReadableFile("materials/note.md");
       assert.equal(allowed.scope, "workspace");
-      assert.equal(allowed.path, join(materials, "note.md"));
+      // Windows TEMP may use an 8.3 alias (RUNNER~1); the public contract returns a canonical path.
+      assert.equal(allowed.path, realpathSync.native(join(materials, "note.md")));
 
       const cases = [
         ["../outside/secret.txt", "PATH_OUTSIDE_AUTHORIZED_SCOPE"],

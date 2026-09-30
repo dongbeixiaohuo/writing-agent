@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,24 @@ REGISTRY = ROOT / "upstream-sources.json"
 
 
 class UiUpstreamSourceTests(unittest.TestCase):
+    def test_byte_verified_sources_pin_lf_in_git(self) -> None:
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        paths = [
+            item["target_path"]
+            for upstream in registry["upstreams"]
+            for component in upstream.get("components", [])
+            for item in component.get("copied_files", [])
+        ]
+        archive = json.loads((ROOT / "packages/writing-pack/src/legacy-style-data.json").read_text(encoding="utf-8"))
+        paths.extend(item["sourcePath"] for item in [archive["registrySource"], *archive["profiles"], archive["methodology"]])
+        result = subprocess.run(
+            ["git", "-c", "core.quotePath=false", "check-attr", "eol", "--", *paths],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
+        )
+        self.assertEqual(len(result.stdout.splitlines()), len(paths))
+        for line in result.stdout.splitlines():
+            self.assertTrue(line.endswith(": eol: lf"), line)
+
     def setUp(self) -> None:
         registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
         self.upstream = registry["upstreams"][0]
