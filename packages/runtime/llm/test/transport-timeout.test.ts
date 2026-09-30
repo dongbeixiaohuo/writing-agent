@@ -87,7 +87,13 @@ async function localRun(
 for (const protocol of ["openai", "anthropic"] as const) {
   describe(`${protocol} local transport deadlines`, () => {
     it("allows a continuously progressing stream to exceed the per-phase timeout", async () => {
-      const events = await localRun(protocol, 80, (response) => {
+      // Real HTTP and shared CI scheduling need headroom. Keep total stream time
+      // above the phase deadline so a whole-request timeout still fails this test.
+      const phaseTimeoutMs = 1_000;
+      let streamStartedAt = 0;
+      let streamFinishedAt = 0;
+      const events = await localRun(protocol, phaseTimeoutMs, (response) => {
+        streamStartedAt = performance.now();
         headers(response, protocol);
         start(response, protocol);
         let count = 0;
@@ -95,13 +101,15 @@ for (const protocol of ["openai", "anthropic"] as const) {
           content(response, protocol, "x");
           if (++count === 5) {
             clearInterval(interval);
+            streamFinishedAt = performance.now();
             finish(response, protocol);
           }
-        }, 35);
+        }, 300);
         response.on("close", () => clearInterval(interval));
       });
       assert.equal(events.filter((event) => event.type === "text_delta").length, 5);
       assert.equal(events.at(-1)?.type, "completed");
+      assert.ok(streamFinishedAt - streamStartedAt > phaseTimeoutMs);
       assert.ok(events.some((event) => event.type === "response_activity" && event.phase === "headers"));
       assert.ok(events.some((event) => event.type === "response_activity" && event.phase === "content"));
     });
