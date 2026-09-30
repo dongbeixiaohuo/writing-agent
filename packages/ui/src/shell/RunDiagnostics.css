@@ -1,0 +1,30 @@
+.run-diagnostics { display: grid; gap: 14px; padding: 8px 0 2px; font-size: 13px; line-height: 1.6; }
+.run-diagnostics-segment { padding: 12px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 10px; }
+.run-diagnostics-segment h4 { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; font-size: 14px; }
+.run-diagnostics-segment h4 small, .run-diagnostics-block h5, .run-diagnostics-group summary span, .run-diagnostics-block li small { color: var(--dsw-alias-label-caption); font-weight: 400; }
+.run-diagnostics-block { margin-top: 10px; }
+.run-diagnostics-block h5 { margin: 0 0 5px; font-size: 12px; }
+.run-diagnostics-block ol, .run-diagnostics-group ul { display: grid; gap: 5px; margin: 0; padding-left: 22px; }
+.run-diagnostics-block li { padding: 4px 0; overflow-wrap: anywhere; }
+.run-diagnostics-block li small { display: block; margin-top: 2px; }
+.run-diagnostics-block li p { margin: 3px 0 0; white-space: pre-wrap; }
+.run-diagnostics-reason { margin-top: 4px; }
+.run-diagnostics-reason summary, .run-diagnostics-models > summary { cursor: pointer; overflow-wrap: anywhere; }
+.run-diagnostics-reason p { padding: 7px 9px; border-radius: 7px; background: var(--dsw-alias-interactive-bg-hover); }
+.run-diagnostics-models > ol { margin-top: 7px; }
+.run-diagnostics-group { padding: 6px 8px; border-radius: 7px; background: var(--dsw-alias-interactive-bg-hover); }
+.run-diagnostics-group + .run-diagnostics-group { margin-top: 5px; }
+.run-diagnostics-group summary { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; cursor: pointer; }
+.run-diagnostics-group summary strong { font-weight: 500; }
+.run-diagnostics-group > summary::before { content: '▸'; }
+.run-diagnostics-group[open] > summary::before { content: '▾'; }
+.run-diagnostics-group > summary strong { flex: 1; }
+.run-diagnostics-identifiers { margin-top: 3px; font-size: 11px; }
+.run-diagnostics-identifiers > summary { cursor: pointer; }
+.run-diagnostics-group ul { margin-top: 6px; }
+.run-diagnostics-error { margin: 6px 0 0; color: var(--dsw-static-red-500); overflow-wrap: anywhere; }
+.run-diagnostics-help { margin: 4px 0 10px; color: var(--dsw-alias-label-caption); font-size: 12px; }
+.run-diagnostics-tool-info { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 8px; margin: 10px 0; }
+.run-diagnostics-tool-info dt { color: var(--dsw-alias-label-caption); }
+.run-diagnostics-tool-info dd { margin: 0; overflow-wrap: anywhere; }
+.run-diagnostics-tool-info code { font-size: 12px; }

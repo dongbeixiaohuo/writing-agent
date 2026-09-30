@@ -1,0 +1,78 @@
+name: Desktop RC candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      previous_ref:
+        description: "Optional prior RC Git ref for a real upgrade and data-retention test"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64-candidate:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+          cache: npm
+      - run: npm ci
+      - run: npm run check:runtime
+      - run: npm run check:ui
+      - run: npm run check:desktop
+      - run: npm run test:py
+      - run: npm run check:scripts
+      - run: npm run validate:workflow
+      - run: npm run check:docs
+      - run: npm run check:claude-runtime
+      - run: npm audit --omit=dev --audit-level=high
+      - run: python -B writing-agent-1.0-prd-v1.1-dsh-ui/tools/check_document_pack.py
+      - run: npm run desktop:package
+      - name: Install, launch and uninstall the unsigned candidate
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem output/desktop/Writing-Agent-Setup-*-x64.exe)
+          if ($installers.Count -ne 1) { throw "Expected exactly one installer, found $($installers.Count)" }
+          & apps/desktop/scripts/test_desktop_installer.ps1 -InstallerPath $installers[0].FullName -EvidencePath output/desktop/installer-test.json
+      - name: Check out the explicitly selected prior RC
+        if: inputs.previous_ref != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.previous_ref }}
+          path: previous-source
+      - name: Build the prior RC installer
+        if: inputs.previous_ref != ''
+        working-directory: previous-source
+        run: |
+          npm ci
+          npm run desktop:package
+      - name: Upgrade prior RC to current and verify retained data
+        if: inputs.previous_ref != ''
+        shell: pwsh
+        run: |
+          $previous = @(Get-ChildItem previous-source/output/desktop/Writing-Agent-Setup-*-x64.exe)
+          $current = @(Get-ChildItem output/desktop/Writing-Agent-Setup-*-x64.exe)
+          if ($previous.Count -ne 1 -or $current.Count -ne 1) { throw "Expected exactly one prior and one current installer" }
+          & apps/desktop/scripts/test_desktop_installer.ps1 -PreviousInstallerPath $previous[0].FullName -InstallerPath $current[0].FullName -EvidencePath output/desktop/upgrade-test.json
+      - name: Upload candidate for maintainer review only
+        uses: actions/upload-artifact@v4
+        with:
+          name: writing-agent-windows-x64-unsigned-candidate
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            output/desktop/Writing-Agent-Setup-*-x64.exe
+            output/desktop/Writing-Agent-Setup-*-x64.exe.blockmap
+            output/desktop/SHA256SUMS.txt
+            output/desktop/build-manifest.json
+            output/desktop/installer-test.json
+            output/desktop/upgrade-test.json

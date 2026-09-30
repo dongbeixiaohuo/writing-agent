@@ -1,0 +1,18 @@
+{
+  "id": "fixture-project-001",
+  "slug": "2026-09-16-synthetic-project",
+  "title": "合成桌面项目",
+  "mode": "deep",
+  "topic": "用于迁移测试的合成主题",
+  "audience": "测试人员",
+  "wordTarget": 1200,
+  "styleProfileId": null,
+  "modelProfileId": "fixture-model-001",
+  "currentStage": "review",
+  "status": "active",
+  "isArchived": false,
+  "archivedAt": null,
+  "workspacePath": "C:\\fixture\\writing-agent\\2026-09-16-synthetic-project",
+  "createdAt": "2026-09-16T00:00:00+08:00",
+  "updatedAt": "2026-09-16T00:00:00+08:00"
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": "fact-check-v2",
+  "snapshot_id": "__SNAPSHOT_ID__",
+  "body_file": "draft.md",
+  "title_file": "04_title.md",
+  "coverage": {
+    "body": true,
+    "title": true,
+    "distribution_copy": true
+  },
+  "claims": [
+    {
+      "claim_id": "C002",
+      "claim_text": "一项仅被部分支持的合成说法",
+      "claim_type": "other",
+      "location": "正文第 1 段",
+      "status": "SUPPORTED",
+      "risk": "green",
+      "support_scope": "partial",
+      "matched_evidence_id": null,
+      "source_reference": "合成材料第 2 页",
+      "evidence_summary": "只能支持说法的一部分",
+      "recommended_action": "缩窄表述"
+    }
+  ],
+  "no_factual_claims_reason": ""
+}

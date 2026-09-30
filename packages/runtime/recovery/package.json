@@ -1,0 +1,5 @@
+{
+  "name": "@writing-agent/runtime-recovery",
+  "private": true,
+  "type": "module"
+}

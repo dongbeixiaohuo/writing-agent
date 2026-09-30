@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- 建立 Writing Agent 1.0 M0 基线审计、固定 DSH 来源/许可登记、前端依赖映射与 UI 保真测试计划；所有上游条目在实际复制前保持 `audited_planned`，不冒充已移植。
+- 新增不含私人数据的 legacy manifest、旧桌面 SQLite schema 和 `fact-check-v2` 损坏输入夹具，并以自动测试固定旧 `passed` 失效及严格门禁语义。
+- 固化自主运行时、SQLite 恢复、同源 Electron 分发、legacy 迁移/双导出语义和 DSH 前端源码移植五项 ADR，并增加 Node 24 `node:sqlite` 双平台基础检查。
+- 新增 `writing-core`/`storage` 基础：`quick/deep` 领域契约、StoragePort、严格 SQLite schema、项目序列事件、不可变工件版本、创建事件与来源边、CAS/operationId 幂等、事实门禁失效、在线备份/选定恢复和精确项目删除。
+- 新增 provider-neutral 模型流合同、无 Key deterministic mock、JSON Schema 工具调用安全组装、连接能力探测和首个 OpenAI-compatible adapter；使用本机 SSE fixture 验证多轮 tool-call/result、usage、错误分类、截断与 abort，不把本机测试冒充真实模型验收。
+- 新增受控工具注册与应用签发权限、带版本 hash 的 schema 快照、首批材料/版本只读工具、路径/网络/不可信 HTML 边界，以及依赖校验和失败逆序清理的内部模块宿主；默认不注册 shell 或外部未知插件。
+- 新增仓库自有 model→tool→result→model 循环、project-scoped session/run、SQLite schema v2 不可变请求快照与离线重建、v1 verified-backup migration，以及最小 CLI 请求重建入口；确定性 mock 闭环将最终正文版本绑定到实际末次模型请求。
+- 新增持久取消、run 级模型/重试/工具/重大修订预算、SQLite schema v3 runtime operation 对账、`interrupted/unknown_outcome` 崩溃恢复和 CLI `inspect/replay/resume`；外部结果不明时默认阻断自动重试。
+- 新增中性 `writing-pack`、Application Service 与 SQLite schema v4 材料/简报/决定持久化；CLI `run` 已用确定性 mock 跑通 UTF-8 材料读取、模型工具往返和草稿版本保存，并显式区分 mock、真实 provider、未执行评审、事实门禁和正式导出状态。
+- 新增固定 DSH commit 的 UI 源码基线：精确登记主题/布局/输入/Button 切片，自有 Web composition 与品牌、versioned Client Bridge、显式确定性 Mock、production fail-closed 双构建，以及上游/派生明暗主题和双视口真实截图证据。
+- 将 DSH 派生 UI 接入真实 Application Service 与持久事件投影，新增 Client Bridge v2、随机 loopback Local Web Host、Origin/Host/短期 capability/generation 门禁、Browser Remote、停止/中断恢复及 production 本地启动器；Mock 与正式入口继续物理分离。
+- 新增 schema v5 正文块索引、持久修改提案/差异与 append-only 块锁决定；手动保存和提案接受均执行 project/body/block CAS 与锁检查，同内容不造空版本，显式回退保留新版本和完整历史。
+- Client Bridge 升至 v3，DSH 派生右栏新增真实稿件块编辑、锁定/解锁、差异接受/取消及版本回退；Mock 保持只读并用实际 Chromium 验证面板生命周期和跨项目隔离。
+- 新增 `fact-check-v2` TypeScript 领域门禁与 SQLite schema v6：冻结正文/锁定标题/分发文案/证据账本，运行时计算 claims/blockers，输入变化显式传播为 `stale`，旧 `passed` 迁移后不再受信。
+- Client Bridge 升至 v4，DSH 派生右栏新增“核查与来源”只读页签，展示当前快照、逐条核查、失效记录与 `CHECKED_IN` 来源边，并明确来源关系不构成事实真实性承诺。
+- 新增 SQLite schema v7 持久导出记录：Markdown 工作备份与正式 TXT/HTML 使用不同命令，正式格式共用当前事实门禁；同目录临时写入、SHA-256、原子改名、旧文件冲突保护和改名后崩溃对账均有自动测试。
+- Client Bridge 升至 v5，CLI 与 DSH 派生右栏新增“备份与交付”入口和项目级导出历史；浏览器不接收任意文件路径、不执行导出的不可信 HTML，Mock 保持只读。
+- 新增 Anthropic-compatible Messages adapter 与 schema v2 双协议配置；CLI/Web 共享 adapter factory，显式 `doctor` 覆盖认证、模型、stream、tools、usage 和稳定错误分类，兼容端点不再靠单一 OpenAI wire 假设。
+- 新增 Windows Credential Manager broker 与 CLI `credential set/inspect/delete`：配置只保存 `managed:`/`env:` 引用，系统安全存储失败仅回退当前会话，Key 不进入请求上下文、snapshot、Bridge、日志或诊断包。
+- 新增 DNS 校验后固定地址且逐跳复验的安全网页读取、无权威不可信文本/HTML 去活边界，以及需预览 confirmation hash 才能原子导出的 allowlist 脱敏诊断 ZIP；派生 UI 同步增加遥测/更新/账户、外部 endpoint 和危险 HTML 的自动审计。
+- 新增集中品牌、DSH token alias 与布局配置，以及静态 Writing UI registry；稿件/差异/版本/核查/交付工作台从基础 shell 迁到 `packages/writing-ui`，项目切换按 `panelId:projectId` 清除局部状态。
+- 新增独立 `extension-demo`，演示替换品牌/主题并从侧栏挂载只读面板；production 分发检查明确拒绝示例 ID/文案和 Mock 代码进入正式 bundle。
+- Client Bridge 升至 v6：主题模式与正文字号经受保护 Local Web Host 原子保存到 workspace 的 Writing Agent 设置文件，重连可恢复默认/自定义值，浏览器仍不获得 Key、路径或 Provider 权限。
+- 新增 WA-025 可复现 UI/Bridge 验收矩阵：固定 DSH 上游、派生 Mock 与真实 Application Service 同轮运行，生成 15 张截图、SHA-256、结构/像素报告，并验证锁定差异、事实失效、项目隔离、设置重连和零 Provider 调用。
+- 新增旧 manifest/Markdown 与桌面 0.1.0 SQLite 的只读迁移：CLI 支持 dry-run、空间与目标预检、独立源/目标备份、确定性幂等重试、完成报告及精确项目回退；旧 `passed`/风格状态防御性降级，Key 与旧 App/Tauri 依赖保持排除。
+- 新增 Writing Agent 自有 Electron 44 桌面壳（Desktop Bridge 初始 v7，当前 v17）、首次项目/模型设置、Windows Credential Manager、受限 preload/IPC/导航、自定义协议与 NSIS 打包；本机安装、打包后 renderer/Application Service/SQLite 握手和卸载已有分阶段证据。
+- 新增 RC 38 项状态表、桌面安装/启动/卸载及校验和脚本、Quickstart/演示/PR/Release 草稿和发布门禁；公开发布、真实模型、干净机和维护者签收仍 fail closed。
+- 新增 rc.1 → rc.2 真实 NSIS 原位升级门禁：验证旧程序自动移除、固定安装 GUID、单一卸载项、AppData 保留及升级后协议握手；隔离安装测试发现已有用户安装时主动拒绝执行。
+- 写作评估扩展为旧版/新版/简单基线三组 A/B/C 盲评，12 例共 36 篇输入可随机化、独立记录重大事实错误并分别汇总相对差异；尚未生成真实文章或人工评分。
+- 将原项目核心写作链迁入桌面主路径：完整简报、多材料、Quick/Deep 九阶段、三类独立审校、集中修订、语言终审、共创检查点、阶段产物与运行记录均为真实持久能力。
+- Client Bridge 升至 v15，新增简报修改/确认、专项事实重查、材料与过程投影；Desktop Host 增加真实模型连接验证、工作区备份/恢复和精确项目删除。
+- 使用 Anthropic-compatible MiniMax-M3 完成真实 Quick/Deep 代表性旅程；Deep 共创先因 partial 主张正确阻断，局部修改后旧核查 stale、专项重查 passed，并成功导出纯净 TXT/HTML。
+- Client Bridge 升至 v16：共创恢复投影新增检查点/下一阶段，自由文本意见可安全进入同一 run 的续跑指令；已有成稿后的消息在工作流提交前强制读取当前正文。
+- 新建项目改为“选题策划 → 读者研究 → 创作导演 → 资料研究”四步引导；提纲、初稿和读者审校检查点显示角色、成果摘要、下一步和可输入反馈。
+- 正式 HTML 导出新增清爽阅读、杂志长文、紧凑报告三种安全静态排版预设，继续复用同一事实门禁。
+- 新增 `1.0.0-rc.3` 升级体验：安装器明确说明检测到的旧版、目标版本和数据保留策略；旧卸载登记缺失时可从快捷方式找回原安装位置；“关于”页显示用户可读版本、发布阶段及折叠的反馈信息。
+- 新增 `1.0.0-rc.4` 主对话优先交互：点击历史项目可恢复它的当前/可继续/最新会话；项目与会话有明确的“当前项目/正在查看”状态。
+- 阶段成果改为主对话内始终展开的安全 Markdown 渲染；运行完成时完整稿件也会进入对话时间线。
+- 事实核查的 `blocked`/`stale`/错误状态会在主对话显示具体阻断、建议动作和直达“核查与来源”的处理入口；“稿件与版本”回归历史追溯和精细调整用途。
+- 新增 `1.0.0-rc.5` 两阶段可见升级：安装器先明确显示“步骤 1/2：正在移除旧版本”，旧卸载程序成功返回后再切换为“步骤 2/2：正在安装新版本”；项目、设置、模型凭据和已有快捷方式继续保留。
+- 新增 `1.0.0-rc.6` 项目级“新建对话”与可见删除入口：零会话历史项目可先明确选中，再由首条消息在正确项目下创建会话；项目删除要求输入完整名称并明确影响范围。
+- Client Bridge 升至 v17，新增不依赖既有 session 的 `selectProject`，并贯通 Application、Local Web、Desktop IPC 与 deterministic mock。
+
+### Changed
+
+- 在 `next/runtime` 开始 1.0 开发，明确旧 `writing-agent-app` 只作历史与只读迁移来源，不再作为新版 UI 或桌面壳基线。
+- 保留原 Node 20 legacy CI，新增独立 M0 foundation 通道；当前根包仍为 `private`，不提前公布尚未实现的 1.0 npm 命令。
+- M0 foundation 通道现在安装锁定依赖并执行 `check:runtime`；运行时类型检查与 Node test runner 测试仍和 legacy 通道分开。
+- 新桌面版本独立采用 `1.0.0-rc.6`，根 legacy 工作流继续保持 `0.11.0`；历史 `app-preview-0.1.0`与 rc.1–rc.5 明确退出当前验收入口。
+- 真实用户试用后撤回旧 `1.0.0-rc.1` 的最终用户验收候选状态；协议 v15 安装包只保留历史运行时证据，新基准要求协议 v16 安装包和真实共创旅程重新验收。
+
+### Fixed
+
+- 更新 `fflate`、`tsx`/`esbuild` 与锁定的 `js-yaml` 补丁版本，消除会阻断现有 `npm audit --audit-level=high` CI 的已知公告；未新增依赖。
+- 修复浏览器原生 `fetch` 被 Client Bridge 以错误接收者调用而在请求发出前失败的问题；默认 fetch 现在显式绑定 `globalThis`。
+- 修复迟到旧 generation 或同 generation 低 revision snapshot 可覆盖较新 UI 投影的问题；本地断线也不再伪造服务端 revision，重连只补读而不隐式启动/恢复任务。
+- 修复 Electron sandbox preload 间接捆入 `node:path` 的边界违规；固定 channel 移至纯常量模块，分发扫描要求 preload 只依赖 `electron`。
+- 修复桌面 smoke 在 Chromium 尚持有 user-data 文件时递归删除目录导致“握手成功但退出码 1”的问题；清理由外部测试脚本在进程退出后执行。
+- 修复桌面来源测试依赖开发机 `%USERPROFILE%\.codex\upstreams` 缓存、导致干净 GitHub Runner 无法执行的问题；现在按仓库内固定 commit、来源登记和 SHA-256 做自包含校验。
+- 修复共创恢复丢失研究/提纲/审校上下文的问题；恢复段现在必须读取对应持久工件后才能提交下一阶段。
+- 修复事实模型把常识、同类例子或说明性推断当成完整证据，以及 partial 主张仍显示“完整支持”的问题；程序门禁继续 fail closed。
+- 修复真实 Provider 404 被一律误报为模型名称不可用、MiniMax Anthropic 地址缺少 `/v1`、发送后不跟随最新进度，以及打包校验和脚本依赖 `Get-FileHash` 自动加载的问题。
+- 修复共创节点只能“继续”而不能表达意见、成稿后自然语言修改可能从零重写，以及正式 HTML 只有单一固定样式的问题。
+- 修复 Desktop Client Bridge 在 Electron RPC 前丢弃 `layoutPreset`、导致界面显示“杂志 HTML”却仍导出清爽 CSS 的问题；新增 Electron ingress 回归与真实文件级排版读回。
+- 固定 NSIS GUID 为 rc.1 已发布身份，避免未来调整 `appId` 时破坏静默升级；rc.2 安装程序已实测自动替换 rc.1，无需用户手工卸载。
+- 修复 rc.2 安装时没有升级提示、“关于”页不显示版本，以及旧卸载登记缺失后可能无法识别原安装位置的问题；rc.3 已实测覆盖登记完整和登记缺失两类升级。
+- 修复左侧历史项目无法作为导航入口、当前选中态过弱、提纲需额外点击且暴露 Markdown 符号，以及关键事实阻断只藏在“稿件与版本”的问题。
+- 修复历史安装器升级测试可读取用户真实快捷方式、误将孤儿安装当作测试目标的隔离缺陷；测试现在会先备份并暂时移出真实快捷方式，在 `finally` 中原样恢复。
+- 修复升级时旧版卸载只在后台执行、用户容易误判安装器卡住的问题；正常登记与缺失登记两条路径现在共用清晰的移除/安装阶段反馈，并在旧卸载失败时停止覆盖。
+- 修复 `test` 这类“项目存在、简报已确认但会话为 0”的历史项目点击后只报“没有可继续会话”、无法进入输入状态的问题；“新建对话”也会显式清除旧会话选择，不再误续写上一会话。
+- 修复项目删除仅埋在“设置 → 数据与诊断”、普通用户无法发现的问题；侧栏每个项目现有独立删除按钮、精确名称确认、成功反馈和其他项目保留验证。
+
 ## [0.11.0] - 2026-09-07
 
 ### Changed

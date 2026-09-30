@@ -8,9 +8,10 @@
   },
   "dependencies": {
     "@antv/infographic": "0.2.19",
+    "ajv": "8.20.0",
     "cheerio": "1.0.0",
     "dotenv": "^16.0.0",
-    "fflate": "^0.8.2",
+    "fflate": "^0.8.3",
     "front-matter": "^4.0.2",
     "highlight.js": "^11.11.1",
     "https-proxy-agent": "^7.0.0",
@@ -23,7 +24,8 @@
     "remark-cjk-friendly": "^1.1.0",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
-    "tsx": "^4.0.0",
-    "unified": "^11.0.5"
+    "tsx": "^4.23.13",
+    "unified": "^11.0.5",
+    "zod": "3.25.76"
   }
 }

@@ -24,11 +24,15 @@ Thumbs.db
 
 # 依赖（如果将来添加）
 node_modules/
+.playwright-cli/
+apps/web/dist/
+apps/desktop/dist/
+output/
 docs/
 .env
 .claude/settings.local.json
-!writing-agent-app/docs/
-!writing-agent-app/docs/**
+# 老版本桌面客户端（0.1.0 Tauri 预览版）已退出主线，本地保留但不再跟踪
+writing-agent-app/
 
 # Python 缓存
 __pycache__/
@@ -40,3 +44,14 @@ docs/*
 !docs/WORKFLOW_CONTRACT.md
 !docs/WORKFLOW_QUICK_REFERENCE.md
 !docs/PROJECT_STRUCTURE.md
+!docs/QUICKSTART_1_0.md
+!docs/CLAUDE_CODE_GUIDE.md
+!docs/DESKTOP_SKILL_COMPARISON.md
+!docs/architecture/
+!docs/architecture/**
+!docs/implementation/
+!docs/implementation/**
+!docs/launch/
+!docs/launch/**
+!docs/testing/
+!docs/testing/**

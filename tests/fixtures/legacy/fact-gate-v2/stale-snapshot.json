@@ -1,0 +1,13 @@
+{
+  "schema_version": "fact-check-v2",
+  "snapshot_id": "stale-snapshot-id",
+  "body_file": "draft.md",
+  "title_file": "04_title.md",
+  "coverage": {
+    "body": true,
+    "title": true,
+    "distribution_copy": true
+  },
+  "claims": [],
+  "no_factual_claims_reason": "绑定故意过期，必须拒绝。"
+}

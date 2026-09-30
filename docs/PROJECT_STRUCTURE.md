@@ -2,6 +2,10 @@
 
 ## 顶层目录
 
+仓库目前有两条明确分离的产品线：Claude Code Skill `0.11.x` 工作流，以及 1.0 独立桌面运行时。不要把 `.claude/` 工作流镜像与新桌面 runtime 混成同一启动链。普通用户入口见 [README](../README.md)，功能对应见[能力与差异](DESKTOP_SKILL_COMPARISON.md)。
+
+Skill 的唯一源为 `claude-runtime/`，同步到 `.claude/`、兼容脚本与 `plugins/writing-agent/`；桌面使用 `apps/desktop`、`apps/web` 和 `packages/*`。旧 `writing-agent-app/` 已不在当前跟踪范围，源码在历史 Tag 中保留。安装包只保存在本地 `output/desktop` 并作为 Release 附件发布，不提交到 Git 源码历史。
+
 ```text
 写稿Agent/
 ├── .claude/
@@ -12,10 +16,23 @@
 │   ├── settings.json
 │   └── settings.example.json
 ├── articles/                   # 每篇文章一个项目目录
+├── apps/
+│   ├── cli/                    # 1.0 runtime/迁移 CLI
+│   ├── web/                    # DSH 派生同源 Web composition/Local Host
+│   └── desktop/                # Electron 44 最小壳与 NSIS 配置
+├── packages/
+│   ├── application/            # 1.0 唯一业务写边界
+│   ├── writing-core/           # 领域、版本、门禁、导出合同
+│   ├── storage/                # SQLite schema、事务、恢复
+│   ├── runtime/                # LLM、agent loop、工具、凭据、诊断
+│   ├── model-adapters/         # Chat Completions / Responses / Anthropic adapters
+│   ├── client-bridge/          # Web/Desktop/Mock 版本化桥接
+│   ├── ui/、writing-ui/        # DSH 派生壳和写作 Slot
+│   └── legacy-migration/       # 旧 manifest/SQLite 只读迁移
 ├── docs/                       # 使用说明、结构文档、计划文档
 ├── scripts/                    # hook、清洗、校验、run manifest 等脚本
 ├── tests/                      # Python 回归测试
-├── evaluations/                # 固定简报、配对盲评工具与说明
+├── evaluations/                # 固定简报、A/B 与三组三盲评工具
 ├── README.md
 ├── package.json
 └── CHANGELOG.md

@@ -1,0 +1,27 @@
+{
+  "schema_version": "fact-check-v2",
+  "snapshot_id": "__SNAPSHOT_ID__",
+  "body_file": "draft.md",
+  "title_file": "04_title.md",
+  "coverage": {
+    "body": true,
+    "title": true,
+    "distribution_copy": true
+  },
+  "claims": [
+    {
+      "claim_id": "C001",
+      "claim_text": "一项没有证据的合成比例",
+      "claim_type": "number",
+      "location": "正文第 1 段",
+      "status": "UNSUPPORTED",
+      "risk": "yellow",
+      "support_scope": "none",
+      "matched_evidence_id": null,
+      "source_reference": "合成材料第 1 页",
+      "evidence_summary": "没有可用支持",
+      "recommended_action": "删除或补充来源"
+    }
+  ],
+  "no_factual_claims_reason": ""
+}

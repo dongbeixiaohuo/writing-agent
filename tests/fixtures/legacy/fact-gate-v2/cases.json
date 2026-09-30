@@ -1,0 +1,27 @@
+[
+  {
+    "id": "valid-no-facts",
+    "input": "valid-no-facts.json",
+    "expected": "passed"
+  },
+  {
+    "id": "unsupported-claim",
+    "input": "unsupported-claim.json",
+    "expected": "blocked"
+  },
+  {
+    "id": "partial-support",
+    "input": "partial-support.json",
+    "expected": "blocked"
+  },
+  {
+    "id": "stale-snapshot",
+    "input": "stale-snapshot.json",
+    "expected": "error"
+  },
+  {
+    "id": "malformed-json",
+    "input": "malformed.txt",
+    "expected": "error"
+  }
+]

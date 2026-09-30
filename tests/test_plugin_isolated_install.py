@@ -2,16 +2,63 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = PROJECT_ROOT / "plugins" / "writing-agent"
+
+
+def run_visible_process(
+    args: list[str],
+    *,
+    cwd: Path,
+    timeout: float,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Stream diagnostics and terminate the complete child tree on timeout."""
+    process = subprocess.Popen(
+        args,
+        cwd=cwd,
+        env=env,
+        text=True,
+        start_new_session=os.name != "nt",
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+    )
+    try:
+        returncode = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=10)
+        raise
+    return subprocess.CompletedProcess(args, returncode)
+
+
+class VisibleProcessTests(unittest.TestCase):
+    def test_visible_process_timeout_returns_promptly(self) -> None:
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_visible_process(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=PROJECT_ROOT,
+                timeout=0.1,
+            )
+        self.assertLess(time.monotonic() - started, 5)
 
 
 @unittest.skipUnless(
@@ -30,7 +77,7 @@ class PluginIsolatedInstallTests(unittest.TestCase):
             workspace = root / "unrelated-workspace"
             plugin_data = root / "plugin-data"
             workspace.mkdir()
-            bootstrap = subprocess.run(
+            bootstrap = run_visible_process(
                 [
                     sys.executable,
                     str(PLUGIN_ROOT / "scripts" / "bootstrap_workspace.py"),
@@ -42,14 +89,10 @@ class PluginIsolatedInstallTests(unittest.TestCase):
                     str(plugin_data),
                 ],
                 cwd=workspace,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
                 timeout=240,
             )
-            self.assertEqual(0, bootstrap.returncode, bootstrap.stdout + bootstrap.stderr)
+            self.assertEqual(0, bootstrap.returncode)
             self.assertTrue((workspace / "articles").is_dir())
             self.assertFalse((workspace / "scripts").exists())
             self.assertTrue((plugin_data / "node_modules" / "tsx").exists())

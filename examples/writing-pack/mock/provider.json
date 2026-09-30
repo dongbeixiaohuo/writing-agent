@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "kind": "mock",
+  "model": "mock-writing-model",
+  "draftTemplate": "# 一次安静的下班散步\n\n这是确定性 mock 生成的开发草稿，用于验证工具往返和版本保存，不用于评价文章质量。\n\n材料快照：\n\n{{material}}"
+}

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞私下报告
+    url: https://github.com/dongbeixiaohuo/writing-agent/security/advisories/new
+    about: 涉及凭据、任意文件访问或远程代码执行时，不要公开提交 Issue。

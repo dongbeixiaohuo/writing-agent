@@ -1,0 +1,10 @@
+{
+  "workflow_version": "collab-v2",
+  "status": "reviewed",
+  "latest_body_file": "draft_v3.md",
+  "latest_notes_file": "draft_v3_notes.md",
+  "clean_source_file": "draft_v3.md",
+  "fact_check_schema": "fact-check-v2",
+  "fact_check_status": "stale",
+  "fact_check_stale_reason": "legacy_import_requires_recheck"
+}

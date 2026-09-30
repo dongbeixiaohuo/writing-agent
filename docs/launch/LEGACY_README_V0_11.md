@@ -1,0 +1,987 @@
+<!-- 历史存档：不作为当前桌面下载或功能承诺。 -->
+
+> 本文保留 2026-09-30 发布整理前的完整首页，供 Claude Code 老用户查阅。其中桌面状态、模型价格和安装建议属于历史记录；当前桌面说明见[新版首页](../../README.md)，当前 Skill 入口见 [Claude Code 指南](../CLAUDE_CODE_GUIDE.md)。
+
+# 写稿Agent v0.11.0
+
+> **2026-09-19 当前桌面产品状态：BLOCKED_CORE_WORKFLOW。** rc.6 的最终用户验收就绪判断已撤回。原安装包与下文运行结果只作为历史证据保留；[CR-002](../../writing-agent-1.0-prd-v1.1-dsh-ui/docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)重新要求缺口即时追问、同 run 恢复、导演委派及隔离评审，尚未全部实现/验收。
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../.././LICENSE)
+[![Legacy Desktop](https://img.shields.io/badge/Legacy%20Desktop-0.1.0-777777)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)
+[![Writing Workflow](https://img.shields.io/badge/Writing%20Workflow-Stage%20Driven-1f6feb)](https://github.com/dongbeixiaohuo/writing-agent)
+
+把写作从“一次性吐全文”，改成“分阶段策划、证据留痕、审稿、去 AI 味、导出终稿”的流水线。
+
+你拿到的不只是文章，更是一套能反复复用、能中断继续、能回头复盘的写作生产线。
+
+它适合这几类人：
+
+- 想写长文、观点文、公众号文章，不想再靠一把梭 prompt 碰运气
+- 想让 AI 写作过程可中断、可修改、可复盘
+- 不只想拿到一篇文，而是想把写作变成稳定、可控、可积累的工作流
+
+当前优先接入模型（官方资料核验于 2026-08-31）：
+
+- `deepseek-v4-flash`：默认推荐的按量方案，成本低，支持 Anthropic 兼容接口
+- `qwen3.8-flash`：阿里云百炼 Token Plan 用户的优先日常档
+- `GLM-4.7`、`MiniMax-M2.7`、`kimi-for-coding`：已经购买对应套餐时直接使用，不必追最高档模型
+
+## Writing Agent 1.0 独立桌面版进展
+
+`next/runtime` 正在把写作能力升级为本地优先的独立运行时：同一套 DSH 派生界面中包含自有模型/工具循环、SQLite 稿件版本、可控修改、事实门禁、恢复、旧数据迁移和 Windows 桌面分发。普通用户目标是不需要安装 DSH、Claude Code、Python 或旧 Tauri 应用。
+
+截至 2026-09-19，`1.0.0-rc.1`–`rc.5` 已退出当前验收。新 `1.0.0-rc.6` 包含主对话优先信息架构：可恢复有会话的旧项目，也可在零会话历史项目中直接开启新对话；当前项目/会话有强选中态，阶段成果自动展开并渲染 Markdown，事实阻断和完整稿件直接出现在主对话，项目列表提供带精确名称确认的删除入口；“稿件与版本”收口为历史追溯与精细调整工作台。Windows 升级还会明确依次显示“正在移除旧版本”和“正在安装新版本”。这组工程证据曾被误判为最终用户验收就绪；该判断现已撤回，当前状态为 **`BLOCKED_CORE_WORKFLOW`**。本地候选位于 `output/desktop/Writing-Agent-Setup-1.0.0-rc.6-x64.exe`，SHA-256 为 `11bfd315eeaca79ac548ac2cfc47cea5028341bce901ff6397a9d726e00531fa`；它尚未签名或公开发布。下方 `app-preview-0.1.0` 仍是历史 Legacy 预览，不是 1.0 下载入口。
+
+已安装 rc.1/rc.2/rc.3 的用户无需手工卸载：直接运行 rc.4 安装包会明确显示升级和数据保留说明，原位替换程序并保留项目、设置与 Credential Manager 中的模型 Key。若旧卸载登记意外缺失，安装器会通过 Writing Agent 快捷方式找回原位置；rc.2 正常/缺失登记升级到 rc.4，以及 rc.3 升级到 rc.4，均已通过隔离的真实 NSIS 安装回归。
+
+- [1.0 快速开始与真实状态](../../docs/QUICKSTART_1_0.md)
+- [RC 38 项验收记录](../../docs/testing/RC_RESULTS.md)
+- [最终用户验收清单](../../docs/testing/FINAL_USER_UAT_CHECKLIST.md)
+- [质量与易用性缺口](../../docs/testing/QUALITY_AND_USABILITY.md)
+- [发布门禁](../../docs/testing/RELEASE_GATE.md)
+- [架构实施进展](../../docs/architecture/IMPLEMENTATION_PROGRESS.md)
+
+界面源码复用和许可见 `upstream-sources.json` 与 `THIRD_PARTY_NOTICES.md`。Writing Agent 并非 DeepSeek 官方产品；未上线能力不会在 README 中提供假下载链接。
+
+---
+
+## 旧桌面预览版（Legacy 0.1.0）
+
+历史 `Writing Agent App` Windows 预览版仍保留，便于旧用户访问和迁移：
+
+- [下载 Writing Agent App 预览版 0.1.0](https://github.com/dongbeixiaohuo/writing-agent/releases/download/app-preview-0.1.0/Writing.Agent.App_0.1.0_x64-setup.exe)
+
+桌面应用源码位于：
+
+- `writing-agent-app/`
+
+它使用旧 Tauri/旧 UI，不会继续扩展为 1.0。需要历史版本可下载上面的安装包；准备使用 1.0 时请等待经门禁签收的新 Release，并按迁移指南导入数据。旧源码仍在 `writing-agent-app/`。
+
+---
+
+## 快速入口
+
+- 了解 1.0：[独立桌面版进展](#writing-agent-10-独立桌面版进展)
+- 下载旧版：[Legacy 0.1.0](#旧桌面预览版legacy-010)
+- 先看完整样本：[工资的一半，是你受的气折算的 Demo](#完整-demo工资的一半是你受的气折算的)
+- 再看当前版本：[最新更新](#最新更新)
+- 先判断模型成本：[模型与 Token Plan](#模型与-token-plan)
+- 想直接部署：[完整版安装](#完整版安装)
+- 想按新手路径一步步装：[给新手的完整安装与使用说明](#给新手的完整安装与使用说明)
+
+---
+
+## 先看一个完整样本
+
+如果你只想先判断这个仓库值不值得收藏，不要先看安装，先看这个真实样本：
+
+[`demo/工资的一半，是你受的气折算的/`](../../demo/工资的一半，是你受的气折算的/)
+
+这不是只放一篇成品，而是把整条写作链路都放出来了，包括：
+
+- 选题和约束：[01_theme.md](../../demo/工资的一半，是你受的气折算的/01_theme.md)
+- 观点定牙齿：[01b_position.md](../../demo/工资的一半，是你受的气折算的/01b_position.md)
+- 伤疤和证据：[02_scar_tissue.md](../../demo/工资的一半，是你受的气折算的/02_scar_tissue.md)、[02_evidence_ledger.json](../../demo/工资的一半，是你受的气折算的/02_evidence_ledger.json)
+- 结构和开头：[03_outline.md](../../demo/工资的一半，是你受的气折算的/03_outline.md)、[05c_opening_hook.md](../../demo/工资的一半，是你受的气折算的/05c_opening_hook.md)
+- 草稿和去 AI 味：[draft_v1.md](../../demo/工资的一半，是你受的气折算的/draft_v1.md)、[draft_v1_humanized.md](../../demo/工资的一半，是你受的气折算的/draft_v1_humanized.md)
+- 审稿和传播测试：[pre_publish_review.md](../../demo/工资的一半，是你受的气折算的/pre_publish_review.md)、[wechat_reader_test.md](../../demo/工资的一半，是你受的气折算的/wechat_reader_test.md)
+- 事实核查：[fact_claims.json](../../demo/工资的一半，是你受的气折算的/fact_claims.json)、[fact_check_report.md](../../demo/工资的一半，是你受的气折算的/fact_check_report.md)
+- 纯文本候选稿：[draft_v1_humanized_clean.txt](../../demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt)
+- 运行态记录：[run_manifest.json](../../demo/工资的一半，是你受的气折算的/run_manifest.json)（事实结论同时绑定正文与锁定标题 SHA-256）
+
+建议浏览顺序：
+
+```text
+01_theme.md
+-> 01b_position.md
+-> 02_scar_tissue.md + 02_evidence_ledger.json
+-> 03_outline.md
+-> 05c_opening_hook.md
+-> draft_v1.md
+-> draft_v1_humanized.md
+-> fact_claims.json + fact_check_report.md
+-> draft_v1_humanized_clean.txt
+```
+
+如果你看完这套 Demo 觉得“这不是一次性吐全文，而是一条可复盘的生产线”，那这个仓库的核心价值你已经看到了。
+
+---
+
+## 完整 Demo：工资的一半，是你受的气折算的
+
+下面不是虚构示例，是这个仓库里一篇真实跑完的文章项目。
+
+- Demo 目录：[`demo/工资的一半，是你受的气折算的/`](../../demo/工资的一半，是你受的气折算的/)
+- 文章标题：`工资的一半，是你受的气折算的`
+- 主题：`工资的一半是“技术溢价”，一半是“情绪折价”`
+- 核心判断：`你的工资不是你值多少，而是市场价减去组织税之后剩下的数`
+- 完整过程文件都在这个目录里，包含选题、立场、伤疤、证据账本、大纲、开头赛马、草稿、审稿、传播测试、事实核查和纯文本稿
+
+这套 Demo 主要传达这些信息：
+
+- 这是一条完整生产线，不是只放终稿
+- 默认发布出口仍然是 `_clean.txt`，也可以在最后一步额外导出公众号排版 `.html`
+- 这个样本真实包含调研阶段的事实证据账本，以及交付前的事实声明和核查报告
+- 核查报告保留了 2 条黄色修改建议、0 条红色问题，展示工作流如何暴露风险；正式发布前仍应处理黄色建议
+- 该历史样本使用的“记忆大师风格”目前标记为 `legacy_unverified`；可以参考方向，但不代表已完成跨样本风格验证
+- 中间产物本身就能证明“可调度、可中断、可复盘”
+
+最关键的几个文件：
+
+- [01b_position.md](../../demo/工资的一半，是你受的气折算的/01b_position.md)：先把文章的“牙齿”定下来，避免后面越写越软
+- [02_scar_tissue.md](../../demo/工资的一半，是你受的气折算的/02_scar_tissue.md)：不是堆资料，而是打捞致命场景、隐秘代价、荒诞细节
+- [02_evidence_ledger.json](../../demo/工资的一半，是你受的气折算的/02_evidence_ledger.json)：给数字、引文和历史材料建立可追踪的证据账本
+- [04_share_map.md](../../demo/工资的一半，是你受的气折算的/04_share_map.md)：不是只做共情，而是设计读者为什么愿意转发
+- [05c_opening_hook.md](../../demo/工资的一半，是你受的气折算的/05c_opening_hook.md)：先赛马开头，再锁定起手式
+- [pre_publish_review.md](../../demo/工资的一半，是你受的气折算的/pre_publish_review.md)：发布前追问和红队挑刺
+- [wechat_reader_test.md](../../demo/工资的一半，是你受的气折算的/wechat_reader_test.md)：该历史样本记录公众号私域场景；当前新项目会按公众号、头条或知乎切换测试矩阵
+- [fact_check_report.md](../../demo/工资的一半，是你受的气折算的/fact_check_report.md)：把通过项、黄色建议和红色问题分级留痕
+- [draft_v1_humanized_clean.txt](../../demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt)：去 AI 味后的纯文本候选稿
+
+如果你只看最终效果，这篇 Demo 的发布出口就是：
+
+```text
+demo/工资的一半，是你受的气折算的/draft_v1_humanized_clean.txt
+```
+
+---
+
+## 最新更新
+
+首页前部只保留最近主线版本，历史版本不再堆在前面。
+
+### v0.11.0 文体化写作、集中修订与事实核查升级
+
+- 按争议评论、解释分析、叙事观察、实用经验组织创作，优先明确读者新收获和作者真实素材；传播目标可为不适用。
+- 默认自主推进，已有风格/方向授权不重复确认；需要逐阶段参与时选择逐步共创。
+- 标题和开头先暂定，成稿后锁定；三份独立评审只给建议，由主笔集中修订，允许保留原稿。
+- 事实核查升级为 fact-check-v2：先固定正文、标题、证据账本，再验证逐条 claims 并计算结果；无依据、矛盾或部分支持的问题不能靠黄色标记放行。纯文本和 HTML 同用门禁。
+- 复盘区分用户修改和模型建议，新增 [12 案例写作盲评工具](../../evaluations/README.md)。文章质量是否提升需要实际成稿和人工评分验证。
+
+**升级须知：** v0.10.0 及更早项目需要针对当前终稿、锁定标题和证据账本重新执行 Stage 10.5；旧 passed 不能自动升级为通过。已有插件工作区还需核对并刷新 `.claude/workflows/collab_v2.json`，bootstrap 只补缺失文件，不会覆盖已有工作流。完整步骤见 [v0.11.0 Release Notes](../../.github/releases/v0.11.0.md)。历史 Demo 保留原始状态，不代表通过新版门禁。现行行为以 [工作流契约](../../docs/WORKFLOW_CONTRACT.md) 为准；以下为历史版本记录。
+
+### v0.10.0 平台增长、创意反馈与双版本事实门禁
+
+v0.10.0 正式版同时收录创意反馈、尾部事实门禁重排和平台化配图：
+
+- **配图不再破坏事实哈希**：尾部顺序调整为 Humanizer → 可选配图 → Fact Checker → Auto Clean；配图写入新正文版本，最终核查绑定配图后的 Markdown
+- **评审不再重复打分**：Editor 聚焦写作工艺与风格，Pre-publish 聚焦读者价值与发布风险，Reader Test 聚焦平台行为；发布前评审不再用第一人称数量衡量“灵魂”
+- **真实数据开始学习创意变量**：发布指标自动快照标题公式、开头方案、主导社交货币、风格和源文件哈希，并允许在同平台、同窗口、同来源条件下跨项目比较
+- **“有趣”成为可设计维度**：Share Map 与 Editor 支持幽默、荒诞反差、认知意外和新鲜细节；严肃主题不强制搞笑，也禁止为了好玩编造素材
+- **标题和调研更可控**：Stage 9 可由用户选择回到 Stage 5.5 重新锁定标题；外部事实检索记录成功与失败，不再用固定搜索次数假装完成调研
+- **配图按平台策划**：读取 `01_theme.md` 的发布平台，比例和安全裁切区进入用户确认卡点，不再把 16:9 或模板化企业插画当全局默认值
+
+#### 平台增长与可信交付主线
+
+这一版把流程从“正文写得可信”继续推进到“标题也可信、平台用得上、发布后能复盘”：
+
+- **事实放行同时绑定标题与正文**：Stage 10.5 显式核查锁定标题、最终分发文案和正文；`run_manifest.json` 同时记录两份 SHA-256，任何一边改动都会让旧结果变成 `stale`
+- **标题接入证据与立场**：`title-designer` 正式读取 `01b_position.md` 和 `02_evidence_ledger.json`，区分结构数字与事实数字，禁止凭空制造金额、比例、年龄或年份
+- **平台字段真正参与交付**：标题阶段同步给出 3 条公众号摘要、头条信息流导语或知乎回答导语；Stage 9 根据平台切换定性矩阵，不再拿微信群聊逻辑测试所有文章，也不伪造 CTR/完读率预测
+- **模式 C 与记忆包进入机器契约**：选题生成、验证、交接 Stage 1 都写进 `collab_v2.json`；下游真实消费者显式依赖 `00_memory_packet.md`，动态正文占位符从 `run_manifest.json` 安全解析
+- **风格档案有验证状态**：新增 `style_registry.json`；六六、耍大刀标记为已验证，其余 5 份历史档案降级为低置信度方向参考，不再冒充跨样本稳定风格
+- **风格建模与登记状态闭环**：`style-modeler` 会先解析开发仓库或插件工作区的可写风格根目录；新档案由原子注册工具登记为 `legacy_unverified`，只有证据账本、陌生主题验证和独立盲测全部通过后，才能显式升级为 `verified`
+- **发布后数据闭环**：可选 Stage 14 用 `publication_metrics.jsonl` 追加记录曝光、打开、完成阅读、分享等指标，并绑定标题/正文/封面版本、观察窗口和流量来源；单篇只产出假设，跨项目可比后才进入记忆候选
+- **互动不靠骗评**：Share Map 和大纲新增真实讨论入口，明确禁止虚假二选一、强迫站队和“扣 1”式伪互动
+
+升级后，v0.9.1 及更早项目即使已有正文哈希，只要缺少 `fact_checked_title_file` / `fact_checked_title_sha256`，也会被视为旧式未完整绑定状态，需要针对当前锁定标题与正文重新执行 Stage 10.5。完整说明见 [v0.10.0 Release Notes](../../.github/releases/v0.10.0.md)。
+
+### v0.9.1 写作可信度与交付门禁补丁
+
+这一版重点解决“文件看起来齐全，但可能不是用户确认的那一版”以及“去 AI 味时为了生动而补出假经历”两类风险：
+
+- **事实结论绑定正文**：`fact_check_status` 同时记录被核查正文的文件名和 SHA-256；正文哪怕只改一个字，旧的 `passed` 都会自动变成 `stale`，不能继续生成 `_clean.txt`
+- **Humanizer 不再造经历**：去 AI 味前必须读取 `01_theme.md` 和 `02_evidence_ledger.json`；只能强化已有真实素材，禁止新增第一人称亲历、金额、日期、人物、对话和无来源细节
+- **Stage 6 改为语义门禁**：主题必须有用户确认的风格，证据账本必须是合法且字段完整的 JSON，标题和开头必须记录用户已锁定的选择；单纯创建非空占位文件不再算完成
+- **自动清稿严格限定项目**：正常流程只接受 `--project` 或 Hook 明确传入的正文，不再跨 `articles/` 猜“最近修改的终稿”，避免并行项目串稿
+- **网页主地址先过安全预检**：不仅图片 URL，用户给出的正文页面及每次跳转也会检查协议、凭据、DNS 和私网/保留地址；导航后还会复核 `window.location.href`
+- **依赖与 CI 门禁更新**：生产依赖中的 high/moderate 漏洞已通过锁文件升级消除；CI 新增 high 级依赖审计与真实隔离插件安装，`npm run check` 也纳入工作流和文档契约校验
+
+升级后，旧 `run_manifest.json` 中只有 `fact_check_status=passed`、却没有正文哈希绑定的项目会被视为 `stale`，需要重新执行 Stage 10.5。最低 Node.js 版本同步调整为 `18.17.0`。完整说明见 [v0.9.1 Release Notes](../../.github/releases/v0.9.1.md)。
+
+### v0.9.0 运行时、安全与插件交付重构
+
+这一版不只调整写作提示词，而是把“clone 能跑、plugin 也能独立跑、失败时不会越权交付”做成了可验证的运行时契约：
+
+- **工作流契约统一**：Mode A/B/C 的阶段、必需产物和自动跳转全部由 `collab_v2.json` 约束；当前流程先处理可选配图，再对最终 Markdown 做事实核查，未通过时自动清稿和 HTML 交付不会放行
+- **插件真正独立运行**：插件脚本固定从 `${CLAUDE_PLUGIN_ROOT}` 调用，Node 依赖安装在 `${CLAUDE_PLUGIN_DATA}`，不再依赖用户工作区里恰好存在本仓库的 `scripts/` 或 `node_modules/`
+- **网页与导出安全加固**：网页内容按不可信输入处理；图片下载增加内网地址、DNS 重绑定、跳转、MIME、体积和超时校验；HTML 导出增加 XSS 清理和原子写入
+- **风格建模证据化**：稳定风格特征至少需要跨样本证据，单篇观察只作为候选；量化脚本修复句长中位数、段落和标点统计偏差
+- **可发布验证链**：新增 Windows/Linux CI、107 项回归测试、Python 无落盘语法检查、插件严格校验、npm 打包预检和隔离工作区安装测试
+
+本版同时将三个 Skill 目录对齐其 frontmatter 名称：
+
+| 旧目录 | 新目录 |
+|------|------|
+| `风格建模` | `style-modeler` |
+| `工作流导演` | `workflow-producer` |
+| `公众号文章获取` | `web-article-extractor` |
+
+正常 `git pull` 会完成目录迁移；如果你有自定义脚本、快捷命令或文档直接引用旧目录，需要同步更新路径。完整变更见 [CHANGELOG](../../CHANGELOG.md)，面向发布和升级的说明见 [v0.9.0 Release Notes](../../.github/releases/v0.9.0.md)。
+
+### v0.8.1 风格提取重大升级：从"形似"到"神似"
+
+如果你用过风格库功能，可能遇到过这种情况：让 AI 学一个作者的风格，学出来的东西看着眼熟——设问推进、具体案例、金句收尾——但换个话题一写，读者一眼就能看出"这不是那个人"。
+
+问题出在提取方法上：之前的风格建模，很容易把"任何优秀公众号写手都会这么写"的通用公式，当成了"只有这个作者才这么写"的独有指纹。这一版重构了风格建模的整套方法论和工具链，并用新流程把风格库里的示范文件全部推倒重来：
+
+- **量化指纹脚本**：句长、问句占比、段落长度这些节奏结论，过去全靠肉眼估。现在用脚本对样本实测——这一测就测出旧文件里两处纯凭印象写错的结论（"耍大刀风格"旧版写"短句为主"，实测平均句长其实是 32 字；"每2-3段设问"实测问句占比只有 3.4%）
+- **区分性检验**：风格内核的每一条特征都要过两道关——"随便一个优秀写手是不是本来就这么做"、"是不是和风格库里其他作者撞脸了"。通不过的降级成"通用基线"，不再冒充作者独有指纹
+- **判断库（观点指纹）**：新增"这个作者反复表达的实质判断是什么、价值排序是什么"——句式可以模仿，但一个人会得出什么结论，是仿不出来的
+- **独立盲测验证**：仿写验证不再是自己写完自己打分（这样的分数必然虚高），改成拉一个完全没见过风格文件的独立 AI，把原文和仿写打乱顺序让它猜"哪个是仿的"。它猜错了，才算真的过关
+
+用新流程重新提取的两份风格文件（[耍大刀风格](../../.claude/styles/耍大刀风格.md)/金错刀、[六六的风格](../../.claude/styles/六六的风格.md)/刘润）已经验证：独立盲测员被骗过，误把原文当成了仿写。六六风格这一轮还挖出一条此前完全没发现的硬指纹——**全篇零感叹号**，靠短句和逗号顿挫表达情绪，而不是靠标点抒情。
+
+如果你之前觉得"风格学出来的文章有点像，但总差点意思"，这一版就是冲着这个问题去的。
+
+### v0.8.0 个性注入与反模板（Fable 5 优化版）
+
+这一版解决的问题，用一句话说：**之前的流程能保证文章"不像AI写的"，但保证不了"值得读"。**
+
+此前的真实痛点：流水线跑完 14 个阶段、通过全部检查，成稿仍然是"第一个坑…第五个坑"式的对称排比清单文——数据是编的、案例是虚构的"老张"、风格只学了口头禅没学判断方式。这一版由 Claude Fable 5 对全链路做了一次针对性诊断和重构，把质量控制从"负向拦AI腔"升级为"正向产个性"：
+
+- **真实素材采集（新增卡点）**：写作前强制向你要 1-2 条真实经历、真实观点或亲历细节；你说没有，全流程就禁止虚构"我一个朋友老张"式假故事。个性的唯一来源是真素材，现在从源头保证它存在
+- **风格内核管道化**：立场、大纲、素材调研阶段现在都要先读风格文件的"判断方式"（作者首先看见什么、论证发动机），而不是等到动笔才贴口头禅——解决"形似神不似"
+- **结构反模板**：大纲阶段硬性限制全文最多 1 处编号列表、相邻章节禁止同构，从结构层消灭AI排比，这是句子级规则管不到的最大模板味来源
+- **素材防编造**：伤疤素材库禁止出现任何没有证据ID的数字和百分比，"少而真"压倒"多而假"
+- **评审去通胀**：主编审稿新增"无聊段落淘汰"（每段必须有新信息/新观点/新画面）和"风格盲测对照"（与作者原文并排找露馅点）；微信读者测试必须回答"我在第几段想关掉"；复盘禁止给自己打分
+- **写作用最强模型**：正文写作和去AI味两个最吃创造力的环节解除了模型钉死，改为继承会话模型
+- **正文纯净**："分享指南"之类的模板产物不再混进终稿
+
+如果你之前用这套流程写出来的文章总觉得"哪都对但没人想看完"，这一版就是冲着这个问题去的。
+
+### v0.7.8 新增事实证据账本与发布前核查
+
+- Stage 2 `research-expert` 现在会同步生成 `02_evidence_ledger.json`：数字、日期、机构、人名、公司名、报告、政策、网页链接等事实性内容都要有 `evidence_id`
+- Stage 6 `writing-executor` 写作时必须读取证据账本：没有证据的内容只能写成观点或生活观察，不能伪装成“数据显示”“研究表明”“报告指出”
+- 新增 Stage 10.5 `fact-checker`：在 Humanizer 之后、生成 `_clean.txt` 之前抽取正文事实 claim，反查证据账本和外部来源
+- 遇到 `CONTRADICTED`、`BROKEN_LINK`、`NEEDS_USER_SOURCE` 或红色 `UNSUPPORTED`，流程会停机，禁止继续进入配图、纯文本终稿或 HTML 导出
+- 同步补齐 `claude-runtime/` 和 plugin 分发目录，避免 clone 用户和 plugin 用户拿到不同工作流
+
+这版解决的是“文章写得像人，但事实可能是错的”这个硬伤。现在流程会先要求事实有来源，再在最终提交前拦一次高风险幻觉。
+
+### v0.7.7 新增公众号排版 HTML 导出
+
+- 新增 `html-exporter` 末端导出器：最终 Markdown 定稿后，可以额外导出一份适合公众号排版和复制的 `.html`
+- 内置 4 种默认版式可选：`经典正文（default）`、`精致长文（grace）`、`极简评论（simple）`、`现代杂志（modern）`
+- 保留 `_clean.txt` 作为默认纯文本出口：你可以只拿纯文本，也可以同时拿纯文本和排版 HTML
+- 收紧 Stage 12.5 契约、运行态记录和回归测试，让“是否导出 HTML、选择哪种版式”变成真实流程，而不是 prompt 口头约束
+
+如果你关心的是“最后到底能交付什么”，这一版的答案很直接：**正文、可直接复制的 `_clean.txt`、可选的公众号排版 `.html`，都能稳定落地。**
+
+### v0.7.6 深化生产骨架
+
+- `research-expert` 从泛泛调研改成“伤疤打捞”，核心产物是 [02_scar_tissue.md](../../demo/工资的一半，是你受的气折算的/02_scar_tissue.md)
+- `empathy-designer` 从共情点设计升级成“社交转发动机”，核心产物是 [04_share_map.md](../../demo/工资的一半，是你受的气折算的/04_share_map.md)
+- 新增 `opening-tournament`，在正式写稿前先赛马开头，核心产物是 [05c_opening_hook.md](../../demo/工资的一半，是你受的气折算的/05c_opening_hook.md)
+
+快速了解当前版本，先看 `v0.11.0` 的写作流程与升级须知；平台能力可继续参考 `v0.10.0`。更早的记录见 [CHANGELOG](../../CHANGELOG.md) 和 [Releases](https://github.com/dongbeixiaohuo/writing-agent/releases)。
+
+---
+
+## 模型与 Token Plan
+
+这个项目不一定非要跑 Claude 官方模型。只要服务商提供 Claude Code 可用的 Anthropic 兼容接口，就可以用第三方模型运行完整流程。
+
+当前推荐顺序：
+
+1. 低频或第一次试跑：`deepseek-v4-flash` 按量付费。
+2. 国内长期使用：先比较阿里云百炼 Token Plan Lite 和 MiniMax Token Plan Plus，不默认购买最高档。
+3. 已有套餐：GLM 用 `GLM-4.7`，MiniMax 用 `MiniMax-M2.7`，Kimi 用 `kimi-for-coding`；普通写作任务没必要先上旗舰模型。
+4. 需要切换多家兼容接口：使用 [CC-Switch](https://github.com/farion1231/cc-switch)。
+
+| 场景 | 优先选择 |
+|------|------|
+| 第一次验证完整流程 | `deepseek-v4-flash` 按量付费 |
+| 已有阿里云 Token Plan | `qwen3.8-flash` |
+| 已有 GLM / MiniMax / Kimi 套餐 | `GLM-4.7` / `MiniMax-M2.7` / `kimi-for-coding` |
+| 中高频长期使用 | 从当前仍在售的入门 Token Plan 或会员档开始 |
+| 多模型来回切换 | `CC-Switch` |
+
+价格、额度、模型 ID 和官方接入地址见下方 [模型和成本怎么选](#模型和成本怎么选)。
+
+---
+
+## 它和普通 AI 写作工具有什么不一样
+
+普通 AI 写作：
+
+- 一次性生成全文
+- 改一轮就开始漂
+- 风格、结构、审稿全混在一个大 prompt 里
+- 很难知道文章为什么好，为什么差
+
+写稿Agent：
+
+- 先定主题和立场
+- 再打捞场景、代价和细节
+- 同步建立事实证据账本，给可核查内容留来源
+- 再做大纲、分享触点、具象化和开头赛马
+- 写完后还有主编审稿、发布前评审、微信传播测试、去 AI 味
+- 表达诊断及可选配图后，对最终稿执行完整事实核查；无依据、矛盾、部分支持或红色问题不放行
+- 最后输出 `_clean.txt` 终稿，并可按需额外导出公众号排版 `.html`
+
+一句话说：
+
+**它不是“让 AI 帮你写一篇文章”，而是“把写作拆成可调度、可中断、可复盘的流程”。**
+
+---
+
+## 适合谁，不适合谁
+
+适合：
+
+- 写公众号文章、长文观点文、行业评论的人
+- 对“AI 味”“结构松”“标题软”“开头弱”敏感的人
+- 想把 AI 写作纳入稳定工作流的人
+
+不适合：
+
+- 只想一句话秒出 300 字短文的人
+- 不关心中间产物、只关心快的人
+- 不想做任何确认和审稿的人
+
+---
+
+## 完整版安装
+
+完整版不是只靠一个 Skill 在跑，它依赖整个仓库一起工作：
+
+- `.claude/skills/`
+- `.claude/agents/`
+- `.claude/workflows/`
+- `scripts/`
+
+最短路径：
+
+1. 先准备 `Node.js 18.17+`、`Python 3.11+` 和 `Claude Code`
+2. clone 本仓库并执行 `npm ci`
+3. 配好你要用的模型 API 或 Claude 账号
+4. 一定在项目根目录启动 `claude`
+5. 先用 [`demo/工资的一半，是你受的气折算的/`](../../demo/工资的一半，是你受的气折算的/) 理解流程，再开始正式写作
+
+如果你已经准备直接跑完整版，继续看：
+
+- [给新手的完整安装与使用说明](#给新手的完整安装与使用说明)
+
+### 现在有两种交付路径
+
+从这一版开始，这个项目同时支持两种使用方式：
+
+| 方式 | 适合谁 | 运行根目录 |
+|------|------|------|
+| `git clone` 仓库 | 想直接拿完整项目、看 demo、参与开发的人 | 仓库根目录 |
+| `plugin` 安装 | 不想先 clone 仓库，只想在任意工作目录里使用工作流的人 | 你的当前工作目录 |
+
+两条路径的底层运行时现在共用一套唯一源：
+
+- `claude-runtime/`
+
+然后再分别同步到：
+
+- 项目兼容层：`.claude/`
+- 插件目录：`plugins/writing-agent/`
+
+### 如果你是 `git clone` 用户
+
+用法不变：
+
+1. clone 仓库
+2. 在仓库根目录执行 `npm ci`
+3. 在仓库根目录启动 `claude`
+4. 继续按项目内 `.claude/`、`scripts/`、`demo/` 这套方式使用
+
+### 如果你是 `plugin` 用户
+
+插件模式的目标是：
+
+- 安装插件后，不需要先 clone 这个仓库
+- 在任意正常工作目录启动 `claude`
+- 插件会通过工作区自举脚本补齐最小运行目录
+
+当前仓库里已经包含插件骨架：
+
+- `plugins/writing-agent/`
+- `.claude-plugin/marketplace.json`
+
+安装方式只保留最简单这一条。
+
+假设仓库地址就是：
+
+- `dongbeixiaohuo/writing-agent`
+
+那用户只需要执行：
+
+#### 1. 添加 marketplace
+
+```bash
+claude plugin marketplace add dongbeixiaohuo/writing-agent
+```
+
+#### 2. 安装插件
+
+```bash
+claude plugin install writing-agent@writing-agent-marketplace
+```
+
+#### 3. 重新加载插件
+
+```text
+/reload-plugins
+```
+
+装完之后，在你想写文章的目录里启动 `claude` 就可以了。
+
+如果已经安装旧版，先更新 marketplace，再更新插件：
+
+```bash
+claude plugin marketplace update writing-agent-marketplace
+claude plugin update writing-agent@writing-agent-marketplace
+```
+
+更新完成后重启 Claude Code，或执行 `/reload-plugins`。从 v0.8.x 升级时，如果自定义内容直接引用过中文 Skill 目录，还需要按上面的目录映射改成英文名称。
+
+插件第一次进入一个空工作目录时，会自动补齐最小运行结构：
+
+- `articles/`
+- `.claude/styles/`
+- `.claude/workflows/`
+
+工作区自举采用“只补缺失文件”的策略：如果工作区里已经存在同名样式或工作流，现有文件优先，插件不会覆盖。插件脚本不会复制进用户工作区，而是刷新到 Claude 提供的 `${CLAUDE_PLUGIN_DATA}/runtime/`；HTML、配图等 Node 依赖按插件自己的 `package-lock.json` 首次执行 `npm ci --omit=dev --ignore-scripts`，后续只有依赖清单变化才重装。这样既不会污染现有项目，也不会因插件升级继续调用旧脚本。
+
+因此插件首次启动需要能够访问 npm registry，首次安装时间会比后续启动长；依赖成功安装后会持久缓存。离线环境应先在联网环境完成一次启动并保留对应的 `${CLAUDE_PLUGIN_DATA}`，不能只复制插件源码后假设依赖已经存在。
+
+两种路径都要求本机可以直接执行：
+
+```bash
+node --version
+npm --version
+python --version
+```
+
+最低版本为 `Node.js 18.17+`、`Python 3.11+`。Python 脚本只使用标准库；Node 依赖以根目录和插件目录各自的 `package-lock.json` 为准，不依赖用户手工猜包名。
+
+---
+
+## 给新手的完整安装与使用说明
+
+如果你对这些东西还不熟：
+
+- GitHub 仓库怎么 clone
+- Claude Code 怎么装
+- Node.js 为什么要装
+- 模型和 API 怎么配
+- 怎么确认项目真的跑起来了
+
+那就直接按这一节来，不需要先去翻别的文档。
+
+---
+
+## 三种安装方式
+
+Claude Code 支持 macOS、Linux、Windows。你该选哪条路，取决于你的系统和习惯。
+
+| 安装方式 | 命令 | 适用平台 | 推荐度 |
+|------|------|------|------|
+| Native Install | `curl -fsSL https://claude.ai/install.sh \| bash` | macOS / Linux / WSL | ⭐ 推荐 |
+| Homebrew | `brew install --cask claude-code` | macOS | 适合已经在用 brew 的人 |
+| WinGet | `winget install --id Anthropic.ClaudeCode -e` | Windows | Windows 首选 |
+
+核心建议：
+
+- 不确定选哪个：macOS / Linux 直接用 Native Install
+- 已经是 Homebrew 用户：用 `brew` 更顺手
+- Windows：先装 Git for Windows，再走 WinGet
+
+---
+
+## 为什么 Node.js 和 Python 都要讲
+
+这点必须说清楚。
+
+本仓库的锁定依赖要求 `Node.js 18.17+`。提前准备好 Node.js 的原因有两个：
+
+- 如果你后面想走 `npm` 路线安装、升级或调试 Claude Code，Node.js 是硬前置
+- 这个仓库本身带了 `package.json` 和一些基于 Node 的脚本、工具链，后面你大概率还是会用到 `node` / `npm`
+- 工作流的校验、自举、清理和运行状态脚本使用 `Python 3.11+`
+
+所以最稳的建议是：
+
+- 先装好 `Node.js 18.17+`
+- 再装好 `Python 3.11+`
+- 再装 Claude Code
+- 最后 clone 仓库、执行 `npm ci` 并启动项目
+
+### Node.js 怎么装
+
+**Windows：**
+
+- 官网下载安装：[nodejs.org](https://nodejs.org/)
+- 或者直接用 WinGet：
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+**macOS：**
+
+- 官网安装包
+- 或者：
+
+```bash
+brew install node
+```
+
+**Linux：**
+
+- 推荐用 `nvm`
+- 或者用你发行版自己的包管理器
+
+装完先验证：
+
+```powershell
+node --version
+npm --version
+```
+
+能看到版本号，再继续下一步。
+
+---
+
+## Claude Code 怎么装
+
+### macOS / Linux
+
+打开终端，运行：
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+这个脚本会自动下载 Claude Code，并把 `claude` 命令放到你的 PATH 里。
+
+如果你是 Homebrew 用户，也可以直接：
+
+```bash
+brew install --cask claude-code
+```
+
+装完验证：
+
+```bash
+claude --version
+```
+
+### Windows
+
+Windows 这里建议按“Git for Windows + WinGet”这条路走。
+
+#### 1. 先装 Git for Windows
+
+从 [git-scm.com](https://git-scm.com/) 下载也可以，直接 WinGet 更省事：
+
+```powershell
+winget install --id Git.Git -e
+```
+
+它会顺带给你 Git Bash。Claude Code 在 Windows 上需要这类 Unix 工具链支持，所以这一步不要跳。
+
+#### 2. 安装 Claude Code
+
+```powershell
+winget install --id Anthropic.ClaudeCode -e
+```
+
+如果你不用 WinGet，也可以改走官方 PowerShell 安装脚本：
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+```
+
+#### 3. 验证安装
+
+重新打开 PowerShell 或 Git Bash，运行：
+
+```powershell
+claude --version
+```
+
+看到版本号就说明装好了。
+
+#### 4. Windows 使用建议
+
+- 推荐用 PowerShell 或 Git Bash
+- 不推荐直接在 CMD 里折腾
+- 如果你装了便携版 Git，Claude Code 找不到 Git Bash，再单独配置 `CLAUDE_CODE_GIT_BASH_PATH`
+
+---
+
+## 五种用法，选哪个
+
+Claude Code 装好之后，常见有五种用法：
+
+| 环境 | 特点 | 适合谁 |
+|------|------|------|
+| 终端 CLI | 最原生、能力最完整 | 日常开发主力方式 |
+| VS Code 扩展 | 在 VS Code 侧边栏里用 | 已经重度依赖 VS Code 的人 |
+| Desktop App | 图形界面更直接 | 不熟终端、但想先上手的人 |
+| Web | 浏览器直接使用 | 临时体验 |
+| JetBrains 插件 | IntelliJ / WebStorm 等集成 | JetBrains 用户 |
+
+这份 README 和本仓库的所有说明，默认都以 **终端 CLI** 为基准。
+
+原因很简单：
+
+- 这个仓库强依赖“当前项目目录”这个上下文
+- `.claude/skills/`、`.claude/agents/`、`.claude/workflows/` 都更适合按 CLI 路径理解
+- 就算你后面要用 VS Code 或 JetBrains，也建议先把 CLI 这条路摸熟
+
+---
+
+## 账号和钱的事
+
+你有两条常见路径：
+
+- 直接用 Claude 官方订阅登录 Claude Code
+- 不走 Claude 订阅，改用 Anthropic 兼容接口接第三方模型
+
+这两条路不是互斥的，只是适用场景不同。
+
+### Claude 官方订阅
+
+如果你打算直接用 Claude 官方账号，当前个人档位是：
+
+| 方案 | 官方价格 | 建议 |
+|------|------|------|
+| Free | `$0` | 只做偶尔体验，额度有限 |
+| Pro | `$20/月` 或 `$200/年` | 本项目的默认起步档，先用一段时间再判断是否需要升级 |
+| Max 5x | `$100/月` | Pro 经常触顶时再考虑 |
+| Max 20x | `$200/月` | 不是本项目的默认推荐 |
+
+Claude 与 Claude Code 共用订阅额度；如果环境里保留了 `ANTHROPIC_API_KEY`，Claude Code 会优先走 API 按量计费，而不是消耗订阅额度。价格见 [Anthropic 个人套餐说明](https://support.claude.com/en/articles/11049762-choose-a-claude-plan)，登录方式见 [在 Claude Code 中使用 Pro 或 Max](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan)。
+
+简单选法：
+
+- 偶尔体验先用 Free；准备正式跑长链路时从 `Pro` 开始
+- 只有 `Pro` 经常撞额度，才升级 `Max 5x`
+- 不要为了“模型最强”直接购买 `Max 20x`
+
+### 这个仓库更常见的实际路径
+
+对这个项目来说，更常见的用法其实是：
+
+- 用 Anthropic 兼容接口
+- 接 `deepseek-v4-flash`、`qwen3.8-flash`、`GLM-4.7`、`MiniMax-M2.7` 或 `kimi-for-coding`
+- 用更低成本把长链路写作流程跑通
+
+所以你不用把“Claude 官方订阅”和“第三方模型 API”理解成二选一。
+
+---
+
+## 模型和成本怎么选
+
+这个项目的模型选择逻辑，不是“谁绝对最强”，而是“能不能稳定跑完整流程，以及每个月实际花多少钱”。以下信息核验于 **2026-08-31**；活动价可能变化，购买前仍要打开链接确认结算页。
+
+### 先选日常档，不先买旗舰档
+
+- 默认按量模型：`deepseek-v4-flash`。它是当前 DeepSeek 的 Flash 模型，支持 1M 上下文、工具调用和 Anthropic 兼容接口。
+- 已有阿里云 Token Plan：优先 `qwen3.8-flash`，复杂任务失败时再临时切 `qwen3.8-max` 或其他高阶模型。
+- 已有 GLM Coding Plan：日常用 `GLM-4.7`；官方也建议只在复杂任务中切 `GLM-5.2`，后者会更快消耗额度。
+- 已有 MiniMax Token Plan：先用官方 Claude Code 接入文档明确支持的 `MiniMax-M2.7`。
+- 已有 Kimi 会员：入门档先用 `kimi-for-coding`（Kimi K2.7 Code），不必为了 K3 或 HighSpeed 直接升级高价档。
+
+这些是依据当前官方模型和计费文档给出的成本优先建议，不等于每个新模型别名都已在本仓库完成整条回归。正式写作前请先用 Demo 跑一遍。
+
+### 按量付费模型
+
+| 模型 ID | 当前公开价格 | 什么时候用 | 官方入口 |
+|------|------|------|------|
+| **`deepseek-v4-flash`** | 每百万 Token：缓存未命中输入 `$0.22 / $0.44`、输出 `$0.66 / $1.32`（低谷 / 高峰） | 默认按量试跑；先少量充值，再看真实消耗 | [价格](https://api-docs.deepseek.com/quick_start/pricing/) · [Anthropic 接入](https://api-docs.deepseek.com/guides/anthropic_api/) |
+| **`qwen3-coder-flash`** | 单次输入不超过 32K 时，每百万 Token 输入 `¥1`、输出 `¥4`；长上下文分档涨价 | 已有百炼按量账号，并希望使用低价 Flash 档 | [百炼模型价格](https://help.aliyun.com/zh/model-studio/model-pricing) |
+
+DeepSeek 当前高峰时段为工作日北京时间 `09:00–12:00` 和 `14:00–18:00`，其余时段按低谷价；缓存命中输入另有更低价格，仍以实时价格页为准。
+
+不要用一次完整长文任务去反推“每篇固定多少钱”：本项目会经历多 Agent、多轮返工和长上下文，缓存命中、上下文长度、是否重跑阶段都会改变账单。
+
+### 当前仍在售的订阅方案
+
+| 平台 | 当前入门方案 | 日常模型建议 | 额度特点 | 官方链接 |
+|------|------|------|------|------|
+| 阿里云百炼 Token Plan | Lite 原价 `¥60/月`，当前页面限时 `¥39/月` | `qwen3.8-flash` | 每 7 天 2,500 Credits；Token Plan Key 与按量/Coding Plan Key 不互通 | [套餐与价格](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview) · [接入指南](https://help.aliyun.com/zh/model-studio/token-plan-personal-quick-start) |
+| MiniMax Token Plan | Plus `¥49/月` | `MiniMax-M2.7` | 5 小时窗口和周窗口；更高档只在确实触顶后考虑 | [套餐与价格](https://platform.minimaxi.com/docs/guides/pricing-token-plan) · [Claude Code 接入](https://platform.minimaxi.com/docs/token-plan/claude-code) |
+| Kimi 会员 | Andante `¥49/月` | `kimi-for-coding` | Kimi Code 与其他会员功能共享额度；K3 需更高会员档 | [会员价格](https://www.kimi.com/help/membership/membership-pricing) · [Kimi Code 模型与接入](https://www.kimi.com/code/docs/) |
+| GLM Coding Plan | Lite 价格由登录后的订阅页实时显示 | `GLM-4.7` | 约 80 prompts/5 小时、400 prompts/周；`GLM-5.2` 消耗倍率更高 | [套餐说明](https://docs.bigmodel.cn/cn/coding-plan/overview) · [接入指南](https://docs.bigmodel.cn/cn/coding-plan/quick-start) |
+| Claude 官方订阅 | Pro `$20/月` 或 `$200/年` | 使用 Pro 当前提供的默认模型 | Claude 与 Claude Code 共用额度；先用 Pro，不默认推荐 Max | [套餐价格](https://support.claude.com/en/articles/11049762-choose-a-claude-plan) · [Claude Code 登录](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan) |
+
+阿里云旧 Coding Plan Lite 已停止新购和续费，Pro 也改为限量供应；新用户应看 Token Plan。MiniMax 已改为 Token Plan，Kimi 使用会员额度。旧表里的腾讯云、百度千帆、火山引擎和无问芯穹促销入口因无法继续从官方页面确认现行套餐，已经移除。
+
+### 怎么选最省事
+
+- 每月少量使用：`deepseek-v4-flash` 按量付费
+- 每月持续写、持续改：先看阿里云 Token Plan Lite 或 MiniMax Token Plan Plus
+- 已有 GLM、MiniMax 或 Kimi 套餐：使用对应日常档模型，不需要为了 README 换平台
+- 只有日常档反复失败或额度长期不够，才升级模型或套餐
+
+### 模型切换怎么搞
+
+如果你不想手改环境变量，推荐直接用：
+
+- [CC-Switch](https://github.com/farion1231/cc-switch)
+
+它适合这类场景：
+
+- 你在 `deepseek-v4-flash`、`qwen3.8-flash`、`GLM-4.7`、`MiniMax-M2.7`、`kimi-for-coding` 之间切换
+- 你不想反复改 `ANTHROPIC_BASE_URL`
+- 你不想每次都重新整理 API Key
+
+不同产品的订阅 Key、按量 API Key 和 Base URL 往往互不通用。切换后先用 `/status` 与 `/model` 读回实际服务地址和模型，不要只看配置文件里写了什么。
+
+---
+
+## 说第一句话
+
+装好了，模型也有了，先不要急着正式写文章。先让 Claude Code 证明它真的能理解这个仓库。
+
+### 1. 进入项目目录
+
+```powershell
+git clone https://github.com/dongbeixiaohuo/writing-agent.git
+cd writing-agent
+```
+
+### 2. 启动 Claude Code
+
+```powershell
+claude
+```
+
+如果你走 Claude 官方账号，第一次启动会引导你登录。
+
+如果你走第三方兼容接口，先把 `settings.json` 配好再启动。
+
+### 3. 先说这句话
+
+进入对话后，直接试一句：
+
+```text
+先别写新文章，先解释 demo/工资的一半，是你受的气折算的 里每个阶段文件各自起什么作用。
+```
+
+这句话的好处是：
+
+- 它能验证 Claude Code 读没读到当前项目目录
+- 它能验证 `.claude/skills/` 是否被正确加载
+- 它能让你立刻理解这套流程到底怎么工作
+
+---
+
+## 确认一切正常
+
+按这个清单过一遍：
+
+| 检查项 | 命令 / 操作 | 预期结果 |
+|------|------|------|
+| Node.js 可用 | `node --version` / `npm --version` | 能看到版本号 |
+| Claude CLI 可用 | `claude --version` | 能看到版本号 |
+| Claude 环境自检 | `claude doctor` | 没有关键错误 |
+| 项目目录正确 | 在仓库根目录执行 `dir` / `ls` | 能看到 `.claude/`、`demo/`、`scripts/` |
+| Skills 可见 | 启动 `claude` 后询问有哪些 skills | 至少能识别项目级 skills |
+| Demo 可读 | 让它解释 `demo/工资的一半，是你受的气折算的/` | 能说明各阶段文件的作用 |
+| 基础命令可跑 | 让它执行 `git status` 或 `dir` / `ls` | 能返回命令结果 |
+
+如果这些都过了，就说明基础环境是正常的。
+
+---
+
+## 项目级加载逻辑
+
+很多人会误以为：
+
+- clone 了仓库 = 一定能跑完整流程
+
+实际不是。
+
+这个仓库的完整版依赖 4 层同时存在：
+
+- skill 作为入口：`.claude/skills/`
+- agent 作为执行单元：`.claude/agents/`
+- workflow 作为协议：`.claude/workflows/`
+- scripts 作为底层工具：`scripts/`
+
+所以你必须做到：
+
+1. clone 完整仓库
+2. 在项目根目录启动 `claude`
+3. 让这 4 层一起工作
+
+少了其中一层，都不是完整链路。
+
+### 双轨兼容后的真实结构
+
+现在仓库里多了一层运行时唯一源：
+
+- `claude-runtime/`
+
+维护逻辑变成：
+
+- 开发时优先修改 `claude-runtime/`
+- 然后同步生成项目兼容层 `.claude/`
+- 再同步生成插件目录 `plugins/writing-agent/`
+
+对应命令：
+
+```bash
+npm run sync:claude-runtime
+npm run check:claude-runtime
+npm run check
+```
+
+第一条负责同步，第二条负责检查有没有漂移；`npm run check` 会继续执行 Python 回归、语法检查和插件严格校验，是提交或发布前的统一验证入口。
+
+这样可以避免后续出现：
+
+- `git clone` 用户拿到的是新逻辑
+- `plugin` 用户拿到的还是旧逻辑
+
+如果你在改运行时相关内容，例如：
+
+- `skills`
+- `agents`
+- `styles`
+- `workflows`
+- `scripts`
+
+那就不要只改 `.claude/` 或 `plugins/writing-agent/`，而是优先改 `claude-runtime/`。
+
+---
+
+## 推荐的新手使用顺序
+
+如果你是第一次接触这类工具，我建议按这个顺序来：
+
+### 路线 A：先看 Demo，再安装
+
+1. 先看 [`demo/工资的一半，是你受的气折算的/`](../../demo/工资的一半，是你受的气折算的/)
+2. 看明白 `01_theme.md -> draft_v1_humanized_clean.txt` 这条链路
+3. 再决定你要走哪家模型和哪种费用方案
+4. 最后开始安装和配置
+
+### 路线 B：直接上完整版
+
+1. 先装 Node.js
+2. 再装 Claude Code
+3. clone 仓库
+4. 配模型或账号
+5. 在项目目录启动 `claude`
+6. 用 Demo 做第一轮验证
+
+---
+
+## 遇到问题了
+
+### 1. `claude: command not found`
+
+通常是：
+
+- Claude Code 没装好
+- PATH 没生效
+- 终端没重开
+
+处理方式：
+
+- 重开终端再试
+- 重新跑安装命令
+- 再执行一次 `claude --version`
+
+### 2. 代理或网络连不上
+
+如果你在国内网络环境下访问 Anthropic 官方服务，可能需要代理。
+
+**macOS / Linux：**
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+```
+
+**PowerShell：**
+
+```powershell
+$env:HTTPS_PROXY="http://127.0.0.1:7890"
+$env:HTTP_PROXY="http://127.0.0.1:7890"
+```
+
+如果你长期需要代理，把它写进你的 shell 配置里。
+
+### 3. 安装时报权限错误
+
+macOS / Linux 不要先上来就 `sudo`。
+
+如果你走 Native Install 路线，先确认：
+
+```bash
+mkdir -p ~/.local/bin
+```
+
+然后重新执行安装脚本。
+
+如果你走的是 `npm` 安装路径，优先修正本地 Node/npm 权限，而不是直接把所有东西用 `sudo` 装。
+
+### 4. 我 clone 了仓库，为什么还是没有完整流程
+
+优先排查这三件事：
+
+1. 你是不是在项目根目录启动的 `claude`
+2. `.claude/skills/`、`.claude/agents/`、`.claude/workflows/`、`scripts/` 是否都在
+3. 你的仓库是不是拉到了最新版本
+
+这套系统不是只靠一个 Skill 跑起来的，它依赖完整目录和项目内启动。
+
+### 5. 怎么升级 Claude Code
+
+先试：
+
+```bash
+claude update
+```
+
+如果你更习惯沿用安装时的包管理方式，再用下面这些命令：
+
+**Native Install：**
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+**Homebrew：**
+
+```bash
+brew upgrade --cask claude-code
+```
+
+**WinGet：**
+
+```powershell
+winget upgrade Anthropic.ClaudeCode
+```
+
+### 6. 想在 VS Code 里用
+
+去 VS Code 扩展市场搜索 `Claude Code`，安装 Anthropic 官方扩展即可。
+
+但建议先把 CLI 路线跑通，再切 IDE。
+
+### 7. 不想用终端，想用桌面应用
+
+可以直接去 [claude.ai/download](https://claude.ai/download) 下载 Desktop App。
+
+但这套仓库仍然建议你至少先把 CLI 跑通，因为项目目录上下文、skills、agents、workflows 的理解都更直接。
+
+---
+
+## 如果你只想记住最重要的 4 句话
+
+1. 先看 [`demo/工资的一半，是你受的气折算的/`](../../demo/工资的一半，是你受的气折算的/)，比先看安装说明更容易看懂项目价值。
+2. 低成本起步优先 `deepseek-v4-flash`；已有套餐就用对应平台的 Flash 或日常档，不要默认购买最贵模型。
+3. 完整版一定要在项目根目录启动 Claude Code，最后默认交付的是 `_clean.txt`，并可按需额外导出公众号排版 `.html`。
+4. 新版会在调研阶段生成 `02_evidence_ledger.json`，最终交付前生成 `fact_claims.json` 和 `fact_check_report.md`，用来拦截错误事实和失效引用。

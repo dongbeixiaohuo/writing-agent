@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "wa025-ui-consistency-v1",
+  "primaryProject": {
+    "id": "wa025-primary",
+    "name": "WA-025 验收项目",
+    "sessionId": "wa025-primary-session",
+    "sessionTitle": "视觉与桥接验收",
+    "topic": "DSH 派生 UI 一致性验收",
+    "body": "# 验收标题\n\n第一段需要保持原样。\n\n第二段允许通过受保护 Bridge 修改。",
+    "replacement": "第二段已经通过受保护 Bridge 形成差异并创建新版本。"
+  },
+  "secondaryProject": {
+    "id": "wa025-secondary",
+    "name": "WA-025 隔离项目",
+    "sessionId": "wa025-secondary-session",
+    "sessionTitle": "项目隔离检查",
+    "topic": "跨项目状态隔离"
+  }
+}

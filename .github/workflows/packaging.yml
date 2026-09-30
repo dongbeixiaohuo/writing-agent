@@ -7,7 +7,27 @@ on:
 env:
   PYTHONUTF8: "1"
 
+permissions:
+  contents: read
+
 jobs:
+  m0-foundation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+      - run: npm ci --ignore-scripts
+      - run: npm run check:m0
+
   check:
     strategy:
       fail-fast: false
@@ -28,6 +48,49 @@ jobs:
       - run: npm run check
       - run: npm audit --omit=dev --audit-level=high
       - name: Verify isolated plugin installation
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
         run: python -m unittest tests.test_plugin_isolated_install
         env:
           RUN_PLUGIN_INSTALL_TEST: "1"
+          npm_config_offline: "true"
+
+  desktop-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+          cache: npm
+      - run: npm ci
+      - name: Validate UI and bridge
+        run: npm run check:ui
+      - name: Validate desktop host
+        run: |
+          npx tsc --noEmit -p apps/desktop/tsconfig.json
+          npm run test:desktop
+      - name: Package unsigned NSIS candidate
+        run: |
+          npm run desktop:package
+          node tests/check_desktop_distribution.mjs
+      - name: Install, launch and uninstall in the clean runner
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem output/desktop/Writing-Agent-Setup-*-x64.exe)
+          if ($installers.Count -ne 1) { throw "Expected exactly one installer, found $($installers.Count)" }
+          & apps/desktop/scripts/test_desktop_installer.ps1 -InstallerPath $installers[0].FullName -EvidencePath output/desktop/installer-test.json
+      - name: Upload desktop validation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: writing-agent-pr-desktop-validation
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            output/desktop/SHA256SUMS.txt
+            output/desktop/build-manifest.json
+            output/desktop/installer-test.json

@@ -77,6 +77,61 @@ class WritingEvaluationTests(unittest.TestCase):
         briefs = json.loads((self.packet / "briefs.json").read_text(encoding="utf-8"))
         self.assertEqual(payload, briefs)
 
+    def test_prepare_three_way_suite_writes_twelve_blinded_triads(self):
+        legacy, candidate, simple = self.root / "legacy", self.root / "candidate", self.root / "simple"
+        payload = json.loads(CASES.read_text(encoding="utf-8"))
+        for case in payload["cases"]:
+            for root, text in ((legacy, "旧版"), (candidate, "新版"), (simple, "简单基线")):
+                root.mkdir(exist_ok=True)
+                (root / f"{case['id']}.md").write_text(f"# {case['id']}\n\n{text}", encoding="utf-8")
+        review.prepare_three_way_suite(
+            legacy,
+            candidate,
+            simple,
+            CASES,
+            self.packet,
+            self.key,
+            seed=17,
+            model="same-model",
+            prompt_version="legacy=p1,candidate=p2,simple=p0",
+        )
+        self.assertEqual(36, len(list(self.packet.glob("*-?.md"))))
+        with (self.packet / "scores.csv").open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+            self.assertEqual(list(review.THREE_WAY_SCORE_FIELDS), list(rows[0]))
+        key = json.loads(self.key.read_text(encoding="utf-8"))
+        self.assertEqual("writing-blind-review-key-v3", key["format"])
+        for mapping in key["cases"].values():
+            self.assertEqual({"legacy", "candidate", "simple_baseline"}, {mapping["A"], mapping["B"], mapping["C"]})
+
+    def test_summarize_three_way_maps_all_arms_and_vetoes(self):
+        legacy, candidate, simple = self.root / "legacy", self.root / "candidate", self.root / "simple"
+        cases = self.root / "one-case.json"
+        cases.write_text(json.dumps({"cases": [{"id": "case-1"}]}), encoding="utf-8")
+        for root, text in ((legacy, "旧版"), (candidate, "新版"), (simple, "简单基线")):
+            root.mkdir()
+            (root / "case-1.md").write_text(text, encoding="utf-8")
+        review.prepare_three_way_suite(legacy, candidate, simple, cases, self.packet, self.key, seed=2)
+        key = json.loads(self.key.read_text(encoding="utf-8"))
+        candidate_side = next(side for side in ("A", "B", "C") if key["cases"]["case-1"][side] == "candidate")
+        row = {field: "3" for field in review.THREE_WAY_SCORE_FIELDS}
+        row.update({
+            "case_id": "case-1",
+            "preferred": candidate_side,
+            "major_fact_error_a": "no",
+            "major_fact_error_b": "no",
+            "major_fact_error_c": "yes" if candidate_side != "C" else "no",
+        })
+        scores = self.packet / "scores.csv"
+        with scores.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=review.THREE_WAY_SCORE_FIELDS)
+            writer.writeheader()
+            writer.writerow(row)
+        result = review.summarize_three_way(scores, self.key, self.root / "summary.json")
+        self.assertEqual(1, result["reviewed_triads"])
+        self.assertEqual(1, result["preference_counts"]["candidate"])
+        self.assertEqual({"legacy", "candidate", "simple_baseline"}, set(result["means"]))
+
     def test_blinding_preserves_quoted_content_after_body_begins(self):
         article = "# 题目\n> 版本：old\n\n文章分析三种表达。\n\n> 风格：它是一个原始引用，应当保留。\n"
         blinded = review.blind_text(article)
