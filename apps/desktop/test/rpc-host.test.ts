@@ -39,6 +39,7 @@ function fakeBridge(): ClientBridge {
       workspaceId: "rpc-workspace",
     }),
     getSnapshot: () => snapshot,
+    getRunTraceDetail: async input => ({ runId: input.runId, stepId: input.stepId, requestId: null, callId: null, provider: null, model: null, sections: [], notes: [] }),
     subscribe: () => () => undefined,
     selectProject: async () => undefined,
     selectSession: async () => undefined,

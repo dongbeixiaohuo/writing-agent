@@ -62,6 +62,47 @@ function setup(provider: AuthorProvider) {
 }
 const input = (userInstruction: string) => ({ projectId: 'p', sessionId: 'conversation', model: 'mock', parameters: {}, userInstruction });
 
+it('defers fact checking with one semantic decision, keeping the draft unverified and the stopped run stopped', async () => {
+  const provider = new AuthorProvider([{ name: 'interpret_author_reply', args: { intent: 'defer_fact_check', reason: '作者要求暂缓核查，保留工作稿' } }]);
+  const f = setup(provider);
+  try {
+    f.storage.createSession({ projectId: 'p', sessionId: 'conversation', purpose: 'writing-pack:draft' });
+    f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'stopped', purpose: 'writing-pack:draft', planVersion: 'test' });
+    f.storage.finishRun({ projectId: 'p', runId: 'stopped', operationId: 'stop', status: 'cancelled', stopReason: 'USER_CANCELLED' });
+    const service = new WritingApplicationService({ storage: f.storage, provider });
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId;
+    const result = await service.startAuthorTurn(input('核查的部分跳过吧')).result;
+    assert.equal(result.ok, true);
+    assert.equal(provider.requests.length, 1, 'a control decision must not generate another long reply or save request');
+    const saved = JSON.parse(f.storage.listArtifactVersions('p', 'report', `author-turn:${result.runId}`).at(-1)!.content);
+    assert.match(saved.reply, /暂缓.*核查/);
+    assert.match(saved.reply, /未核查|尚未核查/);
+    assert.equal(saved.requestedAction, null);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
+    assert.notEqual(f.storage.getFactCheckStatus('p').status, 'passed');
+    assert.equal(f.storage.getRun('stopped')!.status, 'cancelled');
+  } finally { f.close(); }
+});
+
+it('persists ordinary streamed author replies without asking the model to copy them into a save tool', async () => {
+  class PlainAuthor extends AuthorProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      this.requests.push(structuredClone(request));
+      yield { type: 'text_delta', delta: '目前正文仍在，可以先阅读。' };
+      yield { type: 'completed', finishReason: 'stop' };
+    }
+  }
+  const provider = new PlainAuthor([]); const f = setup(provider);
+  try {
+    const result = await f.service.startAuthorTurn(input('现在稿子还在吗')).result;
+    assert.equal(result.ok, true);
+    assert.equal(provider.requests.length, 1);
+    const saved = JSON.parse(f.storage.listArtifactVersions('p', 'report', `author-turn:${result.runId}`).at(-1)!.content);
+    assert.equal(saved.reply, '目前正文仍在，可以先阅读。');
+    assert.match(provider.requests[0]!.messages[0]!.content, /普通文本流式输出.*程序.*自动保存/u);
+  } finally { f.close(); }
+});
+
 it('corrects a text-only formal-check handoff using the available tool, never an unavailable reply tool', async () => {
   class TextThenHandoff extends AuthorProvider {
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {

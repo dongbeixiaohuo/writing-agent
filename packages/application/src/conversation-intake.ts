@@ -1276,6 +1276,7 @@ export function buildConversationIntakePrompt(
         ? "公开回复已经展示，现在只调用 respond_writing_intake 保存同一条回复及必要状态。reply 保留刚才的公开回复，不重写、不继续聊天。保存指令不是作者的新消息，不能作为确认、材料或授权来源。"
         : "先以普通文本直接给作者本轮完整的自然语言回复，让作者边生成边阅读；不要输出思考过程、工具参数或内部记录。随后调用 respond_writing_intake 保存同一条回复及必要状态，reply 与刚才的公开回复保持一致，不再写第二版。工具保存成功前不要声称已保存、已确认或已完成写作；生成和保存状态由界面展示，不要把这些状态写进回复正文。",
       "信息足以形成可执行方案时，用 respond_writing_intake 的 proposal.brief 提交写作偏好：topic、genre、audience、targetCharacters（整数，例如1200）、constraints、publicationGoal；voice、styleReference、platform 未知时省略或设为 null。用户未明确的信息可以建议，但 reply、summary 和 assumptions 必须说明哪些是建议或推测；还不适合提出方案时只回复和追问，不必为了填字段硬给方案。",
+      "非用户明确要求时，需求澄清阶段不得拟标题或标题候选；用户明确指定的现有标题应原样保留为写作约束，不得误当成待优化候选。如需新拟或比较标题候选，留到后期 title 专家阶段。",
       "工具参数层级：reply、summary、questions 始终位于顶层；proposal 只放 brief、assumptions 及可选授权，不能把 summary 放进 proposal 或 brief。summary 用简短摘要，不重复完整回复；没有问题时 questions=[]，没有新方案时省略 proposal。只通过工具提交参数，不在公开回复展示这些字段。",
       'reply、summary 和 assumptions 都是给普通作者阅读的中文。用短段落、分组和列表表达；不要展示字段名、英文枚举、null、消息编号或字段赋值来源。仅在 proposal.brief 的结构字段内使用这些程序值。把需要作者决定的建议说清楚，不展示后台填表过程。reply 请放在工具参数的第一项，便于用户尽早看到回复。',
       "对用户只给简短、可读的自然语言摘要，不输出 JSON 字段清单。没有事实材料时可以讨论方向，但不得编造事实、来源、亲历经历或授权。",

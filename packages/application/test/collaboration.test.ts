@@ -575,9 +575,16 @@ it('streams public ' + targetStage + ' before saving with stable identity', asyn
   class StreamingOutlineProvider extends CollaborationProvider {
     outlined = false;
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      if (targetStage === 'central_revision' && collaborationState(request)?.actor === 'language_review') {
+        // The following polish stage must preserve the custom revision in this fixture.
+        yield { type: 'text_delta', delta: full };
+        yield { type: 'completed', finishReason: 'stop' };
+        return;
+      }
       if (collaborationState(request)?.actor !== targetStage) { yield* super.providerStream(request); return; }
       if (!this.outlined) {
         this.outlined = true;
+        if (targetStage === 'language_review') inspect(request, 'waiting');
         yield { type: 'text_delta', delta: partial };
         inspect(request, 'partial');
         yield { type: 'text_delta', delta: tail };
@@ -590,10 +597,17 @@ it('streams public ' + targetStage + ' before saving with stable identity', asyn
   const f = setup(new StreamingOutlineProvider(), 'autonomous', 0, 'deep');
   const bridge = createApplicationBridge({ service: f.app, workspaceId: 'stream-test', model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {}, budget: f.input.budget } });
   const samples: string[] = [];
+  let waitingActivity: ReturnType<typeof f.app.getLiveActivity> = null;
+  let waitingError: unknown;
   let previewId = '';
   inspect = (request, phase) => {
     const run = f.storage.listRuns('p')[0]!;
     const preview = f.app.getLiveReply('p', run.sessionId, run.id);
+    if (phase === 'waiting') {
+      try { waitingActivity = f.app.getLiveActivity('p', run.sessionId, run.id); }
+      catch (error) { waitingError = error; }
+      return;
+    }
     assert.ok(preview, `${phase}: outline output must already be visible`);
     assert.equal(preview.text, phase === 'partial' ? partial : full);
     assert.equal(f.storage.listArtifactVersions('p', 'report', `workflow:${run.id}:${targetStage}`).length, 0, 'preview must never commit');
@@ -603,7 +617,15 @@ it('streams public ' + targetStage + ' before saving with stable identity', asyn
   };
   try {
     const result = await f.app.runDraft(f.input);
+    assert.equal(result.ok, true, JSON.stringify(result));
     assert.deepEqual(samples, ['partial', 'full']);
+    if (targetStage === 'language_review') {
+      assert.equal(waitingError, undefined);
+      const activity = waitingActivity as ReturnType<typeof f.app.getLiveActivity>;
+      assert.ok(activity, 'active request must be visible');
+      assert.ok(activity.materials?.some(item => item.text.includes('central_revision')), `bound manuscript must be available before model prose: ${JSON.stringify(activity)}`);
+      assert.doesNotMatch(activity.workPreview?.label ?? '', /正在核对的已保存内容/, 'do not duplicate the manuscript as a legacy read preview');
+    }
     assert.equal(f.app.getLiveReply('p', result.sessionId, result.runId), null);
     await bridge.selectSession('p', result.sessionId);
     const timeline = bridge.getSnapshot().timelineBySession[result.sessionId]!;
@@ -1022,6 +1044,9 @@ it("uses real director decisions and independent same-draft reviews before compl
       assert.doesNotMatch(request.messages[1]!.content, /必须先用 read_material/u);
     }
     const languageRequest = provider.requests.find((request) => collaborationState(request)?.stage === "language_review")!;
+    const draftRequest = provider.requests.find((request) => collaborationState(request)?.stage === 'draft')!;
+    assert.match(draftRequest.messages[0]!.content, /已确认主题作工作标题/u);
+    assert.doesNotMatch(draftRequest.messages[0]!.content, /带真实标题/u);
     assert.match(languageRequest.messages[0]!.content, /完整.*正文/u);
     assert.match(languageRequest.messages[0]!.content, /不是.*评审报告/u);
     const decisions = f.storage.listRunEvents(result.runId).filter((event) => event.type === "tool.completed" && (event.payload.result as any)?.toolName === "director_decide");

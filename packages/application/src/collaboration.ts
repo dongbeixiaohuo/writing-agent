@@ -38,7 +38,7 @@ function stageInstruction(stage: WritingWorkflowStage, basePrompt: string): stri
     `claimType 只能使用 ${FactClaimTypeSchema.options.join(' / ')}。引语、解读、场景等不属于前九类时使用 other，不新增 quote/interpretation 等分类。每次提交完整 claims 数组和每条所有必填字段，不提交差异补丁。validEvidenceIds 是程序按实际保存账本提取的唯一可引用 ID 清单；notes 文字中出现的 E### 不代表已登记证据。列表为空或找不到匹配时 matchedEvidenceId 必须是 JSON null，sourceReference 可填写真正可复核的来源定位；缺少支持仍标 UNSUPPORTED 或 NEEDS_USER_SOURCE，不能猜测为支持。`,
     `提交契约优先于任务描述里的报告措辞。submit_fact_check.claims[].status 只能逐字使用 ${FactClaimStatusSchema.options.join(' / ')}。无法验证或证据不足使用 UNSUPPORTED；需要作者补充来源使用 NEEDS_USER_SOURCE；有证据相反使用 CONTRADICTED；链接失效使用 BROKEN_LINK。不得填写 unverifiable、partial、passed 或 passed_with_minor_notes 等非枚举值。partial 是 supportScope，不是 status，部分支持须使用 UNSUPPORTED + supportScope=partial。只有证据完整支持才能使用 SUPPORTED。最终 passed/blocked 由程序根据逐条结论计算，不自行添加总评字段，不用调整状态绕过阻断。格式、字数、排版不是事实主张。核验绑定的当前正文及用户已选择的发布标题和配文，不核查旧标题或未选候选；不得修改正文。给作者的收尾说明必须以明确的下一步结束：全部通过就写「下一步：可以导出发布」；有阻断项就写「下一步：需要你处理以上第几项后让我重新核查」，不得以含糊总结收尾。`,
   ].join('\n');
-  return stage === "central_revision" ? "你是主笔。按taskInstruction综合各独立评审的分歧与必要修改，完成一次集中修订；提交带真实标题的完整文章正文，不要提交修改说明。未获材料支持的内容不得保留或补写。" : "你是主笔。依据绑定研究和已确认提纲写出带真实标题的完整文章正文。不得编造材料外事实或经历。content只含文章，不附过程说明。";
+  return stage === "central_revision" ? "你是主笔。按taskInstruction综合各独立评审的分歧与必要修改，完成一次集中修订；保留原稿工作标题或用户指定标题，提交完整文章正文，不要提交修改说明。未获材料支持的内容不得保留或补写。" : "你是主笔。依据绑定研究和已确认提纲写出完整文章正文。保留用户已指定标题；未指定时只用已确认主题作工作标题，不拟发布标题或候选，也不要求作者提前选标题。不得编造材料外事实或经历。content只含文章，不附过程说明。";
 }
 
 /** The runtime, not a nested provider, owns every request, tool, budget and cancellation. */

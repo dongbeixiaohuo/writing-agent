@@ -544,6 +544,12 @@ export async function startLocalWebHost(
     }
 
     assertGeneration(bridge, body);
+    if (route === '/api/v6/trace/detail') {
+      const result = await bridge.getRunTraceDetail({ projectId: requiredString(body, 'projectId', 512),
+        sessionId: requiredString(body, 'sessionId', 512), runId: requiredString(body, 'runId', 512), stepId: requiredString(body, 'stepId', 512) });
+      json(response, 200, { result });
+      return;
+    }
     if (route === "/api/v6/command/update-settings") {
       const theme = requiredString(body, "theme", 16);
       if (theme !== "light" && theme !== "dark" && theme !== "system") {

@@ -1,10 +1,13 @@
 import clsx from 'clsx'
 import { RunDiagnostics } from './RunDiagnostics.tsx'
+import { RunTrace, type RunTraceProps } from './RunTrace.tsx'
+import './RunTrace.css'
 import { ConversationWorking } from './ConversationWorking.tsx'
 import { conversationWithPreview } from './conversation-stream.ts'
 import './RunDiagnostics.css'
 import {
   Suspense,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -387,10 +390,12 @@ function PublicationGateNoticeCard({
   </section>
 }
 
-export function RunRecords({ records }: { records: readonly RunRecordView[] }) {
+export function RunRecords({ records, activeRunId, liveActivity, loadDetail }: { records: readonly RunRecordView[]; activeRunId?: string | null; liveActivity?: BridgeSnapshot['liveActivity']; loadDetail?: RunTraceProps['loadDetail'] }) {
   if (records.length === 0) return <div className={css.emptyRunRecords}><strong>还没有运行记录</strong><span>提交第一条写作指令后，这里会显示每个阶段的真实进度、用量和结果。</span></div>
   return <div className={css.runRecords}>
-    <div className={css.runRecordsIntro}><h2>运行记录</h2><p>先看写作阶段：每个阶段标明负责的专家、作用和保存状态。需求交流与改稿讨论单独记录，不算新的写作阶段。确认、继续和重试可能多次续接同一流程；底部“执行详情”保留各次续接中的模型请求、工具调用和调度记录。</p></div>
+    <div className={css.runRecordsIntro}><h2>运行记录</h2><p>按时间查看 Agent、模型和工具的实际执行过程。选择一步查看当时的输入、回复、工具参数、结果与耗时；只有实际调用了搜索才会显示搜索记录。详情按需读取，历史缺失不会补造。</p></div>
+    <RunTrace records={records} activeRunId={activeRunId} liveActivity={liveActivity} loadDetail={loadDetail} />
+    <details><summary>写作阶段与累计用量</summary>
     {[...records].reverse().map(run => <article className={css.runRecordCard} key={run.id}>
       <div className={css.runRecordHeader}>
         <div><span>{run.purpose === 'writing-pack:intake' ? '需求交流' : run.purpose === 'writing-pack:author-conversation' ? '改稿与讨论' : run.totalStages > 1 ? `写作流程 · ${run.totalStages} 个阶段` : run.purpose === 'writing-pack:fact-check' ? '专项事实核查' : '专项处理'}{run.diagnostics ? ` · ${run.diagnostics.segments.length} 次执行（含续接）` : ''}</span><h3>{run.displayInstruction.startsWith('按刚才确认的方向继续：') ? '按已确认的写作方向继续' : run.displayInstruction}</h3></div>
@@ -406,7 +411,7 @@ export function RunRecords({ records }: { records: readonly RunRecordView[] }) {
       {run.diagnostics && run.diagnostics.segments.length > 0
         ? <details className={css.runActivity}><summary>执行详情 · 模型、工具与调度记录</summary><RunDiagnostics diagnostics={run.diagnostics} /></details>
         : (run.activity?.length ?? 0) > 0 && <details className={css.runActivity}><summary>执行详情 · 模型、工具与调度记录</summary><Timeline items={run.activity!} brand={WRITING_AGENT_BRAND} diagnostic /></details>}
-    </article>)}
+    </article>)}</details>
   </div>
 }
 
@@ -1564,6 +1569,9 @@ export function WritingAgentShell({
   const [hero, setHero] = useState(() => snapshot.selectedSessionId.length === 0)
   const [newProjectIntent, setNewProjectIntent] = useState(() => snapshot.selectedProjectId.length === 0)
   const [activeTab, setActiveTab] = useState<'conversation' | 'runs'>('conversation')
+  const loadTraceDetail = useCallback((runId: string, stepId: string) => bridge.getRunTraceDetail({
+    projectId: snapshot.selectedProjectId, sessionId: snapshot.selectedSessionId, runId, stepId,
+  }), [bridge, snapshot.selectedProjectId, snapshot.selectedSessionId])
   const [showJumpLatest, setShowJumpLatest] = useState(false)
   const [briefConfirming, setBriefConfirming] = useState(false)
   const [briefConfirmationError, setBriefConfirmationError] = useState<string | null>(null)
@@ -1946,7 +1954,7 @@ export function WritingAgentShell({
             onConfigureModel={() => openSettings('models')}
             hostConfiguration={hostConfiguration}
           /></div>
-        </> : <div className={css.runRecordsScroll}><RunRecords records={snapshot.runRecords} /></div>}
+        </> : <div className={css.runRecordsScroll}><RunRecords key={`${snapshot.selectedProjectId}:${snapshot.selectedSessionId}`} records={snapshot.runRecords} activeRunId={snapshot.activeRunId} liveActivity={snapshot.liveActivity} loadDetail={loadTraceDetail} /></div>}
       </section>
 
       <aside className={appFrameCss.rightbarCol} aria-label={activePanel?.label ?? '扩展面板'}>

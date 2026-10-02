@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ExecutablePath,
     [int]$TimeoutSeconds = 30,
-    [int]$ExpectedProtocolVersion = 20,
+    [int]$ExpectedProtocolVersion = 21,
     [string]$EvidencePath,
     [switch]$KeepSmokeData
 )

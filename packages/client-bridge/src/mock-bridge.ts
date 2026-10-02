@@ -326,6 +326,11 @@ export function createDeterministicMockBridge(options: DeterministicMockOptions 
   return {
     handshake,
     getSnapshot: () => snapshot,
+    async getRunTraceDetail(input) {
+      if (input.projectId !== snapshot.selectedProjectId || input.sessionId !== snapshot.selectedSessionId) throw new Error('TRACE_SCOPE_MISMATCH');
+      return { runId: input.runId, stepId: input.stepId, requestId: null, callId: null, provider: null, model: null,
+        sections: [], notes: ['演示模式没有持久化请求快照；此处不模拟真实模型的输入或结果。'] };
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)

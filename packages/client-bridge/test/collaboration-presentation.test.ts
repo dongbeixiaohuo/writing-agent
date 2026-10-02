@@ -130,7 +130,7 @@ test('a paused question already covered by the reason is shown once, not twice',
 test('model failure surfaces the sanitized upstream reason in the timeline', async () => {
   const f = await fixture();
   try {
-    f.event('request.dispatch_attempted', 'model-1', { requestId: 'request-1' });
+    f.event('request.dispatch_attempted', 'model-1', { requestId: 'request-1', attemptIndex: 0, outputRecoveryAttempt: 0 });
     f.event('request.failed', 'model-1', {
       error: { code: 'INVALID_REQUEST', message: '模型服务拒绝了请求参数' },
       providerHttpStatus: 400,
@@ -259,9 +259,9 @@ test('recovery explains the current model interruption and an accepted reply wit
 test('run diagnostics preserve every model attempt and aggregate reads by known material without leaking tool bodies', async () => {
   const f = await fixture();
   try {
-    f.event('request.dispatch_attempted', 'model-1', { requestId: 'request-1' });
+    f.event('request.dispatch_attempted', 'model-1', { requestId: 'request-1', attemptIndex: 0, outputRecoveryAttempt: 0 });
     f.event('request.failed', 'model-1', { error: { code: 'MODEL_OUTPUT_TRUNCATED', message: 'secret request body' } });
-    f.event('request.dispatch_attempted', 'model-2', { requestId: 'request-2' });
+    f.event('request.dispatch_attempted', 'model-2', { requestId: 'request-2', attemptIndex: 1, outputRecoveryAttempt: 0 });
     f.event('request.completed', 'model-2', { usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 }, responseText: 'secret response body' });
     for (const operationId of ['read-1', 'read-2']) {
       f.event('tool.requested', operationId, { toolName: 'read_material', arguments: { materialId: 'missing-material', contentVersionId: 'version-1', offset: 0 } });
@@ -274,12 +274,49 @@ test('run diagnostics preserve every model attempt and aggregate reads by known 
     assert.equal(diagnostics.segments[0]?.modelRequests.length, 2);
     assert.equal(diagnostics.segments[0]?.modelRequests[0]?.errorCode, 'MODEL_OUTPUT_TRUNCATED');
     assert.deepEqual(diagnostics.segments[0]?.modelRequests[1]?.usage, { inputTokens: 12, outputTokens: 8, totalTokens: 20 });
+    assert.match(diagnostics.trace?.[0]?.inputPreview ?? '', /本执行段第 1 次模型请求.*首次尝试/u);
+    assert.match(diagnostics.trace?.[1]?.inputPreview ?? '', /本执行段第 2 次模型请求.*已重试 1 次/u);
     const reads = diagnostics.segments[0]?.toolGroups.find(group => group.toolName === 'read_material');
     assert.equal(reads?.count, 2);
     assert.equal(reads?.targets?.[0]?.id, 'missing-material');
     assert.equal(reads?.targets?.[0]?.count, 2);
     assert.match(JSON.stringify(diagnostics), /请策划形成提纲/u);
     assert.doesNotMatch(JSON.stringify(diagnostics), /secret (?:request|response|material) body/u);
+    const assignment = diagnostics.trace?.find(step => step.technicalName === 'director_decide');
+    assert.equal(assignment?.kind, 'agent');
+    assert.match(assignment?.outputPreview ?? '', /交给选题策划/u);
+  } finally { f.close(); }
+});
+
+test('run trace keeps chronological model and tool work with actor timing and allowlisted previews only', async () => {
+  const f = await fixture();
+  try {
+    f.event('request.dispatch_attempted', 'model-director', { requestId: 'request-director', snapshotId: 'private-snapshot', attemptIndex: 0, outputRecoveryAttempt: 0 });
+    f.event('request.completed', 'model-director', { requestId: 'request-director', finishReason: 'tool_calls',
+      toolCallIds: ['call-search'], responseText: 'private model response',
+      stream: { headersMs: 15, firstContentMs: 120, lastContentMs: 250, contentEvents: 3 } });
+    f.event('tool.requested', 'search', { actor: 'director', requestId: 'request-director', toolName: 'search_fact_sources',
+      arguments: { query: '公开事实问题', apiKey: 'top-secret', manuscript: 'private manuscript body' } });
+    f.event('tool.completed', 'search', { requestId: 'request-director', result: { ok: true, toolName: 'search_fact_sources',
+      result: { mode: 'external', provider: 'parallel', evidenceText: '[{"url":"https://public.example/article?token=secret","excerpt":"private search body"}]' } } });
+    f.event('request.dispatch_attempted', 'model-fact', { requestId: 'request-fact', actor: 'fact_check', attemptIndex: 0, outputRecoveryAttempt: 0 });
+    f.event('tool.requested', 'save', { requestId: 'request-fact', toolName: 'submit_fact_check',
+      arguments: { stage: 'fact_check', report: 'private report body' } });
+
+    const trace = (await f.snapshot()).runRecords[0]!.diagnostics!.trace!;
+    assert.deepEqual(trace.map(step => step.kind), ['model', 'tool', 'model', 'tool']);
+    assert.equal(trace[0]?.requestId, 'request-director');
+    assert.equal(trace[0]?.actorLabel, '写作导演');
+    assert.equal(trace[0]?.stream?.firstContentMs, 120);
+    assert.equal(trace[1]?.technicalName, 'search_fact_sources');
+    assert.match(trace[1]?.inputPreview ?? '', /公开事实问题/u);
+    assert.match(trace[1]?.outputPreview ?? '', /Parallel.*public\.example/u);
+    assert.equal(trace[2]?.actorLabel, '事实核查');
+    assert.match(trace[2]?.inputPreview ?? '', /本执行段第 2 次模型请求.*首次尝试/u);
+    assert.equal(trace[2]?.status, 'pending');
+    assert.equal(trace[3]?.status, 'pending');
+    assert.match(trace[3]?.label ?? '', /提交事实核查/u);
+    assert.doesNotMatch(JSON.stringify(trace), /top-secret|token=secret|private (?:snapshot|model response|manuscript|search body|report body)/u);
   } finally { f.close(); }
 });
 
@@ -366,6 +403,28 @@ test('author run history projects its own persisted reply, not the reply from an
   try {
     f.event('tool.completed', 'reply', { result: { ok: true, toolName: 'respond_author', result: { reply: '你想用哪一个标题？', artifactVersionId: 'reply-report' } } });
     assert.equal((await f.snapshot()).runRecords.find(run => run.id === 'run')?.replyPreview, '你想用哪一个标题？');
+  } finally { f.close(); }
+});
+
+test('unchanged polish retains its own saved stage body and confirmation after the live preview ends', async () => {
+  const f = await fixture();
+  try {
+    const body = f.storage.commitArtifactVersion({ operationId: 'same-body', projectId: 'project', expectedProjectRevision: f.storage.inspectProject('project')!.revision,
+      kind: 'body', logicalKey: 'main', baseVersionId: null, content: '# 原稿\n\n这段文字无需再改。', reason: 'revision', actor: { kind: 'agent', id: 'writer', runId: 'run' } });
+    assert.equal(body.ok, true); if (!body.ok) return;
+    for (const stage of ['central_revision', 'language_review']) {
+      f.event('tool.requested', stage, { toolName: 'submit_writing_stage', previewId: `preview:${stage}` });
+      f.event('tool.completed', stage, { result: { ok: true, toolName: 'submit_writing_stage', result: { stage, artifactVersionId: body.result.versionId } } });
+    }
+    f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'polish-wait', reason: 'CO_CREATION_CHECKPOINT', payload: { stage: 'language_review', nextStage: 'fact_check' } });
+    const timeline = (await f.snapshot()).timelineBySession.session!;
+    const polish = timeline.find(row => row.id === 'preview:language_review');
+    assert.ok(polish?.kind === 'message', 'the saved polish must replace its live preview even when the artifact is unchanged');
+    assert.match(polish.body, /这段文字无需再改/);
+    assert.match(polish.body, /认可吗/);
+    assert.equal(timeline.filter(row => row.kind === 'message' && row.stage === 'language_review').length, 1);
+    await f.bridge.refresh();
+    assert.deepEqual(f.bridge.getSnapshot().timelineBySession.session, timeline);
   } finally { f.close(); }
 });
 

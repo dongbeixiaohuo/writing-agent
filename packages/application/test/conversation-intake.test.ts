@@ -15,7 +15,7 @@ import {
   ApplicationServiceError,
   WritingApplicationService,
 } from "../src/index.js";
-import { confirmConversationBriefState } from "../src/conversation-intake.js";
+import { buildConversationIntakePrompt, confirmConversationBriefState } from "../src/conversation-intake.js";
 import { createConversationIntent } from "../src/conversation-intent.js";
 import { intentFixtureEvents } from './intent-fixture.js';
 
@@ -140,6 +140,19 @@ const runInput = (userInstruction: string, operationId: string, sessionId?: stri
 });
 
 describe("conversation intake", () => {
+  it("defers unsolicited title ideation while preserving an author-specified existing title", () => {
+    const f = fixture(new IntakeProvider([]));
+    try {
+      const prompt = buildConversationIntakePrompt(
+        f.service.getConversationIntake("project-1"),
+        "我想写最近开始夜跑后的感受",
+      ).systemPrompt;
+      assert.match(prompt, /非用户明确要求.*不得.*拟标题.*候选/u);
+      assert.match(prompt, /用户明确指定.*现有标题.*原样保留/u);
+      assert.match(prompt, /后期.*title.*阶段/u);
+    } finally { f.close(); }
+  });
+
   it("binds semantic intent provenance to the complete current message even when model sourceQuote is absent or rewritten", () => {
     const f = fixture(new IntakeProvider([]));
     try {

@@ -129,3 +129,52 @@ test("fact source tool reports an empty ledger without fetching", async () => {
     );
   } finally { f.close(); }
 });
+
+test('fact source read has a hard overall timeout when the transport never settles', async () => {
+  const f = setup(LEDGER_URL);
+  try {
+    const tool = createFactSourceTool({
+      storage: f.storage,
+      projectId: 'p',
+      timeoutMs: 20,
+      fetcher: { fetchText: async () => await new Promise<SecureWebFetchResult>(() => undefined) },
+    });
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    await assert.rejects(
+      async () => await tool.execute({ url: LEDGER_URL }, { runId: 'r', abortSignal: controller.signal } as never),
+      (error: unknown) => (error as { code?: string }).code === 'FACT_SOURCE_TIMEOUT',
+    );
+    assert.ok(Date.now() - startedAt < 1_000);
+  } finally { f.close(); }
+});
+
+test('fact source read propagates cancellation to the transport and reports ABORTED', async () => {
+  const f = setup(LEDGER_URL);
+  try {
+    let transportSignal: AbortSignal | undefined;
+    let transportStarted!: () => void;
+    const started = new Promise<void>(resolve => { transportStarted = resolve; });
+    const tool = createFactSourceTool({
+      storage: f.storage,
+      projectId: 'p',
+      timeoutMs: 1_000,
+      fetcher: {
+        fetchText: async (_url, signal) => {
+          transportSignal = signal;
+          transportStarted();
+          return await new Promise<SecureWebFetchResult>(() => undefined);
+        },
+      },
+    });
+    const controller = new AbortController();
+    const pending = tool.execute({ url: LEDGER_URL }, { runId: 'r', abortSignal: controller.signal } as never);
+    await started;
+    controller.abort();
+    await assert.rejects(
+      async () => await pending,
+      (error: unknown) => (error as { code?: string }).code === 'ABORTED',
+    );
+    assert.equal(transportSignal?.aborted, true);
+  } finally { f.close(); }
+});

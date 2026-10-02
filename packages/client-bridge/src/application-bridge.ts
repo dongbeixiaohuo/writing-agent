@@ -9,6 +9,7 @@ import { withoutFirstMarkdownHeading } from '../../writing-core/src/index.js';
 import type { RunRecord } from "../../runtime/session/src/index.js";
 import { loopBudgetUsage } from "../../runtime/session/src/index.js";
 import { recoveryInterruption, runDiagnostics } from './run-diagnostics.js';
+import { runTraceDetail } from './run-trace-detail.js';
 import { isPublicationSelectionWait, isUsablePublicationTitle } from '../../application/src/publication-choice.js';
 import {
   workflowStageSequence,
@@ -25,6 +26,8 @@ import {
   type ExportPublicationOptions,
   type ResumeRunOptions,
   type RunRecordView,
+  type RunTraceDetailInput,
+  type RunTraceDetail,
   type SessionSummary,
   type TimelineItem,
   type RecoverableRunSummary,
@@ -443,6 +446,9 @@ function timelineForSession(
     projection.runs.filter((run) => run.status === "completed").map((run) => run.id),
   );
   const displayedArtifactIds = new Set<string>();
+  // A no-change polish can reuse the revision's body version. Content identity
+  // does not replace stage identity: every checkpoint needs its own visible work.
+  const displayedStageArtifacts = new Set<string>();
   const outputPreviewIds = new Map<string, string>();
   const stageMessageRows = new Map<string, number>();
   const intakeRunIds = new Set(projection.events.filter(event => event.type === 'run.started' &&
@@ -490,7 +496,8 @@ function timelineForSession(
       const result = successfulToolResult(event.payload);
       const stage = result === null ? null : workflowStagePayload(result, 'stage');
       const artifactId = result === null ? null : textPayload(result, 'artifactVersionId');
-      if (stage !== null && artifactId !== null && !displayedArtifactIds.has(artifactId)) {
+      const stageArtifactKey = `${event.runId}:${stage}:${artifactId}`;
+      if (stage !== null && artifactId !== null && !displayedStageArtifacts.has(stageArtifactKey)) {
         const artifact = [...projection.workflowArtifacts, ...projection.bodyVersions].find(version => version.id === artifactId);
         if (artifact !== undefined && artifact.kind !== 'evidence') {
           stageMessageRows.set(`${event.runId}:${stage}`, items.length);
@@ -498,6 +505,7 @@ function timelineForSession(
             stage,
             body: `**${WORKFLOW_STAGE_LABELS[stage]} · 已保存**\n\n${workflowArtifactView(artifact)?.content ?? artifact.content}` });
           displayedArtifactIds.add(artifactId);
+          displayedStageArtifacts.add(stageArtifactKey);
           modelRows.delete(event.runId);
         }
       }
@@ -1038,6 +1046,7 @@ export class ApplicationClientBridge implements ClientBridge {
       runtimeBuild: this.#runtimeBuild,
       capabilities: [
         "snapshot.persisted",
+        "run.trace-detail",
         "events.project-seq-replay",
         "project.select",
         "session.select",
@@ -1067,6 +1076,17 @@ export class ApplicationClientBridge implements ClientBridge {
   }
 
   getSnapshot = (): BridgeSnapshot => this.#snapshot;
+
+  async getRunTraceDetail(input: RunTraceDetailInput): Promise<RunTraceDetail> {
+    if (this.#disposed) throw new Error('BRIDGE_DISPOSED');
+    if (!input || [input.projectId, input.sessionId, input.runId, input.stepId].some(value => typeof value !== 'string' || !value || value.length > 512)) {
+      throw new Error('TRACE_SELECTION_INVALID');
+    }
+    if (input.projectId !== this.#snapshot.selectedProjectId || input.sessionId !== this.#snapshot.selectedSessionId) {
+      throw new Error('TRACE_SCOPE_MISMATCH');
+    }
+    return runTraceDetail(this.#service.getRunTraceSource(input));
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);

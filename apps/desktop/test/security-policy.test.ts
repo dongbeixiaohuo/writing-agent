@@ -4,14 +4,16 @@ import { describe, it } from "node:test";
 import { searchApprovalOptions } from "../src/search-approval.js";
 
 it('external search approval displays exact outbound text and defaults to no transmission', () => {
-  const signal = new AbortController().signal;
-  const options = searchApprovalOptions({ query: '客户甲的内部项目 123', providers: ['parallel', 'tavily'], runId: 'run', signal });
+  const controller = new AbortController();
+  const options = searchApprovalOptions({ query: '客户甲的内部项目 123', providers: ['parallel', 'tavily'], runId: 'run', signal: controller.signal });
   assert.ok(options.detail?.includes('客户甲的内部项目 123'));
   assert.ok(options.detail?.includes('Parallel → 失败时使用 Tavily'));
   assert.ok(options.detail?.includes('可能消耗 Tavily 配额'));
   assert.equal(options.defaultId, 0);
   assert.equal(options.cancelId, 0);
-  assert.equal(options.signal, signal);
+  assert.equal(options.signal, controller.signal);
+  controller.abort();
+  assert.equal(options.signal?.aborted, true, 'Electron receives the live run signal so stop closes the modal');
   assert.deepEqual(options.buttons, ['不发送，使用已有材料', '同意发送并搜索']);
 });
 

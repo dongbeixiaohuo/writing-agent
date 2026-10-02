@@ -436,6 +436,14 @@ describe("secure local Web host", () => {
       await remote.refresh();
       assert.match(remote.getSnapshot().previewDocument.body, /回归草稿/u);
       assert.equal(remote.getSnapshot().activeRunId, null);
+      const traceSnapshot = remote.getSnapshot();
+      const modelStep = traceSnapshot.runRecords.find(record => record.id === runId)?.diagnostics?.trace?.find(step => step.kind === 'model');
+      assert.ok(modelStep, 'real runtime persisted a model request');
+      const detail = await remote.getRunTraceDetail({ projectId: traceSnapshot.selectedProjectId, sessionId: traceSnapshot.selectedSessionId, runId, stepId: modelStep.id });
+      assert.ok(detail.sections.some(section => section.id === 'input' && section.text.includes('messages')));
+      assert.ok(detail.sections.some(section => section.id === 'schema'));
+      assert.equal(remote.getSnapshot(), traceSnapshot, 'read-only details do not refresh or replace the entire snapshot');
+      await assert.rejects(() => remote.getRunTraceDetail({ projectId: 'other-project', sessionId: traceSnapshot.selectedSessionId, runId, stepId: modelStep.id }), /Local bridge request failed/);
       const workingCopy = await remote.saveWorkingCopy({
         operationId: "remote-working-copy",
       });

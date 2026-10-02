@@ -9,6 +9,8 @@ import {
   type ExportPublicationOptions,
   type PublicationLayoutPreset,
   type ResumeRunOptions,
+  type RunTraceDetail,
+  type RunTraceDetailInput,
   type UiSettings,
 } from "./protocol.js";
 
@@ -17,6 +19,7 @@ export type DesktopRpcMethod =
   | 'configureSearch'
   | "handshake"
   | "getSnapshot"
+  | "getRunTraceDetail"
   | "selectProject"
   | "selectSession"
   | "updateSettings"
@@ -61,6 +64,7 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   'configureSearch',
   "handshake",
   "getSnapshot",
+  "getRunTraceDetail",
   "selectProject",
   "selectSession",
   "updateSettings",
@@ -267,7 +271,7 @@ export type DesktopRpcResponse =
   | {
       readonly ok: true;
       readonly result: unknown;
-      readonly snapshot: BridgeSnapshot;
+      readonly snapshot?: BridgeSnapshot;
     }
   | {
       readonly ok: false;
@@ -436,6 +440,10 @@ export class DesktopClientBridge implements ClientBridge {
   }
 
   getSnapshot = (): BridgeSnapshot => this.#snapshot;
+
+  async getRunTraceDetail(input: RunTraceDetailInput): Promise<RunTraceDetail> {
+    return await this.#invoke('getRunTraceDetail', input) as RunTraceDetail;
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.#ensureLive();
@@ -703,7 +711,7 @@ export class DesktopClientBridge implements ClientBridge {
       error.code = response.error.code;
       throw error;
     }
-    this.#accept(response.snapshot);
+    if (response.snapshot) this.#accept(response.snapshot);
     return response.result;
   }
 

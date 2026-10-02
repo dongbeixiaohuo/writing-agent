@@ -110,3 +110,119 @@ test('search is bounded per run, cancellation does not trigger paid fallback', a
   await assert.rejects(scope.search('new run', controller.signal, 'r2'));
   assert.equal(calls, 6);
 });
+
+test('search aborts promptly while host authorization ignores the supplied signal', async () => {
+  const controller = new AbortController();
+  let requests = 0;
+  const scope = search.createFactSearchTools({
+    configuration: () => ({
+      parallelEnabled: true,
+      tavilyEnabled: false,
+      authorizeQuery: async () => await new Promise<boolean>(() => undefined),
+    }),
+    fetch: async () => { requests++; throw new Error('must not send'); },
+    overallTimeoutMs: 1_000,
+  });
+
+  const pending = scope.search('public fact', controller.signal);
+  controller.abort();
+  await assert.rejects(pending, error => error instanceof DOMException && error.name === 'AbortError');
+  assert.equal(requests, 0);
+});
+
+test('search has an overall bound even when host authorization never settles', async () => {
+  let requests = 0;
+  const scope = search.createFactSearchTools({
+    configuration: () => ({
+      parallelEnabled: true,
+      tavilyEnabled: false,
+      authorizeQuery: async () => await new Promise<boolean>(() => undefined),
+    }),
+    fetch: async () => { requests++; throw new Error('must not send'); },
+    overallTimeoutMs: 20,
+  });
+
+  const result = await scope.search('public fact');
+  assert.equal(result.mode, 'unavailable');
+  assert.equal(result.failureCode, 'SEARCH_TIMEOUT');
+  assert.match(result.notice, /SEARCH_TIMEOUT/);
+  assert.equal(requests, 0);
+});
+
+test('each provider request is bounded and Parallel timeout can fall back to Tavily', async () => {
+  const requested: string[] = [];
+  const scope = search.createFactSearchTools({
+    configuration: () => ({
+      parallelEnabled: true,
+      tavilyEnabled: true,
+      authorizeQuery: async () => true,
+      getTavilyKey: async () => 'test-key',
+    }),
+    requestTimeoutMs: 15,
+    overallTimeoutMs: 200,
+    fetch: async url => {
+      requested.push(String(url));
+      if (String(url).includes('parallel')) return await new Promise<Response>(() => undefined);
+      return Response.json({ results: [{ title: 'Official', url: 'https://example.com/fact', content: 'evidence' }] });
+    },
+  });
+
+  const result = await scope.search('public fact');
+  assert.equal(result.mode, 'external');
+  assert.equal(result.provider, 'tavily');
+  assert.deepEqual(requested, ['https://search.parallel.ai/mcp', 'https://api.tavily.com/search']);
+});
+
+test('the per-request bound includes reading a response body that never completes', async () => {
+  const requested: string[] = [];
+  const scope = search.createFactSearchTools({
+    configuration: () => ({
+      parallelEnabled: true,
+      tavilyEnabled: true,
+      authorizeQuery: async () => true,
+      getTavilyKey: async () => 'test-key',
+    }),
+    requestTimeoutMs: 15,
+    overallTimeoutMs: 200,
+    fetch: async url => {
+      requested.push(String(url));
+      if (String(url).includes('parallel')) {
+        return new Response(new ReadableStream({ start() { /* intentionally never closes */ } }), {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }
+      return Response.json({ results: [{ title: 'Official', url: 'https://example.com/fact', content: 'evidence' }] });
+    },
+  });
+
+  const result = await Promise.race([
+    scope.search('public fact'),
+    new Promise<never>((_resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('search did not honor the response-body deadline')), 1_000);
+      timer.unref?.();
+    }),
+  ]);
+  assert.equal(result.provider, 'tavily');
+  assert.deepEqual(requested, ['https://search.parallel.ai/mcp', 'https://api.tavily.com/search']);
+});
+
+test('one search shares a hard overall deadline across provider fallback', async () => {
+  const scope = search.createFactSearchTools({
+    configuration: () => ({
+      parallelEnabled: true,
+      tavilyEnabled: true,
+      authorizeQuery: async () => true,
+      getTavilyKey: async () => 'test-key',
+    }),
+    requestTimeoutMs: 1_000,
+    overallTimeoutMs: 25,
+    fetch: async () => await new Promise<Response>(() => undefined),
+  });
+
+  const startedAt = Date.now();
+  const result = await scope.search('public fact');
+  const elapsedMs = Date.now() - startedAt;
+  assert.equal(result.mode, 'unavailable');
+  assert.equal(result.failureCode, 'SEARCH_TIMEOUT');
+  assert.ok(elapsedMs < 250, `search took ${elapsedMs}ms`);
+});

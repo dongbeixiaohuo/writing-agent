@@ -723,7 +723,7 @@ export class AgentRuntime {
           projectId,
           runId,
           eventType: "request.dispatch_attempted",
-          eventPayload: { requestId, snapshotId, attemptIndex, outputRecoveryAttempt },
+          eventPayload: { ...(policy?.actor ? { actor: policy.actor } : {}), requestId, snapshotId, attemptIndex, outputRecoveryAttempt },
           budgetUse: {
             modelRequests: 1,
             ...(attemptIndex + outputRecoveryAttempt === 0 ? {} : { retries: 1 }),

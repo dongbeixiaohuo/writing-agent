@@ -7,6 +7,8 @@ import {
   type CreateProjectInput,
   type DeliveryExportView,
   type ExportPublicationOptions,
+  type RunTraceDetail,
+  type RunTraceDetailInput,
   type UiSettings,
 } from "./protocol.js";
 
@@ -230,6 +232,12 @@ export class WebClientBridge implements ClientBridge {
   }
 
   getSnapshot = (): BridgeSnapshot => this.#snapshot;
+
+  async getRunTraceDetail(input: RunTraceDetailInput): Promise<RunTraceDetail> {
+    await this.#ensureHandshake();
+    const response = await this.#sessionRequest('/api/v6/trace/detail', { ...input, generation: this.#snapshot.generation });
+    return response.result as RunTraceDetail;
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);

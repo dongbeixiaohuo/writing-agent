@@ -1,6 +1,42 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ConversationStreamPreview, topLevelString } from '../src/conversation-stream.js';
+import { ConversationStreamPreview, topLevelString, requestMaterialPreviews } from '../src/conversation-stream.js';
+
+test('waiting previews use only actual public materials injected into the request, never prompts or reasoning', () => {
+  const previews = requestMaterialPreviews([{ role: 'system', content: 'PRIVATE SYSTEM' }, { role:'user', content: 'task\nCOLLABORATION_STATE=' + JSON.stringify({
+    artifacts: [{ id:'b',kind:'body',content:'# 当前稿\n\n正文。' }, {id:'e',kind:'evidence',content:JSON.stringify({claims:[{secret:'PRIVATE LEDGER'}],notes:'只写个人感受。'})}],
+    materials:[{materialId:'m',contentVersionId:'v',content:'原始材料。'}], reasoning:'PRIVATE REASONING',
+  }) }]);
+  assert.equal(previews.length, 3);
+  assert.deepEqual(previews.map(p=>p.text), ['# 当前稿\n\n正文。', '只写个人感受。', '原始材料。']);
+  assert.doesNotMatch(JSON.stringify(previews), /PRIVATE/);
+  assert.deepEqual(requestMaterialPreviews([{role:'assistant',content:'PRIVATE'},{role:'user',content:'invalid JSON'}]), []);
+});
+
+test('public task summaries and search queries stream as temporary process previews, not final answers', () => {
+  const view = new ConversationStreamPreview();
+  const base = { projectId: 'p', sessionId: 's', runId: 'r', requestId: 'q', actor: 'director' };
+  view.observe({ ...base, event: { type: 'tool_call_delta', sequence: 1, index: 0, id: 't', name: 'director_decide', argumentsDelta: '{"reason":"核对文中的假期' } });
+  assert.equal(view.getActivity('p','s','r')?.workPreview?.text, '核对文中的假期');
+  view.observe({ ...base, event: { type: 'tool_call_delta', sequence: 2, index: 0, id: 't', argumentsDelta: '日期，正文保持不变"}' } });
+  assert.equal(view.getActivity('p','s','r')?.workPreview?.text, '核对文中的假期日期，正文保持不变');
+  assert.equal(view.get('p','s','r'), null);
+  view.observe({ ...base, actor: 'fact_check', requestId: 'q2', event: { type: 'tool_call_delta', sequence: 3, index: 0, id: 's', name: 'search_fact_sources', argumentsDelta: '{"query":"2026年放假通知"}' } });
+  assert.match(view.getActivity('p','s','r')?.workPreview?.text ?? '', /2026年放假通知/);
+  assert.match(view.getActivity('p','s','r')?.workPreview?.label ?? '', /待执行/);
+  view.observe({ ...base, requestId: '', event: null });
+  assert.equal(view.getActivity('p','s','r'), null);
+});
+
+test('reasoning activity is counted truthfully without turning hidden processing into public text', () => {
+  const view = new ConversationStreamPreview();
+  view.observe({ projectId: 'p', sessionId: 's', runId: 'r', requestId: 'q', actor: 'director',
+    event: { type: 'response_activity', sequence: 1, phase: 'reasoning' } });
+  assert.equal(view.getActivity('p','s','r')?.lastEventKind, 'reasoning');
+  assert.equal(view.getActivity('p','s','r')?.receivedEvents, 1);
+  assert.equal(view.get('p','s','r'), null);
+  assert.equal(view.getActivity('p','s','r')?.workPreview, undefined);
+});
 
 test('safe research excerpts remain a temporary preview through request handoffs, never final chat or private reasoning', () => {
   const view=new ConversationStreamPreview();
@@ -156,7 +192,8 @@ test('private reasoning updates liveness without creating a public reply or prev
   assert.equal(activity?.lastActivityAt, 1250);
   assert.equal(activity?.workPreview, undefined);
   assert.equal(view.get('p', 's', 'r'), null);
-  assert.doesNotMatch(JSON.stringify(activity), /reasoning|PRIVATE/u);
+  assert.equal(activity?.lastEventKind, 'reasoning', 'activity kind is public; private reasoning content is not');
+  assert.doesNotMatch(JSON.stringify(activity), /PRIVATE/u);
 });
 
 test('incremental JSON decodes only a top-level user-visible string, including split escapes', () => {

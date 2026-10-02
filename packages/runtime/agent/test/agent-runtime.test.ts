@@ -299,6 +299,8 @@ describe("AgentRuntime", () => {
       provider,
       tools,
       sessions: storage,
+      requestPolicy: () => ({ scopeId: 'draft:test', actor: 'draft', systemPrompt: '使用工具读取材料后写作。',
+        userMessage: '根据材料写一段正文。', allowedTools: ['read_material'] }),
       idFactory: () => `agent-id-${++id}`,
       createPermissionGrant: createToolPermissionGrant,
       finalOutputCommitter: {
@@ -385,6 +387,8 @@ describe("AgentRuntime", () => {
         "request.completed",
         "run.completed",
       ]);
+      assert.deepEqual(storage.listRunEvents(result.runId).filter(event => event.type === 'request.dispatch_attempted')
+        .map(event => event.payload.actor), ['draft', 'draft']);
       assert.equal(eventTypes.some((type) => type.includes("progress")), false);
       const completedRun = storage.getRun(result.runId);
       assert.equal(completedRun?.status, "completed");

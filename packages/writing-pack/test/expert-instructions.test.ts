@@ -111,4 +111,14 @@ describe("expert instruction migration", () => {
     assert.match(buildExpertInstructions("retrospective"), /相关性不能写成因果/u);
     assert.match(buildExpertInstructions("illustrator"), /生成失败.*不写假路径.*不声称图片成功/u);
   });
+
+  it("defers unsolicited title candidates in outline and draft without discarding an existing author title", () => {
+    for (const role of ["outline", "draft"] as const) {
+      const instruction = buildExpertInstructions(role);
+      assert.match(instruction, /非用户明确要求.*不得.*拟标题.*候选/u, role);
+      assert.match(instruction, /用户明确指定.*现有标题.*保留/u, role);
+      assert.match(instruction, /后期.*title.*阶段/u, role);
+    }
+    assert.match(buildExpertInstructions('draft'), /已确认主题.*工作标题/u);
+  });
 });

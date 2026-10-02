@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ConversationStreamPreview } from './conversation-stream.js';
+import { ConversationStreamPreview, requestMaterialPreviews, type MaterialPreview } from './conversation-stream.js';
 import { pendingWorkflowHandoffs, recordHandoffFailure, isWorkflowHandoffSourceCommitted } from './workflow-handoff.js';
 import { finalLockedTitle } from '../../writing-core/src/index.js';
 
@@ -476,14 +476,28 @@ function originalRunInstruction(events: readonly RuntimeEvent[]): string | null 
 
 export class WritingApplicationService {
   readonly #streamPreview = new ConversationStreamPreview();
+  #activityMaterials: { requestId: string; previews: readonly MaterialPreview[] } | null = null;
   getLiveActivity(projectId: string, sessionId: string, runId: string) {
     if (this.#storage.getRun(runId)?.status !== 'running') return null;
-    const activity = this.#streamPreview.getActivity(projectId, sessionId, runId);
-    if (!activity || activity.workPreview) return activity;
+    let activity = this.#streamPreview.getActivity(projectId, sessionId, runId);
+    if (!activity) return activity;
     // Only actual authorized read results, never private model reasoning or raw
     // tool arguments, can be shown as a temporary material excerpt.
     const events = this.#storage.listRunEvents(runId);
     const start = events.findLastIndex(event => event.type === 'run.started' || event.type === 'run.resumed');
+    const segment = events.slice(start);
+    if (this.#activityMaterials?.requestId !== activity.requestId) {
+      const request = segment.findLast(event => event.type === 'request.dispatch_attempted' && event.payload.requestId === activity!.requestId);
+      const snapshot = typeof request?.payload.snapshotId === 'string' ? this.#storage.getRequestSnapshot(request.payload.snapshotId) : null;
+      this.#activityMaterials = { requestId: activity.requestId, previews: snapshot ? requestMaterialPreviews(snapshot.request.messages) : [] };
+    }
+    if (this.#activityMaterials.previews.length) activity = { ...activity, materials: this.#activityMaterials.previews };
+    const settledTools = new Set(segment.filter(event => ['tool.completed', 'tool.failed', 'tool.outcome_unknown'].includes(event.type)).map(event => event.operationId));
+    const pendingTool = segment.findLast(event => event.type === 'tool.requested' && !settledTools.has(event.operationId));
+    if (pendingTool && typeof pendingTool.payload.toolName === 'string') activity = {
+      ...activity, activeTool: { name: pendingTool.payload.toolName, startedAt: Date.parse(pendingTool.occurredAt) },
+    };
+    if (activity.workPreview || activity.materials?.length) return activity;
     for (const event of events.slice(start).reverse()) {
       const envelope = event.payload.result as { ok?: boolean; toolName?: string; result?: { content?: unknown } } | undefined;
       if (event.type === 'tool.completed' && envelope?.ok && ['read_material', 'read_artifact_version'].includes(envelope.toolName ?? '') && typeof envelope.result?.content === 'string') {
@@ -934,6 +948,28 @@ export class WritingApplicationService {
 
   listProjects(): readonly ProjectInspection[] {
     return this.#storage.listProjects();
+  }
+
+  /** Read only one run's recorded trace, without rebuilding the project or contacting a provider. */
+  getRunTraceSource(input: { projectId: string; sessionId: string; runId: string; stepId: string }) {
+    const run = this.#storage.getRun(input.runId);
+    if (!run || run.projectId !== input.projectId || run.sessionId !== input.sessionId) {
+      throw new Error('TRACE_SCOPE_MISMATCH');
+    }
+    const events = this.#storage.listRunEvents(run.id);
+    const step = events.find(event => event.id === input.stepId);
+    if (!step || !['request.dispatch_attempted', 'tool.requested'].includes(step.type)) {
+      throw new Error('TRACE_STEP_NOT_FOUND');
+    }
+    const requestId = typeof step.payload.requestId === 'string' ? step.payload.requestId : null;
+    const prepared = requestId === null ? null : events.slice(0, events.indexOf(step) + 1)
+      .findLast(event => event.type === 'request.prepared' && event.payload.requestId === requestId);
+    const snapshotId = prepared?.payload.snapshotId;
+    const snapshot = typeof snapshotId === 'string' ? this.#storage.getRequestSnapshot(snapshotId) : null;
+    if (snapshot && (snapshot.projectId !== input.projectId || snapshot.sessionId !== input.sessionId || snapshot.runId !== run.id || snapshot.requestId !== requestId)) {
+      throw new Error('TRACE_SCOPE_MISMATCH');
+    }
+    return { step, events, snapshot };
   }
 
   getProjectProjection(projectIdInput: string): WritingProjectProjection {

@@ -68,3 +68,12 @@ test('a growing live reply follows its new text without scrolling into the contr
   assert.equal(follow.conversationFollowTarget(metrics, 900, 1700), 1200);
   assert.equal(follow.conversationFollowTarget(metrics, 900, 1100), 900);
 });
+test('process copy distinguishes provider processing from an actual external search', () => {
+  const base = { runId:'r', requestId:'q', actor:'fact_check', phase:'receiving' as const, startedAt:1000, lastActivityAt:65000, receivedEvents:20 };
+  const reasoning = interaction.conversationWorkingCopy({ ...base, lastEventKind:'reasoning' }, 66000);
+  assert.match(reasoning.detail, /内部处理.*尚未.*可展示/);
+  const search = interaction.conversationWorkingCopy({ ...base, activeTool:{name:'search_fact_sources', startedAt:60000} }, 66000);
+  assert.match(search.title, /搜索/);
+  assert.match(search.detail, /6 秒/);
+  assert.doesNotMatch(search.detail, /正在等待模型回复/);
+});
