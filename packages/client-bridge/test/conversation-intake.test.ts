@@ -49,6 +49,68 @@ async function settled(check: () => boolean): Promise<void> {
 
 const model = { model: 'synthetic', providerLabel: 'test', credentialReference: 'TEST_ONLY', parameters: {} };
 
+test('a durable confirmation survives bridge replacement and starts writing exactly once', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-durable-handoff-'));
+  const storage = openWorkspaceStorage({ workspacePath: root });
+  const provider = new ConversationalProvider();
+  const service = new WritingApplicationService({ storage, provider });
+  let bridge = createApplicationBridge({ service, model, workspaceId: 'test' });
+  try {
+    provider.next = proposal;
+    await bridge.startConversation('写夜跑');
+    await settled(() => bridge.getSnapshot().conversationIntake?.phase === 'proposal');
+    const snapshot = bridge.getSnapshot();
+    // Crash window: confirmation committed, but its volatile callback never ran.
+    service.confirmConversationBrief(snapshot.selectedProjectId, snapshot.conversationIntake!.proposalVersionId!, 'approve-offline');
+    service.createProject({ projectId: 'other-view', operationId: 'create-other', name: '另一个项目', mode: 'quick', actor: { kind: 'user', id: 'test' } });
+    bridge.dispose();
+    const unconfigured = new WritingApplicationService({ storage });
+    assert.deepEqual(unconfigured.continuePendingHandoffs(model), []);
+    assert.equal(unconfigured.getHandoffError(snapshot.selectedProjectId, snapshot.selectedSessionId!), null,
+      'starting without a provider must not permanently consume the saved confirmation');
+    bridge = createApplicationBridge({ service: new WritingApplicationService({ storage, provider }), model, workspaceId: 'test', initialProjectId: 'other-view' });
+    await bridge.refresh();
+    await settled(() => storage.listRuns(snapshot.selectedProjectId).some(r => r.stopReason === 'CO_CREATION_CHECKPOINT'));
+    await bridge.refresh(); await bridge.refresh();
+    const drafts = service.getProjectProjection(snapshot.selectedProjectId).runs.filter(r => service.getProjectProjection(snapshot.selectedProjectId).events.some(e => e.runId === r.id && e.type === 'run.started' && e.payload.purpose === 'writing-pack:draft'));
+    assert.equal(drafts.length, 1);
+    assert.equal(drafts[0]!.sessionId, snapshot.selectedSessionId);
+    assert.equal(bridge.getSnapshot().selectedProjectId, 'other-view', 'background handoff must not change the viewed conversation');
+  } finally { bridge.dispose(); storage.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a legacy chat-only direction is repaired into a visible proposal, then approval reaches the first writing checkpoint', async () => {
+  class RecoveryProvider extends ConversationalProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      if (request.tools?.[0]?.name === 'interpret_author_reply') {
+        const allowed = (request.tools[0].inputSchema as any).properties.intent.enum;
+        yield* intentFixtureEvents(request, [allowed.includes('propose_direction') ? 'propose_direction' : 'confirm_direction', null])!;
+      } else if (request.tools?.[0]?.name === 'submit_writing_proposal') {
+        const { sourceQuotes: _legacy, ...fields } = proposal.proposal;
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'submit_writing_proposal', argumentsDelta: JSON.stringify(fields) };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      } else yield* super.providerStream(request);
+    }
+  }
+  const root = mkdtempSync(join(tmpdir(), 'wa-intake-repair-'));
+  const storage = openWorkspaceStorage({ workspacePath: root });
+  const provider = new RecoveryProvider();
+  const service = new WritingApplicationService({ storage, provider });
+  const bridge = createApplicationBridge({ service, model, workspaceId: 'test' });
+  try {
+    await bridge.startConversation('聊聊夜跑');
+    await settled(() => bridge.getSnapshot().connection === 'ready');
+    await bridge.sendMessage('按前面聊的方向整理吧');
+    await settled(() => bridge.getSnapshot().conversationIntake?.phase === 'proposal');
+    const { selectedProjectId, selectedSessionId } = bridge.getSnapshot();
+    assert.match(JSON.stringify(bridge.getSnapshot().timelineBySession[selectedSessionId]), /写作方向/);
+    await bridge.sendMessage('我觉得挺好，就这么办');
+    await settled(() => service.getProjectProjection(selectedProjectId).runs.some(r => r.stopReason === 'CO_CREATION_CHECKPOINT'));
+    assert.equal(service.getConversationIntake(selectedProjectId).phase, 'confirmed');
+    assert.equal(service.getProjectProjection(selectedProjectId).sessions.length, 1);
+  } finally { bridge.dispose(); storage.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 for (const mode of ['tool', 'text'] as const) test(`desktop snapshot exposes a partial ${mode} reply before model completion, then only the saved reply`, async () => {
   let release!: () => void;
   let emitted!: () => void;
@@ -162,6 +224,7 @@ for (const savedReply of [false, true]) test(`historical intake protection expla
       assert.ok(items.some(item => item.kind === 'message' && item.body === '你想从什么角度聊起？'));
     } else assert.match(stop.detail, /未能保存.*回复/u);
     assert.equal(storage.getRun('run')?.status, 'budget_exhausted');
+    assert.ok(bridge.getSnapshot().recoverableRuns.some(run => run.runId === 'run'), 'intake protection must expose a scoped retry, even without a brief');
   } finally { bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
 });
 
@@ -228,7 +291,7 @@ test('inline confirmation is version bound and hands off to writing in the same 
   } finally { bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
 });
 
-test('a natural short confirmation starts writing once in the same session', async () => {
+for (const includeConfirmation of [true, false]) test(`a natural short confirmation starts writing once in the same session (model supplies confirmation: ${includeConfirmation})`, async () => {
   const workspacePath = mkdtempSync(join(tmpdir(), 'wa-chat-natural-'));
   const storage = openWorkspaceStorage({ workspacePath });
   const provider = new ConversationalProvider(); provider.next = proposal;
@@ -239,7 +302,7 @@ test('a natural short confirmation starts writing once in the same session', asy
     await settled(() => bridge.getSnapshot().conversationIntake?.phase === 'proposal' && bridge.getSnapshot().connection === 'ready');
     const { selectedProjectId, selectedSessionId, conversationIntake } = bridge.getSnapshot();
     provider.next = { reply: '好的，我们按已确认的方向开始研究，并一起确认提纲。', summary: '已确认当前方向', questions: [],
-      confirmation: { proposalVersionId: conversationIntake!.proposalVersionId, sourceQuote: '好的' } };
+      ...(includeConfirmation ? { confirmation: { proposalVersionId: conversationIntake!.proposalVersionId, sourceQuote: '好的' } } : {}) };
     await bridge.sendMessage('好的', { operationId: 'yes' });
     await settled(() => service.getProjectProjection(selectedProjectId).runs.some(run => run.status === 'waiting_user'));
     await bridge.refresh();

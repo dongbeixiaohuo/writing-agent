@@ -142,6 +142,23 @@ test('request activity is visible before text and private output updates activit
   assert.equal(view.getActivity('p', 's', 'r'), null);
 });
 
+test('private reasoning updates liveness without creating a public reply or preview', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+  const view = new ConversationStreamPreview();
+  const input = { projectId: 'p', sessionId: 's', runId: 'r', requestId: 'q', actor: 'director' };
+  view.observe({ ...input, lifecycle: 'started', event: null });
+  view.observe({ ...input, event: { type: 'response_activity', phase: 'headers', sequence: 1 } });
+  t.mock.timers.tick(250);
+  view.observe({ ...input, event: { type: 'response_activity', phase: 'reasoning', sequence: 2 } });
+
+  const activity = view.getActivity('p', 's', 'r');
+  assert.equal(activity?.phase, 'receiving');
+  assert.equal(activity?.lastActivityAt, 1250);
+  assert.equal(activity?.workPreview, undefined);
+  assert.equal(view.get('p', 's', 'r'), null);
+  assert.doesNotMatch(JSON.stringify(activity), /reasoning|PRIVATE/u);
+});
+
 test('incremental JSON decodes only a top-level user-visible string, including split escapes', () => {
   assert.equal(topLevelString('{"reply":"第一行\\n第二行\\u4f', 'reply'), '第一行\n第二行');
   assert.equal(topLevelString('{"reply":"第一行\\n第二行\\u4f60', 'reply'), '第一行\n第二行你');

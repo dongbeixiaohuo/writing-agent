@@ -77,6 +77,21 @@ test('Responses merges vendor extraBody into the wire body without overriding pr
   }, { extraBody: { thinking: { type: 'disabled' }, model: 'must-not-win', store: true } });
 });
 
+test('Responses reports private reasoning as progress without exposing reasoning text', async () => {
+  await fixture(res => {
+    event(res, { type: 'response.reasoning_summary_text.delta', output_index: 0, delta: 'PRIVATE_REASONING' });
+    event(res, { type: 'response.output_text.delta', delta: '完成。' });
+    event(res, { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } });
+    res.end();
+  }, async provider => {
+    const events = await collectModelEvents(provider.stream(request));
+    assert.equal(events.at(-1)?.type, 'completed');
+    assert.ok(events.some(e => e.type === 'response_activity' && (e.phase as string) === 'reasoning'));
+    assert.equal(events.filter(e => e.type === 'text_delta').map(e => e.type === 'text_delta' ? e.delta : '').join(''), '完成。');
+    assert.equal(JSON.stringify(events).includes('PRIVATE_REASONING'), false);
+  });
+});
+
 test('Responses streams text before completion, then round-trips function calls without duplicate arguments', async () => {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -126,6 +141,10 @@ for (const [name, terminal] of [['truncated', null], ['incomplete', { type: 'res
       assert.equal(events.some(e => e.type === 'tool_call_complete'), false);
       const last = events.at(-1);
       assert.equal(last?.type, 'error');
+      if (name === 'truncated' && last?.type === 'error') {
+        assert.equal(last.error.code, 'NETWORK_ERROR');
+        assert.equal(last.error.retryable, true);
+      }
       // Only the sanitized upstream message may surface; other body fields never do.
       assert.equal(JSON.stringify(events).includes('SECRET_BODY'), false);
       if (name === 'failed' && last?.type === 'error') {

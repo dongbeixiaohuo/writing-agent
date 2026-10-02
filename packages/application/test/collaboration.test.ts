@@ -67,6 +67,63 @@ export class CollaborationProvider extends ModelProviderBase {
   }
 }
 
+for (const interruptedCommit of [false, true]) for (const action of ['resume_checkpoint', 'full_writing', 'fact_check', 'continue_title'] as const) it(`recovers persisted ${action} after process replacement without duplicate handoff (commit interrupted=${interruptedCommit})`, async () => {
+  class HandoffProvider extends CollaborationProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const tool = request.tools?.find(t => ['request_author_fact_check', 'request_author_full_writing', 'choose_publication'].includes(t.name));
+      if (tool) {
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: tool.name,
+          argumentsDelta: JSON.stringify(tool.name === 'choose_publication' ? { index: 1 } : {}) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new HandoffProvider();
+  const f = setup(provider, action === 'resume_checkpoint' || action === 'continue_title' ? 'co_creation' : 'autonomous');
+  let bridge: ReturnType<typeof createApplicationBridge> | undefined;
+  try {
+    const first = await f.app.runDraft(f.input);
+    if (action === 'continue_title') {
+      for (let index = 0; index < 6; index++) await f.app.resumeDraft(withCheckpointIntent(f.storage, {
+        ...f.input, runId: first.runId, operationId: `title-stage-${index}`, decision: 'resume', userInstruction: '继续',
+        expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
+      assert.equal(f.storage.getRun(first.runId)?.stopReason, 'WRITING_INPUT_REQUIRED');
+    }
+    const sessionId = f.storage.getRun(first.runId)!.sessionId;
+    const text = { resume_checkpoint: '认同', full_writing: '请根据当前材料生成一份完整稿件',
+      fact_check: '正文别动，只重新做一次事实核查', continue_title: '就用第一个吧' }[action];
+    const source = f.app.startAuthorTurn({ projectId: 'p', sessionId, model: 'mock', parameters: {}, userInstruction: text });
+    const finishRun = f.storage.finishRun.bind(f.storage);
+    if (interruptedCommit) f.storage.finishRun = input => input.runId === source.runId && input.status === 'completed'
+      ? f.storage.getRun(source.runId)! : finishRun(input);
+    assert.equal((await source.result).ok, true);
+    f.storage.finishRun = finishRun;
+    if (interruptedCommit) {
+      f.storage.recoverProjectRuns('p');
+      assert.equal(f.storage.getRun(source.runId)?.status, 'interrupted');
+    }
+    const afterAuthor = provider.requests.length;
+    const restarted = new WritingApplicationService({ storage: f.storage, provider: withIntentFixture(provider) });
+    const model = { model: 'mock', parameters: {}, providerLabel: 'test', credentialReference: null, budget: f.input.budget };
+    bridge = createApplicationBridge({ service: restarted, model, workspaceId: 'test' });
+    for (let i = 0; i < 1000; i++) {
+      await new Promise(r => setTimeout(r, 5));
+      await bridge.refresh();
+      if (!f.storage.listRuns('p').some(r => r.status === 'running')) break;
+    }
+    assert.ok(provider.requests.length > afterAuthor);
+    const consumed = f.storage.listEvents('p').filter(e => ['run.started', 'run.resumed'].includes(e.type) && e.operationId.startsWith('workflow-handoff:'));
+    assert.equal(consumed.length, 1);
+    const count = provider.requests.length;
+    bridge.dispose();
+    bridge = createApplicationBridge({ service: new WritingApplicationService({ storage: f.storage, provider: withIntentFixture(provider) }), model, workspaceId: 'test' });
+    await bridge.refresh();
+    assert.equal(provider.requests.length, count);
+    if (action === 'resume_checkpoint') assert.equal(f.storage.listRunEvents(first.runId).findLast(e => e.type === 'run.waiting_user')?.payload.stage, 'draft');
+  } finally { bridge?.dispose(); f.close(); }
+});
+
 for (const parallelEnabled of [false, true]) it(`full workflow scopes external fact tools to checker only (enabled=${parallelEnabled})`, async () => {
   const provider = new CollaborationProvider();
   const f = setup(provider);
@@ -203,15 +260,43 @@ it('does not accept a receipt after its checkpoint or body changes', async () =>
   } finally { f.close(); }
 });
 
-it('does not reuse a prior approval after a newer objection in the same conversation', async () => {
+it('does not accept a checkpoint receipt after the bound body version changes', async () => {
+  const f = setup(new CollaborationProvider(), 'co_creation');
+  try {
+    const first = await f.app.runDraft(f.input);
+    const approved = withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: 'body-bound-intent', decision: 'resume', userInstruction: '继续' });
+    const project = f.storage.inspectProject('p')!;
+    const changed = f.storage.commitArtifactVersion({ projectId: 'p', operationId: 'external-body-change', expectedProjectRevision: project.revision,
+      kind: 'body', logicalKey: 'main', baseVersionId: project.latestBodyVersionId, content: '# 外部修改\n\n回执之后正文已变化。', reason: 'user edit', actor: { kind: 'user', id: 'u' } });
+    assert.equal(changed.ok, true, JSON.stringify(changed));
+    assert.throws(() => f.app.resumeDraft({ ...approved, operationId: 'resume-stale-body', expectedProjectRevision: f.storage.inspectProject('p')!.revision }), /checkpoint/i);
+    assert.equal(f.storage.getRun(first.runId)?.status, 'waiting_user');
+  } finally { f.close(); }
+});
+
+it('keeps a version-bound approval valid after an unrelated completed message in the same conversation', async () => {
   const f = setup(new CollaborationProvider(), 'co_creation');
   try {
     const first = await f.app.runDraft(f.input);
     const approved = withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: 'old-approval', decision: 'resume', userInstruction: '继续' });
-    f.storage.startRun({ projectId: 'p', sessionId: first.sessionId, runId: 'new-objection', planVersion: 'test', displayInstruction: '等等，我还没同意' });
-    f.storage.finishRun({ projectId: 'p', runId: 'new-objection', operationId: 'new-objection-saved', status: 'completed', stopReason: null });
-    assert.throws(() => f.app.resumeDraft(approved), /checkpoint/i);
-    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, null);
+    f.storage.startRun({ projectId: 'p', sessionId: first.sessionId, runId: 'later-note', planVersion: 'test', displayInstruction: '记下：稍后检查语气' });
+    f.storage.finishRun({ projectId: 'p', runId: 'later-note', operationId: 'later-note-saved', status: 'completed', stopReason: null });
+    const resumed = await f.app.resumeDraft({ ...approved, operationId: 'resume-after-note', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    assert.equal(resumed.ok, false, JSON.stringify(resumed));
+    assert.equal(resumed.ok ? null : resumed.error.code, 'USER_CONFIRMATION_REQUIRED');
+  } finally { f.close(); }
+});
+
+it('cannot reuse one approval receipt to advance a second checkpoint', async () => {
+  const f = setup(new CollaborationProvider(), 'co_creation');
+  try {
+    const first = await f.app.runDraft(f.input);
+    const approved = withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: 'single-use-approval', decision: 'resume', userInstruction: '继续' });
+    const resumed = await f.app.resumeDraft({ ...approved, operationId: 'first-use', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    assert.equal(resumed.ok, false, JSON.stringify(resumed));
+    assert.equal(resumed.ok ? null : resumed.error.code, 'USER_CONFIRMATION_REQUIRED');
+    assert.equal(f.storage.getRun(first.runId)?.stopReason, 'CO_CREATION_CHECKPOINT');
+    assert.throws(() => f.app.resumeDraft({ ...approved, operationId: 'second-use', expectedProjectRevision: f.storage.inspectProject('p')!.revision }), /checkpoint/i);
   } finally { f.close(); }
 });
 
@@ -243,6 +328,29 @@ it('retires resume-time read instructions when later stages replace their input 
   } finally { f.close(); }
 });
 
+for (const checkpointIndex of [0, 1, 2, 3, 4, 5, 6]) it(`recovers a missing checkpoint before any next request (checkpoint ${checkpointIndex})`, async () => {
+  const provider = new CollaborationProvider(), f = setup(provider, 'co_creation', 0, 'deep');
+  try {
+    const first = await f.app.runDraft(f.input);
+    for (let n = 0; n < checkpointIndex; n++) await f.app.resumeDraft(withCheckpointIntent(f.storage, {
+      ...f.input, runId: first.runId, operationId: `crash-prep-${n}`, decision: 'resume', userInstruction: '可以',
+      expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+    })).result;
+    const readEvents = f.storage.listRunEvents.bind(f.storage);
+    const missing = readEvents(first.runId).findLast(e => e.type === 'run.waiting_user')!;
+    assert.equal(missing.payload.stopReason, 'CO_CREATION_CHECKPOINT');
+    f.storage.listRunEvents = id => readEvents(id).filter(e => e.id !== missing.id);
+    f.storage.resumeRun({ projectId: 'p', runId: first.runId, operationId: 'simulate-crash-window', decision: 'resume' });
+    f.storage.recoverProjectRuns('p');
+    const before = provider.requests.length;
+    const result = await f.app.resumeDraft({ ...f.input, runId: first.runId, operationId: 'recover-crash', decision: 'resume',
+      expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+    assert.equal(f.storage.getRun(first.runId)?.stopReason, 'CO_CREATION_CHECKPOINT', JSON.stringify(result));
+    assert.equal(readEvents(first.runId).findLast(e => e.type === 'run.waiting_user')?.payload.stage, missing.payload.stage);
+    assert.equal(provider.requests.length, before, 'repair persisted waiting state without another model call');
+  } finally { f.close(); }
+});
+
 it('recovers a legacy missing language checkpoint without rerunning saved experts or starting fact check', async () => {
   const provider = new CollaborationProvider(), f = setup(provider, 'co_creation');
   try {
@@ -268,7 +376,7 @@ it('recovers a legacy missing language checkpoint without rerunning saved expert
   } finally { f.close(); }
 });
 
-it('carries a dead run\'s contiguous completed stages into the next run of the same session', async () => {
+it('carries saved work but never treats cancellation as checkpoint approval', async () => {
   const provider = new CollaborationProvider();
   const f = setup(provider, 'co_creation');
   try {
@@ -286,13 +394,12 @@ it('carries a dead run\'s contiguous completed stages into the next run of the s
     assert.ok(carriedOutline && sourceOutline);
     assert.equal(JSON.parse(carriedOutline.content).artifactVersionId, JSON.parse(sourceOutline.content).artifactVersionId);
     assert.equal(carriedOutline.actor.kind === 'agent' && carriedOutline.actor.runId, second.runId);
-    // The continuation starts at draft: outline/research were carried, not redone.
+    // Restore the outstanding decision without spending another model request.
     const continuationStates = provider.requests.slice(before).map(request => collaborationState(request)).filter(state => state !== null);
-    assert.ok(continuationStates.length > 0);
-    assert.deepEqual(continuationStates[0]!.completedStages, ['research', 'outline']);
-    assert.equal(continuationStates[0]!.nextStage, 'draft');
+    assert.equal(continuationStates.length, 0);
+    assert.equal(f.storage.getRun(second.runId)?.stopReason, 'CO_CREATION_CHECKPOINT');
     assert.equal(continuationStates.filter(state => state.stage === 'outline').length, 0);
-    assert.equal(continuationStates.some(state => state.stage === 'draft'), true);
+    assert.equal(continuationStates.some(state => state.stage === 'draft'), false);
     // fact_check is never carried: it stays with the project-level gate.
     assert.equal(f.storage.listArtifactVersions('p', 'report', `workflow:${second.runId}:fact_check`).length, 0);
   } finally { f.close(); }

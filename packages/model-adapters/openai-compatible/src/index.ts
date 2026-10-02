@@ -141,6 +141,17 @@ export function invalidResponse(
   });
 }
 
+export function interruptedStream(
+  providerRequestId?: string,
+): ModelProviderFailure {
+  return providerFailure({
+    code: "NETWORK_ERROR",
+    message: "模型流在终态事件前中断",
+    retryable: true,
+    ...(providerRequestId === undefined ? {} : { providerRequestId }),
+  });
+}
+
 export function serializeMessages(messages: readonly ModelMessage[]): WireMessage[] {
   const result: WireMessage[] = [];
   const awaitingResults = new Map<string, string>();
@@ -374,7 +385,7 @@ export async function* parseSse(
   }
 
   if (requireDone && !reachedDone) {
-    throw invalidResponse("SSE 流在 [DONE] 前结束");
+    throw interruptedStream();
   }
 }
 
@@ -675,6 +686,7 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
         | "tool_calls"
         | "content_filter"
         | undefined;
+      let responseId: string | undefined;
 
       for await (const payload of parseSse(response.body)) {
         let chunk: unknown;
@@ -685,6 +697,15 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
         }
         if (!isRecord(chunk)) {
           throw invalidResponse("模型 chunk 结构无效", providerRequestId);
+        }
+        if (chunk.id !== undefined && chunk.id !== null) {
+          if (typeof chunk.id !== "string" || chunk.id.length === 0) {
+            throw invalidResponse("模型响应 id 无效", providerRequestId);
+          }
+          if (responseId !== undefined && responseId !== chunk.id) {
+            throw invalidResponse("模型流包含冲突的响应 id", providerRequestId);
+          }
+          responseId = chunk.id;
         }
         for (const choice of wireChoices(chunk.choices)) {
           if (choice.index !== 0) continue;
@@ -700,6 +721,18 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
               deadline.content();
               yield { type: "response_activity", phase: "content" };
               yield { type: "text_delta", delta: content };
+            }
+          }
+
+          const reasoningContent = choice.delta.reasoning_content;
+          if (reasoningContent !== undefined && reasoningContent !== null) {
+            if (typeof reasoningContent !== "string") {
+              throw invalidResponse("模型推理增量结构无效", providerRequestId);
+            }
+            if (reasoningContent.length > 0) {
+              deadline.content();
+              // Signal liveness only. Never surface private reasoning as text.
+              yield { type: "response_activity", phase: "reasoning" };
             }
           }
 

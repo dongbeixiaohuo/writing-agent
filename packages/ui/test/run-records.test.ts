@@ -4,7 +4,7 @@ import test from 'node:test'
 import type { RunRecordView } from '../../client-bridge/src/protocol.ts'
 import { runProgressSummary, runStatusLabel, runStopReasonLabel } from '../src/shell/run-records.ts'
 import * as progress from '../src/shell/run-records.ts'
-import { checkpointCopy, checkpointResumeInstruction, composerRecoveryMode, stageRoleCopy } from '../src/shell/interaction.ts'
+import { checkpointCopy, checkpointResumeInstruction, composerRecoveryMode, recoveryContinueAction, stageRoleCopy } from '../src/shell/interaction.ts'
 
 function record(overrides: Partial<RunRecordView> = {}): RunRecordView {
   return {
@@ -116,6 +116,24 @@ test('main composer can respond to a co-creation checkpoint, but not retry an un
   const recovery = { runId: 'run-1', sessionId: 'session-1', status: 'waiting_user' as const, stopReason: 'CO_CREATION_CHECKPOINT' }
   assert.equal(composerRecoveryMode([recovery], 'session-1'), 'answer')
   assert.equal(composerRecoveryMode([{ ...recovery, stopReason: 'UNKNOWN_EXTERNAL_OUTCOME' }], 'session-1'), 'decision')
+  assert.equal(composerRecoveryMode([
+    { ...recovery, runId: 'unknown', stopReason: 'UNKNOWN_EXTERNAL_OUTCOME' },
+    recovery,
+  ], 'session-1'), 'answer')
+})
+
+test('checkpoint approval uses the natural reply path without authorizing an unrelated unknown retry', () => {
+  const checkpoint = { runId: 'checkpoint', sessionId: 'session-1', status: 'waiting_user' as const, stopReason: 'CO_CREATION_CHECKPOINT' }
+  const unknown = { ...checkpoint, runId: 'unknown', stopReason: 'UNKNOWN_EXTERNAL_OUTCOME' }
+
+  assert.deepEqual(recoveryContinueAction(checkpoint), {
+    kind: 'message',
+    text: '认可当前阶段，继续下一步',
+  })
+  assert.deepEqual(recoveryContinueAction(unknown), {
+    kind: 'resume',
+    decision: 'retry_unknown',
+  })
 })
 
 test('co-creation checkpoint is described as a saved user decision point', () => {

@@ -57,6 +57,7 @@ export function createWritingCollaboration(options: {
   const { storage, projectId, workflow } = options;
   const factSearch = createFactSearchTools({ configuration: options.factSearchConfiguration ?? (() => ({ parallelEnabled: false, tavilyEnabled: false })) });
   const state = (runId: string) => {
+    const confirmedBodyVersionId = workflow.recoverConfirmedBody(runId);
     const events = storage.listRunEvents(runId);
     const resume = events.findLastIndex((event) => event.type === "run.resumed");
     const segment = events.slice(Math.max(0, resume));
@@ -84,7 +85,9 @@ export function createWritingCollaboration(options: {
     // Write CAS follows this run's own last committed body, never a concurrently
     // edited project pointer. Rework may read an earlier body while replacing
     // the run's previous output; those are intentionally distinct bindings.
-    const expectedBodyVersionId = storage.listArtifactVersions(projectId, "body", "main").filter((version) => version.actor.kind === "agent" && version.actor.runId === runId).at(-1)?.id ?? initialBody;
+    const expectedBodyVersionId = storage.listArtifactVersions(projectId, "body", "main")
+      .filter((version) => (version.actor.kind === "agent" && version.actor.runId === runId) || version.id === confirmedBodyVersionId)
+      .sort((left, right) => left.createdEventSeq - right.createdEventSeq).at(-1)?.id ?? initialBody;
     return { events, segment, resume, latest, current, nextStage, inputs, ready, finished, expectedBodyVersionId };
   };
   const definition: ToolDefinition<Decision, JsonValue> = {

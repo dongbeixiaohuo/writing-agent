@@ -16,6 +16,7 @@ import {
   WritingApplicationService,
 } from "../src/index.js";
 import { confirmConversationBriefState } from "../src/conversation-intake.js";
+import { createConversationIntent } from "../src/conversation-intent.js";
 import { intentFixtureEvents } from './intent-fixture.js';
 
 type ToolArgs = Readonly<Record<string, unknown>>;
@@ -139,6 +140,29 @@ const runInput = (userInstruction: string, operationId: string, sessionId?: stri
 });
 
 describe("conversation intake", () => {
+  it("binds semantic intent provenance to the complete current message even when model sourceQuote is absent or rewritten", () => {
+    const f = fixture(new IntakeProvider([]));
+    try {
+      f.storage.createSession({ projectId: "project-1", sessionId: "intent-session", purpose: "writing-pack:author-conversation" });
+      for (const [index, sourceQuote] of ([undefined, "只摘录了一部分"] as const).entries()) {
+        const runId = `intent-run-${index}`;
+        const message = `这是第 ${index + 1} 条完整作者消息，包含不能丢失的上下文。`;
+        f.storage.startRun({ projectId: "project-1", sessionId: "intent-session", runId, planVersion: "test", purpose: "writing-pack:author-conversation", displayInstruction: message });
+        const intent = createConversationIntent({ storage: f.storage, projectId: "project-1", sessionId: "intent-session",
+          userMessage: message, context: {}, allowedIntents: ["discuss"] });
+        const result = intent.definition.execute({ intent: "discuss", ...(sourceQuote === undefined ? {} : { sourceQuote }),
+          selectionIndex: null, reason: "模型只负责语义判断" }, {
+          projectId: "project-1", runId, operationId: `${runId}:intent`, abortSignal: new AbortController().signal,
+          expectedBodyVersionId: null, permissionGrant: { permissions: ["author:intent"] } as any,
+        });
+        assert.equal((result as any).sourceQuote, message);
+        const receipt = f.storage.listArtifactVersions("project-1", "report", `author-intent:${runId}`)[0]!;
+        assert.equal(JSON.parse(receipt.content).sourceQuote, message);
+        assert.equal(JSON.parse(receipt.content).userMessage, message);
+      }
+    } finally { f.close(); }
+  });
+
   it('switches a text-only intake reply to a required save instead of repeatedly asking for another reply', async () => {
     class TextFirstProvider extends IntakeProvider {
       protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
@@ -332,7 +356,7 @@ describe("conversation intake", () => {
       const failed = await f.service.startConversationTurn(runInput("想写夜跑", "plain-turn")).result;
       assert.equal(failed.ok, false);
       if (failed.ok) return;
-      assert.equal(failed.error.code, "BUDGET_EXHAUSTED");
+      assert.equal(failed.error.code, "MODEL_REQUIRED_TOOL_MISSING");
       assert.equal(failed.modelRequestCount, 4);
       assert.equal(failed.toolCallCount, 0);
       assert.equal(f.storage.listArtifactVersions("project-1", "report", "conversation-intake").length, 0);
@@ -342,7 +366,7 @@ describe("conversation intake", () => {
       assert.equal(next.ok, true);
       assert.equal(next.modelRequestCount, 1);
       assert.equal(next.sessionId, failed.sessionId);
-      assert.equal(f.storage.getRun(failed.runId)?.status, "budget_exhausted");
+      assert.equal(f.storage.getRun(failed.runId)?.status, "failed");
     } finally { f.close(); }
   });
 

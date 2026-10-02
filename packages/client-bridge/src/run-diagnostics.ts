@@ -193,7 +193,7 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
       tool.outcome = null
       const envelope = object(event.payload.result)
       const result = status === 'completed' && envelope?.ok === true ? object(envelope.result) : null
-      if (result && tool.toolName === 'respond_writing_intake') {
+      if (result && ['respond_writing_intake', 'submit_writing_proposal'].includes(tool.toolName)) {
         tool.outcome = result.phase === 'collecting' ? '交流已保存，仍在讨论需求'
           : result.phase === 'proposal' ? '已保存待确认方案，尚未确认'
           : result.phase === 'confirmed' ? '已保存需求确认结果' : null

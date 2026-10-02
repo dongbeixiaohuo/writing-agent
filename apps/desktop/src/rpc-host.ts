@@ -1,4 +1,5 @@
 import { UI_BRIDGE_PROTOCOL_VERSION, type ClientBridge } from "../../../packages/client-bridge/src/protocol.js";
+import { WORKFLOW_COMMAND_MESSAGES } from '../../../packages/client-bridge/src/workflow-errors.js';
 import type {
   DesktopRpcRequest,
   DesktopRpcResponse,
@@ -9,6 +10,7 @@ function rpcError(code: string, message: string): DesktopRpcResponse {
 }
 
 const publicMessages: Readonly<Record<string, string>> = {
+  ...WORKFLOW_COMMAND_MESSAGES,
   SEARCH_API_KEY_REQUIRED: '启用 Tavily 前请填写 API Key。',
   SEARCH_SETTINGS_INVALID: '搜索配置格式无效，请检查后重新保存。',
   SEARCH_SETTINGS_BUSY: '正在保存搜索配置，请稍后重试。',

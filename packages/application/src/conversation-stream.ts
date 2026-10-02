@@ -88,7 +88,7 @@ export class ConversationStreamPreview {
     const event = input.event;
     if (event === null) return;
     if (event.type === 'response_activity' && event.phase === 'headers' && state.activity.phase === 'waiting') state.activity.phase = 'connected';
-    if ((event.type === 'response_activity' && event.phase === 'content') || (event.type === 'text_delta' && event.delta.length > 0)
+    if ((event.type === 'response_activity' && (event.phase === 'content' || event.phase === 'reasoning')) || (event.type === 'text_delta' && event.delta.length > 0)
       || (event.type === 'tool_call_delta' && event.argumentsDelta.length > 0)) {
       state.activity.phase = 'receiving'; state.activity.lastActivityAt = Date.now();
     }

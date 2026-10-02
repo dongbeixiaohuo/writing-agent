@@ -288,6 +288,43 @@ it('streams an author discussion before saving without changing the current manu
   } finally { release(); await handle?.result; f.close(); }
 });
 
+it('can save supplementary material during a review discussion without treating its compound approval as handoff', async () => {
+  class ReviewMaterialProvider extends AuthorProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      this.requests.push(request);
+      if (this.requests.length === 1) {
+        assert.ok(request.tools?.some(tool => tool.name === 'attach_author_material'));
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'attach_author_material',
+          argumentsDelta: JSON.stringify({ name: '补充观察', role: 'illustrative' }) };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      } else {
+        yield { type: 'text_delta', delta: '补充材料已保存。先核对它对当前建议的影响，再确认交接。' };
+        yield { type: 'completed', finishReason: 'stop' };
+      }
+    }
+  }
+  const f = setup(new ReviewMaterialProvider([]));
+  try {
+    f.storage.createSession({ projectId: 'p', sessionId: 'conversation', purpose: 'writing-pack:draft' });
+    f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'review-wait', planVersion: 'test', purpose: 'writing-pack:draft' });
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId;
+    f.storage.commitArtifactVersion({ projectId: 'p', operationId: 'review', expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+      kind: 'review', logicalKey: 'review_editor:review-wait', baseVersionId: null,
+      content: JSON.stringify({ content: '开头可更具体。', bodyVersionId: bodyId, reviewType: 'review_editor' }),
+      reason: 'review', actor: { kind: 'agent', id: 'review_editor', runId: 'review-wait' } });
+    f.storage.pauseRun({ projectId: 'p', runId: 'review-wait', operationId: 'pause', reason: 'CO_CREATION_CHECKPOINT',
+      payload: { stage: 'review_editor', nextStage: 'review_publish' } });
+    const message = '可以，顺便把这句存为参考材料：窗边的夜景。先记下来再继续。';
+    const result = await f.service.startAuthorTurn(input(message)).result;
+    assert.equal(result.ok, true);
+    const material = f.storage.listMaterials('p').find(m => m.displayName === '补充观察');
+    assert.equal(material?.content, message);
+    assert.ok(f.storage.getWritingBriefVersion(f.storage.inspectProject('p')!.currentBriefVersionId!)?.brief.materialIds.includes(material!.id));
+    assert.equal(f.storage.getRun('review-wait')?.status, 'waiting_user');
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
+  } finally { f.close(); }
+});
+
 for (const entry of ['checkpoint', 'composer'] as const) it(`keeps natural title feedback conversational through ${entry}, without resuming fact check`, async () => {
   const feedback = entry === 'checkpoint' ? '这是工作标题吗？完全不像适合可以吸引人的标题' : '不行，换一批';
   const provider = new AuthorProvider([{ name: 'respond_author', args: { reply: '这段是开场，不适合作为标题。我们可以重新讨论方向，正文不会改动。' } }]);

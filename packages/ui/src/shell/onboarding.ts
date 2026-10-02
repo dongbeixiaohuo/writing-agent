@@ -1,3 +1,4 @@
+import { WORKFLOW_COMMAND_MESSAGES } from '../../../client-bridge/src/workflow-errors.js';
 import type {
   CreateProjectInput,
   UpdateBriefInput,
@@ -128,6 +129,7 @@ const COMMAND_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   BRIEF_NOT_FOUND: "当前写作简报不可用，请重新打开项目后重试。",
   BRIEF_VERSION_CONFLICT: "写作目标已变化，请确认最新写作简报后重试。",
   CHECKPOINT_FEEDBACK_NOT_ALLOWED: "当前不是可反馈的共创节点，请刷新后查看最新进度。",
+  ...WORKFLOW_COMMAND_MESSAGES,
   WRITING_INPUT_ANSWER_REQUIRED: "请先回答对话中的问题或补充材料；只说“继续”无法补齐缺少的信息。",
   CHECKPOINT_FEEDBACK_TOO_LONG: "本次修改意见过长，请精简到 4,000 字符以内。",
   DESKTOP_COMMAND_FAILED: "本次操作未能完成，原因尚未确认。请重试；若仍失败，请反馈操作位置和时间。",
@@ -227,6 +229,7 @@ export function providerConnectionMessage(
     AUTH_FAILED: "API Key 无效或没有访问权限，请更新 Key 后重试。",
     INVALID_REQUEST: "服务拒绝了测试请求，请检查服务类型、API 地址和模型 ID。",
     MODEL_RESPONSE_INVALID: "模型响应格式不兼容，请检查服务类型或更换模型。",
+    MODEL_REQUIRED_TOOL_MISSING: "模型没有提交必须保存的操作，本轮未完成。你的输入仍保留，可重试这一步。",
     MODEL_OUTPUT_TRUNCATED: "模型回复达到单次输出长度上限，连接验证未完成；这不是 API Key 或账户额度错误。",
     MODEL_UNSUPPORTED: result.stage === "tools"
       ? "当前模型不支持写作所需的工具调用，请更换支持工具调用的模型。"

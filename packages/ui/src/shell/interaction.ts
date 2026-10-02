@@ -167,8 +167,22 @@ export function checkpointResumeInstruction(feedback: string): string {
     : normalized
 }
 
+export type RecoveryContinueAction =
+  | { readonly kind: 'message'; readonly text: string }
+  | { readonly kind: 'resume'; readonly decision: 'resume' | 'retry_unknown' }
+
+export function recoveryContinueAction(recovery: RecoverableRunSummary): RecoveryContinueAction {
+  if (recovery.stopReason === 'CO_CREATION_CHECKPOINT') {
+    return { kind: 'message', text: checkpointResumeInstruction('') }
+  }
+  return {
+    kind: 'resume',
+    decision: recovery.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' ? 'retry_unknown' : 'resume',
+  }
+}
+
 export function composerRecoveryMode(runs: readonly RecoverableRunSummary[], sessionId: string): 'answer' | 'decision' | null {
   const pending = runs.filter(run => run.sessionId === sessionId)
-  if (pending.some(run => run.stopReason !== 'WRITING_INPUT_REQUIRED' && run.stopReason !== 'CO_CREATION_CHECKPOINT')) return 'decision'
-  return pending.length > 0 ? 'answer' : null
+  if (pending.some(run => run.stopReason === 'WRITING_INPUT_REQUIRED' || run.stopReason === 'CO_CREATION_CHECKPOINT')) return 'answer'
+  return pending.length > 0 ? 'decision' : null
 }

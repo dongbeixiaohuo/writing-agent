@@ -86,6 +86,7 @@ export interface AgentRuntimeOptions {
     readonly reason: string;
     readonly payload?: Readonly<Record<string, JsonValue>>;
   } | null;
+  readonly pauseBeforeRequest?: (runId: string) => { readonly reason: string; readonly payload?: Readonly<Record<string, JsonValue>> } | null;
   readonly waitBeforeRetry?: (
     milliseconds: number,
     signal: AbortSignal,
@@ -288,6 +289,7 @@ export class AgentRuntime {
   readonly #completeAfterTool: NonNullable<AgentRuntimeOptions["completeAfterTool"]>;
   readonly #onModelStream: AgentRuntimeOptions['onModelStream'];
   readonly #pauseAfterTool: NonNullable<AgentRuntimeOptions["pauseAfterTool"]>;
+  readonly #pauseBeforeRequest: NonNullable<AgentRuntimeOptions["pauseBeforeRequest"]>;
   readonly #waitBeforeRetry: NonNullable<
     AgentRuntimeOptions["waitBeforeRetry"]
   >;
@@ -304,6 +306,7 @@ export class AgentRuntime {
     this.#finalOutputCommitter = options.finalOutputCommitter;
     this.#completeAfterTool = options.completeAfterTool ?? (() => null);
     this.#pauseAfterTool = options.pauseAfterTool ?? (() => null);
+    this.#pauseBeforeRequest = options.pauseBeforeRequest ?? (() => null);
     this.#waitBeforeRetry = options.waitBeforeRetry ?? waitBeforeRetry;
   }
 
@@ -615,6 +618,11 @@ export class AgentRuntime {
       if (this.#sessions.getRun(runId)?.status === "cancelled") {
         return this.#cancelledResult(active);
       }
+      const pendingPause = this.#pauseBeforeRequest(runId);
+      if (pendingPause) {
+        this.#sessions.pauseRun({ projectId, runId, operationId: this.#idFactory(), ...pendingPause });
+        return this.#waitingUserResult(active);
+      }
       const requestId = this.#idFactory();
       const policy = this.#requestPolicy?.(runId);
       if (policy !== undefined && policy.scopeId !== scopeId) {
@@ -790,8 +798,14 @@ export class AgentRuntime {
             schemaCorrectionCount += 1;
             if (schemaCorrectionCount <= 2) {
               const toolUnavailable = attempt.error.toolSchemaFeedback.issues.some(issue => issue.rule === 'allowed_tools');
+              // Correct within this actor's existing scope/budget. Do not ask
+              // for another prose answer before the corrected tool submission.
+              requireToolOnContinuation = true;
+              const invalidJson = attempt.error.toolSchemaFeedback.issues.some(issue => issue.rule === 'json_syntax');
               messages.push({ role: "user", content: toolUnavailable
                 ? `本批工具全部未执行。请求了当前任务未开放的工具，请按当前状态先完成必要读取和信息检查，仅使用 allowedTools 中的工具，不得跳过前提或越权。校验反馈：${canonicalJson(attempt.error.toolSchemaFeedback)}`
+                : invalidJson
+                ? `本批工具全部未执行。工具参数不是合法 JSON；请直接重新调用同一工具，提交完整参数（不是差异补丁）。字符串内的双引号、反斜杠和换行必须正确转义，不加 Markdown 代码围栏、注释或尾逗号。不要在聊天中重写或重复全文，不拼接上次残缺参数，不新增用户确认或授权。校验反馈：${canonicalJson(attempt.error.toolSchemaFeedback)}`
                 : `本次响应的工具参数未通过schema校验，整批工具均未执行。请修正后重新提交完整工具参数（不是差异补丁），保留全部内容及每项所有 required 字段，只更正错误，不删除主张或改用其他工具绕过。校验反馈：${canonicalJson(attempt.error.toolSchemaFeedback)}` });
               continue executionLoop;
             }
@@ -862,6 +876,17 @@ export class AgentRuntime {
         });
         break;
       }
+
+      if (attempt && attempt.completedToolCalls.length === 0 && !policy?.textOutputTool &&
+          (requireToolOnContinuation || policy?.toolChoice === 'required')) {
+        schemaCorrectionCount += 1;
+        if (schemaCorrectionCount > 2) return this.#failRun(active, 'MODEL_REQUIRED_TOOL_MISSING',
+          'Model did not submit the required operation; no result was saved', true);
+        requireToolOnContinuation = true;
+        messages.push({ role: 'user', content: `尚未执行所需操作，不能以道歉、承诺或完成说明结束。请调用当前可用工具（${tools.map(tool => tool.name).join('、')}）中符合本轮任务的工具，提交完整合法参数；不要调用未提供的工具，不要重新生成已保存的阶段。` });
+        continue executionLoop;
+      }
+      if (attempt && attempt.completedToolCalls.length > 0) requireToolOnContinuation = false;
 
       if (attempt === null) {
         return this.#failRun(

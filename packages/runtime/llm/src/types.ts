@@ -143,7 +143,9 @@ interface ProviderTerminalMetadata {
 export type ModelEvent =
   | (SequencedEvent & {
       readonly type: "response_activity";
-      readonly phase: "headers" | "content";
+      // "reasoning" is progress only: it carries no private reasoning text
+      // and must not be presented as user-visible answer content.
+      readonly phase: "headers" | "reasoning" | "content";
     })
   | (SequencedEvent & {
       readonly type: "text_delta";

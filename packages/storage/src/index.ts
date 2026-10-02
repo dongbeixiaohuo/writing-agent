@@ -2184,6 +2184,7 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
         {
           runId,
           decision: input.decision,
+          ...(input.checkpointDecision ? { checkpointDecision: input.checkpointDecision } : {}),
           ...(input.refreshLoopAllowance ? { loopAllowanceBaseline: { modelRequests: run.usage.modelRequests, toolCalls: run.usage.toolCalls, majorRevisions: run.usage.majorRevisions } } : {}),
           ...(input.preservePendingAssignment ? { preservePendingAssignment: true } : {}),
           unknownOperationCount: unknownCount,
