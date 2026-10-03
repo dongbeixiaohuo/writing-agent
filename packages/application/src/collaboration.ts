@@ -55,7 +55,7 @@ export function createWritingCollaboration(options: {
   recoverPendingAssignment?: boolean;
 }) {
   const { storage, projectId, workflow } = options;
-  const factSearch = createFactSearchTools({ configuration: options.factSearchConfiguration ?? (() => ({ parallelEnabled: false, tavilyEnabled: false })) });
+  const factSearch = createFactSearchTools({ storage, configuration: options.factSearchConfiguration ?? (() => ({ parallelEnabled: false, tavilyEnabled: false })) });
   const state = (runId: string) => {
     const confirmedBodyVersionId = workflow.recoverConfirmedBody(runId);
     const events = storage.listRunEvents(runId);

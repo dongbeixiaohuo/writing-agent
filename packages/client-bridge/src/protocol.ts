@@ -1,4 +1,4 @@
-export const UI_BRIDGE_PROTOCOL_VERSION = 21
+export const UI_BRIDGE_PROTOCOL_VERSION = 22
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type ConnectionState = 'ready' | 'running' | 'offline'

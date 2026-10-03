@@ -6,6 +6,93 @@ import { join } from 'node:path';
 import { DesktopApplicationHost } from '../src/application-host.js';
 import { SearchSettingsStore } from '../src/search-settings.js';
 import { CredentialBroker } from '../../../packages/runtime/credentials/src/index.js';
+import { createFactSearchTools } from '../../../packages/application/src/fact-search.js';
+
+test('saved search switches authorize repeated public searches without per-query dialogs; disabling stops egress', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-search-auto-'));
+  const keys = new Map<string, string>();
+  const credentials = new CredentialBroker({ systemBackend: { isAvailable: async () => true,
+    read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
+  const store = new SearchSettingsStore(join(root, 'search-settings.json'), credentials);
+  let requests = 0;
+  const scope = createFactSearchTools({ configuration: () => store.configuration(),
+    fetch: async () => { requests++; return Response.json({ results: [] }); } });
+  try {
+    await store.save({ parallelEnabled: false, tavilyEnabled: true, tavilyApiKey: 'synthetic-key' });
+    for (const query of ['国庆节是哪天', '中华人民共和国成立年份']) {
+      const result = await scope.search(query);
+      assert.equal(result.mode, 'external');
+      assert.equal(result.provider, 'tavily');
+      assert.equal(result.authorizationMs, 0);
+    }
+    assert.equal(requests, 2);
+    assert.equal((await scope.search('国庆节是哪天')).cacheHit, true);
+    await store.save({ parallelEnabled: false, tavilyEnabled: false });
+    assert.equal((await scope.search('国庆节是哪天')).mode, 'model_only');
+    assert.equal(requests, 2);
+    const main = readFileSync('apps/desktop/src/main.ts', 'utf8');
+    assert.doesNotMatch(main, /searchApprovalOptions|authorizeFactSearchQuery/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failed revalidation clears old availability; stale verification cannot green-light changed settings', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-search-health-'));
+  const keys = new Map<string, string>();
+  const credentials = new CredentialBroker({ systemBackend: { isAvailable: async () => true,
+    read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
+  let response = async () => Response.json({ results: [] });
+  const store = new SearchSettingsStore(join(root, 'search-settings.json'), credentials, { fetch: async () => response() });
+  try {
+    await store.save({ parallelEnabled: false, tavilyEnabled: true, tavilyApiKey: 'synthetic-key' });
+    assert.equal((await store.verify('tavily')).verification?.tavily?.status, 'available');
+    response = async () => new Response('private provider error text', { status: 401 });
+    const failed = await store.verify('tavily');
+    assert.equal(failed.verification?.tavily?.status, 'failed');
+    assert.match(failed.verification!.tavily!.message, /SEARCH_HTTP_401/);
+    assert.doesNotMatch(JSON.stringify(failed), /private provider|synthetic-key/);
+    let dispatched!: () => void;
+    const ready = new Promise<void>(resolve => { dispatched = resolve; });
+    let complete!: (value: Response) => void;
+    response = () => { dispatched(); return new Promise<Response>(resolve => { complete = resolve; }); };
+    const pending = store.verify('tavily');
+    await ready;
+    await store.save({ parallelEnabled: false, tavilyEnabled: true, tavilyApiKey: 'replacement' });
+    complete(Response.json({ results: [] }));
+    assert.notEqual((await pending).verification?.tavily?.status, 'available');
+    await assert.rejects(store.verify('unknown' as never), /SEARCH_SETTINGS_INVALID/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a saved key is not verified; each service is probed directly and key changes invalidate success', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-search-verify-'));
+  const keys = new Map<string, string>();
+  const credentials = new CredentialBroker({ systemBackend: { isAvailable: async () => true,
+    read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
+  const urls: string[] = [];
+  const store = new SearchSettingsStore(join(root, 'search-settings.json'), credentials, { fetch: async (url, init) => {
+    urls.push(String(url));
+    if (String(url).includes('tavily')) return Response.json({ results: [] });
+    const body = JSON.parse(String(init?.body));
+    if (body.method === 'initialize') return Response.json({ id: 1, result: { protocolVersion: '2024-11-05' } });
+    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    return Response.json({ id: 2, result: { content: [{ type: 'text', text: 'public evidence' }] } });
+  } });
+  try {
+    const saved = await store.save({ parallelEnabled: true, tavilyEnabled: true, tavilyApiKey: 'synthetic-key' });
+    assert.notEqual(saved.verification?.tavily?.status, 'available');
+    const tavily = await store.verify('tavily');
+    assert.equal(tavily.verification?.tavily?.status, 'available');
+    assert.deepEqual(urls, ['https://api.tavily.com/search']);
+    const parallel = await store.verify('parallel');
+    assert.equal(parallel.verification?.parallel?.status, 'available');
+    assert.equal(urls.filter(url => url.includes('parallel')).length, 3);
+    assert.ok(!JSON.stringify(parallel).includes('synthetic-key'));
+    const changed = await store.save({ parallelEnabled: true, tavilyEnabled: true, tavilyApiKey: 'replacement-key' });
+    assert.notEqual(changed.verification?.tavily?.status, 'available');
+    const reopened = new SearchSettingsStore(join(root, 'search-settings.json'), credentials);
+    assert.notEqual((await reopened.status()).verification?.tavily?.status, 'available');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test('search settings persist toggles but never plaintext keys; blank key retains saved key', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-search-settings-'));

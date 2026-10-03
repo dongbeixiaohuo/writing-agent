@@ -19,6 +19,25 @@ function projection(events: Array<{ type: string; operationId: string; payload: 
   } as unknown as WritingProjectProjection
 }
 
+test('search trace exposes the current provider before completion and fallback attempts afterwards', () => {
+  const events = [
+    { type: 'run.started', operationId: 'start', payload: {} },
+    { type: 'tool.requested', operationId: 'search', payload: { toolName: 'search_fact_sources', arguments: { query: '公开事实' } } },
+    { type: 'search.progress', operationId: 'search', payload: { message: 'Tavily 已发出第 1 个 HTTP 请求；本轮检索 1/6。' } },
+  ];
+  const pending = runDiagnostics(projection(events), run).trace!.find(s => s.kind === 'tool')!;
+  assert.equal(pending.status, 'pending');
+  assert.match(pending.outputPreview!, /Tavily 已发出/);
+  const done = runDiagnostics(projection([...events, { type: 'tool.completed', operationId: 'search', payload: { result: { ok: true, result: {
+    mode: 'external', provider: 'tavily', evidenceText: '公开来源 https://example.com', attempts: [
+      { provider: 'parallel', status: 'failed', elapsedMs: 8000, httpRequests: 1, errorCode: 'SEARCH_REQUEST_TIMEOUT' },
+      { provider: 'tavily', status: 'completed', elapsedMs: 2000, httpRequests: 1 },
+    ],
+  } } } }]), run).trace!.find(s => s.kind === 'tool')!;
+  assert.match(done.outputPreview!, /Parallel.*SEARCH_REQUEST_TIMEOUT/);
+  assert.match(done.outputPreview!, /Tavily/);
+});
+
 test('model trace shows a bounded assistant reply without private reasoning', () => {
   const visible = `已根据材料归纳三个核心观点：${'论点、证据与结论形成完整闭环。'.repeat(20)}`
   const result = runDiagnostics(projection([
@@ -106,6 +125,59 @@ test('retried requests sharing a request id do not attach later tools to the fai
   assert.equal(failed?.actorLabel, undefined)
   assert.match(completed?.outputPreview ?? '', /调用工具：search_fact_sources/u)
   assert.equal(completed?.actorLabel, '写作导演')
+})
+
+test('failure summaries identify the recorded failing layer without guessing an external cause', () => {
+  const result = runDiagnostics(projection([
+    { type: 'run.started', operationId: 'start', payload: { purpose: 'writing-pack:fact_check' } },
+    { type: 'request.dispatch_attempted', operationId: 'model', payload: { requestId: 'request-timeout' } },
+    { type: 'request.failed', operationId: 'model', payload: {
+      error: { code: 'TIMEOUT' }, transport: { phase: 'first_response', timeoutMs: 30_000, elapsedMs: 30_001 },
+    } },
+    { type: 'tool.requested', operationId: 'search', payload: { toolName: 'search_fact_sources', arguments: { query: '公开事实' } } },
+    { type: 'tool.failed', operationId: 'search', payload: { error: { code: 'SEARCH_HTTP_429' } } },
+    { type: 'tool.requested', operationId: 'source', payload: { toolName: 'read_fact_source', arguments: { url: 'https://example.com/report' } } },
+    { type: 'tool.failed', operationId: 'source', payload: { error: { code: 'FACT_SOURCE_NOT_IN_LEDGER' } } },
+    { type: 'tool.requested', operationId: 'gate', payload: { toolName: 'submit_fact_check', arguments: {} } },
+    { type: 'tool.failed', operationId: 'gate', payload: { error: { code: 'FACT_CHECK_EVIDENCE_REFERENCE_INVALID' } } },
+  ]), run).trace ?? []
+
+  const model = result.find(step => step.kind === 'model')!
+  assert.match(model.outputPreview ?? '', /模型.*首个有效内容/u)
+  assert.doesNotMatch(model.outputPreview ?? '', /搜索服务/u)
+  assert.match(result.find(step => step.technicalName === 'search_fact_sources')?.outputPreview ?? '', /公开搜索服务.*失败/u)
+  const source = result.find(step => step.technicalName === 'read_fact_source')?.outputPreview ?? ''
+  assert.match(source, /未匹配.*来源记录/u)
+  assert.match(source, /未发出网络读取/u)
+  assert.doesNotMatch(source, /模型编造|网站宕机|搜索服务失败/u)
+  assert.match(result.find(step => step.technicalName === 'submit_fact_check')?.outputPreview ?? '', /事实核查提交.*门禁/u)
+})
+
+test('known source policy and search precondition codes keep their precise recorded boundary', () => {
+  const failure = (operationId: string, toolName: string, code: string) => [
+    { type: 'tool.requested', operationId, payload: { toolName, arguments: {} } },
+    { type: 'tool.failed', operationId, payload: { error: { code } } },
+  ]
+  const trace = runDiagnostics(projection([
+    { type: 'run.started', operationId: 'start', payload: { purpose: 'writing-pack:fact_check' } },
+    ...failure('private', 'read_fact_source', 'NETWORK_PRIVATE_TARGET_DENIED'),
+    ...failure('credentials', 'read_fact_source', 'NETWORK_CREDENTIALS_DENIED'),
+    ...failure('dns', 'read_fact_source', 'NETWORK_TARGET_UNRESOLVED'),
+    ...failure('http', 'read_fact_source', 'WEB_HTTP_STATUS_REJECTED'),
+    ...failure('limit', 'search_fact_sources', 'SEARCH_LIMIT_REACHED'),
+    ...failure('disabled', 'search_fact_sources', 'FACT_SEARCH_DISABLED'),
+  ]), run).trace ?? []
+  const output = (id: string) => trace.find(step => step.id === `event-${id}`)?.outputPreview ?? ''
+  const requestedIndexes = { private: 1, credentials: 3, dns: 5, http: 7, limit: 9, disabled: 11 }
+
+  assert.match(output(String(requestedIndexes.private)), /本机安全规则.*未发出网络读取/u)
+  assert.match(output(String(requestedIndexes.credentials)), /本机安全规则.*未发出网络读取/u)
+  assert.match(output(String(requestedIndexes.dns)), /来源域名解析失败/u)
+  assert.match(output(String(requestedIndexes.http)), /HTTP 状态.*未记录具体状态/u)
+  assert.match(output(String(requestedIndexes.limit)), /搜索次数.*上限/u)
+  assert.doesNotMatch(output(String(requestedIndexes.limit)), /搜索服务请求失败/u)
+  assert.match(output(String(requestedIndexes.disabled)), /外部事实搜索已关闭/u)
+  assert.doesNotMatch(output(String(requestedIndexes.disabled)), /搜索服务请求失败/u)
 })
 
 test('tool trace summarizes persisted inputs, replies, evidence, sources, and failures safely', () => {

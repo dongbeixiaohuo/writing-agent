@@ -829,14 +829,24 @@ describe("Application Service client bridge", () => {
       const timeline = snapshot.timelineBySession[snapshot.selectedSessionId] ?? [];
       assert.equal(timeline.some((item) => item.kind === "message" && item.role === "user"), true);
       assert.equal(timeline.some((item) => item.kind === "message" && item.role === "assistant"), true);
+      const factSummary = timeline.find((item) =>
+        item.kind === "message" &&
+        item.role === "assistant" &&
+        item.body.includes("核查范围：文章正文、标题和发布配文")
+      );
       assert.equal(
-        timeline.some((item) =>
-          item.kind === "message" &&
-          item.role === "assistant" &&
-          item.body.includes("当前稿件已保存") &&
-          item.body.includes("事实核查通过")
-        ),
+        factSummary?.kind === "message" &&
+        factSummary.body.includes("合成测试正文没有外部事实主张") &&
+        factSummary.body.includes("未列出的信息做外部验证") &&
+        !/快照|门禁|证据账本/u.test(factSummary.body),
         true,
+      );
+      await bridge.refresh();
+      const refreshedTimeline = bridge.getSnapshot().timelineBySession[snapshot.selectedSessionId] ?? [];
+      const refreshedFactSummary = refreshedTimeline.find((item) => item.id === factSummary?.id);
+      assert.equal(
+        refreshedFactSummary?.kind === "message" ? refreshedFactSummary.body : undefined,
+        factSummary?.kind === "message" ? factSummary.body : undefined,
       );
       assert.equal(
         timeline.some((item) =>

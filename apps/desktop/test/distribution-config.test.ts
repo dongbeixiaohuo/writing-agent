@@ -25,7 +25,7 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
   assert.deepEqual(packageJson, {
     ...packageJson,
     name: "writing-agent-desktop",
-    version: "1.0.0-rc.63",
+    version: "1.0.0-rc.65",
     productName: "Writing Agent",
     main: "dist/main.cjs",
   });

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { IncomingMessage } from "node:http";
+import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 
@@ -173,7 +173,8 @@ function createPinnedRequest(
         if (error !== null) reject(error);
         else if (response !== undefined) resolve(response);
       };
-      request = httpsRequest(
+      const requestTransport = targetUrl.protocol === 'http:' ? httpRequest : httpsRequest;
+      request = requestTransport(
         targetUrl,
         {
           method: "GET",
@@ -183,7 +184,7 @@ function createPinnedRequest(
             "user-agent": "WritingAgent/1.0 secure-source-reader",
           },
           lookup,
-          servername: targetUrl.hostname,
+          ...(targetUrl.protocol === 'https:' ? { servername: targetUrl.hostname } : {}),
           timeout: timeoutMs,
         },
         (response) => {

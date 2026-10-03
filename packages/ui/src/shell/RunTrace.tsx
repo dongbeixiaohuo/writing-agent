@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react'
 import type { BridgeSnapshot, DiagnosticOperationStatus, RunDiagnosticTraceStep, RunRecordView, RunTraceDetail } from '../../../client-bridge/src/protocol.ts'
-import { RunDiagnostics } from './RunDiagnostics.tsx'
+import { explainRunFailure } from '../../../client-bridge/src/run-failure-explanation.ts'
 
 const MarkdownContent = lazy(async () => ({ default: (await import('./MarkdownContent.tsx')).MarkdownContent }))
 
@@ -74,7 +74,9 @@ function duration(ms: number | null): string {
 
 function clock(iso: string): string {
   const date = new Date(iso)
-  return Number.isNaN(date.valueOf()) ? '时间未记录' : date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  if (Number.isNaN(date.valueOf())) return '时间未记录'
+  const day = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
+  return `${day} ${date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
 }
 
 function metric(ms: number | null): string {
@@ -157,7 +159,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
   const [activeTab, setActiveTab] = useState<InspectorTab>('overview')
   const [detailState, dispatchDetail] = useReducer(reduceDetailLoadState, INITIAL_DETAIL_LOAD_STATE)
   const detailRequest = useRef(0)
-  const selectedStatus = useRef<{ key: string; status: 'pending' | 'settled' } | null>(null)
+  const selectedStatus = useRef<{ key: string; status: 'pending' | 'settled'; outputPreview?: string | undefined } | null>(null)
   const selectedIdentity = useRef<{ key: string; runId: string; requestId: string | undefined; kind: RunDiagnosticTraceStep['kind']; technicalName: string | undefined } | null>(null)
   const ledgerRef = useRef<HTMLElement | null>(null)
   const followingTail = useRef(true)
@@ -249,7 +251,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
   const selectEntry = useCallback((entry: typeof timeline[number]) => {
     setSelectedKey(entry.key)
     setActiveTab('overview')
-    selectedStatus.current = { key: entry.key, status: displayStatus(entry.record, entry.step) }
+    selectedStatus.current = { key: entry.key, status: displayStatus(entry.record, entry.step), outputPreview: entry.step.outputPreview }
     selectedIdentity.current = { key: entry.key, runId: entry.record.id, requestId: entry.step.requestId, kind: entry.step.kind, technicalName: entry.step.technicalName }
     requestDetail(entry.record.id, entry.step.id, entry.key)
   }, [requestDetail])
@@ -272,8 +274,9 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
     if (!selectedEntry) return
     const next = displayStatus(selectedEntry.record, selectedEntry.step)
     const previous = selectedStatus.current
-    if (previous?.key === selectedEntry.key && previous.status === 'pending' && next === 'settled') requestDetail(selectedEntry.record.id, selectedEntry.step.id, selectedEntry.key)
-    selectedStatus.current = { key: selectedEntry.key, status: next }
+    const searchProgressChanged = selectedEntry.step.technicalName === 'search_fact_sources' && previous?.outputPreview !== selectedEntry.step.outputPreview
+    if (previous?.key === selectedEntry.key && previous.status === 'pending' && (next === 'settled' || searchProgressChanged)) requestDetail(selectedEntry.record.id, selectedEntry.step.id, selectedEntry.key)
+    selectedStatus.current = { key: selectedEntry.key, status: next, outputPreview: selectedEntry.step.outputPreview }
   }, [requestDetail, selectedEntry])
 
   function moveSelection(event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) {
@@ -329,6 +332,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
       <label><span className="run-trace-visually-hidden">搜索运行轨迹</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="在输入与结果摘要中搜索" /></label>
       <span>{query ? `找到 ${filteredTimeline.length} 条` : `显示最近 ${shownTimeline.length} 条，共 ${filteredTimeline.length} 条`}</span>
     </div>
+    <div className="run-trace-direction"><span>较早记录在上 <b aria-hidden="true">↓</b> 最新记录在下 · 本机当地时间</span><button type="button" onClick={jumpToLatest}>到最新步骤 ↓</button></div>
 
     <div className="run-trace-workspace">
       <section className="run-trace-ledger" aria-label="运行步骤账本" ref={ledgerRef} onScroll={trackLedgerScroll}>
@@ -346,19 +350,24 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
             const stoppedDetail = stoppedPending ? `运行已结束，未记录${step.kind === 'model' ? '模型响应' : step.kind === 'tool' ? '工具完成' : 'Agent 调度完成'}结果。` : ''
             const stoppedElapsed = record.completedAt ? duration(Math.max(0, Date.parse(record.completedAt) - Date.parse(step.occurredAt))) : '结束耗时未记录'
             const isSelected = key === selectedKey
+            const failure = step.status === 'failed' || step.status === 'outcome_unknown' ? explainRunFailure({
+              kind: step.kind, status: step.status, technicalName: step.technicalName, errorCode: step.errorCode,
+              transportPhase: step.transport?.phase,
+            }) : null
             return <li className={`run-trace-step run-trace-${step.kind} run-trace-${stoppedPending ? 'stopped' : step.status}${isActivePending ? ' run-trace-current' : ''}${isSelected ? ' run-trace-selected' : ''}`}
               key={key} role="presentation" data-run-id={record.id} data-step-id={step.id}>
               <button type="button" className="run-trace-select" role="option" aria-selected={isSelected} tabIndex={isSelected || (!selectionIsShown && index === 0) ? 0 : -1}
                 aria-current={isActivePending ? 'step' : undefined} data-trace-key={key} onClick={() => selectEntry(entry)} onKeyDown={event => moveSelection(event, index)}>
-                <time dateTime={step.occurredAt}>{clock(step.occurredAt)}</time><span className="run-trace-marker" aria-hidden="true" />
+                <time dateTime={step.occurredAt}>{clock(step.occurredAt)}{key === timeline.at(-1)?.key && <small className="run-trace-latest">最新记录</small>}</time><span className="run-trace-marker" aria-hidden="true" />
                 <span className="run-trace-content">
                   <span className="run-trace-context" title={record.displayInstruction}>任务：{compactTask(record.displayInstruction)} · {segmentLabel}</span>
                   <span className="run-trace-summary"><strong>{step.actorLabel ? `${step.actorLabel} · ` : ''}{label}</strong><span className="run-trace-status">{stoppedPending ? '已停止等待' : STATUS[step.status]}</span>
                     {isActivePending && <span className="run-trace-current-label">当前活动</span>}<span>{stoppedPending ? stoppedElapsed : isActivePending ? `${step.kind === 'model' ? '已等待' : '已进行'} ${Math.floor(activeElapsed / 1000)} 秒` : duration(step.durationMs)}</span></span>
                   {liveDetail && <span className="run-trace-live-detail">{liveDetail}</span>}{stoppedDetail && <span className="run-trace-live-detail">{stoppedDetail}</span>}
-                  {step.inputPreview && <span className="run-trace-preview"><b>输入</b>{step.inputPreview}</span>}{step.outputPreview && <span className="run-trace-preview"><b>输出</b>{step.outputPreview}</span>}
+                  {step.inputPreview && <span className="run-trace-preview"><b>输入</b>{step.inputPreview}</span>}{step.outputPreview && !failure && <span className="run-trace-preview"><b>输出</b>{step.outputPreview}</span>}
                   {step.stream && <span className="run-trace-stream">响应头 {metric(step.stream.headersMs)} · 首个有效内容（首个内容事件） {metric(step.stream.firstContentMs)} · 最后内容 {metric(step.stream.lastContentMs)}</span>}
-                  {step.errorCode && <span className="run-trace-error">{step.errorCode}</span>}
+                  {failure && <span className="run-trace-failure"><strong>{failure.title}</strong><span>{failure.detail}</span>
+                    <span><b>处理建议</b>{failure.remediation}</span><code>技术代码 · {step.errorCode ?? '未记录'}</code></span>}
                 </span>
               </button>
             </li>
@@ -405,6 +414,5 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
       </aside>
     </div>
 
-    {records.some(record => record.diagnostics) && <details className="run-trace-legacy"><summary>查看旧版分段统计</summary>{records.filter(record => record.diagnostics).map(record => <section key={record.id}><h4>{compactTask(record.displayInstruction)}</h4><RunDiagnostics diagnostics={record.diagnostics!} /></section>)}</details>}
   </div>
 }

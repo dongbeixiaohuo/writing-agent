@@ -10,6 +10,7 @@ import type { RunRecord } from "../../runtime/session/src/index.js";
 import { loopBudgetUsage } from "../../runtime/session/src/index.js";
 import { recoveryInterruption, runDiagnostics } from './run-diagnostics.js';
 import { runTraceDetail } from './run-trace-detail.js';
+import { factCheckCompletionSummary } from './fact-summary.js';
 import { isPublicationSelectionWait, isUsablePublicationTitle } from '../../application/src/publication-choice.js';
 import {
   workflowStageSequence,
@@ -77,9 +78,6 @@ const ACTIVE_STATUSES = new Set<RunRecord["status"]>([
   "running",
   "paused",
 ]);
-
-const SAVED_DRAFT_MESSAGE =
-  "当前稿件已保存，事实核查通过，可以正式导出。需要调整时直接在这里告诉我；历史版本可在“稿件与版本”查看。";
 
 function successfulToolResult(payload: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | null {
   const envelope = payload.result;
@@ -613,7 +611,9 @@ function timelineForSession(
           id: `${event.id}:saved`,
           kind: "message",
           role: "assistant",
-          body: deliveryReady(versionId) ? SAVED_DRAFT_MESSAGE : '工作稿和阶段结果已保存，但尚未达到正式交付条件。请查看当前核查问题，并在这里补充材料或告诉我如何修改。',
+          body: deliveryReady(versionId)
+            ? factCheckCompletionSummary(projection.factCheck.assessment)
+            : '工作稿和阶段结果已保存，但尚未达到正式交付条件。请查看当前核查问题，并在这里补充材料或告诉我如何修改。',
           createdAt,
         });
       }

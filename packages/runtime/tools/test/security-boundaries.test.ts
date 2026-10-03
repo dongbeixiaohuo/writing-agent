@@ -98,6 +98,39 @@ describe("authorized file boundary", () => {
 });
 
 describe("web and untrusted-content boundary", () => {
+  it('HTTP opt-in uses a pinned HTTP request, preserves public redirects and rejects unsafe targets', async () => {
+    const require = createRequire(import.meta.url);
+    const httpModule = require('node:http') as typeof import('node:http');
+    const original = httpModule.request;
+    const requests: string[] = [];
+    httpModule.request = ((url: URL, options: any, done: (response: any) => void) => {
+      requests.push(url.href);
+      assert.equal(options.headers.authorization, undefined);
+      options.lookup(url.hostname, {}, (_error: unknown, address: string) => assert.equal(address, '93.184.216.34'));
+      const request = new EventEmitter() as any;
+      request.destroy = () => request;
+      request.end = () => queueMicrotask(() => {
+        const response = new EventEmitter() as any;
+        response.statusCode = 200;
+        response.headers = { 'content-type': 'text/plain' };
+        done(response);
+        response.emit('data', Buffer.from('公开来源原文'));
+        response.emit('end');
+      });
+      return request;
+    }) as typeof httpModule.request;
+    syncBuiltinESMExports();
+    try {
+      const policy = new NetworkAccessPolicy({ allowHttp: true, resolveHost: async () => ['93.184.216.34'] });
+      const result = await new SecureWebFetcher({ policy }).fetchText('http://public.example/article');
+      assert.equal(result.content.text, '公开来源原文');
+      assert.deepEqual(requests, ['http://public.example/article']);
+      assert.equal((await policy.assertAllowedRedirect('http://public.example/article', 'https://public.example/next')).url, 'https://public.example/next');
+      for (const unsafe of ['http://127.0.0.1/','http://169.254.169.254/','http://user:key@public.example/', 'file:///etc/passwd']) {
+        await assert.rejects(policy.assertAllowedRedirect('http://public.example/', unsafe), { name: 'NetworkPolicyError' });
+      }
+    } finally { httpModule.request = original; syncBuiltinESMExports(); }
+  });
   it("destroys the pinned HTTPS request when the caller aborts", async () => {
     const require = createRequire(import.meta.url);
     const httpsModule = require("node:https") as typeof import("node:https");

@@ -11,6 +11,11 @@
   gap: 12px;
 }
 
+.run-trace-direction { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--dsw-alias-label-caption); font-size: 12px; }
+.run-trace-direction b { color: var(--dsw-alias-brand-primary); margin: 0 8px; }
+.run-trace-direction button { background: transparent; border: 0; color: var(--dsw-alias-brand-primary); cursor: pointer; font: inherit; }
+.run-trace-latest { display: block; color: var(--dsw-alias-brand-primary); font-weight: 600; }
+
 .run-trace-toolbar label {
   flex: 1;
   max-width: 520px;
@@ -84,7 +89,7 @@
 
 .run-trace-select {
   display: grid;
-  grid-template-columns: 64px 14px minmax(0, 1fr);
+  grid-template-columns: 86px 14px minmax(0, 1fr);
   gap: 7px;
   width: 100%;
   min-width: 0;
@@ -115,9 +120,9 @@
 
 .run-trace-select > time {
   padding-top: 12px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--dsw-alias-label-secondary);
   font-family: var(--ds-font-family-code);
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -221,7 +226,7 @@
 .run-trace-preview,
 .run-trace-live-detail,
 .run-trace-stream,
-.run-trace-error {
+.run-trace-failure {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -252,9 +257,30 @@
   font-size: 10px;
 }
 
-.run-trace-error {
+.run-trace-failure {
+  display: grid;
+  gap: 3px;
+  margin-top: 3px;
+  padding: 8px 10px;
+  border: 0.5px solid color-mix(in srgb, var(--dsw-static-red-500) 38%, var(--dsw-alias-border-l3));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-static-red-500) 7%, transparent);
+}
+
+.run-trace-failure > strong {
   color: var(--dsw-static-red-500);
+  font-size: 12px;
+}
+
+.run-trace-failure b {
+  margin-right: 6px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.run-trace-failure code {
+  color: var(--dsw-alias-label-caption);
   font-family: var(--ds-font-family-code);
+  font-size: 10px;
 }
 
 .run-trace-load-older {
@@ -617,21 +643,6 @@
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
   line-height: 1.55;
-}
-
-.run-trace-legacy {
-  font-size: 12px;
-}
-
-.run-trace-legacy > summary {
-  color: var(--dsw-alias-label-caption);
-  cursor: pointer;
-}
-
-.run-trace-legacy > section > h4 {
-  margin: 12px 0 4px;
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
 }
 
 .run-trace-visually-hidden {

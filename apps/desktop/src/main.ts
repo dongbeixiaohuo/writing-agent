@@ -32,7 +32,6 @@ import type {
 import { DESKTOP_RPC_METHODS } from "../../../packages/client-bridge/src/desktop-bridge.js";
 import { inspectWorkspaceBackupFile } from "../../../packages/storage/src/index.js";
 import { DesktopApplicationHost } from "./application-host.js";
-import { searchApprovalOptions } from './search-approval.js';
 import { parseDesktopProviderProfileInput } from "./provider-profile.js";
 import { dispatchDesktopRpc, safeDesktopFailure } from "./rpc-host.js";
 import { resolveDesktopRunEnvironment } from "./run-environment.js";
@@ -179,8 +178,9 @@ async function handleRpc(
     return { ok: false, error: { code: "DESKTOP_HOST_NOT_READY", message: "Desktop host is not ready" } };
   }
   try {
-    if (parsed.method === 'searchStatus' || parsed.method === 'configureSearch') {
+    if (parsed.method === 'searchStatus' || parsed.method === 'configureSearch' || parsed.method === 'testSearchConnection') {
       const result = parsed.method === 'searchStatus' ? await currentHost.searchStatus()
+        : parsed.method === 'testSearchConnection' ? await currentHost.testSearchConnection(parsed.args[0] as 'parallel' | 'tavily')
         : await currentHost.configureSearch(parsed.args[0] as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsInput);
       return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
     }
@@ -572,11 +572,6 @@ async function start(): Promise<void> {
     providerProfilePath,
     applicationVersion: app.getVersion(),
     applicationBuild: "writing-agent-desktop-v1",
-    authorizeFactSearchQuery: async (request) => {
-      if (!mainWindow || mainWindow.isDestroyed() || request.signal?.aborted) return false;
-      const result = await dialog.showMessageBox(mainWindow, searchApprovalOptions(request));
-      return result.response === 1 && !request.signal?.aborted;
-    },
   });
   hostUnsubscribe = host.subscribe(broadcast);
   ipcMain.handle(DESKTOP_BRIDGE_CHANNEL, handleRpc);

@@ -1422,6 +1422,7 @@ export class WritingApplicationService {
           "fact:submit",
           // fact_check 专用：只允许重读证据账本中已登记的来源 URL（read_fact_source）
           "network:https:read",
+          "network:http:read",
         ],
         expectedBodyVersionId: project.latestBodyVersionId,
         displayInstruction:
@@ -1547,7 +1548,7 @@ export class WritingApplicationService {
     if ((currentBrief?.interactionMode === 'co_creation' || (project.currentTitleVersionId && this.#storage.getArtifactVersion(project.currentTitleVersionId)?.reason === 'author-publication-selection')) && !isPublicationSelectionCurrent(this.#storage, projectId)) {
       throw new ApplicationServiceError('PUBLICATION_SELECTION_REQUIRED', '请先在主对话选择或确认发布标题，再核查最终标题与正文。');
     }
-    const factSearch = createFactSearchTools({ configuration: this.#factSearchConfiguration });
+    const factSearch = createFactSearchTools({ storage: this.#storage, configuration: this.#factSearchConfiguration });
     const tools = ToolRegistry.create([
       ...(factSearch.enabled() ? [...factSearch.definitions, createFactSourceTool({ storage: this.#storage, projectId,
         searchEnabled: factSearch.enabled, isDiscoveredSource: factSearch.isDiscoveredSource }) as unknown as ToolDefinition<never, JsonValue>] : []),
@@ -1613,7 +1614,7 @@ export class WritingApplicationService {
         selectedPublication: project.currentTitleVersionId ? this.#storage.getArtifactVersion(project.currentTitleVersionId)?.content : null,
       }),
       parameters: input.parameters,
-      grantedPermissions: ["artifact:read", "material:list", "material:read", "workflow:submit", "fact:submit", ...(factSearch.enabled() ? ['network:https:read'] : [])],
+      grantedPermissions: ["artifact:read", "material:list", "material:read", "workflow:submit", "fact:submit", ...(factSearch.enabled() ? ['network:https:read', 'network:http:read'] : [])],
       expectedBodyVersionId: body.id,
       displayInstruction: "重新核查当前稿件",
       ...(input.operationId === undefined ? {} : { operationId: input.operationId }),

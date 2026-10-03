@@ -31,6 +31,34 @@ function fixture() {
   return { storage, bridge, event, model, tool, input: { projectId: 'p', sessionId: 's', runId: 'r' }, close() { bridge.dispose(); storage.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
+test('search details retain timestamped dispatch and failure history even before a final result', async () => {
+  const f = fixture();
+  try {
+    const step = f.event('tool.requested', 'search-op', { toolName: 'search_fact_sources', arguments: { query: '公开事实' } });
+    f.event('search.progress', 'search-op', { message: '等待授权，尚未请求搜索服务' });
+    f.event('search.progress', 'search-op', { message: 'Tavily 已发出第 1 个 HTTP 请求' });
+    const detail = await f.bridge.getRunTraceDetail({ ...f.input, stepId: step.id });
+    const output = JSON.parse(detail.sections.find(s => s.id === 'output')!.text);
+    assert.equal(output.result, null);
+    assert.equal(output.progress.length, 2);
+    assert.ok(Number.isFinite(Date.parse(output.progress[0].at)));
+    assert.match(output.progress[1].message, /Tavily 已发出/);
+  } finally { f.close(); }
+});
+
+test('failed source detail explains the ledger gate and next step without inventing a network failure', async () => {
+  const f = fixture();
+  try {
+    const step = f.event('tool.requested', 'source-op', { toolName: 'read_fact_source', arguments: { url: 'https://example.com/report' } });
+    f.event('tool.failed', 'source-op', { error: { code: 'FACT_SOURCE_NOT_IN_LEDGER' } });
+    const detail = await f.bridge.getRunTraceDetail({ ...f.input, stepId: step.id });
+    assert.match(detail.notes.join('\n'), /未匹配.*来源记录/u);
+    assert.match(detail.notes.join('\n'), /未发出网络读取/u);
+    assert.match(detail.notes.join('\n'), /先.*公开搜索/u);
+    assert.doesNotMatch(detail.notes.join('\n'), /模型编造|网站宕机/u);
+  } finally { f.close(); }
+});
+
 test('trace details read recorded model input, reply, tool arguments, result and historical schema without model calls', async () => {
   const f = fixture();
   try {

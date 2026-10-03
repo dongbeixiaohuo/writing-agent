@@ -69,7 +69,7 @@ test('run trace presents chronological live work instead of repeated run summary
   assert.match(html, /读取参考材料/u)
   assert.match(html, /40 毫秒/u)
   assert.match(html, /首个内容.*850 毫秒/u)
-  assert.match(html, /<details/u)
+  assert.doesNotMatch(html, /查看旧版分段统计|run-trace-legacy/u)
   assert.doesNotMatch(html, /模型请求 2\s*\/\s*24|工具调用 1\s*\/\s*32/u)
 })
 

@@ -26,6 +26,22 @@ test('source transport failure is classified without leaking URL credentials or 
 const actor = { kind: "user", id: "fact-web-test" } as const;
 const LEDGER_URL = "https://93.184.216.34/report-2026";
 
+test('known public HTTP sources are read directly, but private networks remain denied', async () => {
+  const httpUrl = LEDGER_URL.replace('https:', 'http:');
+  const f = setup(httpUrl);
+  try {
+    const captured: string[] = [];
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p',
+      isDiscoveredSource: url => url === 'http://127.0.0.1/internal', fetcher: fetcherWith('原文', captured) });
+    const result = await tool.execute({ url: httpUrl }, { runId: 'r' } as never) as { finalUrl: string };
+    assert.deepEqual(captured, [httpUrl]);
+    assert.equal(result.finalUrl, httpUrl);
+    await assert.rejects(async () => tool.execute({ url: 'http://127.0.0.1/internal' }, { runId: 'r' } as never),
+      (error: any) => error.code === 'NETWORK_PRIVATE_TARGET_DENIED');
+    assert.equal(captured.length, 1);
+  } finally { f.close(); }
+});
+
 function setup(ledgerContent: string) {
   const directory = mkdtempSync(join(tmpdir(), "wa-fact-web-"));
   const storage = openWorkspaceStorage({ workspacePath: directory });

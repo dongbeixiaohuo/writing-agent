@@ -2952,6 +2952,9 @@
   max-width: 720px;
 }
 
+.searchConnection { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+.searchConnectionAvailable { color: #167647; font-size: 13px; font-weight: 600; }
+
 .searchHeading {
   display: flex;
   align-items: flex-start;
