@@ -4,7 +4,7 @@
 
 从一个模糊想法出发，与写作导演、主笔、审校和去 AI 味专家一起把文章写出来。你可以在过程中补充材料、改变方向、选择标题，而不只是等着接收最终结果。
 
-[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.63)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
+[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.68)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
 
 ## 老朋友，这个项目正在发生什么变化？
 
@@ -18,9 +18,9 @@
 - **原版用户**：可以继续使用原工作流，不必迁移；[直接跳到原版介绍与安装入口](#claude-code-skill)。
 - **准备尝试新版的老用户**：请先看[迁移边界](#rc-status)。**原版能力尚未全部迁入，桌面版目前不是完整替代品。**
 
-> **当前状态 · 2026-10-03**
+> **当前状态 · 2026-10-04**
 >
-> 桌面版 **[1.0.0-rc.63 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.63)**，提供 Windows x64 安装包。本次补强阶段确认与恢复、过程展示，并增加可查看真实输入、输出和工具详情的运行轨迹。它是 **RC（候选测试版），不是稳定正式版**；未签名，欢迎用独立测试项目体验并反馈。
+> 桌面版 **[1.0.0-rc.68 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.68)**，提供 Windows x64 安装包。相比公开 RC63，本次减少跨专家重复输入，补充公众号素材读取、搜索连接验证、清晰的运行错误与交付指引。它是 **RC（候选测试版），不是稳定正式版**；未签名，欢迎用独立测试项目体验并反馈。
 >
 > 原版 Skill 版本线仍为 `v0.11.x`。Releases 中的 `v0.11.0` 是 Skill 版本，`app-preview-0.1.0` 是早期桌面预览，两者都不是这次重构的新 App。公开下载以本仓库标注“桌面版”的 Release 为准。
 
@@ -81,6 +81,8 @@
 
 Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启并保存搜索设置后，会自动检索公开事实，不再逐次弹窗；检索词、服务、耗时与结果均可在运行记录查看。公开 HTTP 和 HTTPS 来源都可读取。请勿将私人或客户机密作为检索内容；关闭全部搜索服务后，仅用已有材料与模型复核，并提示未联网验证。
 
+两个服务均提供独立连接测试，只有验证成功才显示可用标记；保存配置不等于已验证。每轮最多 6 次不同搜索尝试（含失败），重复查询可复用缓存；这不是所有模型、HTTP 请求或费用的统一上限。公开公众号链接可作为素材读取，但验证码、登录墙、站点拒绝及失效链接仍可能无法读取。
+
 两者都开启时，先用 Parallel，请求失败才转 Tavily，可能消耗 Tavily 配额。搜索结果仍需核对来源、时间与上下文，不是搜到网页就算核查通过。
 
 这个模块服务于**事实性问题**，不用于挑剔个人感受、修辞或措辞偏好；也不等同于原版开放式资料研究的全部能力。具体实测范围见[搜索验收记录](docs/testing/FACT_SEARCH_SETTINGS.md)。
@@ -89,7 +91,7 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启�
 
 - 在主对话讨论方向、看阶段成果、补材料、选标题，直接打开当前稿件。
 - 在“稿件与版本”查看历史、比较修改、处理精细调整，并导出 TXT / HTML。
-- 在“运行记录”按时间追溯专家、模型和工具步骤；点击查看已保存的输入、回复、工具参数与结果、Schema 和耗时，帮助定位等待或失败。详情按需加载，支持搜索摘要与加载历史；普通用户仍可只看主对话。记录可能包含文章和材料，分享前请自行检查隐私。
+- 在“运行记录”按完整日期和新旧方向追溯专家、模型和工具步骤；点击查看已保存的输入、回复、工具参数与结果、Schema 和耗时，区分模型、搜索与网页读取失败。输入页提供字符构成统计，不将字符等同于 Token 或费用。详情按需加载，支持搜索摘要与加载历史；普通用户仍可只看主对话。记录可能包含文章和材料，分享前请自行检查隐私。
 - 已保存成果保留在本机；停止或失败后可按当前状态继续或重试，不必重新填写全部需求。未保存的生成内容不等于已保存稿件。
 
 事实核查绑定当前版本；正文、标题或证据变化后，旧结论可能需要更新。核查通过也不是“绝对无误”的保证，重要内容仍需人工复核。
@@ -98,11 +100,11 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启�
 
 ## 下载与第一次使用
 
-**[查看 rc.63 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.63)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.63/Writing-Agent-Setup-1.0.0-rc.63-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.63/SHA256SUMS.txt)
+**[查看 rc.68 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.68)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.68/Writing-Agent-Setup-1.0.0-rc.68-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.68/SHA256SUMS.txt)
 
 此包未签名，Windows 可能显示“未知发布者”或 SmartScreen 提醒。请核对仓库来源和校验值，不要关闭安全防护。不要把旧 `app-preview-0.1.0` 当作这次新版。
 
-升级前请备份工作区并退出旧版，再运行新安装包。已在干净 Windows Runner 验证 RC58 → RC63 升级及合成测试数据保留，不代表所有历史数据库已穷举；当前没有自动更新。此前本地 RC63 测试包与本次固定提交构建的公开包校验值不同，请以 Release 附件为准。
+升级前请备份工作区并退出旧版，再运行新安装包。安装与升级的实际验证范围见 [RC68 发布记录](docs/launch/RC68_RELEASE_EXECUTION.md)，不代表所有历史数据库已穷举；当前没有自动更新。此前本地 RC68 测试包与本次固定提交构建的公开包不同，请以 Release 附件及校验值为准。
 
 1. 找到明确标注“桌面版”的 Release，阅读 RC 限制，下载 Windows x64 的 `Writing-Agent-Setup-版本号-x64.exe`。GitHub 自动附带的 `Source code.zip` 是源码，不是安装包。
 2. 安装后进入“设置 → 模型”，选择供应商，填写 Key 与模型 ID，验证连接。
