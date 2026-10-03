@@ -147,7 +147,7 @@ for (const parallelEnabled of [false, true]) it(`full workflow scopes external f
   } finally { f.close(); }
 });
 
-function setup(provider: CollaborationProvider, interactionMode: "autonomous" | "co_creation" = "autonomous", materialCount = 0, mode: 'quick' | 'deep' = 'quick', materialContent?: string) {
+function setup(provider: CollaborationProvider, interactionMode: "autonomous" | "co_creation" = "autonomous", materialCount = 0, mode: 'quick' | 'deep' = 'quick', materialContent?: string, sourceKind: 'pasted_text' | 'web_snapshot' = 'pasted_text') {
   const path = mkdtempSync(join(tmpdir(), "writing-collaboration-"));
   const storage = openWorkspaceStorage({ workspacePath: path });
   const app = new WritingApplicationService({ storage, provider: withIntentFixture(provider) });
@@ -155,7 +155,7 @@ function setup(provider: CollaborationProvider, interactionMode: "autonomous" | 
   app.createProject({ operationId: "project", projectId: "p", name: "test", mode, actor });
   for (let i = 0; i < materialCount; i++) {
     const imported = app.importMaterial({ operationId: `material-${i}`, projectId: 'p', expectedProjectRevision: storage.inspectProject('p')!.revision,
-      materialId: `m-${i}`, displayName: `需求对话 ${i + 1}`, sourceKind: 'pasted_text', sourceReference: 'conversation', role: 'illustrative', trustLabel: 'user_provided_untrusted', permissionScope: 'project_only', content: materialContent ?? `写安静的观察，要求 ${i}`, actor });
+      materialId: `m-${i}`, displayName: `需求对话 ${i + 1}`, sourceKind, sourceReference: 'conversation', role: 'illustrative', trustLabel: 'user_provided_untrusted', permissionScope: 'project_only', content: materialContent ?? `写安静的观察，要求 ${i}`, actor });
     assert.equal(imported.ok, true, JSON.stringify(imported));
   }
   const saved = app.saveWritingBrief({ operationId: "brief", projectId: "p", expectedProjectRevision: storage.inspectProject("p")!.revision, baseVersionId: null, actor, brief: { schemaVersion: 1, topic: "安静", genre: "narrative_observation", audience: "读者", lengthTarget: { targetCharacters: 800 }, materialIds: Array.from({ length: materialCount }, (_, i) => `m-${i}`), constraints: [], interactionMode, authorAuthorization: { voice: "克制", styleReference: null, styleDecision: "user_confirmed", directionDecision: "user_confirmed", firsthandMaterialIds: [] }, platform: null, publicationGoal: "not_applicable", confirmationStatus: "confirmed" } });
@@ -369,6 +369,39 @@ it('scopes research to supplied evidence without demanding unavailable searches 
     assert.doesNotMatch(system, /主动寻找最强反证|对准备进入正文的外部事实逐项核查|director_decide省略inputVersionIds/);
     assert.ok(!request.tools?.some(t => t.name === 'search_fact_sources'));
     assert.deepEqual(request.parameters, { toolChoice: 'required' }, 'no model effort or token limit change');
+  } finally { f.close(); }
+});
+
+it('fact check has a focused context with complete current body, deduplicated evidence and explicit author boundaries', async () => {
+  const provider = new CollaborationProvider(); const f = setup(provider, 'autonomous', 1);
+  try {
+    const result = await f.app.runDraft({ ...f.input, userInstruction: '数字如有冲突请标明，保留我的判断。' });
+    assert.equal(result.ok, true);
+    const request = provider.requests.find(r => collaborationState(r)?.actor === 'fact_check')!;
+    const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
+    assert.ok(state.materialCatalog.length > 0);
+    assert.ok(state.artifacts.find((a: any) => a.kind === 'body').content.includes('我喜欢这样的安静。'));
+    assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object');
+    assert.ok(state.authorAuthorization);
+    assert.match(request.messages[1]!.content, /数字如有冲突请标明/);
+    assert.doesNotMatch(request.messages[1]!.content, /必须先用 read_material|约 800 字符/);
+    assert.ok(!request.tools?.some(t => t.name === 'read_artifact_version'), 'no reread tool when bound artifacts already provided in full');
+    assert.ok(request.tools?.some(t => t.name === 'read_material'), 'original material stays available when a specific claim requires it');
+  } finally { f.close(); }
+});
+
+it('projects evidence and original sources for every downstream expert, with on-demand source access', async () => {
+  const provider = new CollaborationProvider(); const f = setup(provider, 'autonomous', 1, 'quick', '外部资料原文', 'web_snapshot');
+  try {
+    assert.equal((await f.app.runDraft(f.input)).ok, true);
+    for (const actor of ['outline', 'draft', 'review_editor', 'review_reader', 'central_revision', 'language_review']) {
+      const request = provider.requests.find(r => collaborationState(r)?.actor === actor)!;
+      const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
+      assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object', actor);
+      assert.ok(Array.isArray(state.materialCatalog), actor);
+      assert.ok(request.tools?.some(t => t.name === 'read_material'), `${actor} can read omitted material if needed`);
+      assert.ok(!request.tools?.some(t => t.name === 'read_artifact_version'), `${actor} already has complete bound artifacts`);
+    }
   } finally { f.close(); }
 });
 
@@ -696,7 +729,7 @@ it('saves a streamed outline verbatim through the harness without a second model
     assert.equal(provider.outlineRequests, 1);
     const request = provider.requests.find(r => collaborationState(r)?.stage === 'outline')!;
     assert.equal(request.parameters.toolChoice, 'auto');
-    assert.deepEqual(request.tools?.map(t => t.name).sort(), ['assess_writing_readiness', 'read_artifact_version']);
+    assert.deepEqual(request.tools?.map(t => t.name).sort(), ['assess_writing_readiness']);
     assert.deepEqual(samples, parts.map((_, i) => parts.slice(0, i + 1).join('')));
     assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main')[0]?.content, parts.join(''));
     assert.equal(f.storage.listArtifactVersions('p', 'body', 'main').length, 0);
@@ -1049,19 +1082,20 @@ for (const cancel of [false, true]) it(`desktop recovers a protected expert with
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       if (collaborationState(request)?.actor === 'outline' && this.looping) {
         // Exercise the general call allowance, not the text-save repetition guard.
-        yield { type: 'tool_call_delta', index: 0, id: `read-loop-${this.requests.length}`, name: 'read_artifact_version', argumentsDelta: JSON.stringify({versionId: collaborationState(request)!.inputVersionIds[0]}) };
+        const material = (collaborationState(request) as any).materialCatalog.find((m: any) => m.materialId === 'm-0');
+        yield { type: 'tool_call_delta', index: 0, id: `read-loop-${this.requests.length}`, name: 'read_material', argumentsDelta: JSON.stringify({materialId: 'm-0', contentVersionId: material.contentVersionId, offset: 0, maxChars: 100}) };
         yield { type: 'completed', finishReason: 'tool_calls' }; return;
       }
       yield* super.providerStream(request);
     }
   }
   const provider = new LimitedProvider();
-  const f = setup(provider, 'co_creation');
+  const f = setup(provider, 'co_creation', 1, 'quick', '外部资料原文', 'web_snapshot');
   const input = { ...f.input, budget: { ...f.input.budget, maxModelRequests: 12 } };
   const bridge = createApplicationBridge({ service: f.app, workspaceId: 'protected-retry', model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {}, budget: input.budget } });
   try {
     const first = await f.app.runDraft(input);
-    assert.equal(f.storage.getRun(first.runId)?.status, 'budget_exhausted');
+    assert.equal(f.storage.getRun(first.runId)?.status, 'budget_exhausted', JSON.stringify(f.storage.listRunEvents(first.runId).filter(e => e.type === 'tool.failed' || e.type === 'run.waiting_user').map(e => e.payload)));
     await bridge.selectSession('p', first.sessionId);
     assert.ok(bridge.getSnapshot().recoverableRuns.some(r => r.runId === first.runId));
     if (cancel) {

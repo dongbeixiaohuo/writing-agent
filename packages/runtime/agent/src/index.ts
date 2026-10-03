@@ -111,6 +111,9 @@ export interface AgentRequestPolicy {
   readonly modelTools?: readonly string[];
   readonly toolChoice?: ModelParameters['toolChoice'];
   readonly authorizeTool?: (call: CompletedToolCall) => boolean;
+  /** Request-only projection of already recorded tool output. Full events and
+   * in-memory history stay intact; applications must retain errors and provenance. */
+  readonly projectToolResult?: (message: ModelMessage) => string;
 }
 
 export interface AgentRunInput {
@@ -671,7 +674,8 @@ export class AgentRuntime {
       const request: ModelRequest = {
         requestId,
         model: input.model,
-        messages: structuredClone(messages),
+        messages: structuredClone(messages).map(message => message.role === 'tool' && policy?.projectToolResult
+          ? { ...message, content: policy.projectToolResult(message) } : message),
         ...(tools.length === 0 ? {} : { tools }),
         parameters: { ...structuredClone(input.parameters),
           ...(escalatedOutputTokens === null ? {} : { maxOutputTokens: escalatedOutputTokens }),
@@ -711,7 +715,7 @@ export class AgentRuntime {
           },
           toolSchemas,
           assemblyVersion: REQUEST_ASSEMBLY_VERSION,
-          contentReferences: contentReferences(messages),
+          contentReferences: contentReferences(request.messages),
         });
       } catch (error) {
         if (this.#sessions.getRun(runId)?.status === "cancelled") {

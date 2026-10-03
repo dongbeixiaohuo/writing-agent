@@ -8,6 +8,35 @@ import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from "
 import { ToolRegistry, ToolExecutionFault } from "../../tools/src/index.js";
 import { AgentRuntime } from "../src/index.js";
 
+it('projects duplicate read results for a request without losing original history or persisted tool results', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'read-context-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  const requests: ModelRequest[] = [];
+  class Provider extends ModelProviderBase {
+    constructor() { super('context', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push(request);
+      if (requests.length < 3) {
+        yield { type: 'tool_call_delta', index: 0, id: `c${requests.length}`, name: 'read', argumentsDelta: '{}' };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      } else { yield { type: 'text_delta', delta: 'done' }; yield { type: 'completed', finishReason: 'stop' }; }
+    }
+  }
+  try {
+    storage.createProject({ operationId: 'p', projectId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage,
+      tools: ToolRegistry.create([{ name: 'read', version: '1.0.0', description: 'read', effect: 'read_only', permissions: [], inputSchema: { type: 'object', properties: {} }, execute() { return { content: 'complete original' }; } }]),
+      requestPolicy: () => ({ scopeId: 'fixed', systemPrompt: 'read', userMessage: 'complete original', allowedTools: ['read'],
+        ...(requests.length === 1 ? { projectToolResult: () => '{"contentFrom":"current input"}' } : {}) }),
+    });
+    const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'm', parameters: {}, systemPrompt: 'read', userMessage: 'read', grantedPermissions: [], expectedBodyVersionId: null });
+    assert.equal(result.ok, true);
+    assert.equal(requests[1]!.messages.find(m => m.role === 'tool')!.content, '{"contentFrom":"current input"}');
+    assert.match(requests[2]!.messages.find(m => m.role === 'tool')!.content, /complete original/);
+    assert.match(JSON.stringify(storage.listRunEvents(result.runId).filter(e => e.type === 'tool.completed')), /complete original/);
+  } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 for (const scenario of ['repeated', 'changing', 'corrected'] as const) {
 it(`bounds local text-save corrections without replaying a stage indefinitely: ${scenario}`, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'text-save-loop-'));

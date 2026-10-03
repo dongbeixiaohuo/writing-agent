@@ -68,6 +68,12 @@ function errorCode(payload: Readonly<Record<string, unknown>>): string | null {
   return safeCode(object(payload.error)?.code) ?? safeCode(object(object(payload.result)?.error)?.code) ?? safeCode(payload.code)
 }
 
+function sourceHttpStatus(payload: Readonly<Record<string, unknown>>): number | undefined {
+  const error = object(payload.error) ?? object(object(payload.result)?.error)
+  const status = count(object(error?.details)?.httpStatus)
+  return status !== null && status >= 100 && status <= 599 ? status : undefined
+}
+
 function duration(start: string, end: string): number | null {
   const elapsed = Date.parse(end) - Date.parse(start)
   return Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null
@@ -77,14 +83,14 @@ function safeHttpsHost(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 4096 || /[\u0000-\u001f\u007f]/u.test(value)) return null
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' && !url.username && !url.password ? url.hostname : null
+    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.hostname : null
   } catch { return null }
 }
 
 function safeSourceHosts(value: unknown): string[] {
   if (typeof value !== 'string') return []
   const hosts = new Set<string>()
-  for (const match of value.replace(/\\\//gu, '/').matchAll(/https:\/\/[^\s"<>\\]+/gu)) {
+  for (const match of value.replace(/\\\//gu, '/').matchAll(/https?:\/\/[^\s"<>\\]+/gu)) {
     const host = safeHttpsHost(match[0])
     if (host) hosts.add(host)
     if (hosts.size === 3) break
@@ -113,6 +119,7 @@ interface MutableTool {
   outcome: string | null
   status: DiagnosticOperationStatus
   errorCode: string | null
+  httpStatus?: number
   targetId: string | null
   versionId: string | null
   startedAt: string
@@ -181,7 +188,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     const code = errorCode(payload)
     const message = safeFailureMessage(payload)
     const explanation = explainRunFailure({ kind: toolName === 'director_decide' || toolName === 'delegate_author_expert' ? 'agent' : 'tool',
-      status, technicalName: toolName, errorCode: code })
+      status, technicalName: toolName, errorCode: code, httpStatus: sourceHttpStatus(payload) })
     return `${explanation.title}：${explanation.detail}${code ? ` · 技术代码：${code}` : ''}${message ? ` · 记录信息：${message}` : ''}`
   }
   if (status === 'outcome_unknown') {
@@ -445,6 +452,8 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
       tool.completedAt = event.occurredAt
       tool.durationMs = duration(tool.startedAt, event.occurredAt)
       tool.errorCode = status === 'completed' ? null : errorCode(event.payload)
+      const httpStatus = sourceHttpStatus(event.payload)
+      if (httpStatus !== undefined) tool.httpStatus = httpStatus
       tool.outputPreview = safeToolOutput(tool.toolName, event.payload, status)
       tool.outcome = null
       const envelope = object(event.payload.result)
@@ -474,7 +483,8 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
       kind: tool.toolName === 'director_decide' || tool.toolName === 'delegate_author_expert' ? 'agent' as const : 'tool' as const,
       status: tool.status, label: toolPresentation(tool.toolName).label, technicalName: tool.toolName,
       ...(tool.caller !== '未记录调用者' ? { actorLabel: tool.caller } : {}), durationMs: tool.durationMs,
-      ...(tool.inputPreview ? { inputPreview: tool.inputPreview } : {}), ...(tool.outputPreview ? { outputPreview: tool.outputPreview } : {}), errorCode: tool.errorCode })),
+      ...(tool.inputPreview ? { inputPreview: tool.inputPreview } : {}), ...(tool.outputPreview ? { outputPreview: tool.outputPreview } : {}), errorCode: tool.errorCode,
+      ...(tool.httpStatus === undefined ? {} : { httpStatus: tool.httpStatus }) })),
   ]).sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.order - right.order)
   const trace = orderedTrace.map(({ order: _order, ...step }) => step)
   return { segments: segments.map(segment => ({ id: segment.id, label: segment.label, startedAt: segment.startedAt,

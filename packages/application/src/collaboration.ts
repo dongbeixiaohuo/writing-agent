@@ -13,6 +13,8 @@ import { createFactSourceTool } from './fact-web.js';
 import { createFactSearchTools, type FactSearchConfiguration } from './fact-search.js';
 import { checkpointIntentReceipt } from './conversation-intent.js';
 import { inlineMaterialContext } from './material-context.js';
+import { compactReworkReport, deduplicateReviewDiscussion, factStatusContext, projectInlineRead } from './agent-context.js';
+import { compactFactEvidence, factMaterialContext, FACT_CONTEXT_GUIDANCE } from './fact-context.js';
 
 type Decision = { action: "dispatch" | "ask" | "rework" | "finish"; stage: WritingWorkflowStage | null; reason: string; questions: string[]; inputVersionIds?: string[]; readinessReason?: string };
 
@@ -51,6 +53,7 @@ export function createWritingCollaboration(options: {
   systemPrompt: string;
   directorMessage: string;
   expertMessage: string;
+  factInstruction?: string;
   materialIds: readonly string[];
   authorReviewDiscussion?: JsonValue;
   recoverPendingAssignment?: boolean;
@@ -222,6 +225,7 @@ export function createWritingCollaboration(options: {
     const actor = assignment?.actor ?? "director";
     const inputs = assignment?.inputVersionIds ?? current.inputs;
     const artifacts = inputs.map((id) => storage.getArtifactVersion(id)).filter((item) => item !== null).map((item) => ({ id: item.id, kind: item.kind, content: item.content }));
+    const isFactCheck = assignment?.stage === 'fact_check';
     const authorizedMaterials = storage.listMaterials(projectId).filter(material => options.materialIds.includes(material.id));
     const authorizedVersions = new Map(authorizedMaterials.map(material => [material.id, material.contentVersionId]));
     const materialSlices = new Map<string, JsonValue>();
@@ -230,10 +234,17 @@ export function createWritingCollaboration(options: {
       if (event.type !== 'tool.completed' || envelope?.ok !== true || envelope?.toolName !== 'read_material') continue;
       const slice = envelope.result;
       if (!slice || authorizedVersions.get(slice.materialId) !== slice.contentVersionId) continue;
-      materialSlices.set(JSON.stringify([slice.materialId, slice.contentVersionId, slice.offset, slice.nextOffset]), slice);
+      materialSlices.set(JSON.stringify([slice.materialId, slice.contentVersionId, slice.offset, slice.nextOffset]), { ...slice,
+        displayName: authorizedMaterials.find(material => material.id === slice.materialId)?.displayName ?? '' });
     }
     const cachedIds = new Set([...materialSlices.values()].map(slice => (slice as {materialId: string}).materialId));
     const materials = [...inlineMaterialContext(authorizedMaterials.filter(material => !cachedIds.has(material.id))), ...materialSlices.values()];
+    const downstream = actor !== 'research' && artifacts.some(item => item.kind === 'evidence');
+    const projectedArtifacts = artifacts.map(item => ({ ...item, content: item.kind === 'evidence'
+      ? compactFactEvidence(item.content) : item.kind === 'report' ? compactReworkReport(item.content) : item.content }));
+    // Non-web author inputs can include fictional scenes, style examples or
+    // requirements. Keep them; only external source articles become on-demand.
+    const authorMaterialIds = new Set(authorizedMaterials.filter(m => m.sourceKind !== 'web_snapshot' || m.role === 'user_firsthand' || m.id.startsWith('intake-user-')).map(m => m.id));
     const boundBody = artifacts.find(item => item.kind === 'body')?.content;
     const articleBaseline = boundBody === undefined ? undefined : bodyArticleBaseline(boundBody);
     const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
@@ -245,24 +256,31 @@ export function createWritingCollaboration(options: {
       delegationTargetCharacters: 200,
     };
     const summary = { actor, stage: assignment?.stage ?? null, nextStage: current.nextStage, inputVersionIds: inputs, ready: current.ready, finished: current.finished,
+      writingRequirements: briefId ? (() => { const brief = storage.getWritingBriefVersion(briefId)?.brief; return { audience: brief?.audience, platform: brief?.platform }; })() : undefined,
       outputGuidance,
       unreadArtifactVersionIds: workflow.unreadReadinessArtifactIds(runId),
       ...(assignment?.stage === "fact_check" ? { currentBodyVersionId: storage.inspectProject(projectId)?.latestBodyVersionId ?? null,
         validEvidenceIds: evidenceIdsFromLedger(artifacts.find(item => item.kind === 'evidence')?.content ?? '') } : {}),
       ...(assignment?.stage ? { taskInstruction: assignment.reason, expectedArtifact: assignment.expectedArtifact ?? expectedArtifact(assignment.stage) } : {}),
-      completedStages: workflow.progress(runId).completedStages, artifacts, materials: actor === 'title' ? [] : materials,
+      completedStages: workflow.progress(runId).completedStages,
+      artifacts: projectedArtifacts,
+      materials: actor === 'title' ? [] : downstream ? materials.filter(m => authorMaterialIds.has(String((m as { materialId: string }).materialId))) : materials,
+      ...(downstream ? { materialCatalog: factMaterialContext(authorizedMaterials).materialCatalog } : {}),
+      ...(isFactCheck ? { ...factMaterialContext(authorizedMaterials),
+        authorAuthorization: briefId ? storage.getWritingBriefVersion(briefId)?.brief.authorAuthorization : null } : {}),
       ...(assignment?.stage === 'language_review' && articleBaseline !== undefined ? { bodyOutputContract: {
         requiredHeadings: articleBaseline.split(/\r?\n/u).filter(line => /^#{1,6}\s/u.test(line)),
         articleCharacters: articleBaseline.length, legacyProcessPostscript: articleBaseline !== boundBody?.trim(),
         output: 'complete_article_only',
       } } : {}),
-      ...(assignment?.stage === 'central_revision' ? { authorReviewDiscussion: options.authorReviewDiscussion ?? [] } : {}),
+      ...(assignment?.stage === 'central_revision' ? { authorReviewDiscussion: deduplicateReviewDiscussion(options.authorReviewDiscussion ?? [], artifacts) } : {}),
       ...(assignment?.stage === 'fact_check' ? { selectedPublication: (() => { const id = storage.inspectProject(projectId)?.currentTitleVersionId; return id ? storage.getArtifactVersion(id)?.content : null; })() } : {}),
-      ...(actor === "director" ? { factCheck: storage.getFactCheckStatus(projectId) } : {}) };
+      ...(actor === "director" ? { factCheck: factStatusContext(storage.getFactCheckStatus(projectId), true) } : {}) };
     // ready is bound to this stage and exact material versions. Complete reads
     // are already injected above; changing a version reopens readiness/reading.
-    const materialReadTools = current.ready ? [] : ['read_material'];
-    const artifactReadTools = inputs.length ? ['read_artifact_version'] : [];
+    const needsSourceAccess = downstream && actor !== 'title' && authorizedMaterials.some(m => !authorMaterialIds.has(m.id));
+    const materialReadTools = !current.ready || isFactCheck || needsSourceAccess ? ['read_material'] : [];
+    const artifactReadTools = inputs.length && (workflow.unreadReadinessArtifactIds(runId).length > 0 || artifacts.some(a => a.kind === 'report')) ? ['read_artifact_version'] : [];
     const allowedTools = actor === "director" ? [...materialReadTools, ...artifactReadTools, "assess_writing_readiness", "director_decide"] : actor === 'title'
       ? [...artifactReadTools, 'submit_publication_candidates']
       : [...materialReadTools, ...artifactReadTools, "assess_writing_readiness", ...(assignment?.stage === "fact_check" ? ["submit_fact_check", ...(factSearch.enabled() ? ['search_fact_sources', 'read_fact_source'] : [])] : ["submit_writing_stage"])];
@@ -297,19 +315,21 @@ export function createWritingCollaboration(options: {
     const stage = assignment?.stage;
     const outputPreview = isPublicStageOutput(stage)
       ? { id: `${runId}:preview:${scopeId}`, stage } : undefined;
-    if (outputPreview) rolePrompt += '\n本次是纯文本成果生成：直接以普通回复逐步输出本阶段完整的 Markdown 提纲、文章或审校建议，不调用工具，不把全文包装为 JSON，不先写“正在整理”等开场说明。不输出私有推理、调度指令或内部字段。审校建议说明问题、阅读影响和修改建议，使用简短分段。程序会在完整响应结束后把这份原文交给 submit_writing_stage 校验保存，不需要你再次复制、调用或宣称保存成功。预览不代表已保存，也不代表作者已确认或事实核查已通过。';
-    if (outputPreview) rolePrompt += '\n唯一例外：确实发现任务依赖的必要信息缺口时，不写成果或缺料说明，调用 assess_writing_readiness(status=needs_input) 提出最多两个具体问题并等待回答。当前 ready 已由程序按输入版本确认，不要重复提交 ready。';
+    if (outputPreview) rolePrompt += '\n本次是纯文本成果生成：以普通回复逐步输出本阶段完整的 Markdown 提纲、文章或审校建议，不把全文包装为 JSON，不先写“正在整理”等开场说明。成果输出前仅在必要时调用已提供的读取工具补读目录中的原文，不重读本次已完整提供的内容。不输出私有推理、调度指令或内部字段。审校建议说明问题、阅读影响和修改建议，使用简短分段。程序会在完整响应结束后把这份原文交给 submit_writing_stage 校验保存，不需要你再次复制、调用或宣称保存成功。预览不代表已保存，也不代表作者已确认或事实核查已通过。';
+    if (outputPreview) rolePrompt += '\n确实发现任务依赖的必要作者信息缺口时，不写成果或缺料说明，调用 assess_writing_readiness(status=needs_input) 提出最多两个具体问题并等待回答。当前 ready 已由程序按输入版本确认，不要重复提交 ready。';
     if (assignment?.stage && ['draft', 'central_revision', 'language_review'].includes(assignment.stage)) rolePrompt += '\n正文交付契约由程序规定，优先于任务说明中的输出格式建议：只输出完整文章，不附改动说明、审校结论、版本号或“无需修改”等状态。没有修改时返回完整原文。语言润色必须保留 bodyOutputContract.requiredHeadings 的 Markdown 标题；不要因标题已确认而省略它。旧稿末尾如带明确的改动说明，说明不是文章，不复制进新正文，不把其字数算进正文基线。';
     if (actor === 'director' && !current.ready) rolePrompt += '\n先根据实际提供的材料判断本阶段是否充分。充分时优先一次调用 director_decide(action=dispatch, stage=nextStage, readinessReason=简短的充分性判断, reason=简短任务说明, questions=[])，程序会同时校验读取和阶段权限，无需先单独提交 ready。材料未完整提供时先补读；确有作者信息缺口时用 ask 或 assess_writing_readiness needs_input，不强行推进。';
+    if (downstream) rolePrompt += '\n上下文按职责精简：研究证据用claims.source_id引用sources，全部引句、限定条件和未核实状态保留。外部原文只在materialCatalog列目录，不代表本阶段已读；需要补充上下文、引用或风格细节时用read_material按需读取，不猜测省略内容。authorReviewDiscussion中的contentFromArtifactId指向本次artifacts内同一份完整报告，作者原话和修改意见未去重。factCheck为状态与未解决主张，不是整份核查报告；不改变核查门禁。';
     return {
       scopeId,
       ...(outputPreview ? { outputPreview } : {}),
       ...(outputPreview ? { textOutputTool: { name: 'submit_writing_stage', arguments: { stage: outputPreview.stage }, contentArgument: 'content' },
-        modelTools: [...artifactReadTools, 'assess_writing_readiness'], toolChoice: 'auto' as const } : {}),
+        modelTools: [...materialReadTools, ...artifactReadTools, 'assess_writing_readiness'], toolChoice: 'auto' as const } : {}),
       actor,
-      systemPrompt: `${commonPrompt}\nACTOR=${actor}\n${buildExpertInstructions(actor)}\n${rolePrompt}\n${sharedStateRules}\n${actor === 'fact_check' || assignment?.stage === 'fact_check' ? factSearch.instructions() : ''}`,
-      userMessage: `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material")).join("\n")}\nCOLLABORATION_STATE=${JSON.stringify(summary)}`,
+      systemPrompt: `${commonPrompt}\nACTOR=${actor}\n${buildExpertInstructions(actor)}\n${rolePrompt}\n${sharedStateRules}\n${isFactCheck ? `${FACT_CONTEXT_GUIDANCE}\n${factSearch.instructions()}` : ''}`,
+      userMessage: `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : isFactCheck ? options.factInstruction ?? options.expertMessage : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material")).join("\n")}\nCOLLABORATION_STATE=${JSON.stringify(summary)}`,
       allowedTools,
+      projectToolResult: message => projectInlineRead(message, artifacts, summary.materials),
       ...(!outputPreview && !current.finished ? { toolChoice: 'required' as const } : {}),
       expectedBodyVersionId: assignment?.expectedBodyVersionId === undefined ? current.expectedBodyVersionId : assignment.expectedBodyVersionId,
       authorizeTool(call) {

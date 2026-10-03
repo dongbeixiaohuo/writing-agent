@@ -3,6 +3,7 @@ import test from 'node:test'
 import type { WritingProjectProjection } from '../../application/src/index.js'
 import type { RunRecord } from '../../runtime/session/src/index.js'
 import { runDiagnostics } from '../src/run-diagnostics.js'
+import { explainRunFailure } from '../src/run-failure-explanation.js'
 
 const run = {
   id: 'run', sessionId: 'session', projectId: 'project', status: 'completed', planVersion: 'test',
@@ -18,6 +19,22 @@ function projection(events: Array<{ type: string; operationId: string; payload: 
     })),
   } as unknown as WritingProjectProjection
 }
+
+test('source HTTP failures retain structured status through the trace and UI explanation, including public HTTP hosts', () => {
+  for (const httpStatus of [403, 404, 429, 503]) {
+    const step = runDiagnostics(projection([
+      { type: 'run.started', operationId: 'start', payload: {} },
+      { type: 'tool.requested', operationId: 'read', payload: { toolName: 'read_fact_source', arguments: { url: 'http://example.com/article' } } },
+      { type: 'tool.failed', operationId: 'read', payload: { result: { ok: false, toolName: 'read_fact_source', error: { code: 'WEB_HTTP_STATUS_REJECTED', details: { httpStatus } } } } },
+    ]), run).trace!.find(s => s.kind === 'tool')!;
+    assert.equal(step.httpStatus, httpStatus);
+    assert.match(step.inputPreview!, /example.com/);
+    assert.match(step.outputPreview!, new RegExp(`HTTP ${httpStatus}`));
+    assert.doesNotMatch(step.outputPreview!, /未保存.*状态|未记录具体/);
+    assert.match(explainRunFailure(step).title, new RegExp(`HTTP ${httpStatus}`));
+    assert.match(explainRunFailure(step).detail, /不是禁止 http/);
+  }
+});
 
 test('search trace exposes the current provider before completion and fallback attempts afterwards', () => {
   const events = [
@@ -199,7 +216,7 @@ test('known source policy and search precondition codes keep their precise recor
   assert.match(output(String(requestedIndexes.private)), /本机安全规则.*未发出网络读取/u)
   assert.match(output(String(requestedIndexes.credentials)), /本机安全规则.*未发出网络读取/u)
   assert.match(output(String(requestedIndexes.dns)), /来源域名解析失败/u)
-  assert.match(output(String(requestedIndexes.http)), /HTTP 状态.*未记录具体状态/u)
+  assert.match(output(String(requestedIndexes.http)), /旧记录.*缺少状态码.*未保存具体 HTTP 状态/u)
   assert.match(output(String(requestedIndexes.limit)), /搜索次数.*上限/u)
   assert.doesNotMatch(output(String(requestedIndexes.limit)), /搜索服务请求失败/u)
   assert.match(output(String(requestedIndexes.disabled)), /外部事实搜索已关闭/u)

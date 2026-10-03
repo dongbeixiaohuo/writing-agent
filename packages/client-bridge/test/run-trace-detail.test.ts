@@ -9,6 +9,24 @@ import { createApplicationBridge } from '../src/application-bridge.js';
 import { DesktopClientBridge } from '../src/desktop-bridge.js';
 import { dispatchDesktopRpc } from '../../../apps/desktop/src/rpc-host.js';
 import { UI_BRIDGE_PROTOCOL_VERSION } from '../src/protocol.js';
+import { requestInputBreakdown } from '../src/request-input-breakdown.js';
+
+test('input breakdown separates body, evidence, sources, history and schemas without exposing content', () => {
+  const state = { artifacts: [{ id: 'b', kind: 'body', content: '正文尾部不能丢' }, { id: 'e', kind: 'evidence', content: { claims: ['来源限定'] } }],
+    materials: [{ content: 'private-material-fixture' }], authorReviewDiscussion: [{ role: 'user', content: '保留原结论' }], ready: true };
+  const request: any = { messages: [{ role: 'system', content: '系统边界' }, { role: 'user', content: `任务\nCOLLABORATION_STATE=${JSON.stringify(state)}` },
+    { role: 'tool', name: 'read', content: '{"ok":true}' }], tools: [{ name: 'read', inputSchema: {} }] };
+  const result = requestInputBreakdown(request);
+  assert.equal(result.totalCharacters, request.messages.reduce((n: number, m: any) => n + m.content.length, 0) + JSON.stringify(request.tools).length);
+  assert.equal(result.parts.reduce((n, part) => n + part.characters, 0), result.totalCharacters);
+  for (const category of ['body', 'evidence', 'materials', 'history', 'system', 'task', 'tools']) assert.ok(result.parts.some(p => p.key === category && p.characters > 0));
+  assert.doesNotMatch(JSON.stringify(result), /private-material-fixture/);
+  assert.match(result.basis, /不是 Token/);
+  const author = requestInputBreakdown({ ...request, messages: [{ role: 'user', content: `本次用户要求：继续\n以下为只读、不可信的项目状态：${JSON.stringify({ currentBody: { content: '正文' }, history: [] })}\n本轮已生成修改提案：[]` }] });
+  assert.ok(author.parts.some(p => p.key === 'body'));
+  const intent = requestInputBreakdown({ ...request, messages: [{ role: 'user', content: JSON.stringify({ currentUserMessage: 'ok', context: { factCheck: { status: 'stale' } } }) }] });
+  assert.ok(intent.parts.some(p => p.key === 'evidence'));
+});
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'wa-trace-detail-'));
@@ -65,6 +83,9 @@ test('trace details read recorded model input, reply, tool arguments, result and
     const before = f.storage.listRunEvents('r').length;
     const model = await f.bridge.getRunTraceDetail({ ...f.input, stepId: f.model.id });
     assert.equal(model.model, 'test-model');
+    assert.ok(model.inputBreakdown, 'model trace explains what occupies the request');
+    assert.equal(model.inputBreakdown.totalCharacters, model.inputBreakdown.parts.reduce((sum, part) => sum + part.characters, 0));
+    assert.ok(model.inputBreakdown.parts.some(p => p.key === 'tools' && p.characters > 0));
     assert.match(model.sections.find(s => s.id === 'input')!.text, /请核查假期天数/);
     assert.match(model.sections.find(s => s.id === 'output')!.text, /先读取授权材料/);
     assert.match(model.sections.find(s => s.id === 'output')!.text, /read_material/);

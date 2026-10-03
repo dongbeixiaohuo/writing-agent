@@ -6,9 +6,20 @@ import type { RunRecordView } from '../../client-bridge/src/protocol.ts'
 import {
   INITIAL_DETAIL_LOAD_STATE,
   RunTrace,
+  SectionContent,
   isNearTraceTail,
   reduceDetailLoadState,
 } from '../src/shell/RunTrace.tsx'
+
+test('input inspector shows counted components with an explicit non-token basis', () => {
+  const html = renderToStaticMarkup(<SectionContent sectionId="input" detail={{ runId: 'r', stepId: 's', requestId: 'q', callId: null, provider: 'test', model: 'test', notes: [],
+    inputBreakdown: { totalCharacters: 1200, basis: '不是 Token 或费用', parts: [{ key: 'body', label: '正文与正文分块', characters: 1000 }, { key: 'evidence', label: '证据与核查信息', characters: 200 }] },
+    sections: [{ id: 'input', label: '实际输入', format: 'json', text: '{}', totalCharacters: 2, truncated: false }] }} />)
+  assert.match(html, /请求输入构成/)
+  assert.match(html, /1,200/)
+  assert.match(html, /正文与正文分块/)
+  assert.match(html, /不是 Token 或费用/)
+})
 
 function recordWithSteps(count: number): RunRecordView {
   return {

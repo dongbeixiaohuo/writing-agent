@@ -14,6 +14,14 @@ const passedAssessment = (claims: readonly Record<string, unknown>[], noFactualC
 });
 
 describe('fact-check completion summary', () => {
+  it('ends every passed report with an actionable path to export, without requiring illustrations', () => {
+    for (const assessment of [null, passedAssessment([], '个人感受'), passedAssessment([{ claimText: '事实', status: 'SUPPORTED' }])]) {
+      const summary = factCheckCompletionSummary(assessment);
+      assert.match(summary, /下一步[\s\S]*查看当前稿件[\s\S]*导出文章/);
+      assert.match(summary, /配图.*可选/);
+      assert.match(summary, /不会自动发布/);
+    }
+  });
   it('reports the checked facts with their persisted evidence and sources', () => {
     const summary = factCheckCompletionSummary(passedAssessment([
       {

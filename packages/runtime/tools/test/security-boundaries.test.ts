@@ -382,6 +382,19 @@ describe("web and untrusted-content boundary", () => {
     assert.match(fetched.bodyHash, /^[a-f0-9]{64}$/u);
   });
 
+  it('reports the actual HTTP response status, without returning error pages as source text', async () => {
+    for (const status of [403, 404, 429, 503]) {
+      const fetcher = new SecureWebFetcher({ policy: new NetworkAccessPolicy({ allowHttp: true, resolveHost: async () => ['93.184.216.34'] }),
+        request: async () => ({ status, headers: { 'content-type': 'text/html' }, body: Buffer.from('secret error page') }) });
+      await assert.rejects(() => fetcher.fetchText('http://public.example/article'), (error: any) => {
+        assert.equal(error.code, 'WEB_HTTP_STATUS_REJECTED');
+        assert.equal(error.httpStatus, status);
+        assert.doesNotMatch(error.message, /secret/);
+        return true;
+      });
+    }
+  });
+
   it("rejects oversized and non-text responses before exposing their bodies", async () => {
     const policy = new NetworkAccessPolicy({
       resolveHost: async () => ["93.184.216.34"],

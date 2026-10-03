@@ -82,6 +82,9 @@ export function createFactSourceTool(
   const policy = new NetworkAccessPolicy({ allowHttp: true });
   const fetcher = options.fetcher ?? new SecureWebFetcher({ policy });
   const timeoutMs = sourceTimeout(options.timeoutMs);
+  // Do not spend more network calls on the same rejected page in this run.
+  // A new run can try again. Authorization is always checked before this cache.
+  const rejectedReads = new Map<string, ToolExecutionFault>();
 
   return {
     name: "read_fact_source",
@@ -105,6 +108,10 @@ export function createFactSourceTool(
           "Only ledger URLs or URLs returned by this run's search may be read. Search first when enabled; if it requires the author's private evidence use NEEDS_USER_SOURCE.",
         );
       }
+      if (context.abortSignal?.aborted) throw new ToolExecutionFault('ABORTED', '来源原文读取已取消。');
+      const cacheKey = JSON.stringify([context.runId, args.url]);
+      const rejected = rejectedReads.get(cacheKey);
+      if (rejected) throw new ToolExecutionFault(rejected.code, `本轮此来源已读取失败，未重复请求网站。${rejected.message}`, false, { ...rejected.details, cacheHit: true });
       let fetched: SecureWebFetchResult;
       const timeoutController = new AbortController();
       const timer = setTimeout(() => timeoutController.abort(new FactSourceTimeoutError()), timeoutMs);
@@ -127,6 +134,17 @@ export function createFactSourceTool(
         // Keep the security denial, but never echo transport diagnostics or URL secrets.
         const code = error instanceof NetworkPolicyError || error instanceof SecureWebFetchError
           ? error.code : 'FACT_SOURCE_FETCH_UNAVAILABLE';
+        if (error instanceof SecureWebFetchError && code === 'WEB_HTTP_STATUS_REJECTED' &&
+            Number.isInteger(error.httpStatus) && error.httpStatus! >= 100 && error.httpStatus! <= 599) {
+          const status = error.httpStatus!;
+          const meaning = status === 401 ? '来源网站要求身份验证' : status === 403 ? '来源网站拒绝访问'
+            : status === 404 ? '来源页面不存在' : status === 429 ? '来源网站限制请求频率'
+            : status >= 500 ? '来源网站服务异常' : '来源网站未返回成功响应';
+          const fault = new ToolExecutionFault(code, `来源网站返回 HTTP ${status}：${meaning}。不是禁止 http:// 链接，也不是模型或搜索引擎故障。使用已有摘录并注明未读原文，或改用其他来源；不要重试同一页面。`, false, { httpStatus: status });
+          if (rejectedReads.size >= 32) rejectedReads.delete(rejectedReads.keys().next().value!);
+          rejectedReads.set(cacheKey, fault);
+          throw fault;
+        }
         throw new ToolExecutionFault(code, '来源原文未能读取。可以使用已取得的搜索摘录并明确说明限制；不得声称已核对原文，不要反复重试同一来源。');
       } finally { clearTimeout(timer); }
       const text = fetched.content.text;

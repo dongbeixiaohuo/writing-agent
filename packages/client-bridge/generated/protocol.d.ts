@@ -163,6 +163,7 @@ export interface RunDiagnosticTraceStep {
     status: DiagnosticOperationStatus;
     label: string;
     technicalName?: string;
+    httpStatus?: number;
     requestId?: string;
     actorLabel?: string;
     durationMs: number | null;
@@ -191,6 +192,15 @@ export interface RunTraceDetail {
     callId: string | null;
     provider: string | null;
     model: string | null;
+    inputBreakdown?: {
+        totalCharacters: number;
+        basis: string;
+        parts: readonly {
+            key: string;
+            label: string;
+            characters: number;
+        }[];
+    };
     sections: readonly {
         id: 'input' | 'output' | 'schema';
         label: string;

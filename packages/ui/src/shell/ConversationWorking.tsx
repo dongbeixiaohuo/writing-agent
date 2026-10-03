@@ -49,12 +49,12 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
     </aside>}
     {material && !snapshot.liveReply && <aside className={css.materialPreview} data-material-preview aria-label="参考材料预览">
       <div className={css.materialPreviewHeader}>
-        <strong>参考材料预览（{materials.length} 份）</strong>
+        <strong>写作要求与参考素材（{materials.length} 项）</strong>
         {materials.length > 1 && <select aria-label="选择参考材料" value={selectedMaterialIndex} onChange={event => setMaterialIndex(Number(event.target.value))}>
           {materials.map((item, index) => <option value={index} key={item.id}>{item.label}</option>)}
         </select>}
       </div>
-      <p>这是本轮已提供的材料，不是实际进度，不会自动切换。可手动选择并查看节选。</p>
+      <p>这里区分写作要求、来源素材和已保存成果；只展示本轮实际提供的内容，不是实际进度，不会自动切换。可手动选择查看。</p>
       <details data-material-details>
         <summary>查看“{material.label}”节选</summary>
         <div className={css.materialExcerpt}><MarkdownContent content={materialExcerpt(material.text)} /></div>

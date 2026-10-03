@@ -12,6 +12,7 @@ export interface RunFailureContext {
   technicalName?: string | undefined
   errorCode: string | null
   transportPhase?: 'first_response' | 'stream_idle' | undefined
+  httpStatus?: number | undefined
 }
 
 /**
@@ -129,10 +130,16 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
       detail: '本机未能将目标域名解析为可用网络地址；本次未取得网页内容。',
       remediation: '核对来源域名与本机 DNS 状态，或改用其他已授权的公开来源。',
     }
-    if (code === 'WEB_HTTP_STATUS_REJECTED') return {
-      title: '来源站点返回未被接受的 HTTP 状态',
-      detail: '来源读取收到了不允许继续处理的 HTTP 状态；当前失败代码未记录具体状态，不能据此断定是哪一种状态。',
-      remediation: '查看步骤详情是否有独立的 HTTP 状态记录，或改用其他已授权来源。',
+    if (code === 'WEB_HTTP_STATUS_REJECTED') {
+      const status = context.httpStatus;
+      const known = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599;
+      const meaning = status === 401 ? '网站要求身份验证' : status === 403 ? '网站拒绝访问' : status === 404 ? '页面不存在'
+        : status === 429 ? '网站限制请求频率' : known && status >= 500 ? '网站服务异常' : '网站未返回成功响应';
+      return {
+        title: known ? `来源网站返回 HTTP ${status}：${meaning}` : '来源网站未返回成功响应（旧记录缺少状态码）',
+        detail: `${known ? '请求已到达来源网站，但没有取得可确认的原文。' : '旧记录未保存具体 HTTP 状态，不能推断为 403、404 或其他原因。'}这不是禁止 http:// 来源，也不表示模型或搜索引擎失败。`,
+        remediation: '使用已有搜索摘录并注明未读取原文，或换一个公开来源；不要反复重试同一页面。',
+      }
     }
     return {
       title: '已授权来源原文读取失败',

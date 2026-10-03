@@ -37,7 +37,7 @@ test('working materials are a collapsed manual preview, not rotating progress', 
       const snapshot={activeRunId:'run-1',liveReply:'',liveActivity:{runId:'run-1',requestId:'request-1',actor:'research',phase:'receiving',startedAt:1000,lastActivityAt:2000,materials:[{id:'m1',label:'访谈纪要',text:longText},{id:'m2',label:'产品资料',text:'第二份节选'}]}};
       export const html=renderToStaticMarkup(React.createElement(ConversationWorking,{snapshot,bridge:{cancelRun:async()=>{}}}));`,resolveDir:resolve('.'),loader:'tsx'},bundle:true,platform:'node',format:'cjs',outfile:file,jsx:'automatic',loader:{'.css':'empty'},logLevel:'silent'});
     const {html}=createRequire(import.meta.url)(file);
-    assert.match(html, /参考材料预览（2 份）/);
+    assert.match(html, /写作要求与参考素材（2 项）/);
     assert.match(html, /不是实际进度/);
     assert.match(html, /<select[^>]*aria-label="选择参考材料"/);
     assert.match(html, /<option[^>]*value="0"[^>]*selected=""[^>]*>访谈纪要<\/option>/);

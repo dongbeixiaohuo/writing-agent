@@ -132,10 +132,15 @@ export function isNearTraceTail(metrics: Pick<HTMLElement, 'scrollHeight' | 'scr
   return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= threshold
 }
 
-function SectionContent({ detail, sectionId }: { detail: RunTraceDetail | null; sectionId: 'input' | 'output' | 'schema' }) {
+export function SectionContent({ detail, sectionId }: { detail: RunTraceDetail | null; sectionId: 'input' | 'output' | 'schema' }) {
   const section = detail?.sections.find(item => item.id === sectionId)
   if (!section) return <p className="run-trace-missing">该步骤没有保存{sectionId === 'input' ? '输入或工具参数' : sectionId === 'output' ? '响应或工具结果' : '结构化 Schema'}。</p>
   return <div className="run-trace-payload">
+    {sectionId === 'input' && detail?.inputBreakdown && <section aria-label="请求输入构成" className="run-trace-overview-summary">
+      <strong>输入构成 · 共 {detail.inputBreakdown.totalCharacters.toLocaleString('zh-CN')} 字符</strong>
+      <dl>{detail.inputBreakdown.parts.map(part => <div key={part.key}><dt>{part.label}</dt><dd>{part.characters.toLocaleString('zh-CN')} 字符</dd></div>)}</dl>
+      <p>{detail.inputBreakdown.basis}</p>
+    </section>}
     <div className="run-trace-payload-heading"><strong>{section.label}</strong><span>{section.totalCharacters.toLocaleString('zh-CN')} 字符{section.truncated ? ' · 已截断展示' : ''}</span></div>
     {section.format === 'json' ? <pre><code>{section.text}</code></pre> : <Suspense fallback={<pre><code>{section.text}</code></pre>}><MarkdownContent content={section.text} className="run-trace-markdown" /></Suspense>}
     {section.truncated && <p className="run-trace-notice">这是持久化详情的安全截断版本；界面不会自动请求未展示部分。</p>}
@@ -353,6 +358,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
             const failure = step.status === 'failed' || step.status === 'outcome_unknown' ? explainRunFailure({
               kind: step.kind, status: step.status, technicalName: step.technicalName, errorCode: step.errorCode,
               transportPhase: step.transport?.phase,
+              httpStatus: step.httpStatus,
             }) : null
             return <li className={`run-trace-step run-trace-${step.kind} run-trace-${stoppedPending ? 'stopped' : step.status}${isActivePending ? ' run-trace-current' : ''}${isSelected ? ' run-trace-selected' : ''}`}
               key={key} role="presentation" data-run-id={record.id} data-step-id={step.id}>

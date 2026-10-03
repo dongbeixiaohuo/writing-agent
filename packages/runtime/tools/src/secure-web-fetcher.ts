@@ -39,7 +39,7 @@ export type SecureWebFetchErrorCode =
   | "WEB_RESPONSE_TOO_LARGE";
 
 export class SecureWebFetchError extends Error {
-  constructor(public readonly code: SecureWebFetchErrorCode, message: string) {
+  constructor(public readonly code: SecureWebFetchErrorCode, message: string, public readonly httpStatus?: number) {
     super(message);
     this.name = "SecureWebFetchError";
   }
@@ -357,6 +357,7 @@ export class SecureWebFetcher {
         throw new SecureWebFetchError(
           "WEB_HTTP_STATUS_REJECTED",
           "The remote server returned an unsuccessful status",
+          response.status,
         );
       }
 

@@ -245,7 +245,7 @@ function toolDisplayLabel(
   const authorLabels: Record<string, string> = { delegate_author_expert: '安排专项专家', respond_author: '整理回复', attach_author_material: '保存补充材料',
     read_author_web: '读取你提供的网页', read_legacy_style: '读取风格档案', read_style_methodology: '参考风格分析方法',
     propose_author_revision: '准备改稿对比', propose_publication_choices: '准备标题与分发候选', choose_publication: '保存你的标题选择',
-    propose_illustration_plan: '准备配图方案', confirm_illustration_plan: '保存配图方案确认', request_author_fact_check: '安排独立事实核查', read_conversation_history: '回顾此前交流' };
+    propose_illustration_plan: '准备配图方案', confirm_illustration_plan: '保存配图方案确认', request_author_fact_check: '安排独立事实核查', read_author_fact_check: '回顾已保存核查结果', read_conversation_history: '回顾此前交流' };
   if (toolName && authorLabels[toolName]) return authorLabels[toolName]!;
   if (toolName === "submit_writing_stage") {
     const stage = workflowStageArgument(payload);

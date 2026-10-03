@@ -2,6 +2,7 @@ type UnknownRecord = Readonly<Record<string, unknown>>;
 
 const MODEL_ONLY_SOURCE = 'model-knowledge:unverified';
 const MAX_DISPLAYED_CLAIMS = 8;
+const NEXT_ACTION = '**下一步：点击下方“查看当前稿件”，在稿件面板选择格式并点击“导出文章”，保存到本地；不会自动发布到外部平台。**\n\n配图是可选项，需要时直接说“给这篇文章配图建议”；想改文章可继续在对话中提出，修改后需要重新核查。';
 
 function record(value: unknown): UnknownRecord | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -68,6 +69,7 @@ export function factCheckCompletionSummary(assessment: unknown): string {
       '旧记录没有保存可展示的逐条核查说明，因此这里不能还原核查了哪些信息或使用了哪些来源。需要确认细节时，请对这版文章重新核查。',
       '',
       '限制：当时的核查结果通过不代表事实绝对正确。',
+      '', NEXT_ACTION,
     ].join('\n');
   }
 
@@ -88,6 +90,7 @@ export function factCheckCompletionSummary(assessment: unknown): string {
       '核查结果：未识别出需要逐条查证的客观信息。',
       `判断依据：${reason === null ? '旧记录没有保存具体原因。' : bounded(reason, 500)}`,
       '方式与限制：这是对这版文章没有识别出待查证信息的判断，不代表已对未列出的信息做外部验证，也不代表事实绝对正确。',
+      NEXT_ACTION,
     );
     return lines.join('\n\n');
   }
@@ -120,5 +123,5 @@ export function factCheckCompletionSummary(assessment: unknown): string {
   } else {
     lines.push('方式与限制：以上结论依据已保存的材料或来源；这次核查通过不代表事实绝对正确，时效性信息仍应在发布前复验。');
   }
-  return lines.join('\n\n');
+  return [...lines, NEXT_ACTION].join('\n\n');
 }

@@ -65,9 +65,18 @@ export function requestMaterialPreviews(messages: readonly { role: string; conte
     try { state = JSON.parse(offset >= 0 ? message.content.slice(offset + marker.length) : message.content); }
     catch { continue; }
     if (!state || typeof state !== 'object') continue;
+    const requirements = state.writingRequirements as Record<string, unknown> | undefined;
+    for (const [key, label] of [['audience', '目标读者'], ['platform', '发布平台']] as const) {
+      const text = requirements?.[key];
+      if (typeof text !== 'string' || !text.trim() || seenText.has(text)) continue;
+      seenText.add(text);
+      previews.push({ id: `requirement:${key}`, label, text: text.slice(0, 1200) });
+    }
     const artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
     const materials = Array.isArray(state.materials) ? state.materials : Array.isArray(state.authorizedMaterials) ? state.authorizedMaterials : [];
-    for (const item of [...artifacts, ...materials]) {
+    for (const raw of [...artifacts, ...materials]) {
+      const item = raw?.kind === 'evidence' && typeof raw.content === 'object' && raw.content !== null
+        ? { ...raw, content: typeof raw.content.notes === 'string' ? raw.content.notes : '' } : raw;
       if (!item || typeof item.content !== 'string') continue;
       const id = item.id ?? item.contentVersionId;
       if (typeof id !== 'string' || previews.some(p => p.id === id)) continue;
@@ -80,8 +89,11 @@ export function requestMaterialPreviews(messages: readonly { role: string; conte
       // A link-only author message is not a second copy of the fetched article.
       if (/^https?:\/\/\S+$/u.test(text.trim()) || seenText.has(text)) continue;
       seenText.add(text);
-      previews.push({ id, label: item.kind === 'body' ? '本次提供的稿件' : item.kind === 'outline' ? '已保存的提纲' : item.kind === 'evidence' ? '研究素材摘要' : '本次提供的参考材料', text: text.slice(0, 1200) });
-      if (previews.length >= 6) return previews;
+      const title = typeof item.displayName === 'string' && !/^需求对话 /u.test(item.displayName) ? item.displayName : text.replace(/\s+/gu, ' ').trim();
+      const shortTitle = title.length > 32 ? `${title.slice(0, 32)}…` : title;
+      const category = typeof item.materialId === 'string' && item.materialId.startsWith('intake-user-') ? '需求补充' : item.sourceKind === 'web_snapshot' ? '网页素材' : '参考素材';
+      previews.push({ id, label: item.kind === 'body' ? '本次提供的稿件' : item.kind === 'outline' ? '已保存的提纲' : item.kind === 'evidence' ? '研究素材摘要' : `${category} · ${shortTitle}`, text: text.slice(0, 1200) });
+      if (previews.length >= 8) return previews;
     }
   }
   return previews;

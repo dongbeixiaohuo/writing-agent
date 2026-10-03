@@ -101,30 +101,17 @@ class BridgeWritingProvider extends ModelProviderBase {
       (message) => message.role === "system" && message.content.includes("专项事实核查员"),
     );
     if (factCheckOnly) {
-      const artifactReads = toolMessages.filter(
-        (message) => message.role === "tool" && message.name === "read_artifact_version",
-      );
       const userMessage = request.messages.find((message) => message.role === "user");
       assert.equal(userMessage?.role, "user");
       const targets = JSON.parse(userMessage?.role === "user" ? userMessage.content : "{}") as {
         bodyVersionId?: string;
         evidenceVersionId?: string;
+        artifacts: { id: string; kind: string; content: unknown }[];
       };
-      if (artifactReads.length < 2) {
-        yield {
-          type: "tool_call_delta",
-          index: 0,
-          id: `fact-read-${artifactReads.length}-${request.requestId}`,
-          name: "read_artifact_version",
-          argumentsDelta: JSON.stringify({
-            versionId: artifactReads.length === 0
-              ? targets.bodyVersionId
-              : targets.evidenceVersionId,
-          }),
-        };
-        yield { type: "completed", finishReason: "tool_calls" };
-        return;
-      }
+      assert.equal(targets.artifacts.find(a => a.id === targets.bodyVersionId)?.content,
+        '# Bridge 持久草稿\n\n这是用户修订后的本地感受。');
+      assert.ok(targets.artifacts.find(a => a.id === targets.evidenceVersionId)?.content);
+      assert.equal(request.tools?.some(tool => tool.name === 'read_artifact_version'), false);
       if (!toolMessages.some((message) => message.role === "tool" && message.name === "submit_fact_check")) {
         yield {
           type: "tool_call_delta",
@@ -1017,6 +1004,9 @@ describe("Application Service client bridge", () => {
         [["fact_check", "completed"]],
       );
       assert.equal(after.runRecords.at(-1)?.publicationReady, true);
+      const completion = JSON.stringify(after.timelineBySession[after.selectedSessionId]);
+      assert.match(completion, /下一步.*查看当前稿件.*导出文章/u);
+      assert.equal(storage.listRunEvents(checked.runId).filter(event => event.type === 'request.dispatch_attempted').length, 1);
       assert.deepEqual(
         after.materialProcessWorkspace.reviews.map((review) => review.id),
         processReviewIds,

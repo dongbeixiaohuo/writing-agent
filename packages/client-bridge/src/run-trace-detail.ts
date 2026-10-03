@@ -1,6 +1,7 @@
 import type { WritingApplicationService } from '../../application/src/index.js';
 import type { RunTraceDetail } from './protocol.js';
 import { explainRunFailure } from './run-failure-explanation.js';
+import { requestInputBreakdown } from './request-input-breakdown.js';
 
 const REDACTED = '[已隐藏敏感信息]';
 const PRIVATE = '[不展示私有推理或服务商续传数据]';
@@ -110,5 +111,6 @@ export function runTraceDetail(source: ReturnType<WritingApplicationService['get
   if (!terminal) notes.push('尚未记录完成结果；运行中请等待，若已停止则保留为结果未记录。');
   if (sections.some(section => section.truncated)) notes.push('长内容仅展示前 64,000 字符；本机原始记录未被修改。');
   return { runId: step.runId, stepId: step.id, requestId, callId,
-    provider: snapshot ? redactText(snapshot.provider) : null, model: snapshot ? redactText(snapshot.model) : null, sections, notes };
+    provider: snapshot ? redactText(snapshot.provider) : null, model: snapshot ? redactText(snapshot.model) : null, sections, notes,
+    ...(isModel && snapshot ? { inputBreakdown: requestInputBreakdown(snapshot.request) } : {}) };
 }
