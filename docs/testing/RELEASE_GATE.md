@@ -1,10 +1,22 @@
 # Writing Agent 桌面发布门禁
 
-更新：2026-09-30。当前候选 **1.0.0-rc.58**，目标为 **公开 Pre-release，不是稳定版**。维护者已授权完成 RC 收尾与发布，并接受未签名安装包；不修改仓库 latest，不删除旧 Skill 或历史 Release。
+更新：2026-10-03。当前公开桌面版 **1.0.0-rc.63**，为 **Pre-release，不是稳定版**。维护者已授权同步源码与更新下载包，并接受未签名安装包；不修改仓库 latest，不删除旧 Skill 或历史 Release。
 
-当前状态：**[rc.58 已公开发布为 Pre-release](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58)**。源码锁定 `cdfe876df1d275b617189d1408217227877d6699`，Windows 候选工作流 `36686059037` 全部通过，公开安装包重新下载校验一致。执行记录见 [rc.58 收尾](../launch/RC58_RELEASE_EXECUTION.md)。
+当前状态：**[rc.63 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.63)**。源码锁定 `2b31ecc779bc94f9f10164021656771048eae912`，[Windows 候选工作流 37084961515](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/37084961515) 全部通过。执行与资产校验记录见 [rc.63 发布记录](../launch/RC63_RELEASE_EXECUTION.md)。
 
-## RC 必须完成
+## RC63 本次发布检查
+
+- [x] 源码经 PR #18 的五项必需检查后合并，没有绕过分支保护。
+- [x] 最终合并 SHA 在干净 Windows Runner 通过 Runtime、UI、Bridge、Desktop、搜索专项、Python、文档/镜像、依赖审计和打包检查。
+- [x] 安装、启动、卸载通过；从 RC58 标签重建的旧版升级 RC63 后，安装项、快捷方式和合成数据哨兵检查通过。
+- [x] 六个公开附件与构建产物校验一致；公开安装包无登录重新下载验证，未签名风险与升级备份要求明确披露。
+- [x] 保留 Skill latest 与历史 Release，桌面 RC 独立命名；首页使用已公开的 RC63 下载链接。
+
+本次过程展示与运行轨迹的验证见 [过程可见性](2026-10-03-process-visibility.md)和[运行轨迹检查器](2026-10-03-run-trace-inspector.md)。自动回归、合成 UI 样例和安装脚本不等于完整人工旅程，也不代表所有模型、文章和历史项目已经验收。以下 RC58 实测仅作为有日期的历史基线，不冒充 RC63 当日重新实测。
+
+## RC58 历史发布基线（2026-09-30）
+
+[rc.58 发布记录](../launch/RC58_RELEASE_EXECUTION.md)：源码 `cdfe876df1d275b617189d1408217227877d6699`，候选工作流 `36686059037`。
 
 - [x] 未签名风险取得明确接受；下载说明不要求关闭安全防护。
 - [x] 模型接口拒绝 HTTP 重定向；OpenAI Chat / Anthropic 真实 307 负向回归通过。
@@ -19,7 +31,7 @@
 - [x] 发布内容不含 Key、用户数据库、私人正文、业务报告或无关临时文件；精确暂存与分发边界检查，六个附件逐一核对 GitHub digest 与本地哈希。
 - [x] README、快速开始、Release 说明包含 RC 限制、费用、备份与反馈入口。
 
-## 当前实测与局限
+## 历史实测与持续适用的局限
 
 自然语言确认与标题连续性已有 [rc.54](RC54_CONTEXTUAL_CONFIRMATION.md)、[rc.55](RC55_STAGE_CONFIRMATION_RECOVERY.md)、[rc.56](RC56_TITLE_SELECTION_CONTINUITY.md) 专项证据；不据此宣称任意模型、任意长历史都可靠。当前回归以最终执行记录为准。
 
