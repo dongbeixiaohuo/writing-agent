@@ -210,7 +210,13 @@ for (const protocol of ["openai", "anthropic"] as const) {
 }
 
 it("Anthropic thinking deltas count as private progress without exposing their text", async () => {
-  const events = await localRun("anthropic", 75, (response) => {
+  // Like the public-content case above, keep real HTTP scheduling headroom,
+  // while requiring progress to survive longer than one phase deadline.
+  const phaseTimeoutMs = 1_000;
+  let streamStartedAt = 0;
+  let streamFinishedAt = 0;
+  const events = await localRun("anthropic", phaseTimeoutMs, (response) => {
+    streamStartedAt = performance.now();
     headers(response, "anthropic");
     response.write('event: message_start\ndata: {"type":"message_start","message":{"id":"local-thinking-message-id"}}\n\n');
     response.write('event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n');
@@ -219,12 +225,14 @@ it("Anthropic thinking deltas count as private progress without exposing their t
       response.write('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"private thought"}}\n\n');
       if (++count === 4) {
         clearInterval(interval);
+        streamFinishedAt = performance.now();
         finish(response, "anthropic");
       }
-    }, 30);
+    }, 300);
     response.on("close", () => clearInterval(interval));
   });
   assert.equal(events.at(-1)?.type, "completed");
+  assert.ok(streamFinishedAt - streamStartedAt > phaseTimeoutMs);
   assert.equal(events.filter((event) => event.type === "response_activity" && event.phase === "reasoning").length, 4);
   assert.ok(events.every((event) => JSON.stringify(event).includes("private thought") === false));
 });
