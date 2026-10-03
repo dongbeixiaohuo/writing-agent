@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 
@@ -28,6 +29,7 @@ export type SecureWebFetchErrorCode =
   | "WEB_HTTP_STATUS_REJECTED"
   | "WEB_REDIRECT_INVALID"
   | "WEB_REDIRECT_LIMIT_EXCEEDED"
+  | "WEB_REQUEST_ABORTED"
   | "WEB_REQUEST_FAILED"
   | "WEB_RESPONSE_TOO_LARGE";
 
@@ -46,6 +48,7 @@ export interface SecureWebTransportResponse {
 
 export type SecureWebRequest = (
   target: AllowedNetworkTarget,
+  signal?: AbortSignal,
 ) => Promise<SecureWebTransportResponse>;
 
 export interface SecureWebFetcherOptions {
@@ -130,7 +133,10 @@ function createPinnedRequest(
   maxBytes: number,
   timeoutMs: number,
 ): SecureWebRequest {
-  return async (target) => {
+  return async (target, signal) => {
+    if (signal?.aborted) {
+      throw new SecureWebFetchError("WEB_REQUEST_ABORTED", "The network request was aborted");
+    }
     const targetUrl = new URL(target.url);
     const pinnedAddress = target.resolvedAddresses[0];
     if (pinnedAddress === undefined) {
@@ -150,16 +156,24 @@ function createPinnedRequest(
 
     return new Promise<SecureWebTransportResponse>((resolve, reject) => {
       let settled = false;
+      let request: ReturnType<typeof httpsRequest> | undefined;
+      let activeResponse: IncomingMessage | undefined;
+      const onAbort = (): void => {
+        finish(new SecureWebFetchError("WEB_REQUEST_ABORTED", "The network request was aborted"));
+        activeResponse?.destroy();
+        request?.destroy();
+      };
       const finish = (
         error: SecureWebFetchError | null,
         response?: SecureWebTransportResponse,
       ): void => {
         if (settled) return;
         settled = true;
+        signal?.removeEventListener("abort", onAbort);
         if (error !== null) reject(error);
         else if (response !== undefined) resolve(response);
       };
-      const request = httpsRequest(
+      request = httpsRequest(
         targetUrl,
         {
           method: "GET",
@@ -173,6 +187,7 @@ function createPinnedRequest(
           timeout: timeoutMs,
         },
         (response) => {
+          activeResponse = response;
           const headers = normalizeHeaders(response.headers);
           const declaredLength = Number.parseInt(headers["content-length"] ?? "", 10);
           if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
@@ -236,6 +251,11 @@ function createPinnedRequest(
           ),
         );
       });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
       request.end();
     });
   };
@@ -264,14 +284,20 @@ export class SecureWebFetcher {
     this.#request = options.request ?? createPinnedRequest(maxBytes, timeoutMs);
   }
 
-  async fetchText(input: string): Promise<SecureWebFetchResult> {
+  async fetchText(input: string, signal?: AbortSignal): Promise<SecureWebFetchResult> {
+    if (signal?.aborted) {
+      throw new SecureWebFetchError("WEB_REQUEST_ABORTED", "The network request was aborted");
+    }
     let target = await this.#policy.assertAllowed(input);
+    if (signal?.aborted) {
+      throw new SecureWebFetchError("WEB_REQUEST_ABORTED", "The network request was aborted");
+    }
     let redirectCount = 0;
 
     while (true) {
       let response: SecureWebTransportResponse;
       try {
-        response = await this.#request(target);
+        response = await this.#request(target, signal);
       } catch (error) {
         if (error instanceof SecureWebFetchError) throw error;
         throw new SecureWebFetchError(
@@ -301,6 +327,9 @@ export class SecureWebFetcher {
           );
         }
         target = await this.#policy.assertAllowedRedirect(target.url, location);
+        if (signal?.aborted) {
+          throw new SecureWebFetchError("WEB_REQUEST_ABORTED", "The network request was aborted");
+        }
         redirectCount += 1;
         continue;
       }

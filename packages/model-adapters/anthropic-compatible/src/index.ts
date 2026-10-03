@@ -12,7 +12,7 @@ import {
   type ProviderTokenUsage,
 } from "../../../runtime/llm/src/index.js";
 import { TransportDeadline } from "../../../runtime/llm/src/transport-deadline.js";
-import { sanitizeProviderErrorDetail, DEFAULT_MAX_OUTPUT_TOKENS } from "../../openai-compatible/src/index.js";
+import { interruptedStream, sanitizeProviderErrorDetail, DEFAULT_MAX_OUTPUT_TOKENS } from "../../openai-compatible/src/index.js";
 
 export interface AnthropicCompatibleModelCapabilities {
   readonly tools: CapabilitySupport;
@@ -88,6 +88,7 @@ interface SseEvent {
 interface StreamBlock {
   readonly type: "text" | "tool_use" | "thinking";
   argumentsMode: "none" | "start" | "delta";
+  stopped: boolean;
 }
 
 const ADAPTER_VERSION = "anthropic-messages-v1";
@@ -788,6 +789,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
         | "content_filter"
         | undefined;
       let sawMessageStop = false;
+      let sawMessageStart = false;
       let sawUsage = false;
 
       for await (const payload of parseSse(response.body)) {
@@ -814,6 +816,10 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
             if (!isRecord(chunk.message)) {
               throw invalidResponse("message_start 结构无效", providerRequestId);
             }
+            if (sawMessageStart || typeof chunk.message.id !== "string" || chunk.message.id.length === 0) {
+              throw invalidResponse("message_start 缺少稳定的 message id 或出现重复", providerRequestId);
+            }
+            sawMessageStart = true;
             if (chunk.message.usage !== undefined) {
               if (!isRecord(chunk.message.usage)) {
                 throw invalidResponse("message_start usage 无效", providerRequestId);
@@ -839,7 +845,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
               if (typeof text !== "string") {
                 throw invalidResponse("text content block 无效", providerRequestId);
               }
-              blocks.set(index, { type: "text", argumentsMode: "none" });
+              blocks.set(index, { type: "text", argumentsMode: "none", stopped: false });
               if (text.length > 0) {
                 deadline.content();
                 yield { type: "response_activity", phase: "content" };
@@ -848,11 +854,11 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
               break;
             }
             if (chunk.content_block.type === "thinking") {
-              blocks.set(index, { type: "thinking", argumentsMode: "none" });
+              blocks.set(index, { type: "thinking", argumentsMode: "none", stopped: false });
               const thinking = chunk.content_block.thinking;
               if (typeof thinking === "string" && thinking.length > 0) {
                 deadline.content();
-                yield { type: "response_activity", phase: "content" };
+                yield { type: "response_activity", phase: "reasoning" };
               }
               break;
             }
@@ -876,6 +882,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
               blocks.set(index, {
                 type: "tool_use",
                 argumentsMode: serializedInput.length === 0 ? "none" : "start",
+                stopped: false,
               });
               deadline.content();
               yield { type: "response_activity", phase: "content" };
@@ -900,7 +907,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
             }
             const index = chunk.index as number;
             const block = blocks.get(index);
-            if (block === undefined) {
+            if (block === undefined || block.stopped) {
               throw invalidResponse("content block delta 缺少 start", providerRequestId);
             }
             if (chunk.delta.type === "text_delta" && block.type === "text") {
@@ -945,7 +952,7 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
               }
               if (chunk.delta.thinking.length > 0) {
                 deadline.content();
-                yield { type: "response_activity", phase: "content" };
+                yield { type: "response_activity", phase: "reasoning" };
               }
               break;
             }
@@ -963,17 +970,21 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
             }
             const index = chunk.index as number;
             const block = blocks.get(index);
-            if (block === undefined) {
+            if (block === undefined || block.stopped) {
               throw invalidResponse("content block stop 缺少 start", providerRequestId);
             }
             if (block.type === "tool_use" && block.argumentsMode === "none") {
               yield { type: "tool_call_delta", index, argumentsDelta: "{}" };
             }
+            block.stopped = true;
             break;
           }
           case "message_delta": {
             if (!isRecord(chunk.delta)) {
               throw invalidResponse("message_delta 结构无效", providerRequestId);
+            }
+            if ([...blocks.values()].some((block) => !block.stopped)) {
+              throw invalidResponse("message_delta 前存在未结束的 content block", providerRequestId);
             }
             finishReason = mapFinishReason(chunk.delta.stop_reason);
             if (chunk.usage !== undefined || startUsage !== undefined) {
@@ -989,6 +1000,9 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
             break;
           }
           case "message_stop":
+            if (!sawMessageStart || [...blocks.values()].some((block) => !block.stopped)) {
+              throw invalidResponse("message_stop 时响应结构仍不完整", providerRequestId);
+            }
             sawMessageStop = true;
             break;
           default:
@@ -996,9 +1010,8 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
         }
       }
 
-      if (!sawMessageStop || finishReason === undefined) {
-        throw invalidResponse("模型流在 message_stop 前结束", providerRequestId);
-      }
+      if (!sawMessageStop) throw interruptedStream(providerRequestId);
+      if (finishReason === undefined) throw invalidResponse("模型完成事件缺少结束原因", providerRequestId);
       yield {
         type: "completed",
         finishReason,

@@ -472,6 +472,60 @@ describe("OpenAI-compatible provider", () => {
     });
   });
 
+  it("treats reasoning_content as private progress without exposing it as answer text", async () => {
+    await withLocalServer((_request, response) => {
+      void (async () => {
+        response.writeHead(200, {
+          "content-type": "text/event-stream; charset=utf-8",
+          "x-request-id": "provider-reasoning-1",
+        });
+        response.flushHeaders();
+        for (let index = 0; index < 5; index += 1) {
+          response.write(`data: ${JSON.stringify({
+            id: "chatcmpl-reasoning-1",
+            choices: [{
+              index: 0,
+              delta: { reasoning_content: `PRIVATE_REASONING_${index}` },
+              finish_reason: null,
+            }],
+          })}\n\n`);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-reasoning-1",
+          choices: [{ index: 0, delta: { content: "完成。" }, finish_reason: null }],
+        })}\n\n`);
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-reasoning-1",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`);
+        response.end("data: [DONE]\n\n");
+      })().catch((error: unknown) => response.destroy(error instanceof Error ? error : new Error(String(error))));
+    }, async (baseURL) => {
+      const provider = new OpenAICompatibleProvider({
+        id: "local-openai-reasoning",
+        baseURL,
+        credentialRef: "test/openai-compatible",
+        resolveCredential: async () => fakeApiKey,
+        allowInsecureHttp: true,
+        timeoutMs: 200,
+        streamIdleTimeoutMs: 200,
+        models: { "mock-text-model": { tools: "supported", usage: "reported" } },
+      });
+      const events = await collectModelEvents(provider.stream({
+        requestId: "request-reasoning-1",
+        model: "mock-text-model",
+        messages: [{ role: "user", content: "测试长推理" }],
+        parameters: {},
+      }));
+
+      assert.equal(events.at(-1)?.type, "completed");
+      assert.ok(events.some((event) => event.type === "response_activity" && (event.phase as string) === "reasoning"));
+      assert.equal(events.filter((event) => event.type === "text_delta").map((event) => event.type === "text_delta" ? event.delta : "").join(""), "完成。");
+      assert.equal(JSON.stringify(events).includes("PRIVATE_REASONING"), false);
+    });
+  });
+
   it("rejects 307 redirects without forwarding the authorization secret", async () => {
     let redirectedRequests = 0;
     let redirectedAuthorization: string | undefined;
@@ -532,7 +586,7 @@ describe("OpenAI-compatible provider", () => {
     assert.equal(JSON.stringify(events).includes("missing/key"), false);
   });
 
-  it("rejects a truncated SSE stream even when a finish reason arrived", async () => {
+  it("classifies EOF before [DONE] as an interrupted retryable transport even after a finish reason", async () => {
     await withLocalServer((_request, response) => {
       response.writeHead(200, {
         "content-type": "text/event-stream; charset=utf-8",
@@ -569,8 +623,53 @@ describe("OpenAI-compatible provider", () => {
       const terminal = events.at(-1);
       assert.equal(terminal?.type, "error");
       if (terminal?.type !== "error") return;
-      assert.equal(terminal.error.code, "MODEL_RESPONSE_INVALID");
+      assert.equal(terminal.error.code, "NETWORK_ERROR");
+      assert.equal(terminal.error.retryable, true);
       assert.equal(terminal.error.providerRequestId, "provider-truncated-1");
+    });
+  });
+
+  it("keeps a [DONE] stream without a finish reason non-retryable and malformed", async () => {
+    await withLocalServer((_request, response) => {
+      sendSse(response, [{
+        id: "chatcmpl-malformed-complete-1",
+        choices: [{ index: 0, delta: { content: "没有结束原因" }, finish_reason: null }],
+      }]);
+    }, async (baseURL) => {
+      const events = await collectModelEvents(createProvider(baseURL).stream({
+        requestId: "request-malformed-complete-1",
+        model: "mock-text-model",
+        messages: [{ role: "user", content: "测试结束原因" }],
+        parameters: {},
+      }));
+      const terminal = events.at(-1);
+      assert.equal(terminal?.type, "error");
+      if (terminal?.type !== "error") return;
+      assert.equal(terminal.error.code, "MODEL_RESPONSE_INVALID");
+      assert.equal(terminal.error.retryable, false);
+    });
+  });
+
+  it("rejects conflicting response ids instead of merging different completions", async () => {
+    await withLocalServer((_request, response) => {
+      sendSse(response, [
+        { id: "chatcmpl-one", choices: [{ index: 0, delta: { content: "前" }, finish_reason: null }] },
+        { id: "chatcmpl-two", choices: [{ index: 0, delta: { content: "后" }, finish_reason: null }] },
+        { id: "chatcmpl-two", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+      ]);
+    }, async (baseURL) => {
+      const events = await collectModelEvents(createProvider(baseURL).stream({
+        requestId: "request-conflicting-response-id",
+        model: "mock-text-model",
+        messages: [{ role: "user", content: "测试响应 id" }],
+        parameters: {},
+      }));
+      assert.equal(events.at(-1)?.type, "error");
+      const terminal = events.at(-1);
+      if (terminal?.type !== "error") return;
+      assert.equal(terminal.error.code, "MODEL_RESPONSE_INVALID");
+      assert.equal(terminal.error.retryable, false);
+      assert.equal(events.some((event) => event.type === "completed"), false);
     });
   });
 

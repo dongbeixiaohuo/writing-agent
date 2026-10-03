@@ -5,7 +5,7 @@ import {
 import { TransportDeadline } from '../../../runtime/llm/src/transport-deadline.js';
 import {
   validateBaseURL, validateCredential, serializeMessages, invalidRequest, invalidResponse,
-  mapHttpError, parseSse, sanitizeProviderErrorDetail, DEFAULT_MAX_OUTPUT_TOKENS, type OpenAICompatibleProviderOptions,
+  interruptedStream, mapHttpError, parseSse, sanitizeProviderErrorDetail, DEFAULT_MAX_OUTPUT_TOKENS, type OpenAICompatibleProviderOptions,
 } from '../../openai-compatible/src/index.js';
 
 const VERSION = 'openai-responses-v1';
@@ -145,6 +145,7 @@ export class OpenAIResponsesProvider extends ModelProviderBase {
         } else if (type === 'response.output_item.done' && record(e.item) && e.item.type === 'reasoning') {
           if (!nonempty(e.item.id) || !nonempty(e.item.encrypted_content) || !Number.isSafeInteger(e.output_index)) throw invalidResponse('Responses 缺少可续接的加密推理信息');
           reasoning.set(e.output_index as number, { type: 'reasoning', id: e.item.id, encrypted_content: e.item.encrypted_content, summary: [] });
+          deadline.content(); yield { type: 'response_activity', phase: 'reasoning' };
         } else if (type === 'response.output_item.done' && record(e.item) && e.item.type === 'function_call') {
           const call = calls.get(e.output_index as number);
           if (!call || call.id !== e.item.call_id || call.name !== e.item.name || call.arguments !== e.item.arguments) throw invalidResponse('Responses 完成工具与增量不一致');
@@ -171,13 +172,13 @@ export class OpenAIResponsesProvider extends ModelProviderBase {
             ...(providerDetail === undefined ? {} : { providerDetail }) });
         } else if (type.startsWith('response.reasoning') && typeof e.delta === 'string' && e.delta.length > 0) {
           // Activity only. Internal reasoning is not article text or a user-visible answer.
-          deadline.content(); yield { type: 'response_activity', phase: 'content' };
+          deadline.content(); yield { type: 'response_activity', phase: 'reasoning' };
         } else if (!['response.created', 'response.queued', 'response.in_progress', 'response.output_item.added', 'response.output_item.done',
           'response.content_part.added', 'response.content_part.done', 'response.output_text.done', 'response.output_text.annotation.added', 'response.refusal.done'].includes(type) && !type.startsWith('response.reasoning')) {
           throw invalidResponse('Responses 返回了未支持的事件');
         }
       }
-      throw invalidResponse('Responses 流缺少完成事件');
+      throw interruptedStream(providerRequestId);
     } catch (error) {
       if (request.signal?.aborted) throw new ModelProviderFailure({ code: 'ABORTED', message: '模型请求已取消', retryable: false });
       const timeout = deadline.error(providerRequestId);

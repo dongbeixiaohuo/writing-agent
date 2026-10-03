@@ -62,6 +62,47 @@ function setup(provider: AuthorProvider) {
 }
 const input = (userInstruction: string) => ({ projectId: 'p', sessionId: 'conversation', model: 'mock', parameters: {}, userInstruction });
 
+it('defers fact checking with one semantic decision, keeping the draft unverified and the stopped run stopped', async () => {
+  const provider = new AuthorProvider([{ name: 'interpret_author_reply', args: { intent: 'defer_fact_check', reason: '作者要求暂缓核查，保留工作稿' } }]);
+  const f = setup(provider);
+  try {
+    f.storage.createSession({ projectId: 'p', sessionId: 'conversation', purpose: 'writing-pack:draft' });
+    f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'stopped', purpose: 'writing-pack:draft', planVersion: 'test' });
+    f.storage.finishRun({ projectId: 'p', runId: 'stopped', operationId: 'stop', status: 'cancelled', stopReason: 'USER_CANCELLED' });
+    const service = new WritingApplicationService({ storage: f.storage, provider });
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId;
+    const result = await service.startAuthorTurn(input('核查的部分跳过吧')).result;
+    assert.equal(result.ok, true);
+    assert.equal(provider.requests.length, 1, 'a control decision must not generate another long reply or save request');
+    const saved = JSON.parse(f.storage.listArtifactVersions('p', 'report', `author-turn:${result.runId}`).at(-1)!.content);
+    assert.match(saved.reply, /暂缓.*核查/);
+    assert.match(saved.reply, /未核查|尚未核查/);
+    assert.equal(saved.requestedAction, null);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
+    assert.notEqual(f.storage.getFactCheckStatus('p').status, 'passed');
+    assert.equal(f.storage.getRun('stopped')!.status, 'cancelled');
+  } finally { f.close(); }
+});
+
+it('persists ordinary streamed author replies without asking the model to copy them into a save tool', async () => {
+  class PlainAuthor extends AuthorProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      this.requests.push(structuredClone(request));
+      yield { type: 'text_delta', delta: '目前正文仍在，可以先阅读。' };
+      yield { type: 'completed', finishReason: 'stop' };
+    }
+  }
+  const provider = new PlainAuthor([]); const f = setup(provider);
+  try {
+    const result = await f.service.startAuthorTurn(input('现在稿子还在吗')).result;
+    assert.equal(result.ok, true);
+    assert.equal(provider.requests.length, 1);
+    const saved = JSON.parse(f.storage.listArtifactVersions('p', 'report', `author-turn:${result.runId}`).at(-1)!.content);
+    assert.equal(saved.reply, '目前正文仍在，可以先阅读。');
+    assert.match(provider.requests[0]!.messages[0]!.content, /普通文本流式输出.*程序.*自动保存/u);
+  } finally { f.close(); }
+});
+
 it('corrects a text-only formal-check handoff using the available tool, never an unavailable reply tool', async () => {
   class TextThenHandoff extends AuthorProvider {
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
@@ -286,6 +327,43 @@ it('streams an author discussion before saving without changing the current manu
     assert.equal(f.service.getLiveReply('p', 'conversation', handle.runId), null);
     assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, before);
   } finally { release(); await handle?.result; f.close(); }
+});
+
+it('can save supplementary material during a review discussion without treating its compound approval as handoff', async () => {
+  class ReviewMaterialProvider extends AuthorProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      this.requests.push(request);
+      if (this.requests.length === 1) {
+        assert.ok(request.tools?.some(tool => tool.name === 'attach_author_material'));
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'attach_author_material',
+          argumentsDelta: JSON.stringify({ name: '补充观察', role: 'illustrative' }) };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      } else {
+        yield { type: 'text_delta', delta: '补充材料已保存。先核对它对当前建议的影响，再确认交接。' };
+        yield { type: 'completed', finishReason: 'stop' };
+      }
+    }
+  }
+  const f = setup(new ReviewMaterialProvider([]));
+  try {
+    f.storage.createSession({ projectId: 'p', sessionId: 'conversation', purpose: 'writing-pack:draft' });
+    f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'review-wait', planVersion: 'test', purpose: 'writing-pack:draft' });
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId;
+    f.storage.commitArtifactVersion({ projectId: 'p', operationId: 'review', expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+      kind: 'review', logicalKey: 'review_editor:review-wait', baseVersionId: null,
+      content: JSON.stringify({ content: '开头可更具体。', bodyVersionId: bodyId, reviewType: 'review_editor' }),
+      reason: 'review', actor: { kind: 'agent', id: 'review_editor', runId: 'review-wait' } });
+    f.storage.pauseRun({ projectId: 'p', runId: 'review-wait', operationId: 'pause', reason: 'CO_CREATION_CHECKPOINT',
+      payload: { stage: 'review_editor', nextStage: 'review_publish' } });
+    const message = '可以，顺便把这句存为参考材料：窗边的夜景。先记下来再继续。';
+    const result = await f.service.startAuthorTurn(input(message)).result;
+    assert.equal(result.ok, true);
+    const material = f.storage.listMaterials('p').find(m => m.displayName === '补充观察');
+    assert.equal(material?.content, message);
+    assert.ok(f.storage.getWritingBriefVersion(f.storage.inspectProject('p')!.currentBriefVersionId!)?.brief.materialIds.includes(material!.id));
+    assert.equal(f.storage.getRun('review-wait')?.status, 'waiting_user');
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
+  } finally { f.close(); }
 });
 
 for (const entry of ['checkpoint', 'composer'] as const) it(`keeps natural title feedback conversational through ${entry}, without resuming fact check`, async () => {

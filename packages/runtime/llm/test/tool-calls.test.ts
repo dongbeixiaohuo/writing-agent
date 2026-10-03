@@ -64,6 +64,20 @@ function scenarioWithArguments(
 }
 
 describe("safe streamed tool-call assembly", () => {
+  it("returns safe correction feedback for malformed JSON without exposing argument content", async () => {
+    const provider = new MockModelProvider(scenarioWithArguments('{"materialId":"PRIVATE_SOURCE",}'));
+    const events = await collectModelEvents(provider.stream(toolRequest));
+    assert.equal(events.some(event => event.type === 'tool_call_complete'), false);
+    const error = events.find(event => event.type === 'error');
+    assert.equal(error?.type, 'error');
+    if (error?.type !== 'error') return;
+    assert.equal(error.error.code, 'MODEL_RESPONSE_INVALID');
+    assert.equal(error.error.retryable, false, 'syntax errors require correction, not a blind network retry');
+    assert.equal(error.error.toolSchemaFeedback?.toolName, 'read_material');
+    assert.equal(error.error.toolSchemaFeedback?.issues[0]?.rule, 'json_syntax');
+    assert.doesNotMatch(JSON.stringify(error.error), /PRIVATE_SOURCE/);
+  });
+
   it("emits an executable call only after complete JSON passes its tool schema", async () => {
     const provider = new MockModelProvider(loadMockScenario(toolFixturePath));
     const events = await collectModelEvents(provider.stream(toolRequest));

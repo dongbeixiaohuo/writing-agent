@@ -121,7 +121,7 @@ interface ProposalAuthorizationInput {
 
 interface ConfirmationInput {
   readonly proposalVersionId: string;
-  readonly sourceQuote: string;
+  readonly sourceQuote?: string;
 }
 
 interface RespondWritingIntakeArgs {
@@ -144,6 +144,7 @@ export interface IntakeToolResponse {
 
 export interface ConversationIntakeTool {
   readonly definition: ToolDefinition<RespondWritingIntakeArgs, JsonValue>;
+  readonly proposalDefinition: ToolDefinition<ProposalInput, JsonValue>;
   response(runId: string): IntakeToolResponse | null;
 }
 
@@ -925,13 +926,15 @@ export function createConversationIntakeTool(input: {
       type: "object",
       properties: {
         reply: { type: "string", minLength: 1, maxLength: 8_000 },
-        summary: { type: "string", minLength: 1, maxLength: 8_000 },
+        summary: { type: "string", minLength: 1, maxLength: 8_000,
+          description: "Required top-level conversation summary, alongside reply and questions. Never nest it inside proposal or brief." },
         questions: { type: "array", maxItems: 2, items: { type: "string", minLength: 1, maxLength: 1_000 } },
         invalidateProposal: {
           type: "boolean",
           description: "Set true when the user changed or rejected a pending direction and no replacement proposal is ready yet.",
         },
         proposal: {
+          description: "Optional tentative proposal. Contains brief and assumptions, optionally authorization. summary belongs at the top level, not here.",
           anyOf: [
             { type: "null" },
             {
@@ -959,7 +962,7 @@ export function createConversationIntakeTool(input: {
                 proposalVersionId: { type: "string", minLength: 1 },
                 sourceQuote: { type: "string", minLength: 1 },
               },
-              required: ["proposalVersionId", "sourceQuote"],
+              required: ["proposalVersionId"],
               additionalProperties: false,
             },
           ],
@@ -999,6 +1002,23 @@ export function createConversationIntakeTool(input: {
           "INTAKE_STATE_CONFLICT",
           "Conversation intake changed while this response was being prepared",
         );
+      }
+      // Semantic decisions are made against the displayed conversation first.
+      // A valid chat reply is not proof that its promised transition was saved.
+      if (input.interpretedIntent?.() === 'propose_direction' && args.proposal == null) {
+        throw new ToolExecutionFault('INTAKE_PROPOSAL_REQUIRED',
+          'The conversation is ready for a proposal. Call respond_writing_intake again with proposal.brief and assumptions; reply/summary alone do not save a proposal. Do not ask the author to repeat their answer.');
+      }
+      if (input.interpretedIntent?.() === 'confirm_direction' && previous.phase === 'proposal' &&
+          previous.proposalVersionId !== null && args.proposal == null) {
+        // The model interprets language; the application applies the already
+        // resolved approval to the exact persisted version, even if it omitted
+        // the optional confirmation argument. Explicit conflicting IDs still fail.
+        args = { ...args, proposal: null, invalidateProposal: false, questions: [], confirmation: {
+          proposalVersionId: args.confirmation?.proposalVersionId ?? previous.proposalVersionId,
+          sourceQuote: input.currentUserMessage,
+        } };
+        reply = '已确认这版写作方向，接下来开始写作，并保留各阶段需要你参与的确认环节。';
       }
       const turns = sourceTurns(input.storage, context.projectId);
       let phase = previous.phase;
@@ -1100,10 +1120,10 @@ export function createConversationIntakeTool(input: {
             "Confirmation does not match the current proposal",
           );
         }
-        if (args.confirmation.sourceQuote.trim() !== input.currentUserMessage.trim() || input.interpretedIntent?.() !== 'confirm_direction') {
+        if (input.interpretedIntent?.() !== 'confirm_direction') {
           throw new ToolExecutionFault(
             "INTAKE_CONFIRMATION_SOURCE_INVALID",
-            "Confirmation must quote the current user's affirmative message exactly",
+            "Confirmation must come from the current semantic author decision",
           );
         }
         const proposal = input.storage.getWritingBriefVersion(previous.proposalVersionId);
@@ -1188,7 +1208,35 @@ export function createConversationIntakeTool(input: {
       return response as unknown as JsonValue;
     },
   };
-  return { definition, response: (runId) => responses.get(runId) ?? null };
+  const proposalDefinition: ToolDefinition<ProposalInput, JsonValue> = {
+    name: 'submit_writing_proposal', version: '1.0.0', effect: 'local_idempotent', permissions: ['intake:respond'],
+    description: 'Save the discussed writing direction as a real tentative proposal. Only supply brief, assumptions and optional source-bound authorization. The application renders the summary and asks for confirmation.',
+    inputSchema: { type: 'object', properties: {
+      brief: PROPOSAL_PREFERENCES_TOOL_SCHEMA,
+      assumptions: { type: 'array', items: { type: 'string', minLength: 1 } },
+      authorization: { anyOf: [{ type: 'null' }, PROPOSAL_AUTHORIZATION_TOOL_SCHEMA],
+        description: 'Omit unless the user explicitly provided firsthand experience, style-reference authority, or collaboration-mode authority in a complete source message. Ordinary tone/emotion preferences belong in brief.voice or constraints, not authorization.style. Agreement with the general plan is not separate style authority.' },
+    }, required: ['brief', 'assumptions'], additionalProperties: false },
+    execute(args, context) {
+      if (input.interpretedIntent?.() !== 'propose_direction') {
+        throw new ToolExecutionFault('INTAKE_TRANSITION_INVALID', 'A proposal requires the current semantic readiness decision');
+      }
+      // The same version/provenance/authorization checks as the existing save
+      // path apply. Do not make the model re-encode the whole public reply.
+      const fields = args.brief as Record<string, unknown>;
+      const reply = [`### 写作方向`, String(fields.topic),
+        `- 读者：${fields.audience}`, `- 篇幅：约 ${fields.targetCharacters} 字`,
+        ...(fields.platform ? [`- 发布平台：${fields.platform}`] : []),
+        ...(fields.voice ? [`- 作者口吻：${fields.voice}`] : []),
+        ...(fields.styleReference ? [`- 风格参考：${fields.styleReference}`] : []),
+        ...(Array.isArray(fields.constraints) && fields.constraints.length ? ['### 写作要求', ...fields.constraints.map(item => `- ${item}`)] : []),
+        ...(args.assumptions.length ? ['### 待你确认的建议', ...args.assumptions.map(item => `- ${item}`)] : []),
+        '这版方向可以吗？可以直接认可，也可以告诉我哪里需要调整。',
+      ].join('\n\n');
+      return definition.execute({ reply, summary: '已将讨论方向整理为待确认方案。', questions: [], proposal: args }, context);
+    },
+  };
+  return { definition, proposalDefinition, response: (runId) => responses.get(runId) ?? null };
 }
 
 export function buildConversationIntakePrompt(
@@ -1228,11 +1276,13 @@ export function buildConversationIntakePrompt(
         ? "公开回复已经展示，现在只调用 respond_writing_intake 保存同一条回复及必要状态。reply 保留刚才的公开回复，不重写、不继续聊天。保存指令不是作者的新消息，不能作为确认、材料或授权来源。"
         : "先以普通文本直接给作者本轮完整的自然语言回复，让作者边生成边阅读；不要输出思考过程、工具参数或内部记录。随后调用 respond_writing_intake 保存同一条回复及必要状态，reply 与刚才的公开回复保持一致，不再写第二版。工具保存成功前不要声称已保存、已确认或已完成写作；生成和保存状态由界面展示，不要把这些状态写进回复正文。",
       "信息足以形成可执行方案时，用 respond_writing_intake 的 proposal.brief 提交写作偏好：topic、genre、audience、targetCharacters（整数，例如1200）、constraints、publicationGoal；voice、styleReference、platform 未知时省略或设为 null。用户未明确的信息可以建议，但 reply、summary 和 assumptions 必须说明哪些是建议或推测；还不适合提出方案时只回复和追问，不必为了填字段硬给方案。",
+      "非用户明确要求时，需求澄清阶段不得拟标题或标题候选；用户明确指定的现有标题应原样保留为写作约束，不得误当成待优化候选。如需新拟或比较标题候选，留到后期 title 专家阶段。",
+      "工具参数层级：reply、summary、questions 始终位于顶层；proposal 只放 brief、assumptions 及可选授权，不能把 summary 放进 proposal 或 brief。summary 用简短摘要，不重复完整回复；没有问题时 questions=[]，没有新方案时省略 proposal。只通过工具提交参数，不在公开回复展示这些字段。",
       'reply、summary 和 assumptions 都是给普通作者阅读的中文。用短段落、分组和列表表达；不要展示字段名、英文枚举、null、消息编号或字段赋值来源。仅在 proposal.brief 的结构字段内使用这些程序值。把需要作者决定的建议说清楚，不展示后台填表过程。reply 请放在工具参数的第一项，便于用户尽早看到回复。',
       "对用户只给简短、可读的自然语言摘要，不输出 JSON 字段清单。没有事实材料时可以讨论方向，但不得编造事实、来源、亲历经历或授权。",
       "普通方案的来源由程序直接绑定已保存的完整用户原文，不要填写 sourceQuotes，也不要重新抄写用户原话来证明来源。材料绑定、版本号、共创模式、亲历授权和确认状态都由程序管理，不要生成 schemaVersion、materialIds、interactionMode、authorAuthorization 或 confirmationStatus 等内部字段。不得把你生成或改写的文字当成用户原文、核实材料或亲历材料。方案建议始终待用户确认，程序会在回复中明确标注暂定状态。",
       "用户明确说某条完整消息是本人亲历、明确选定或授权你决定风格、明确选择自主推进或逐步共创时，可以在 proposal.authorization 中提交待确认授权。每项必须提供该消息的 sourceMaterialId 和完整逐字 sourceQuote；不得截取第三方引文、不得用你的概括、不得把建议当授权。它们只有在用户随后确认整个方案后才生效。用户没有明确原话时省略 authorization。",
-      "你不能在首次方案中自行确认。只有已有待确认 proposalVersionId，且本轮语义判断为confirm_direction，才能用 confirmation 绑定该版本；不要求固定措辞或短句，sourceQuote 必须等于当前消息全文。同一轮不能同时修改方案和确认。",
+      "你不能在首次方案中自行确认。只有已有待确认 proposalVersionId，且本轮语义判断为confirm_direction，才能用 confirmation 绑定该版本；不要求固定措辞或短句，sourceQuote 可省略，程序会绑定当前完整消息。同一轮若修改方案，不得确认旧方案，必须把新版保存为待确认。",
       "如果用户改变、否定或要求修改待确认方向，而本轮还不能形成替代方案，必须设置 invalidateProposal=true，使旧确认按钮立即失效；不能继续保留旧 proposalVersionId。",
       "每轮必须且只能成功调用一次 respond_writing_intake，成功后本轮由程序结束。",
     ].join("\n"),

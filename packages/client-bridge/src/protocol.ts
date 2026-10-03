@@ -1,4 +1,4 @@
-export const UI_BRIDGE_PROTOCOL_VERSION = 20
+export const UI_BRIDGE_PROTOCOL_VERSION = 21
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type ConnectionState = 'ready' | 'running' | 'offline'
@@ -153,7 +153,56 @@ export interface RunDiagnosticSegment {
   decisions: readonly RunDiagnosticDecision[]
 }
 
-export interface RunDiagnosticsView { segments: readonly RunDiagnosticSegment[] }
+export interface RunDiagnosticTraceStep {
+  id: string
+  segmentId: string
+  occurredAt: string
+  completedAt: string | null
+  kind: 'model' | 'tool' | 'agent'
+  status: DiagnosticOperationStatus
+  label: string
+  technicalName?: string
+  requestId?: string
+  actorLabel?: string
+  durationMs: number | null
+  inputPreview?: string
+  outputPreview?: string
+  errorCode: string | null
+  stream?: RunDiagnosticModelRequest['stream']
+  transport?: RunDiagnosticModelRequest['transport']
+  providerHttpStatus?: number
+}
+
+export interface RunDiagnosticsView {
+  segments: readonly RunDiagnosticSegment[]
+  /** Optional so older mock/browser snapshots remain readable. */
+  trace?: readonly RunDiagnosticTraceStep[]
+}
+
+export interface RunTraceDetailInput {
+  projectId: string
+  sessionId: string
+  runId: string
+  stepId: string
+}
+
+export interface RunTraceDetail {
+  runId: string
+  stepId: string
+  requestId: string | null
+  callId: string | null
+  provider: string | null
+  model: string | null
+  sections: readonly {
+    id: 'input' | 'output' | 'schema'
+    label: string
+    format: 'json' | 'text'
+    text: string
+    totalCharacters: number
+    truncated: boolean
+  }[]
+  notes: readonly string[]
+}
 
 export interface MaterialSummaryView {
   id: string
@@ -357,7 +406,7 @@ export interface UiSettings {
 }
 
 export interface BridgeSnapshot {
-  liveActivity?: { runId: string; requestId: string; actor: string; phase: 'waiting' | 'connected' | 'receiving'; startedAt: number; lastActivityAt: number | null; segmentStartedAt?: number; requestOrdinal?: number; workPreview?: { label: string; text: string } } | null
+  liveActivity?: { runId: string; requestId: string; actor: string; phase: 'waiting' | 'connected' | 'receiving'; startedAt: number; lastActivityAt: number | null; segmentStartedAt?: number; requestOrdinal?: number; workPreview?: { label: string; text: string }; lastEventKind?: 'reasoning' | 'content' | 'tool_arguments'; receivedEvents?: number; activeTool?: { name: string; startedAt: number }; materials?: readonly { id: string; label: string; text: string }[] } | null
   liveReply?: { runId: string; requestId: string; text: string; id?: string; stage?: string; phase?: 'generating' | 'saving' } | null
   revision: number
   generation: number
@@ -430,6 +479,7 @@ export type UpdateBriefInput = Omit<CreateProjectInput, 'name' | 'mode' | 'mater
 export interface ClientBridge {
   handshake(): Promise<BridgeHandshake>
   getSnapshot(): BridgeSnapshot
+  getRunTraceDetail(input: RunTraceDetailInput): Promise<RunTraceDetail>
   subscribe(listener: () => void): () => void
   selectProject(projectId: string): Promise<void>
   selectSession(projectId: string, sessionId: string): Promise<void>

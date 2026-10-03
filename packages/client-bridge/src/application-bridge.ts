@@ -9,6 +9,7 @@ import { withoutFirstMarkdownHeading } from '../../writing-core/src/index.js';
 import type { RunRecord } from "../../runtime/session/src/index.js";
 import { loopBudgetUsage } from "../../runtime/session/src/index.js";
 import { recoveryInterruption, runDiagnostics } from './run-diagnostics.js';
+import { runTraceDetail } from './run-trace-detail.js';
 import { isPublicationSelectionWait, isUsablePublicationTitle } from '../../application/src/publication-choice.js';
 import {
   workflowStageSequence,
@@ -25,6 +26,8 @@ import {
   type ExportPublicationOptions,
   type ResumeRunOptions,
   type RunRecordView,
+  type RunTraceDetailInput,
+  type RunTraceDetail,
   type SessionSummary,
   type TimelineItem,
   type RecoverableRunSummary,
@@ -238,6 +241,7 @@ function toolDisplayLabel(
   if (toolName === "director_decide") return "写作导演 · 安排下一步";
   if (toolName === "submit_publication_candidates") return "准备标题候选";
   if (toolName === "respond_writing_intake") return "整理本轮回复";
+  if (toolName === "submit_writing_proposal") return "保存待确认写作方向";
   if (toolName === 'interpret_author_reply') return '理解你的回复';
   if (toolName === 'resume_author_checkpoint') return '继续已确认阶段';
   const authorLabels: Record<string, string> = { delegate_author_expert: '安排专项专家', respond_author: '整理回复', attach_author_material: '保存补充材料',
@@ -354,6 +358,7 @@ function modelFailureDetail(code: string | null, providerDetail: string | null =
     AUTH_FAILED: "API Key 无效或没有访问权限，请在“设置 → 模型”中更新 Key 并验证连接。",
     INVALID_REQUEST: "模型服务拒绝了请求，请检查服务类型、API 地址和模型 ID。",
     MODEL_RESPONSE_INVALID: "模型回复未通过格式校验，本轮未完成；你的输入仍保留，可以重试。若反复出现，请反馈运行记录，无需重新填写资料。",
+    MODEL_REQUIRED_TOOL_MISSING: "模型尚未提交本轮需要保存的操作，不能标为完成。你的输入与已保存内容仍保留，可以重试这一步。",
     STAGE_OUTPUT_NOT_SAVED: "这一阶段的内容反复未通过保存校验，已停止自动重写。上一版稿件仍保留；不是模型账户额度或网络故障。请反馈此阶段的运行记录，不必重新填写材料。",
     TOOL_FAILURE_LOOP: "程序提交反复被同一门禁拒绝，已停止自动重试。已保存的内容仍保留；这不是模型账户额度或网络故障。请反馈这条运行记录，或重试当前步骤。",
     MODEL_OUTPUT_TRUNCATED: "模型回复达到单次输出长度上限而被截断，本阶段未完成；残缺内容没有写入稿件，已保存的阶段仍保留。请反馈这条运行记录，无需重新填写资料。",
@@ -441,6 +446,9 @@ function timelineForSession(
     projection.runs.filter((run) => run.status === "completed").map((run) => run.id),
   );
   const displayedArtifactIds = new Set<string>();
+  // A no-change polish can reuse the revision's body version. Content identity
+  // does not replace stage identity: every checkpoint needs its own visible work.
+  const displayedStageArtifacts = new Set<string>();
   const outputPreviewIds = new Map<string, string>();
   const stageMessageRows = new Map<string, number>();
   const intakeRunIds = new Set(projection.events.filter(event => event.type === 'run.started' &&
@@ -488,7 +496,8 @@ function timelineForSession(
       const result = successfulToolResult(event.payload);
       const stage = result === null ? null : workflowStagePayload(result, 'stage');
       const artifactId = result === null ? null : textPayload(result, 'artifactVersionId');
-      if (stage !== null && artifactId !== null && !displayedArtifactIds.has(artifactId)) {
+      const stageArtifactKey = `${event.runId}:${stage}:${artifactId}`;
+      if (stage !== null && artifactId !== null && !displayedStageArtifacts.has(stageArtifactKey)) {
         const artifact = [...projection.workflowArtifacts, ...projection.bodyVersions].find(version => version.id === artifactId);
         if (artifact !== undefined && artifact.kind !== 'evidence') {
           stageMessageRows.set(`${event.runId}:${stage}`, items.length);
@@ -496,6 +505,7 @@ function timelineForSession(
             stage,
             body: `**${WORKFLOW_STAGE_LABELS[stage]} · 已保存**\n\n${workflowArtifactView(artifact)?.content ?? artifact.content}` });
           displayedArtifactIds.add(artifactId);
+          displayedStageArtifacts.add(stageArtifactKey);
           modelRows.delete(event.runId);
         }
       }
@@ -1024,6 +1034,9 @@ export class ApplicationClientBridge implements ClientBridge {
       },
       null,
     );
+    // Recover committed decisions even when the previous page/process disappeared.
+    // Keep this command outside the pure snapshot projection.
+    this.#service.continuePendingHandoffs(this.#model);
   }
 
   async handshake(): Promise<BridgeHandshake> {
@@ -1033,6 +1046,7 @@ export class ApplicationClientBridge implements ClientBridge {
       runtimeBuild: this.#runtimeBuild,
       capabilities: [
         "snapshot.persisted",
+        "run.trace-detail",
         "events.project-seq-replay",
         "project.select",
         "session.select",
@@ -1062,6 +1076,17 @@ export class ApplicationClientBridge implements ClientBridge {
   }
 
   getSnapshot = (): BridgeSnapshot => this.#snapshot;
+
+  async getRunTraceDetail(input: RunTraceDetailInput): Promise<RunTraceDetail> {
+    if (this.#disposed) throw new Error('BRIDGE_DISPOSED');
+    if (!input || [input.projectId, input.sessionId, input.runId, input.stepId].some(value => typeof value !== 'string' || !value || value.length > 512)) {
+      throw new Error('TRACE_SELECTION_INVALID');
+    }
+    if (input.projectId !== this.#snapshot.selectedProjectId || input.sessionId !== this.#snapshot.selectedSessionId) {
+      throw new Error('TRACE_SCOPE_MISMATCH');
+    }
+    return runTraceDetail(this.#service.getRunTraceSource(input));
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
@@ -1462,7 +1487,10 @@ export class ApplicationClientBridge implements ClientBridge {
       const projection = this.#service.getProjectProjection(projectId);
       if (projection.runs.some(run => ACTIVE_STATUSES.has(run.status))) throw new Error('RUN_ALREADY_ACTIVE');
       const state = this.#service.confirmConversationBrief(projectId, proposalVersionId, operationId);
-      return this.#startConfirmedWriting(projectId, state.sessionId ?? this.#snapshot.selectedSessionId, state.summary, `${operationId}:writing`);
+      const handoff = this.#service.continuePendingHandoffs(this.#model).find(item => item.sourceId === state.stateArtifactVersionId);
+      await this.refresh();
+      if (!handoff) throw new Error(this.#service.getHandoffError(projectId, state.sessionId ?? this.#snapshot.selectedSessionId)?.code ?? 'CONVERSATION_HANDOFF_FAILED');
+      return { runId: handoff.runId };
     });
   }
 
@@ -1491,17 +1519,16 @@ export class ApplicationClientBridge implements ClientBridge {
       userInstruction: body, operationId });
     this.#handoffError = null;
     this.#refreshStartedRun(projectId, handle.sessionId);
-    void handle.result.then(result => {
-      if (!this.#disposed && result.ok && result.intake.phase === 'confirmed') {
-        this.#startConfirmedWriting(projectId, handle.sessionId, result.intake.summary, `${operationId}:writing`);
-      }
-    }).catch(error => {
-      // Keep the confirmed plan durable; a failed handoff is shown in the main
-      // conversation and the user can retry without losing the exchange.
-      if (this.#disposed || this.#snapshot.selectedProjectId !== projectId) return;
-      this.#handoffError = { projectId, error: { code: 'CONVERSATION_HANDOFF_FAILED',
-        message: '方向已经保存，但暂时没有成功开始写作。请在这里回复“继续”，或检查模型连接后重试。' } };
-    }).finally(() => this.refresh());
+    void handle.result.finally(() => this.refresh()).catch(() => undefined);
+    return { runId: handle.runId };
+  }
+
+  #startAuthorReply(projectId: string, sessionId: string, body: string, operationId: string): { runId: string } {
+    const handle = this.#service.startAuthorTurn({ projectId, ...(sessionId ? { sessionId } : {}),
+      model: this.#model.model, parameters: this.#model.parameters, userInstruction: body, operationId });
+    this.#handoffError = null;
+    this.#refreshStartedRun(projectId, handle.sessionId);
+    void handle.result.finally(() => this.refresh()).catch(() => undefined);
     return { runId: handle.runId };
   }
 
@@ -1529,7 +1556,7 @@ export class ApplicationClientBridge implements ClientBridge {
         if (projection.brief?.brief.confirmationStatus !== 'confirmed') {
           return this.#startIntake(projectId, this.#snapshot.selectedSessionId || undefined, body, operationId);
         }
-        const waitingTitle = projection.runs.find(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user' &&
+        const waitingTitle = projection.runs.findLast(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user' &&
           isPublicationSelectionWait(projection.events.filter(event => event.runId === run.id && event.type === 'run.waiting_user').at(-1)?.payload));
         const waitingForMaterial = projection.runs.some(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user' && run.stopReason === 'WRITING_INPUT_REQUIRED');
         // Backward-compatible start shortcuts used by existing clients. These
@@ -1540,48 +1567,11 @@ export class ApplicationClientBridge implements ClientBridge {
         // No language whitelist here. The contextual intent tool interprets all
         // stage approvals, title choices, objections and requests to write.
         if (!startShortcut && (!waitingForMaterial || (waitingTitle && !projection.publicationSelectionCurrent))) {
-          const handle = this.#service.startAuthorTurn({ projectId,
-            ...(this.#snapshot.selectedSessionId ? { sessionId: this.#snapshot.selectedSessionId } : {}),
-            model: this.#model.model, parameters: this.#model.parameters, userInstruction: body, operationId });
-          this.#handoffError = null;
-          this.#refreshStartedRun(projectId, handle.sessionId);
-          void handle.result.then(async result => {
-            if (!result.ok || this.#disposed || this.#snapshot.selectedProjectId !== projectId || this.#snapshot.selectedSessionId !== handle.sessionId) return;
-            const latest = this.#service.getProjectProjection(projectId);
-            const action = latest.events.filter(event => event.runId === handle.runId && event.type === 'tool.completed')
-              .map(event => successfulToolResult(event.payload)).find(value => ['fact_check', 'full_writing', 'resume_checkpoint'].includes(String(value?.requestedAction)));
-            if (action && action.bodyVersionId === latest.project.latestBodyVersionId) {
-              if (action.requestedAction === 'fact_check') await this.runFactCheck({ operationId: `${operationId}:fact-check` });
-              else if (action.requestedAction === 'full_writing') this.#startConfirmedWriting(projectId, handle.sessionId, body, `${operationId}:full-writing`);
-              else if (typeof action.checkpointRunId === 'string' && typeof action.intentReceiptId === 'string' && latest.brief) {
-                const resumed = this.#service.resumeDraft({ projectId, runId: action.checkpointRunId, sessionId: handle.sessionId,
-                  operationId: `${operationId}:checkpoint`, decision: 'resume', intentReceiptId: action.intentReceiptId,
-                  expectedProjectRevision: latest.project.revision, expectedBriefVersionId: latest.brief.id,
-                  model: this.#model.model, parameters: this.#model.parameters, userInstruction: body });
-                this.#refreshStartedRun(projectId, resumed.sessionId);
-                void resumed.result.finally(() => this.refresh()).catch(() => undefined);
-              }
-            } else {
-              const selected = latest.events.filter(event => event.runId === handle.runId && event.type === 'tool.completed')
-                .map(event => successfulToolResult(event.payload)).find(value => typeof value?.titleVersionId === 'string' && value.titleVersionId === latest.project.currentTitleVersionId);
-              const awaitingTitle = latest.runs.find(run => run.sessionId === handle.sessionId && run.status === 'waiting_user' &&
-                isPublicationSelectionWait(latest.events.filter(event => event.runId === run.id && event.type === 'run.waiting_user').at(-1)?.payload));
-              if (selected && awaitingTitle) {
-                const lastBody = latest.bodyVersions.filter(artifact => artifact.actor.kind === 'agent' && artifact.actor.runId === awaitingTitle.id).at(-1);
-                if (selected.bodyChangedSinceCandidates === true || (lastBody && lastBody.id !== latest.project.latestBodyVersionId)) {
-                  await this.runFactCheck({ operationId: `${operationId}:check-selected-title` });
-                  this.#service.cancelDraft({ projectId, runId: awaitingTitle.id, operationId: `${operationId}:retire-old-title-wait`, reason: 'current_body_fact_check_started' });
-                } else await this.resumeRun(awaitingTitle.id, 'resume', { feedback: '标题已确认，请继续核查当前稿件', operationId: `${operationId}:continue-after-title` });
-              }
-            }
-          }).catch(error => {
-            if (!this.#disposed && this.#snapshot.selectedProjectId === projectId) this.#handoffError = { projectId, error: { code: 'AUTHOR_ACTION_FAILED', message: '已收到你的意见，但后续阶段尚未启动。已保存内容不受影响；请重试本步。' } };
-          }).finally(() => this.refresh());
-          return { runId: handle.runId };
+          return this.#startAuthorReply(projectId, this.#snapshot.selectedSessionId, body, operationId);
         }
-        const awaitingInput = projection.runs.find(run =>
+        const awaitingInput = projection.runs.findLast(run =>
           run.sessionId === this.#snapshot.selectedSessionId &&
-          run.status === 'waiting_user' && (run.stopReason === 'WRITING_INPUT_REQUIRED' || run.stopReason === 'CO_CREATION_CHECKPOINT'));
+          run.status === 'waiting_user' && run.stopReason === 'WRITING_INPUT_REQUIRED');
         if (awaitingInput !== undefined) {
           await this.resumeRun(awaitingInput.id, 'resume', { feedback: body, operationId: `${operationId}:answer` });
           return { runId: awaitingInput.id };
@@ -1721,8 +1711,11 @@ export class ApplicationClientBridge implements ClientBridge {
         if (run === undefined) throw new Error("RUN_SCOPE_INVALID");
         const waitingEvent = projection.events.filter(event => event.runId === runId && event.type === 'run.waiting_user').at(-1);
         if (run.status === 'waiting_user' && run.stopReason === 'CO_CREATION_CHECKPOINT') {
+          const latestCheckpoint = projection.runs.findLast(candidate => candidate.sessionId === run.sessionId &&
+            candidate.status === 'waiting_user' && candidate.stopReason === 'CO_CREATION_CHECKPOINT');
+          if (latestCheckpoint?.id !== run.id) throw new Error('CHECKPOINT_DECISION_REQUIRED');
           await this.selectSession(projectId, run.sessionId);
-          await this.sendMessage(feedback || '继续下一步', { operationId: `${operationId}:checkpoint-reply` });
+          this.#startAuthorReply(projectId, run.sessionId, feedback || '继续下一步', `${operationId}:checkpoint-reply`);
           return;
         }
         if (run.status === 'waiting_user' && isPublicationSelectionWait(waitingEvent?.payload) && !projection.publicationSelectionCurrent) {
@@ -1734,7 +1727,7 @@ export class ApplicationClientBridge implements ClientBridge {
         }
         const start = projection.events.find(event => event.runId === runId && event.type === 'run.started');
         if (start?.payload.purpose === 'writing-pack:author-conversation') {
-          if (run.status !== 'interrupted' && run.status !== 'waiting_user') throw new Error('RUN_NOT_RECOVERABLE');
+          if (!['interrupted', 'waiting_user', 'budget_exhausted'].includes(run.status)) throw new Error('RUN_NOT_RECOVERABLE');
           if (run.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && decision !== 'retry_unknown') throw new Error('UNKNOWN_OUTCOME_REQUIRES_CONFIRMATION');
           if (projection.runs.some(candidate => candidate.id !== runId && ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');
           const instruction = feedback || textPayload(start.payload, 'displayInstruction');
@@ -1742,11 +1735,11 @@ export class ApplicationClientBridge implements ClientBridge {
           // Retry the scoped author request, never resume it as a full-writing run.
           this.#service.cancelConversationTurn({ projectId, runId, operationId: `${operationId}:retire`, reason: 'author_retry_authorized' });
           await this.selectSession(projectId, run.sessionId);
-          await this.sendMessage(instruction, { operationId: `${operationId}:author-retry` });
+          this.#startAuthorReply(projectId, run.sessionId, instruction, `${operationId}:author-retry`);
           return;
         }
         if (start?.payload.purpose === 'writing-pack:intake') {
-          if (run.status !== 'interrupted' && run.status !== 'waiting_user') throw new Error('RUN_NOT_RECOVERABLE');
+          if (!['interrupted', 'waiting_user', 'budget_exhausted'].includes(run.status)) throw new Error('RUN_NOT_RECOVERABLE');
           if (run.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && decision !== 'retry_unknown') throw new Error('UNKNOWN_OUTCOME_REQUIRES_CONFIRMATION');
           if (projection.runs.some(candidate => candidate.id !== runId && ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');
           // Intake has no draft prerequisites. Retire the interrupted attempt,
@@ -1754,10 +1747,20 @@ export class ApplicationClientBridge implements ClientBridge {
           this.#service.cancelConversationTurn({ projectId, runId, operationId: `${operationId}:retire`, reason: 'conversation_retry_authorized' });
           const state = this.#service.getConversationIntake(projectId);
           if (state.phase === 'confirmed') {
-            this.#startConfirmedWriting(projectId, run.sessionId, state.summary, `${operationId}:writing`);
+            this.#startConfirmedWriting(projectId, run.sessionId, state.summary,
+              state.stateArtifactVersionId ? `workflow-handoff:${state.stateArtifactVersionId}` : `${operationId}:writing`);
           } else {
             this.#startIntake(projectId, run.sessionId, feedback || textPayload(start.payload, 'displayInstruction') || '请继续刚才的交流。', `${operationId}:intake`);
           }
+          return;
+        }
+        if (start?.payload.purpose === 'writing-pack:fact-check') {
+          if (!['interrupted', 'waiting_user', 'budget_exhausted'].includes(run.status)) throw new Error('RUN_NOT_RECOVERABLE');
+          if (run.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && decision !== 'retry_unknown') throw new Error('UNKNOWN_OUTCOME_REQUIRES_CONFIRMATION');
+          if (projection.runs.some(candidate => candidate.id !== runId && ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');
+          this.#service.cancelDraft({ projectId, runId, operationId: `${operationId}:retire`, reason: 'fact_check_retry_authorized' });
+          await this.selectSession(projectId, run.sessionId);
+          await this.runFactCheck({ operationId: `${operationId}:fact-check-retry` });
           return;
         }
         if (feedback.length > 0 && run.stopReason !== "CO_CREATION_CHECKPOINT" && run.stopReason !== 'WRITING_INPUT_REQUIRED') {
@@ -2090,6 +2093,7 @@ export class ApplicationClientBridge implements ClientBridge {
   async refresh(): Promise<void> {
     if (this.#disposed) return;
     try {
+      this.#service.continuePendingHandoffs(this.#model);
       const next = this.#buildSnapshot(
         this.#snapshot.selectedProjectId,
         this.#snapshot.selectedSessionId,
@@ -2208,6 +2212,7 @@ export class ApplicationClientBridge implements ClientBridge {
     const latestWritingRunId = [...selectedRunViews]
       .reverse()
       .find((run) => run.displayInstruction !== "重新核查当前稿件")?.id ?? null;
+    const savedHandoffError = selectedProjectId ? this.#service.getHandoffError(selectedProjectId, selectedSessionId) : null;
 
     return {
       revision,
@@ -2421,8 +2426,7 @@ export class ApplicationClientBridge implements ClientBridge {
             },
       recoverableRuns: selectedRuns
         .filter(
-          (run) => run.status === "interrupted" || run.status === "waiting_user" ||
-            (run.status === 'budget_exhausted' && selectedProjection?.events.some(event => event.runId === run.id && event.type === 'run.started' && event.payload.purpose === 'writing-pack:draft')),
+          (run) => ['interrupted', 'waiting_user', 'budget_exhausted'].includes(run.status),
         )
         .map((run) => {
           const checkpoint = selectedProjection === undefined || run.status === 'budget_exhausted'
@@ -2438,7 +2442,7 @@ export class ApplicationClientBridge implements ClientBridge {
             ...checkpoint,
           };
         }),
-      lastError: lastError ?? (this.#handoffError?.projectId === selectedProjectId ? this.#handoffError.error : null),
+      lastError: lastError ?? (savedHandoffError ? { code: 'CONVERSATION_HANDOFF_FAILED', message: savedHandoffError.message } : null) ?? (this.#handoffError?.projectId === selectedProjectId ? this.#handoffError.error : null),
       environmentNotice:
         activeRun === undefined
           ? "本地保存已就绪"

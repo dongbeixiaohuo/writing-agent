@@ -45,10 +45,45 @@ export function topLevelString(source: string, key: string): string | null {
 }
 
 export interface LiveConversationReply { runId: string; requestId: string; text: string; id?: string; stage?: string; phase?: 'generating' | 'saving' }
+export interface MaterialPreview { id: string; label: string; text: string }
+/** Only existing public artifacts/material excerpts from the actual request.
+ * No prompt, conversation history, model reasoning, IDs or raw ledger JSON. */
+export function requestMaterialPreviews(messages: readonly { role: string; content: string }[]): MaterialPreview[] {
+  const previews: MaterialPreview[] = [];
+  for (const message of messages) {
+    if (message.role !== 'user') continue;
+    const marker = '\nCOLLABORATION_STATE=';
+    const offset = message.content.lastIndexOf(marker);
+    let state: Record<string, unknown>;
+    try { state = JSON.parse(offset >= 0 ? message.content.slice(offset + marker.length) : message.content); }
+    catch { continue; }
+    if (!state || typeof state !== 'object') continue;
+    const artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
+    const materials = Array.isArray(state.materials) ? state.materials : Array.isArray(state.authorizedMaterials) ? state.authorizedMaterials : [];
+    for (const item of [...artifacts, ...materials]) {
+      if (!item || typeof item.content !== 'string') continue;
+      const id = item.id ?? item.contentVersionId;
+      if (typeof id !== 'string' || previews.some(p => p.id === id)) continue;
+      let text = item.content;
+      if (text.trimStart().startsWith('{')) {
+        if (item.kind !== 'evidence') continue;
+        text = topLevelString(text, 'notes') ?? '';
+      }
+      if (!text.trim() || text.trimStart().startsWith('[')) continue;
+      previews.push({ id, label: item.kind === 'body' ? '本次提供的稿件' : item.kind === 'outline' ? '已保存的提纲' : item.kind === 'evidence' ? '研究素材摘要' : '本次提供的参考材料', text: text.slice(0, 1200) });
+      if (previews.length >= 6) return previews;
+    }
+  }
+  return previews;
+}
 export interface LiveConversationActivity {
   runId: string; requestId: string; actor: string; phase: 'waiting' | 'connected' | 'receiving';
   startedAt: number; lastActivityAt: number | null;
   segmentStartedAt: number; requestOrdinal: number;
+  lastEventKind?: 'reasoning' | 'content' | 'tool_arguments';
+  receivedEvents?: number;
+  activeTool?: { name: string; startedAt: number };
+  materials?: readonly MaterialPreview[];
   workPreview?: { label: string; text: string };
 }
 type StreamInput = Parameters<NonNullable<AgentRuntimeOptions['onModelStream']>>[0];
@@ -88,9 +123,12 @@ export class ConversationStreamPreview {
     const event = input.event;
     if (event === null) return;
     if (event.type === 'response_activity' && event.phase === 'headers' && state.activity.phase === 'waiting') state.activity.phase = 'connected';
-    if ((event.type === 'response_activity' && event.phase === 'content') || (event.type === 'text_delta' && event.delta.length > 0)
+    if ((event.type === 'response_activity' && (event.phase === 'content' || event.phase === 'reasoning')) || (event.type === 'text_delta' && event.delta.length > 0)
       || (event.type === 'tool_call_delta' && event.argumentsDelta.length > 0)) {
       state.activity.phase = 'receiving'; state.activity.lastActivityAt = Date.now();
+      state.activity.receivedEvents = (state.activity.receivedEvents ?? 0) + 1;
+      state.activity.lastEventKind = event.type === 'tool_call_delta' ? 'tool_arguments'
+        : event.type === 'response_activity' && event.phase === 'reasoning' ? 'reasoning' : 'content';
     }
     if (event.type === 'text_delta' && (input.textAudience === 'conversation' || input.outputPreview)) {
       state.plainText = (state.plainText + event.delta).slice(0, 100_000);
@@ -104,6 +142,20 @@ export class ConversationStreamPreview {
     call.raw = (call.raw + event.argumentsDelta).slice(0, 1_000_000);
     state.calls.set(event.index, call);
     let text: string | null = null;
+    // These fields are explicitly public operation summaries, not private
+    // reasoning. A partial call is only being prepared, not executed or saved.
+    const processField = call.name === 'director_decide' ? { key: 'reason', label: '下一步任务说明 · 整理中，尚未执行' }
+      : call.name === 'assess_writing_readiness' ? { key: 'reason', label: '写作信息检查 · 整理中，尚未得出结论' }
+      : call.name === 'search_fact_sources' ? { key: 'query', label: '正在准备检索词 · 待执行' } : null;
+    if (processField) {
+      const summary = topLevelString(call.raw, processField.key);
+      if (summary) {
+        const preview = { label: processField.label, text: summary.slice(0, 2400) };
+        state.activity.workPreview = preview;
+        const segment = this.#segments.get(input.runId);
+        if (segment) segment.workPreview = preview;
+      }
+    }
     if ((call.name === 'respond_author' && input.actor !== 'fact_check') || call.name === 'respond_writing_intake') text = topLevelString(call.raw, 'reply');
     if (input.actor === 'research' && call.name === 'submit_writing_stage' && [null, 'research'].includes(topLevelString(call.raw, 'stage'))) {
       const content = topLevelString(call.raw, 'content');

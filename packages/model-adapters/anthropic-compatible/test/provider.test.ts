@@ -430,6 +430,34 @@ describe("Anthropic-compatible provider", () => {
     });
   });
 
+  it("reports thinking as private progress without exposing it as answer text", async () => {
+    await withLocalServer((_request, response) => {
+      sendEvents(response, [
+        { event: "message_start", data: { type: "message_start", message: { id: "msg-thinking", usage: { input_tokens: 2, output_tokens: 0 } } } },
+        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "PRIVATE_THINKING" } } },
+        { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "PRIVATE_MORE_THINKING" } } },
+        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+        { event: "content_block_start", data: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } },
+        { event: "content_block_delta", data: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "完成。" } } },
+        { event: "content_block_stop", data: { type: "content_block_stop", index: 1 } },
+        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } } },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }, async (baseURL) => {
+      const events = await collectModelEvents(createProvider(baseURL).stream({
+        requestId: "anthropic-thinking",
+        model: "fixture-text-model",
+        messages: [{ role: "user", content: "测试推理" }],
+        parameters: { maxOutputTokens: 16 },
+      }));
+
+      assert.equal(events.at(-1)?.type, "completed");
+      assert.ok(events.some((event) => event.type === "response_activity" && (event.phase as string) === "reasoning"));
+      assert.equal(events.filter((event) => event.type === "text_delta").map((event) => event.type === "text_delta" ? event.delta : "").join(""), "完成。");
+      assert.equal(JSON.stringify(events).includes("PRIVATE_THINKING"), false);
+    });
+  });
+
   it("preserves a complete tool input supplied in content_block_start", async () => {
     await withLocalServer((_request, response) => {
       sendEvents(response, [
@@ -488,6 +516,57 @@ describe("Anthropic-compatible provider", () => {
       assert.equal(call?.type, "tool_call_complete");
       if (call?.type !== "tool_call_complete") return;
       assert.deepEqual(call.call.arguments, { materialId: "material-complete" });
+    });
+  });
+
+  it("rejects message_stop while a tool block is still structurally open", async () => {
+    await withLocalServer((_request, response) => {
+      sendEvents(response, [
+        { event: "message_start", data: { type: "message_start", message: { id: "msg-open-tool", usage: { input_tokens: 2, output_tokens: 0 } } } },
+        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: {
+          type: "tool_use", id: "toolu-open", name: "read_material", input: { materialId: "looks-complete-but-is-not" },
+        } } },
+        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 2 } } },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }, async (baseURL) => {
+      const events = await collectModelEvents(createProvider(baseURL).stream({
+        requestId: "anthropic-open-tool",
+        model: "fixture-tool-model",
+        messages: [{ role: "user", content: "读取材料" }],
+        tools: [readMaterialTool],
+        parameters: { maxOutputTokens: 16, toolChoice: "required" },
+      }));
+      assert.equal(events.some((event) => event.type === "tool_call_complete"), false);
+      const terminal = events.at(-1);
+      assert.equal(terminal?.type, "error");
+      if (terminal?.type !== "error") return;
+      assert.equal(terminal.error.code, "MODEL_RESPONSE_INVALID");
+      assert.equal(terminal.error.retryable, false);
+    });
+  });
+
+  it("rejects a completed message without a stable message id", async () => {
+    await withLocalServer((_request, response) => {
+      sendEvents(response, [
+        { event: "message_start", data: { type: "message_start", message: { usage: { input_tokens: 2, output_tokens: 0 } } } },
+        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "OK" } } },
+        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } } },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }, async (baseURL) => {
+      const events = await collectModelEvents(createProvider(baseURL).stream({
+        requestId: "anthropic-missing-message-id",
+        model: "fixture-text-model",
+        messages: [{ role: "user", content: "测试 message id" }],
+        parameters: { maxOutputTokens: 16 },
+      }));
+      const terminal = events.at(-1);
+      assert.equal(terminal?.type, "error");
+      if (terminal?.type !== "error") return;
+      assert.equal(terminal.error.code, "MODEL_RESPONSE_INVALID");
+      assert.equal(terminal.error.retryable, false);
     });
   });
 
@@ -631,7 +710,7 @@ describe("Anthropic-compatible provider", () => {
     assert.equal(terminalCode, "NETWORK_ERROR");
   });
 
-  it("rejects a stream truncated after its finish delta", async () => {
+  it("classifies EOF before message_stop as an interrupted retryable transport", async () => {
     await withLocalServer((_request, response) => {
       sendEvents(response, [
         {
@@ -690,7 +769,8 @@ describe("Anthropic-compatible provider", () => {
       const terminal = events.at(-1);
       assert.equal(terminal?.type, "error");
       if (terminal?.type !== "error") return;
-      assert.equal(terminal.error.code, "MODEL_RESPONSE_INVALID");
+      assert.equal(terminal.error.code, "NETWORK_ERROR");
+      assert.equal(terminal.error.retryable, true);
       assert.equal(terminal.error.providerRequestId, "anthropic-request-1");
     });
   });

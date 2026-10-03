@@ -31,7 +31,7 @@ export function intentFixtureEvents(request: ModelRequest, override?: [AuthorInt
   const allowed = (request.tools[0].inputSchema as any).properties.intent.enum as string[];
   const selected = override ?? replies[data.currentUserMessage] ?? [allowed.includes('revise_direction') ? 'revise_direction' : 'discuss', null];
   return [{ type: 'tool_call_delta', index: 0, id: request.requestId, name: 'interpret_author_reply',
-    argumentsDelta: JSON.stringify({ intent: selected[0], selectionIndex: selected[1], sourceQuote: data.currentUserMessage, reason: 'Test fixture supplies the contextual model decision' }) },
+    argumentsDelta: JSON.stringify({ intent: selected[0], selectionIndex: selected[1], reason: 'Test fixture supplies the contextual model decision' }) },
   { type: 'completed', finishReason: 'tool_calls' }];
 }
 export function withIntentFixture(provider: ModelProvider, override?: [AuthorIntent, number | null]): ModelProvider {

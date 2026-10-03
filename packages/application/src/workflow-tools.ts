@@ -60,6 +60,8 @@ export interface WritingWorkflowCompletion {
 }
 
 export interface WritingWorkflowTools {
+  pendingCheckpoint(runId: string): { stage: string; nextStage: string; markerId: string; requiredArtifactVersionIds: string[] } | null;
+  recoverConfirmedBody(runId: string): string | null;
   readonly definitions: readonly ToolDefinition<never, JsonValue>[];
   isReady(runId: string): boolean;
   unreadReadinessArtifactIds(runId: string): readonly string[];
@@ -441,7 +443,10 @@ function assertReviewsBoundToDraft(
       if (
         envelope.schemaVersion !== "writing-review-v1" ||
         envelope.reviewType !== stage ||
-        envelope.runId !== context.runId ||
+        typeof envelope.runId !== "string" ||
+        review.actor.kind !== "agent" ||
+        review.actor.runId !== envelope.runId ||
+        review.logicalKey !== `${stage}:${envelope.runId}` ||
         envelope.bodyVersionId !== draftVersionId ||
         typeof envelope.content !== "string" ||
         envelope.content.trim().length === 0
@@ -518,6 +523,7 @@ function markStage(
   stage: WritingWorkflowStage,
   artifactVersionId: string,
   reason?: string,
+  carriedDecision?: string,
 ): void {
   const project = storage.inspectProject(context.projectId);
   if (project === null) {
@@ -535,6 +541,7 @@ function markStage(
       runId: context.runId,
       stage,
       artifactVersionId,
+      ...(carriedDecision ? { carriedDecision } : {}),
     }),
     reason: reason ?? `workflow-stage-complete:${stage}`,
     requestSnapshotId: null,
@@ -549,6 +556,102 @@ function markStage(
 // Carried markers are this run's own artifacts: rework/invalidation and all
 // downstream CAS checks apply to them exactly like freshly earned markers.
 const CARRY_SOURCE_STATUSES: ReadonlySet<string> = new Set(["failed", "cancelled", "interrupted"]);
+
+interface ConfirmedCheckpointDecision {
+  readonly intent: "approve_checkpoint" | "revise_checkpoint";
+  readonly bodyVersionId: string | null;
+  readonly receiptId: string;
+  readonly resumeEventId: string;
+  readonly instruction: string;
+}
+
+function confirmedCheckpointDecision(
+  storage: WorkflowStorage,
+  marker: ArtifactVersion,
+): ConfirmedCheckpointDecision | null {
+  let markerData: any;
+  try { markerData = JSON.parse(marker.content); } catch { return null; }
+  const run = storage.getRun(markerData.runId);
+  if (!run || run.projectId !== marker.projectId) return null;
+  const events = storage.listEvents(marker.projectId).filter(event => event.runId === run.id);
+  const resumes = events.filter(event => event.type === "run.resumed" && event.payload.decision === "resume" &&
+    event.projectSeq > marker.createdEventSeq).reverse();
+  for (const resumed of resumes) {
+    const explicit = resumed.payload.checkpointDecision as { markerId?: unknown; intent?: unknown; receiptId?: unknown } | undefined;
+    if (explicit?.markerId !== undefined && explicit.markerId !== marker.id) continue;
+    const wait = events.findLast(event => event.type === "run.waiting_user" &&
+      event.projectSeq > marker.createdEventSeq && event.projectSeq < resumed.projectSeq &&
+      event.payload.stage === markerData.stage && event.payload.stopReason === "CO_CREATION_CHECKPOINT");
+    if (!wait) continue;
+    const receiptCandidates = typeof explicit?.receiptId === "string"
+      ? [storage.getArtifactVersion(explicit.receiptId)]
+      : storage.listRuns(marker.projectId, run.sessionId).flatMap(candidate =>
+          storage.listArtifactVersions(marker.projectId, "report", `author-intent:${candidate.id}`));
+    for (const receipt of receiptCandidates) {
+      if (!receipt || receipt.reason !== "contextual-author-intent" || receipt.createdEventSeq >= resumed.projectSeq) continue;
+      try {
+        const data = JSON.parse(receipt.content);
+        const intent = data.intent as unknown;
+        const sourceRun = storage.getRun(data.sourceRunId);
+        if ((intent !== "approve_checkpoint" && intent !== "revise_checkpoint") ||
+          (explicit?.intent !== undefined && explicit.intent !== intent) ||
+          data.checkpoint?.runId !== run.id || data.checkpoint?.eventSeq !== wait.projectSeq ||
+          data.sessionId !== run.sessionId || data.userMessage !== resumed.payload.displayInstruction ||
+          (data.bodyVersionId !== null && typeof data.bodyVersionId !== "string") || sourceRun?.projectId !== marker.projectId ||
+          sourceRun.sessionId !== run.sessionId || sourceRun.status !== "completed") continue;
+        return { intent, bodyVersionId: data.bodyVersionId, receiptId: receipt.id, resumeEventId: resumed.id,
+          instruction: data.userMessage };
+      } catch { /* Ignore malformed legacy receipts. */ }
+    }
+  }
+  return null;
+}
+
+function stageDecision(storage: WorkflowStorage, marker: ArtifactVersion): string | null {
+  const data = JSON.parse(marker.content);
+  return confirmedCheckpointDecision(storage, marker)?.intent ?? data.carriedDecision ?? null;
+}
+
+interface CarriedReworkPayload {
+  readonly schemaVersion: "writing-carried-rework-v1";
+  readonly stage: WritingWorkflowStage;
+  readonly instruction: string;
+  readonly receiptId: string;
+  readonly sourceMarkerId: string;
+  readonly sourceRunId: string;
+}
+
+function carriedRework(
+  storage: StoragePort,
+  projectId: string,
+  runId: string,
+): { artifact: ArtifactVersion; payload: CarriedReworkPayload } | null {
+  const artifact = storage.listArtifactVersions(projectId, "report", `workflow-carried-rework:${runId}`).at(-1);
+  if (!artifact) return null;
+  try {
+    const payload = JSON.parse(artifact.content) as Partial<CarriedReworkPayload>;
+    if (payload.schemaVersion !== "writing-carried-rework-v1" || typeof payload.stage !== "string" ||
+      typeof payload.instruction !== "string" || !payload.instruction.trim() || typeof payload.receiptId !== "string" ||
+      typeof payload.sourceMarkerId !== "string" || typeof payload.sourceRunId !== "string") return null;
+    return { artifact, payload: payload as CarriedReworkPayload };
+  } catch { return null; }
+}
+
+/** Saved work is not permission to advance. Reconstruct every checkpoint, including a crash before pauseRun. */
+export function pendingStageCheckpoint(storage: WorkflowStorage, projectId: string, runId: string) {
+  const project = storage.inspectProject(projectId)!;
+  const brief = project.currentBriefVersionId && storage.getWritingBriefVersion(project.currentBriefVersionId)?.brief;
+  if (!brief || brief.interactionMode !== 'co_creation') return null;
+  const sequence = workflowStageSequence(project.mode);
+  for (const [index, stage] of sequence.entries()) {
+    const marker = stageMarker(storage, projectId, runId, stage);
+    if (!marker) break;
+    if (!CO_CREATION_CHECKPOINT_STAGES.has(stage as ContentStage) || !sequence[index + 1]) continue;
+    if (stageDecision(storage, marker)) continue;
+    return { stage, nextStage: sequence[index + 1]!, markerId: marker.id, requiredArtifactVersionIds: [] as string[] };
+  }
+  return null;
+}
 
 function seedCarriedStageMarkers(
   storage: WorkflowStorage,
@@ -571,11 +674,39 @@ function seedCarriedStageMarkers(
     .find((candidate) =>
       sequence.some((stage) => stageMarker(storage, projectId, candidate.id, stage) !== null));
   if (source === undefined) return;
+  const inheritedRework = carriedRework(storage, projectId, source.id)?.payload ?? null;
+  let explicitRework: CarriedReworkPayload | null = null;
+  for (const stage of sequence) {
+    const marker = stageMarker(storage, projectId, source.id, stage);
+    if (!marker) break;
+    const decision = confirmedCheckpointDecision(storage, marker);
+    if (decision?.intent === "revise_checkpoint") {
+      explicitRework = { schemaVersion: "writing-carried-rework-v1", stage, instruction: decision.instruction,
+        receiptId: decision.receiptId, sourceMarkerId: marker.id, sourceRunId: source.id };
+      break;
+    }
+  }
+  const rework = explicitRework ?? inheritedRework;
+  const rebuiltMarker = rework ? stageMarker(storage, projectId, source.id, rework.stage) : null;
+  // A new explicit revise invalidates the marker it answered. An inherited
+  // instruction is still pending only while no replacement marker exists.
+  const reworkPendingExecution = rework !== null && (explicitRework !== null || rebuiltMarker === null);
+  const rebuiltDecision = rebuiltMarker ? stageDecision(storage, rebuiltMarker) : null;
+  const preserveRework = rework !== null && (reworkPendingExecution || rebuiltDecision !== "approve_checkpoint");
+  if (preserveRework) {
+    const project = storage.inspectProject(projectId)!;
+    const saved = storage.commitArtifactVersion({ operationId: `carry:${runId}:rework`, projectId,
+      expectedProjectRevision: project.revision, kind: "report", logicalKey: `workflow-carried-rework:${runId}`,
+      baseVersionId: null, content: JSON.stringify(rework), reason: "workflow-carried-rework",
+      requestSnapshotId: null, actor: { kind: "agent", id: "writing-pack/director", runId } });
+    if (!saved.ok) return; // Never carry past a revision request that was not durably preserved.
+  }
   for (const stage of sequence) {
     // fact_check completion stays with the project-level gate; never carried.
     if (stage === "fact_check") continue;
     const marker = stageMarker(storage, projectId, source.id, stage);
     if (marker === null) break; // contiguous prefix only
+    if (reworkPendingExecution && rework?.stage === stage) break;
     let artifactVersionId: unknown;
     try {
       artifactVersionId = (JSON.parse(marker.content) as { artifactVersionId?: unknown }).artifactVersionId;
@@ -590,6 +721,7 @@ function seedCarriedStageMarkers(
         stage,
         artifactVersionId,
         `workflow-stage-carried:${stage}`,
+        stageDecision(storage, marker) === "approve_checkpoint" ? "approve_checkpoint" : undefined,
       );
     } catch {
       break; // a partial carry still forms a valid contiguous prefix
@@ -746,6 +878,10 @@ export function createWritingWorkflowTools(options: {
   };
   const initialContextIds = (runId: string): readonly string[] =>
     storage.listArtifactVersions(projectId, "report", markerKey(runId, "draft")).length > 0 ? [] : requiredInitialArtifactIds;
+  const carriedReworkInput = (runId: string, stage: WritingWorkflowStage | null) => {
+    const rework = carriedRework(storage, projectId, runId);
+    return rework && rework.payload.stage === stage ? rework.artifact : null;
+  };
 
   const nextStageForRun = (runId: string): WritingWorkflowStage | null =>
     factCheckOnly
@@ -792,6 +928,10 @@ export function createWritingWorkflowTools(options: {
       artifactVersionId,
       source: "current_body",
     })),
+    ...(carriedReworkInput(context.runId, stage) ? [{
+      artifactVersionId: carriedReworkInput(context.runId, stage)!.id,
+      source: "author_rework",
+    }] : []),
   ].filter((artifact, index, artifacts) =>
     artifacts.findIndex((candidate) =>
       candidate.artifactVersionId === artifact.artifactVersionId,
@@ -1140,8 +1280,109 @@ export function createWritingWorkflowTools(options: {
     },
   };
 
+  const recoveryKey = (runId: string): string => `workflow-body-rebound:${runId}`;
+  const recoveredBodyVersionId = (runId: string): string | null => {
+    const report = storage.listArtifactVersions(projectId, "report", recoveryKey(runId)).at(-1);
+    if (!report) return null;
+    try {
+      const data = JSON.parse(report.content);
+      return data.schemaVersion === "writing-checkpoint-body-rebind-v1" && typeof data.bodyVersionId === "string"
+        ? data.bodyVersionId
+        : null;
+    } catch { return null; }
+  };
+  const recoverConfirmedBody = (runId: string): string | null => {
+    seedCarryOnce(runId);
+    if (factCheckOnly) return null;
+    const existing = recoveredBodyVersionId(runId);
+    const sequence = workflowStageSequence(mode);
+    const candidates = sequence.flatMap(stage => {
+      const marker = stageMarker(storage, projectId, runId, stage);
+      if (!marker) return [];
+      const decision = confirmedCheckpointDecision(storage, marker);
+      if (decision?.intent !== "approve_checkpoint") return [];
+      const resume = storage.listEvents(projectId).find(event => event.runId === runId && event.id === decision.resumeEventId);
+      return resume ? [{ stage, marker, decision, projectSeq: resume.projectSeq }] : [];
+    }).sort((left, right) => right.projectSeq - left.projectSeq);
+    const candidate = candidates[0];
+    if (!candidate || candidate.decision.bodyVersionId === null) return existing;
+    const alreadyRecovered = storage.listArtifactVersions(projectId, "report", recoveryKey(runId)).some(report => {
+      try {
+        const data = JSON.parse(report.content);
+        return data.sourceMarkerId === candidate.marker.id && data.receiptId === candidate.decision.receiptId;
+      } catch { return false; }
+    });
+    if (alreadyRecovered) return recoveredBodyVersionId(runId);
+    const project = storage.inspectProject(projectId);
+    const body = storage.getArtifactVersion(candidate.decision.bodyVersionId);
+    // The author authorized exactly the version captured by the receipt. A
+    // later edit is a new boundary and must never be silently adopted.
+    if (!project || project.latestBodyVersionId !== candidate.decision.bodyVersionId || body?.kind !== "body") return existing;
+
+    const boundBodyMarker = candidate.stage.startsWith("review_")
+      ? markerPayload(stageMarker(storage, projectId, runId, "draft"))
+      : candidate.stage === "draft" || candidate.stage === "central_revision" || candidate.stage === "language_review"
+        ? markerPayload(candidate.marker)
+        : null;
+    // A normal checkpoint already points at the confirmed body. Recovery is
+    // only for an author save made between stage completion and confirmation.
+    if (boundBodyMarker?.artifactVersionId === body.id) return existing;
+
+    const operationBase = `checkpoint-body-rebind:${runId}:${candidate.decision.resumeEventId}`;
+    const bodyStages = new Set<WritingWorkflowStage>(["draft", "central_revision", "language_review"]);
+    if (bodyStages.has(candidate.stage)) {
+      markStage(storage, { projectId, runId, operationId: `${operationBase}:stage` } as ToolExecutionContext,
+        candidate.stage, body.id, "workflow-stage-rebound-to-confirmed-body", "approve_checkpoint");
+    } else if (candidate.stage.startsWith("review_")) {
+      markStage(storage, { projectId, runId, operationId: `${operationBase}:draft` } as ToolExecutionContext,
+        "draft", body.id, "workflow-draft-rebound-to-confirmed-body", "approve_checkpoint");
+    }
+
+    const affectedStart = candidate.stage === "draft" || candidate.stage.startsWith("review_")
+      ? sequence.indexOf("review_editor")
+      : candidate.stage === "central_revision"
+        ? sequence.indexOf("language_review")
+        : candidate.stage === "language_review"
+          ? sequence.indexOf("fact_check")
+          : -1;
+    const affected = affectedStart < 0 ? [] : sequence.slice(affectedStart);
+    const markerIds = affected.flatMap(stage => {
+      const marker = stageMarker(storage, projectId, runId, stage);
+      return marker ? [marker.id] : [];
+    });
+    if (markerIds.length > 0) {
+      const invalidationKey = `workflow-invalidated:${runId}`;
+      const current = storage.inspectProject(projectId)!;
+      value(storage.commitArtifactVersion({
+        operationId: `${operationBase}:invalidate`, projectId, expectedProjectRevision: current.revision,
+        kind: "report", logicalKey: invalidationKey,
+        baseVersionId: storage.listArtifactVersions(projectId, "report", invalidationKey).at(-1)?.id ?? null,
+        content: JSON.stringify({ markerIds, invalidatedStages: affected, checkpointBodyRebind: true }),
+        reason: "workflow-checkpoint-body-rebind", requestSnapshotId: null,
+        actor: { kind: "agent", id: "writing-pack/director", runId },
+      }));
+    }
+    const current = storage.inspectProject(projectId)!;
+    value(storage.commitArtifactVersion({
+      operationId: `${operationBase}:report`, projectId, expectedProjectRevision: current.revision,
+      kind: "report", logicalKey: recoveryKey(runId),
+      baseVersionId: storage.listArtifactVersions(projectId, "report", recoveryKey(runId)).at(-1)?.id ?? null,
+      content: JSON.stringify({ schemaVersion: "writing-checkpoint-body-rebind-v1", sourceMarkerId: candidate.marker.id,
+        stage: candidate.stage, bodyVersionId: body.id, receiptId: candidate.decision.receiptId, invalidatedStages: affected }),
+      reason: "workflow-checkpoint-body-rebind", requestSnapshotId: null,
+      actor: { kind: "agent", id: "writing-pack/director", runId },
+    }));
+    readyInputsByRun.delete(runId);
+    return body.id;
+  };
+
   return {
     isReady,
+    recoverConfirmedBody,
+    pendingCheckpoint(runId) {
+      seedCarryOnce(runId);
+      return factCheckOnly ? null : pendingStageCheckpoint(storage, projectId, runId);
+    },
     unreadReadinessArtifactIds,
     invalidate(context, stage) {
       const sequence = workflowStageSequence(mode);
@@ -1190,6 +1431,10 @@ export function createWritingWorkflowTools(options: {
             stage: "current_body" as const,
             artifactVersionId,
           })),
+          ...(carriedReworkInput(runId, nextStage) ? [{
+            stage: nextStage!,
+            artifactVersionId: carriedReworkInput(runId, nextStage)!.id,
+          }] : []),
         ].filter((artifact, index, artifacts) =>
           artifacts.findIndex((candidate) =>
             candidate.artifactVersionId === artifact.artifactVersionId,

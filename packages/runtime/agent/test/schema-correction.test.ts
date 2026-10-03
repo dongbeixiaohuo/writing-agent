@@ -8,6 +8,80 @@ import { ToolRegistry } from "../../tools/src/index.js";
 import { openWorkspaceStorage } from "../../../storage/src/index.js";
 import { AgentRuntime } from "../src/index.js";
 
+it('never accepts apology prose as completion while a corrected tool submission is still required', async () => {
+  const path = mkdtempSync(join(tmpdir(), 'missing-required-tool-'));
+  const storage = openWorkspaceStorage({ workspacePath: path });
+  let calls = 0, writes = 0;
+  class Provider extends ModelProviderBase {
+    constructor() { super('required', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(): AsyncIterable<ProviderStreamEvent> {
+      calls++;
+      if (calls === 1) {
+        yield { type: 'tool_call_delta', index: 0, id: 'bad', name: 'save', argumentsDelta: '{"wrong":1}' };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      } else { yield { type: 'text_delta', delta: '抱歉，已经完成。' }; yield { type: 'completed', finishReason: 'stop' }; }
+    }
+  }
+  try {
+    storage.createProject({ operationId: 'p', projectId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage,
+      tools: ToolRegistry.create([{ name: 'save', version: '1.0.0', description: 'save', effect: 'local_idempotent', permissions: [],
+        inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+        execute() { writes++; return {}; } }]) });
+    const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'test', parameters: {}, systemPrompt: 'save', userMessage: 'ok',
+      expectedBodyVersionId: null, grantedPermissions: [], budget: { maxModelRequests: 10, maxToolCalls: 4, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+    assert.equal(result.ok, false);
+    assert.equal(writes, 0);
+    assert.ok(calls <= 4);
+    assert.notEqual(storage.getRun(result.runId)?.status, 'completed');
+  } finally { storage.close(); rmSync(path, { recursive: true, force: true }); }
+});
+
+for (const mode of ['recover', 'persistent', 'one-request', 'cancel'] as const) {
+  it(`mixed schema and JSON syntax failures recover atomically with a shared bound: ${mode}`, async () => {
+    const path = mkdtempSync(join(tmpdir(), 'mixed-format-correction-'));
+    const storage = openWorkspaceStorage({ workspacePath: path });
+    const requests: ModelRequest[] = [];
+    const controller = new AbortController();
+    const writes: unknown[] = [];
+    class Provider extends ModelProviderBase {
+      constructor() { super('mixed-format', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+      protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+        requests.push(request);
+        // A valid sibling must also remain unexecuted when another call is invalid.
+        yield { type: 'tool_call_delta', index: 0, id: `valid-${requests.length}`, name: 'save', argumentsDelta: '{"summary":"valid sibling"}' };
+        const args = requests.length === 1 ? '{"proposal":{"summary":"wrong level"}}'
+          : mode === 'recover' && requests.length === 3 ? '{"summary":"corrected"}' : '{"summary":"PRIVATE_UNSAVED",}';
+        yield { type: 'tool_call_delta', index: 1, id: `invalid-${requests.length}`, name: 'save', argumentsDelta: args };
+        if (mode === 'cancel' && requests.length === 2) controller.abort();
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      }
+    }
+    try {
+      storage.createProject({ operationId: 'p', projectId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+      const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage,
+        tools: ToolRegistry.create([{ name: 'save', version: '1.0.0', description: 'save', effect: 'local_idempotent', permissions: [],
+          inputSchema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'], additionalProperties: false },
+          execute(args) { writes.push(args); return {}; } }]),
+        completeAfterTool: () => writes.length === 2 ? { content: 'saved', artifactVersionId: 'v' } : null,
+      });
+      const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'test', systemPrompt: 'save', userMessage: 'chosen title', parameters: {},
+        grantedPermissions: [], expectedBodyVersionId: null, signal: controller.signal,
+        budget: { maxModelRequests: mode === 'one-request' ? 1 : 8, maxToolCalls: 4, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+      assert.equal(result.ok, mode === 'recover', JSON.stringify(result));
+      assert.equal(requests.length, mode === 'one-request' ? 1 : mode === 'cancel' ? 2 : 3);
+      assert.deepEqual(writes, mode === 'recover' ? [{ summary: 'valid sibling' }, { summary: 'corrected' }] : []);
+      assert.equal(storage.listRuns('p').length, 1);
+      if (mode === 'recover' || mode === 'persistent') {
+        assert.match(JSON.stringify(requests[2]?.messages), /json_syntax/);
+        assert.doesNotMatch(JSON.stringify(requests[2]?.messages), /PRIVATE_UNSAVED/);
+        assert.equal(requests[2]?.parameters.toolChoice, 'required');
+      }
+      if (mode === 'persistent' && !result.ok) assert.equal(result.error.code, 'MODEL_RESPONSE_INVALID');
+    } finally { storage.close(); rmSync(path, { recursive: true, force: true }); }
+  });
+}
+
 for (const missingTool of [false, true]) for (const corrects of [true, false]) it(`schema errors are non-executable and bounded in the original run (corrects=${corrects}, missingTool=${missingTool})`, async () => {
   const path = mkdtempSync(join(tmpdir(), "schema-correction-"));
   const storage = openWorkspaceStorage({ workspacePath: path });

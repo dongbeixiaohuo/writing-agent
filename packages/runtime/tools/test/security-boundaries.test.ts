@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import {
   lstatSync,
   mkdirSync,
@@ -10,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { describe, it } from "node:test";
 
 import {
@@ -96,6 +98,51 @@ describe("authorized file boundary", () => {
 });
 
 describe("web and untrusted-content boundary", () => {
+  it("destroys the pinned HTTPS request when the caller aborts", async () => {
+    const require = createRequire(import.meta.url);
+    const httpsModule = require("node:https") as typeof import("node:https");
+    const originalRequest = httpsModule.request;
+    const fakeRequest = new EventEmitter() as EventEmitter & {
+      end(): void;
+      destroy(): typeof fakeRequest;
+    };
+    let started!: () => void;
+    const requestStarted = new Promise<void>(resolve => { started = resolve; });
+    let destroyCalls = 0;
+    fakeRequest.end = () => started();
+    fakeRequest.destroy = () => { destroyCalls += 1; return fakeRequest; };
+    httpsModule.request = (() => fakeRequest) as unknown as typeof httpsModule.request;
+    syncBuiltinESMExports();
+
+    try {
+      const fetcher = new SecureWebFetcher({
+        policy: new NetworkAccessPolicy({ resolveHost: async () => ["93.184.216.34"] }),
+        timeoutMs: 60_000,
+      });
+      const controller = new AbortController();
+      const pending = (fetcher.fetchText as (url: string, signal: AbortSignal) => ReturnType<SecureWebFetcher["fetchText"]>)(
+        "https://public.example/article",
+        controller.signal,
+      );
+      await requestStarted;
+      controller.abort();
+      let guard!: NodeJS.Timeout;
+      const bounded = Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => {
+          guard = setTimeout(() => reject(new Error("HTTPS request remained pending after abort")), 250);
+        }),
+      ]);
+      try {
+        await assert.rejects(bounded, { name: "SecureWebFetchError", code: "WEB_REQUEST_ABORTED" });
+      } finally { clearTimeout(guard); }
+      assert.equal(destroyCalls, 1);
+    } finally {
+      httpsModule.request = originalRequest;
+      syncBuiltinESMExports();
+    }
+  });
+
   it("accepts only HTTPS targets whose complete DNS answer is public", async () => {
     const policy = new NetworkAccessPolicy({
       resolveHost: async (hostname) => {

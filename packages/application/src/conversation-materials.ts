@@ -110,6 +110,18 @@ export function addConversationMaterialToBrief(
   }
 
   const existing = input.storage.getMaterial(projectId, identity.materialId);
+  if (existing === null) {
+    // A retry gets a new tool operation ID, not a new author statement. Reuse
+    // only an exact, already-authorized conversation material in this brief.
+    const duplicate = input.storage.listMaterials(projectId).find(material =>
+      material.sourceReference?.startsWith('conversation-user-operation:') &&
+      material.displayName === displayName && material.role === input.role &&
+      material.trustLabel === 'user_provided_untrusted' && material.permissionScope === 'project_only' &&
+      material.content === content && briefVersion!.brief.materialIds.includes(material.id) &&
+      (input.role !== 'user_firsthand' || briefVersion!.brief.authorAuthorization.firsthandMaterialIds.includes(material.id)));
+    if (duplicate) return { materialId: duplicate.id, contentVersionId: duplicate.contentVersionId,
+      briefVersionId: briefVersion.id, projectRevision: project.revision, role: input.role, trustLabel: 'user_provided_untrusted' };
+  }
   if (existing !== null) {
     if (
       existing.displayName !== displayName ||

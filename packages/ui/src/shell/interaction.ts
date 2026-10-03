@@ -13,10 +13,18 @@ export function conversationWorkingCopy(activity: BridgeSnapshot['liveActivity']
     central_revision: '正在按审校意见修改文章', language_review: '正在润色文字', title: '正在构思标题', fact_check: '正在核对文章中的事实',
   }
   const elapsedSeconds = activity ? Math.max(0, Math.floor((now - (activity.segmentStartedAt ?? activity.startedAt)) / 1000)) : 0
+  if (activity?.activeTool) {
+    const seconds = Math.max(0, Math.floor((now - activity.activeTool.startedAt) / 1000))
+    const name = activity.activeTool.name
+    return { title: name === 'search_fact_sources' ? '正在搜索事实来源' : name === 'read_fact_source' ? '正在读取来源原文' : '正在处理工具操作',
+      detail: `本次工具操作已用时 ${seconds} 秒。${name === 'search_fact_sources' || name === 'read_fact_source' ? '等待外部服务返回；超时会说明未能查证，不会把搜索失败当作核查通过。' : '运行记录可查看具体操作与结果。'}你可以随时停止，已保存稿件不会丢失。`, elapsedSeconds }
+  }
   const requestSeconds = activity ? Math.max(0, Math.floor((now - activity.startedAt) / 1000)) : 0
   const idle = activity?.lastActivityAt ? Math.max(0, Math.floor((now - activity.lastActivityAt) / 1000)) : 0
   const detail = !activity ? '有新回复会直接显示在这里。'
     : activity.phase === 'receiving' ? idle >= 30 ? `已收到部分模型数据，${idle} 秒未收到新内容；仍在等待，你可以停止。`
+      : activity.lastEventKind === 'reasoning' ? `已收到模型内部处理活动，尚未收到可展示的答复。已接收 ${activity.receivedEvents ?? 1} 次数据活动；有公开任务说明或素材时会在下方逐步显示。`
+      : activity.lastEventKind === 'tool_arguments' ? '模型正在准备操作。下方逐步展示可公开的任务说明或检索词，操作是否成功以运行记录为准。'
       : '已收到模型数据。下方可展示已读取素材；最终回复会在生成时逐步显示。'
     : activity.phase === 'connected' ? '模型服务已连接，正在等待模型回复。'
     : requestSeconds >= 30 ? '仍在等待模型回复，比平时稍久。你可以继续等待，也可以停止。' : '正在等待模型回复，有新内容会直接显示在这里。'
@@ -167,8 +175,22 @@ export function checkpointResumeInstruction(feedback: string): string {
     : normalized
 }
 
+export type RecoveryContinueAction =
+  | { readonly kind: 'message'; readonly text: string }
+  | { readonly kind: 'resume'; readonly decision: 'resume' | 'retry_unknown' }
+
+export function recoveryContinueAction(recovery: RecoverableRunSummary): RecoveryContinueAction {
+  if (recovery.stopReason === 'CO_CREATION_CHECKPOINT') {
+    return { kind: 'message', text: checkpointResumeInstruction('') }
+  }
+  return {
+    kind: 'resume',
+    decision: recovery.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' ? 'retry_unknown' : 'resume',
+  }
+}
+
 export function composerRecoveryMode(runs: readonly RecoverableRunSummary[], sessionId: string): 'answer' | 'decision' | null {
   const pending = runs.filter(run => run.sessionId === sessionId)
-  if (pending.some(run => run.stopReason !== 'WRITING_INPUT_REQUIRED' && run.stopReason !== 'CO_CREATION_CHECKPOINT')) return 'decision'
-  return pending.length > 0 ? 'answer' : null
+  if (pending.some(run => run.stopReason === 'WRITING_INPUT_REQUIRED' || run.stopReason === 'CO_CREATION_CHECKPOINT')) return 'answer'
+  return pending.length > 0 ? 'decision' : null
 }

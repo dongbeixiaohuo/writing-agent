@@ -9,6 +9,18 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
   const [now, setNow] = useState(Date.now)
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [materialIndex, setMaterialIndex] = useState(0)
+  const materials = snapshot.liveActivity?.materials ?? []
+  const materialKey = materials.map(item => item.id).join(':')
+  useEffect(() => { setMaterialIndex(0) }, [materialKey])
+  useEffect(() => {
+    if (materials.length < 2 || snapshot.liveReply) return
+    // Present already supplied materials once, then hold the last excerpt.
+    // Never simulate another model request or endlessly replay a progress loop.
+    const timer = setInterval(() => setMaterialIndex(index => Math.min(index + 1, materials.length - 1)), 6000)
+    return () => clearInterval(timer)
+  }, [materialKey, materials.length, !!snapshot.liveReply])
+  const material = materials[Math.min(materialIndex, materials.length - 1)]
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer) }, [])
   useEffect(() => { setStopping(false); setError(null) }, [snapshot.activeRunId])
   const copy = conversationWorkingCopy(snapshot.liveActivity, now)
@@ -31,6 +43,11 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
       <strong>{snapshot.liveActivity.workPreview.label}</strong>
       <MarkdownContent content={snapshot.liveActivity.workPreview.text} />
       <small>正在加工；这份临时预览不会作为最终回复留在主对话中。</small>
+    </aside>}
+    {material && !snapshot.liveReply && <aside className={css.workPreview} data-material-preview aria-label="已提供素材预览">
+      <strong>{material.label} · {Math.min(materialIndex + 1, materials.length)} / {materials.length}</strong>
+      <MarkdownContent content={material.text} />
+      <small>已提供给当前专家的内容节选，不是模型新回复。最终答复生成后此预览会收起。</small>
     </aside>}
     {error && <p role="alert">{error}</p>}
   </section>

@@ -11,6 +11,7 @@ export const TOOL_PRESENTATION: Readonly<Record<string, { label: string; descrip
   ['read_fact_source', '阅读事实来源原文', '联网读取', '读取证据账本或本轮搜索返回的来源 URL，核对原文；不接受任意链接，不修改稿件。'],
   ['submit_publication_candidates', '保存发布标题候选', '保存', '保存标题专家提出的候选，等待用户选择；不代替用户确认。'],
   ['respond_writing_intake', '保存需求交流', '保存', '保存本轮回复、需求摘要和待回答问题，以及可选的待确认方案或确认结果；不生成正文。'],
+  ['submit_writing_proposal', '保存写作方向', '保存', '把已讨论的写作方向保存为待确认方案；保留来源和版本，不替作者确认，也不生成正文。'],
   ['respond_author', '保存作者交流', '保存', '保存本轮讨论或专家回复；不直接覆盖正文。'],
   ['interpret_author_reply', '理解本轮意图', '语义判断', '结合当前待确认成果与最近对话，判断认可、修改、选择或继续讨论；记录绑定阶段及版本的决策，不按固定口令匹配。'],
   ['resume_author_checkpoint', '继续已确认阶段', '流程请求', '依据本轮语义决策恢复同一个写作流程；不重跑已保存阶段，也不代表下一阶段已完成。'],

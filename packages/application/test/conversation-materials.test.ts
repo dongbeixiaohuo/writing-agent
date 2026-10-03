@@ -78,6 +78,8 @@ describe("conversation materials", () => {
       const first = addConversationMaterialToBrief(input);
       const replay = addConversationMaterialToBrief(input);
       assert.deepEqual(replay, first);
+      const retriedTurn = addConversationMaterialToBrief({ ...input, operationId: 'retry-new-operation', expectedProjectRevision: first.projectRevision });
+      assert.deepEqual(retriedTurn, first, 'retrying the same material must not create another brief version');
       assert.equal(f.storage.listMaterials("project-1").length, 1);
       const material = f.storage.getMaterial("project-1", first.materialId);
       assert.equal(material?.displayName, input.materialName);

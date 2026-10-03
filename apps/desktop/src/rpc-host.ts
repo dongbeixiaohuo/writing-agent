@@ -1,4 +1,5 @@
 import { UI_BRIDGE_PROTOCOL_VERSION, type ClientBridge } from "../../../packages/client-bridge/src/protocol.js";
+import { WORKFLOW_COMMAND_MESSAGES } from '../../../packages/client-bridge/src/workflow-errors.js';
 import type {
   DesktopRpcRequest,
   DesktopRpcResponse,
@@ -9,6 +10,10 @@ function rpcError(code: string, message: string): DesktopRpcResponse {
 }
 
 const publicMessages: Readonly<Record<string, string>> = {
+  TRACE_SCOPE_MISMATCH: '记录不属于当前对话，请返回当前对话重新选择。',
+  TRACE_SELECTION_INVALID: '记录选择无效，请重新选择执行步骤。',
+  TRACE_STEP_NOT_FOUND: '未找到这一步的持久记录，可能尚未保存。',
+  ...WORKFLOW_COMMAND_MESSAGES,
   SEARCH_API_KEY_REQUIRED: '启用 Tavily 前请填写 API Key。',
   SEARCH_SETTINGS_INVALID: '搜索配置格式无效，请检查后重新保存。',
   SEARCH_SETTINGS_BUSY: '正在保存搜索配置，请稍后重试。',
@@ -121,6 +126,9 @@ export async function dispatchDesktopRpc(
       case "getSnapshot":
         result = bridge.getSnapshot();
         break;
+      case "getRunTraceDetail":
+        // Read-only inspection never resends the entire conversation snapshot.
+        return { ok: true, result: await bridge.getRunTraceDetail(...request.args as Parameters<ClientBridge['getRunTraceDetail']>) };
       case "selectProject":
         result = await bridge.selectProject(...request.args as [string]);
         break;

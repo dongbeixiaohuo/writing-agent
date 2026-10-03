@@ -6,6 +6,21 @@ import {
   type ClientBridge,
 } from "../../../packages/client-bridge/src/protocol.js";
 import { dispatchDesktopRpc } from "../src/rpc-host.js";
+import { commandErrorMessage } from '../../../packages/ui/src/shell/onboarding.js';
+
+test('confirmation and recovery failures keep their actionable code through desktop RPC and UI', async () => {
+  for (const code of ['CHECKPOINT_DECISION_REQUIRED', 'INTENT_CONTEXT_STALE', 'INTENT_CONTEXT_INVALID',
+    'RUN_NOT_RECOVERABLE', 'RUN_NOT_RESUMABLE', 'HANDOFF_CONTEXT_CHANGED', 'CONVERSATION_HANDOFF_FAILED', 'PUBLICATION_SELECTION_REQUIRED']) {
+    const bridge = fakeBridge();
+    bridge.resumeRun = async () => { throw Object.assign(new Error('private diagnostic'), { code }); };
+    const result = await dispatchDesktopRpc(bridge, { protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'resumeRun', args: ['r', 'resume'] });
+    assert.equal(result.ok, false);
+    if (result.ok) continue;
+    assert.equal(result.error.code, code);
+    assert.doesNotMatch(result.error.message, /private diagnostic/);
+    assert.notEqual(commandErrorMessage({ code }, 'unmapped'), 'unmapped');
+  }
+});
 
 function fakeBridge(): ClientBridge {
   const snapshot = {
@@ -24,6 +39,7 @@ function fakeBridge(): ClientBridge {
       workspaceId: "rpc-workspace",
     }),
     getSnapshot: () => snapshot,
+    getRunTraceDetail: async input => ({ runId: input.runId, stepId: input.stepId, requestId: null, callId: null, provider: null, model: null, sections: [], notes: [] }),
     subscribe: () => () => undefined,
     selectProject: async () => undefined,
     selectSession: async () => undefined,

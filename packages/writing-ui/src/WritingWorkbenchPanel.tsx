@@ -17,6 +17,19 @@ import { factClaimStatusLabel } from './fact-claim-view.js'
 
 type WritingPanelTab = 'read' | 'edit' | 'process' | 'versions' | 'facts' | 'delivery'
 
+function documentWriteEnabled(snapshot: BridgeSnapshot): boolean {
+  return snapshot.mode === 'application' &&
+    snapshot.connection !== 'offline' &&
+    snapshot.activeRunId === null
+}
+
+export async function guardedDocumentWrite<T>(bridge: ClientBridge, action: () => Promise<T>): Promise<T> {
+  if (!documentWriteEnabled(bridge.getSnapshot())) {
+    throw new Error('当前有任务正在运行，请等待完成或停止后再修改、回滚或保存正文')
+  }
+  return action()
+}
+
 function RevisionDiff({ proposal }: { proposal: RevisionProposalSummary }) {
   return (
     <section className={css.diffCard} aria-label={`修改提案 ${proposal.id}`}>
@@ -336,8 +349,8 @@ function DeliveryPanel({
         <div className={css.editorActions}>
           <button
             type="button"
-            disabled={busy || !available.workingCopyEnabled}
-            onClick={() => void run(() => bridge.saveWorkingCopy())}
+            disabled={busy || snapshot.activeRunId !== null || !available.workingCopyEnabled}
+            onClick={() => void run(() => guardedDocumentWrite(bridge, () => bridge.saveWorkingCopy()))}
           >
             保存 Markdown 工作备份
           </button>
@@ -433,6 +446,7 @@ export function WritingWorkbenchPanel({
   const [error, setError] = useState<string | null>(null)
   const workspace = snapshot.revisionWorkspace
   const writable = snapshot.mode === 'application' && snapshot.connection !== 'offline'
+  const documentWritable = documentWriteEnabled(snapshot)
   const pending = workspace.proposals.filter(proposal => proposal.status === 'proposed')
 
   useEffect(() => {
@@ -469,9 +483,9 @@ export function WritingWorkbenchPanel({
   }
 
   const propose = (block: BodyBlockView): void => {
-    if (workspace.bodyVersionId === null || replacement.trim().length === 0) return
+    if (!documentWritable || workspace.bodyVersionId === null || replacement.trim().length === 0) return
     void run(async () => {
-      await bridge.proposeRevision({
+      await guardedDocumentWrite(bridge, () => bridge.proposeRevision({
         baseBodyVersionId: workspace.bodyVersionId as string,
         instruction,
         constraints: ['不得修改任何已锁定块'],
@@ -481,20 +495,20 @@ export function WritingWorkbenchPanel({
           baseBlockHash: block.contentHash,
           content: replacement,
         }],
-      })
+      }))
       setEditingBlockId(null)
       setReplacement('')
     })
   }
 
   const toggleLock = (block: BodyBlockView): void => {
-    if (workspace.bodyVersionId === null) return
-    void run(() => bridge.setBlockLock(
+    if (!documentWritable || workspace.bodyVersionId === null) return
+    void run(() => guardedDocumentWrite(bridge, () => bridge.setBlockLock(
       workspace.bodyVersionId as string,
       block.id,
       block.contentHash,
       block.locked ? 'unlock' : 'lock',
-    ))
+    )))
   }
 
   return (
@@ -542,8 +556,8 @@ export function WritingWorkbenchPanel({
               <div className={css.blockToolbar}>
                 <span>{block.kind === 'heading' && block.ordinal === 0 ? '标题' : `块 ${block.ordinal + 1} · ${block.kind}`}</span>
                 <div className={css.blockActions}>
-                  <button type="button" disabled={!writable || busy} onClick={() => toggleLock(block)}>{block.kind === 'heading' && block.ordinal === 0 ? (block.locked ? '显式解锁标题' : '锁定标题') : (block.locked ? '显式解锁' : '锁定')}</button>
-                  <button type="button" disabled={!writable || busy || block.locked} onClick={() => beginEdit(block)}>{block.kind === 'heading' && block.ordinal === 0 ? '修改标题' : '局部修改'}</button>
+                  <button type="button" disabled={!documentWritable || busy} onClick={() => toggleLock(block)}>{block.kind === 'heading' && block.ordinal === 0 ? (block.locked ? '显式解锁标题' : '锁定标题') : (block.locked ? '显式解锁' : '锁定')}</button>
+                  <button type="button" disabled={!documentWritable || busy || block.locked} onClick={() => beginEdit(block)}>{block.kind === 'heading' && block.ordinal === 0 ? '修改标题' : '局部修改'}</button>
                 </div>
               </div>
               {editingBlockId === block.id ? (
@@ -551,7 +565,7 @@ export function WritingWorkbenchPanel({
                   <textarea aria-label={`编辑块 ${block.ordinal + 1}`} value={replacement} onChange={event => setReplacement(event.target.value)} />
                   <input aria-label="修改说明" value={instruction} onChange={event => setInstruction(event.target.value)} />
                   <div className={css.editorActions}>
-                    <button type="button" disabled={busy || replacement.trim().length === 0 || instruction.trim().length === 0} onClick={() => propose(block)}>生成差异预览</button>
+                    <button type="button" disabled={!documentWritable || busy || replacement.trim().length === 0 || instruction.trim().length === 0} onClick={() => propose(block)}>生成差异预览</button>
                     <button type="button" disabled={busy} onClick={() => setEditingBlockId(null)}>取消</button>
                   </div>
                 </div>
@@ -564,8 +578,8 @@ export function WritingWorkbenchPanel({
             <div className={css.proposalActionsCard} key={proposal.id}>
               <RevisionDiff proposal={proposal} />
               <div className={css.editorActions}>
-                <button type="button" disabled={!writable || busy} onClick={() => void run(() => bridge.acceptRevision(proposal.id))}>接受并创建新版本</button>
-                <button type="button" disabled={!writable || busy} onClick={() => void run(() => bridge.rejectRevision(proposal.id, '用户取消差异'))}>取消提案</button>
+                <button type="button" disabled={!documentWritable || busy} onClick={() => void run(() => guardedDocumentWrite(bridge, () => bridge.acceptRevision(proposal.id)))}>接受并创建新版本</button>
+                <button type="button" disabled={!documentWritable || busy} onClick={() => void run(() => guardedDocumentWrite(bridge, () => bridge.rejectRevision(proposal.id, '用户取消差异')))}>取消提案</button>
               </div>
             </div>
           ))}
@@ -576,7 +590,7 @@ export function WritingWorkbenchPanel({
           {[...workspace.versions].reverse().map(version => (
             <div className={clsx(css.versionRow, version.current && css.versionCurrent)} key={version.id}>
               <div><strong>v{version.ordinal}{version.current ? ' · 当前' : ''}</strong><p>{version.reason}</p><span>{version.actorLabel} · {new Date(version.createdAt).toLocaleString('zh-CN')}</span></div>
-              {!version.current && <button type="button" disabled={!writable || busy} onClick={() => void run(() => bridge.rollbackBody(version.id, `回退到 v${version.ordinal}`))}>回退到此版</button>}
+              {!version.current && <button type="button" disabled={!documentWritable || busy} onClick={() => void run(() => guardedDocumentWrite(bridge, () => bridge.rollbackBody(version.id, `回退到 v${version.ordinal}`)))}>回退到此版</button>}
             </div>
           ))}
         </div>

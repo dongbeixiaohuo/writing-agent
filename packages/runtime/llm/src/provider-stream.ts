@@ -22,7 +22,7 @@ export interface ProviderTokenUsage {
 }
 
 export type ProviderStreamEvent =
-  | { readonly type: "response_activity"; readonly phase: "headers" | "content" }
+  | { readonly type: "response_activity"; readonly phase: "headers" | "reasoning" | "content" }
   | { readonly type: "text_delta"; readonly delta: string }
   | {
       readonly type: "tool_call_delta";
@@ -159,7 +159,18 @@ function asExecutableToolCall(
   } catch {
     return {
       ok: false,
-      error: invalidResponse(`工具 ${buffer.name} 的参数 JSON 不完整或无效`),
+      error: {
+        ...invalidResponse(`工具 ${buffer.name} 的参数 JSON 不完整或无效`),
+        // Only emitted after a completed tool response, never for a dropped
+        // stream. Give the bounded correction loop a safe, actionable cause.
+        // JSON.parse errors can quote private source text: do not forward them.
+        toolSchemaFeedback: {
+          toolName: buffer.name,
+          issues: [{ path: '', rule: 'json_syntax',
+            message: 'Arguments must be one complete JSON object. Escape quotes, backslashes and newlines inside strings; no trailing commas, comments or Markdown fences. Resubmit all arguments, not a fragment.',
+            expected: { type: 'object', encoding: 'JSON' } }],
+        },
+      },
     };
   }
   if (

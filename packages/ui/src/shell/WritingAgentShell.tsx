@@ -1,10 +1,13 @@
 import clsx from 'clsx'
 import { RunDiagnostics } from './RunDiagnostics.tsx'
+import { RunTrace, type RunTraceProps } from './RunTrace.tsx'
+import './RunTrace.css'
 import { ConversationWorking } from './ConversationWorking.tsx'
 import { conversationWithPreview } from './conversation-stream.ts'
 import './RunDiagnostics.css'
 import {
   Suspense,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -78,7 +81,7 @@ import {
 import css from './WritingAgentShell.module.css'
 import { aboutVersionView } from './about.ts'
 import { conversationFollowTarget, CONVERSATION_FOLLOW_THRESHOLD } from './conversation-follow.ts'
-import { checkpointCopy, composerRecoveryMode, stageRoleCopy, runRecordsTabLabel } from './interaction.ts'
+import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, runRecordsTabLabel } from './interaction.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import { runProgressSummary, runDisplayStatus, runSavedStageLabel, runStopReasonLabel } from './run-records.ts'
 import { publicationGateNotice, factVerificationNotice } from './publication-gate.ts'
@@ -270,12 +273,16 @@ function CheckpointDecisionCard({
   run,
   onInspect,
   onContinued,
+  runActive,
+  canApproveCheckpoint,
 }: {
   bridge: ClientBridge
   recovery: RecoverableRunSummary
   run: RunRecordView | undefined
   onInspect: () => void
   onContinued: () => void
+  runActive: boolean
+  canApproveCheckpoint: boolean
 }) {
   const copy = checkpointCopy(recovery, run)
   const [busy, setBusy] = useState(false)
@@ -289,13 +296,9 @@ function CheckpointDecisionCard({
     try {
       setBusy(true)
       setError(null)
-      const decision = recovery.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME'
-        ? 'retry_unknown'
-        : 'resume'
-      await bridge.resumeRun(
-        recovery.runId,
-        decision,
-      )
+      const action = recoveryContinueAction(recovery)
+      if (action.kind === 'message') await bridge.sendMessage(action.text)
+      else await bridge.resumeRun(recovery.runId, action.decision)
       onContinued()
     } catch (reason) {
       setError(commandErrorMessage(reason, '继续运行失败，请重试。'))
@@ -319,12 +322,15 @@ function CheckpointDecisionCard({
 
   // Normal confirmation is asked once, at the end of the saved timeline result.
   // Keep cancellation available without creating a second conversation card.
-  if (isCheckpoint && !isTitleDiscussion) return <div className={css.checkpointActions}>
-    <button className={css.textActionNeutral} type="button" disabled={busy} onClick={() => void stop()}>结束本轮</button>
+  if (isCheckpoint && !isTitleDiscussion) return <div className={css.checkpointActions} data-conversation-recovery="true" aria-label="共创确认操作">
+    <button className={css.textActionNeutral} type="button" disabled={busy || runActive} onClick={() => void stop()}>结束本轮</button>
+    {canApproveCheckpoint && <button className={css.primaryAction} type="button" disabled={busy || runActive} onClick={() => void resume()}>
+      {busy ? '正在继续…' : copy.primaryAction}
+    </button>}
     {error !== null && <p className={css.checkpointError} role="alert">{error}</p>}
   </div>
 
-  return <section className={css.checkpointCard} data-conversation-recovery={!isCheckpoint && !needsInput ? 'true' : undefined}
+  return <section className={css.checkpointCard} data-conversation-recovery="true"
     aria-label={isTitleDiscussion ? '待选标题' : needsInput ? '待补充信息' : isCheckpoint ? '共创决策' : '写作暂停'}>
     <div className={css.checkpointHeader}>
       <div className={css.checkpointRole} aria-hidden="true">{copy.role.slice(0, 1)}</div>
@@ -343,10 +349,10 @@ function CheckpointDecisionCard({
     </p>}
     {error !== null && <p className={css.checkpointError} role="alert">{error}</p>}
     <div className={css.checkpointActions}>
-      <button className={css.textActionNeutral} type="button" disabled={busy} onClick={() => void stop()}>结束本轮</button>
+      <button className={css.textActionNeutral} type="button" disabled={busy || runActive} onClick={() => void stop()}>结束本轮</button>
       <div>
         <button className={css.secondaryAction} type="button" disabled={busy} onClick={onInspect}>打开稿件与过程</button>
-        {!isCheckpoint && !needsInput && <button className={css.primaryAction} type="button" disabled={busy} onClick={() => void resume()}>
+        {!isCheckpoint && !needsInput && <button className={css.primaryAction} type="button" disabled={busy || runActive} onClick={() => void resume()}>
           {busy ? '正在继续…' : copy.primaryAction}
         </button>}
       </div>
@@ -384,10 +390,12 @@ function PublicationGateNoticeCard({
   </section>
 }
 
-export function RunRecords({ records }: { records: readonly RunRecordView[] }) {
+export function RunRecords({ records, activeRunId, liveActivity, loadDetail }: { records: readonly RunRecordView[]; activeRunId?: string | null; liveActivity?: BridgeSnapshot['liveActivity']; loadDetail?: RunTraceProps['loadDetail'] }) {
   if (records.length === 0) return <div className={css.emptyRunRecords}><strong>还没有运行记录</strong><span>提交第一条写作指令后，这里会显示每个阶段的真实进度、用量和结果。</span></div>
   return <div className={css.runRecords}>
-    <div className={css.runRecordsIntro}><h2>运行记录</h2><p>先看写作阶段：每个阶段标明负责的专家、作用和保存状态。需求交流与改稿讨论单独记录，不算新的写作阶段。确认、继续和重试可能多次续接同一流程；底部“执行详情”保留各次续接中的模型请求、工具调用和调度记录。</p></div>
+    <div className={css.runRecordsIntro}><h2>运行记录</h2><p>按时间查看 Agent、模型和工具的实际执行过程。选择一步查看当时的输入、回复、工具参数、结果与耗时；只有实际调用了搜索才会显示搜索记录。详情按需读取，历史缺失不会补造。</p></div>
+    <RunTrace records={records} activeRunId={activeRunId} liveActivity={liveActivity} loadDetail={loadDetail} />
+    <details><summary>写作阶段与累计用量</summary>
     {[...records].reverse().map(run => <article className={css.runRecordCard} key={run.id}>
       <div className={css.runRecordHeader}>
         <div><span>{run.purpose === 'writing-pack:intake' ? '需求交流' : run.purpose === 'writing-pack:author-conversation' ? '改稿与讨论' : run.totalStages > 1 ? `写作流程 · ${run.totalStages} 个阶段` : run.purpose === 'writing-pack:fact-check' ? '专项事实核查' : '专项处理'}{run.diagnostics ? ` · ${run.diagnostics.segments.length} 次执行（含续接）` : ''}</span><h3>{run.displayInstruction.startsWith('按刚才确认的方向继续：') ? '按已确认的写作方向继续' : run.displayInstruction}</h3></div>
@@ -403,7 +411,7 @@ export function RunRecords({ records }: { records: readonly RunRecordView[] }) {
       {run.diagnostics && run.diagnostics.segments.length > 0
         ? <details className={css.runActivity}><summary>执行详情 · 模型、工具与调度记录</summary><RunDiagnostics diagnostics={run.diagnostics} /></details>
         : (run.activity?.length ?? 0) > 0 && <details className={css.runActivity}><summary>执行详情 · 模型、工具与调度记录</summary><Timeline items={run.activity!} brand={WRITING_AGENT_BRAND} diagnostic /></details>}
-    </article>)}
+    </article>)}</details>
   </div>
 }
 
@@ -1561,6 +1569,9 @@ export function WritingAgentShell({
   const [hero, setHero] = useState(() => snapshot.selectedSessionId.length === 0)
   const [newProjectIntent, setNewProjectIntent] = useState(() => snapshot.selectedProjectId.length === 0)
   const [activeTab, setActiveTab] = useState<'conversation' | 'runs'>('conversation')
+  const loadTraceDetail = useCallback((runId: string, stepId: string) => bridge.getRunTraceDetail({
+    projectId: snapshot.selectedProjectId, sessionId: snapshot.selectedSessionId, runId, stepId,
+  }), [bridge, snapshot.selectedProjectId, snapshot.selectedSessionId])
   const [showJumpLatest, setShowJumpLatest] = useState(false)
   const [briefConfirming, setBriefConfirming] = useState(false)
   const [briefConfirmationError, setBriefConfirmationError] = useState<string | null>(null)
@@ -1579,14 +1590,21 @@ export function WritingAgentShell({
   )
   const selectedSession = snapshot.sessions.find(session => session.id === snapshot.selectedSessionId)
   const selectedProject = snapshot.projects.find(project => project.id === snapshot.selectedProjectId)
+  const otherRunningSession = snapshot.sessions.find(session => session.projectId === snapshot.selectedProjectId &&
+    session.id !== snapshot.selectedSessionId && session.status === 'running')
   const timeline = conversationWithPreview(snapshot.timelineBySession[snapshot.selectedSessionId] ?? [], snapshot.liveReply, snapshot.activeRunId)
   if (snapshot.liveReply?.id && snapshot.liveReply.runId === snapshot.activeRunId) streamedMessageIdRef.current = snapshot.liveReply.id
-  const selectedRecovery = snapshot.recoverableRuns.find(run => run.sessionId === snapshot.selectedSessionId)
+  const selectedRecoveries = snapshot.recoverableRuns.filter(run => run.sessionId === snapshot.selectedSessionId)
+  const selectedRecoveryKey = selectedRecoveries.map(run => `${run.runId}:${run.status}:${run.stopReason ?? ''}`).join('|')
+  const checkpointApprovalRunId = selectedRecoveries.some(run => run.stopReason === 'WRITING_INPUT_REQUIRED')
+    ? null
+    : selectedRecoveries.findLast(run => run.stopReason === 'CO_CREATION_CHECKPOINT')?.runId ?? null
   const modelConfigured = snapshot.settings.credentialReference !== null
   const latestRun = snapshot.runRecords.at(-1)
 
   const latestMessageTarget = (scrollBody: HTMLDivElement): number => {
-    const recovery = scrollBody.querySelector<HTMLElement>('[data-conversation-recovery]')
+    const recoveries = scrollBody.querySelectorAll<HTMLElement>('[data-conversation-recovery]')
+    const recovery = recoveries.item(recoveries.length - 1)
     if (recovery !== null) {
       const top = recovery.getBoundingClientRect().top - scrollBody.getBoundingClientRect().top + scrollBody.scrollTop - 12
       const bottom = recovery.getBoundingClientRect().bottom - scrollBody.getBoundingClientRect().top + scrollBody.scrollTop + 12
@@ -1720,7 +1738,7 @@ export function WritingAgentShell({
       setShowJumpLatest(false)
     }
     if (followLatestRef.current) scrollToLatest()
-  }, [hero, activeTab, snapshot.selectedSessionId, timeline, snapshot.liveReply?.text, latestRun?.completedStages, latestRun?.status, selectedRecovery?.stopReason, snapshot.deliveryWorkspace.gateStatus])
+  }, [hero, activeTab, snapshot.selectedSessionId, timeline, snapshot.liveReply?.text, latestRun?.completedStages, latestRun?.status, selectedRecoveryKey, snapshot.deliveryWorkspace.gateStatus])
 
   return (
     <main
@@ -1864,6 +1882,10 @@ export function WritingAgentShell({
             if (composerRecoveryMode(snapshot.recoverableRuns, snapshot.selectedSessionId) === 'decision') forceFollowLatest()
           }}>对话</button><button className={clsx(css.tab, activeTab === 'runs' && css.tabActive)} type="button" onClick={() => setActiveTab('runs')}>{runRecordsTabLabel(snapshot.runRecords.length, snapshot.activeRunId, snapshot.liveActivity)}</button></div>
         </header>}
+        {otherRunningSession && <div className={css.modelSetupNotice} role="status">
+          <span>本项目的另一个对话正在运行。可以前往查看进度或停止；完成后再继续当前对话。</span>
+          <button type="button" onClick={() => void openSession(otherRunningSession.projectId, otherRunningSession.id)}>查看运行中的对话</button>
+        </div>}
         {hero ? <div className={css.heroStage}>
           <div className={css.heroCopy}><h1>{!newProjectIntent && selectedProject !== undefined ? `在“${selectedProject.name}”中开始新对话` : '今天想写什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
           {!modelConfigured && snapshot.mode === 'application' && <div className={css.modelSetupNotice}><span>先连接你的模型，然后就可以直接开始交流。</span><button type="button" onClick={() => openSettings('models')}>配置模型</button></div>}
@@ -1887,16 +1909,19 @@ export function WritingAgentShell({
             {latestRun !== undefined && latestRun.stages.length > 0 && <WorkflowProgress run={latestRun} />}
             <Timeline items={timeline} brand={brand} footer={<>
               {snapshot.connection === 'running' && <ConversationWorking snapshot={snapshot} bridge={bridge} />}
-              {selectedRecovery === undefined ? null : <CheckpointDecisionCard
+              {selectedRecoveries.map(recovery => <CheckpointDecisionCard
+                key={recovery.runId}
                 bridge={bridge}
-                recovery={selectedRecovery}
-                run={snapshot.runRecords.find(run => run.id === selectedRecovery.runId)}
+                recovery={recovery}
+                run={snapshot.runRecords.find(run => run.id === recovery.runId)}
+                runActive={snapshot.activeRunId !== null}
+                canApproveCheckpoint={recovery.runId === checkpointApprovalRunId}
                 onInspect={() => {
                   const launcher = extensions.listLaunchers('conversation.actions')[0]
                   if (launcher !== undefined) openWritingPanel(launcher.panelId, 'process')
                 }}
                 onContinued={forceFollowLatest}
-              />}
+              />)}
             {snapshot.conversationIntake?.phase === 'proposal' && <section className={css.intakeConfirmation} aria-label="确认写作方向">
               <MarkdownContent content={snapshot.conversationIntake.summary} />
               <p>这个方向符合你的想法吗？也可以直接在下方告诉我怎么调整。</p>
@@ -1929,7 +1954,7 @@ export function WritingAgentShell({
             onConfigureModel={() => openSettings('models')}
             hostConfiguration={hostConfiguration}
           /></div>
-        </> : <div className={css.runRecordsScroll}><RunRecords records={snapshot.runRecords} /></div>}
+        </> : <div className={css.runRecordsScroll}><RunRecords key={`${snapshot.selectedProjectId}:${snapshot.selectedSessionId}`} records={snapshot.runRecords} activeRunId={snapshot.activeRunId} liveActivity={snapshot.liveActivity} loadDetail={loadTraceDetail} /></div>}
       </section>
 
       <aside className={appFrameCss.rightbarCol} aria-label={activePanel?.label ?? '扩展面板'}>

@@ -299,6 +299,7 @@ export interface RecoveredRun {
 }
 
 export interface ResumeRunInput {
+  readonly checkpointDecision?: { readonly markerId: string; readonly intent: string; readonly receiptId: string };
   readonly projectId: string;
   readonly runId: string;
   readonly operationId: string;

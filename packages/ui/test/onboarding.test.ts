@@ -272,6 +272,19 @@ test("desktop command failures become visible user actions instead of transport 
     commandErrorMessage(feedbackTooLong, "继续运行失败"),
     "本次修改意见过长，请精简到 4,000 字符以内。",
   );
+
+  assert.equal(
+    commandErrorMessage(new Error("CHECKPOINT_DECISION_REQUIRED"), "继续运行失败"),
+    "请先回复当前共创节点；只有经过本轮对话确认后才会继续。",
+  );
+  assert.equal(
+    commandErrorMessage(new Error("INTENT_CONTEXT_STALE"), "继续运行失败"),
+    "等待确认的内容已变化，本次未继续。请查看最新回复后重新确认。",
+  );
+  assert.equal(
+    commandErrorMessage(new Error("RUN_NOT_RECOVERABLE"), "继续运行失败"),
+    "这个等待项已处理或已失效，未重复执行。请查看最新进度。",
+  );
 });
 
 test("diagnostic and migration failures explain the safe next action", () => {

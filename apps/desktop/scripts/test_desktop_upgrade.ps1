@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$CurrentInstallerPath,
     [string]$EvidencePath = 'output/desktop-upgrade-test.json',
-    [int]$ExpectedProtocolVersion = 20,
+    [int]$ExpectedProtocolVersion = 21,
     [int]$TimeoutSeconds = 120,
     [switch]$SimulateOrphanedPreviousInstall
 )

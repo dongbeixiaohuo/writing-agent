@@ -393,6 +393,34 @@ async function waitUntil(check: () => boolean, timeoutMs = 2_000): Promise<void>
 }
 
 describe("Application Service client bridge", () => {
+  it('routes a material answer to its input wait without recursively resuming a newer checkpoint', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'wa-multiple-waits-'));
+    const storage = openWorkspaceStorage({ workspacePath });
+    const service = new WritingApplicationService({ storage, provider: new MissingInputProvider() });
+    seedProject(service, 'project-input', 'test');
+    const bridge = bridgeFor(service);
+    try {
+      const first = await bridge.sendMessage('开始');
+      await waitUntil(() => bridge.getSnapshot().recoverableRuns.length === 1);
+      const sessionId = bridge.getSnapshot().selectedSessionId;
+      storage.startRun({ projectId: 'project-input', sessionId, runId: 'newer-checkpoint',
+        operationId: 'newer-checkpoint-start', purpose: 'writing-pack:draft', planVersion: 'test' });
+      storage.pauseRun({ projectId: 'project-input', runId: 'newer-checkpoint', operationId: 'checkpoint-pause',
+        reason: 'CO_CREATION_CHECKPOINT', payload: { stage: 'outline', nextStage: 'draft' } });
+      await bridge.refresh();
+      const resume = bridge.resumeRun.bind(bridge);
+      let resumeCalls = 0;
+      bridge.resumeRun = async (...args) => {
+        assert.ok(++resumeCalls <= 1, 'a composer answer must not recurse through another waiting run');
+        return resume(...args);
+      };
+      const reply = await bridge.sendMessage('写给新入职同事，介绍我们三步报修流程：提交工单、等待分配、确认恢复。');
+      assert.equal(reply.runId, first.runId);
+      await waitUntil(() => storage.getRun(first.runId)?.status === 'completed');
+      assert.equal(storage.getRun('newer-checkpoint')?.status, 'waiting_user');
+      assert.equal(storage.listRunEvents('newer-checkpoint').some(e => e.type === 'run.resumed'), false);
+    } finally { bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+  });
   it('shows persisted input questions and resumes the same run from the main composer', async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), 'wa-bridge-missing-input-'));
     const storage = openWorkspaceStorage({ workspacePath });
@@ -983,6 +1011,19 @@ describe("Application Service client bridge", () => {
         after.materialProcessWorkspace.reviews.map((review) => review.id),
         processReviewIds,
       );
+      storage.startRun({ projectId: 'project-1', sessionId: after.selectedSessionId, runId: 'protected-fact-check',
+        operationId: 'protected-fact-start', purpose: 'writing-pack:fact-check', planVersion: 'test' });
+      storage.finishRun({ projectId: 'project-1', runId: 'protected-fact-check', operationId: 'protected-fact-stop',
+        status: 'budget_exhausted', stopReason: 'BUDGET_EXHAUSTED' });
+      await bridge.refresh();
+      assert.ok(bridge.getSnapshot().recoverableRuns.some(run => run.runId === 'protected-fact-check'));
+      await bridge.resumeRun('protected-fact-check', 'resume', { operationId: 'retry-protected-fact' });
+      const restarted = storage.listRuns('project-1').at(-1)!;
+      assert.equal(storage.listRunEvents(restarted.id).find(event => event.type === 'run.started')?.payload.purpose, 'writing-pack:fact-check');
+      await waitUntil(() => storage.getRun(restarted.id)?.status === 'completed');
+      await bridge.refresh();
+      assert.equal(bridge.getSnapshot().previewDocument.version, bodyCount);
+      assert.equal(storage.getRun('protected-fact-check')?.status, 'cancelled');
     } finally {
       bridge.dispose();
       storage.close();
