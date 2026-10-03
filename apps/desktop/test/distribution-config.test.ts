@@ -206,6 +206,12 @@ test("packaged smoke validates the current bridge protocol", () => {
   assert.equal(smokeScript.includes("$result.protocolVersion -ne 7"), false);
 });
 
+test("upgrade smoke validates the current bridge protocol rather than the prior RC protocol", () => {
+  const upgradeScript = readFileSync(resolve(root, "scripts/test_desktop_upgrade.ps1"), "utf8");
+  assert.match(upgradeScript, new RegExp(`\\[int\\]\\$ExpectedProtocolVersion = ${UI_BRIDGE_PROTOCOL_VERSION}`, 'u'));
+  assert.match(upgradeScript, /-ExpectedProtocolVersion \$ExpectedProtocolVersion/u);
+});
+
 test("desktop shell contains no updater, external navigation, upstream runtime, or old Tauri path", () => {
   const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
   const preloadSource = readFileSync(resolve(root, "src/preload.ts"), "utf8");
