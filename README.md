@@ -4,7 +4,7 @@
 
 从一个模糊想法出发，与写作导演、主笔、审校和去 AI 味专家一起把文章写出来。你可以在过程中补充材料、改变方向、选择标题，而不只是等着接收最终结果。
 
-[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
+[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.63)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
 
 ## 老朋友，这个项目正在发生什么变化？
 
@@ -18,9 +18,9 @@
 - **原版用户**：可以继续使用原工作流，不必迁移；[直接跳到原版介绍与安装入口](#claude-code-skill)。
 - **准备尝试新版的老用户**：请先看[迁移边界](#rc-status)。**原版能力尚未全部迁入，桌面版目前不是完整替代品。**
 
-> **当前状态 · 2026-09-30**
+> **当前状态 · 2026-10-03**
 >
-> 桌面版 **[1.0.0-rc.58 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58)**，提供 Windows x64 安装包。它是 **RC（候选测试版），不是稳定正式版**；未签名，欢迎用独立测试项目体验并反馈。
+> 桌面版 **[1.0.0-rc.63 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.63)**，提供 Windows x64 安装包。本次补强阶段确认与恢复、过程展示，并增加可查看真实输入、输出和工具详情的运行轨迹。它是 **RC（候选测试版），不是稳定正式版**；未签名，欢迎用独立测试项目体验并反馈。
 >
 > 原版 Skill 版本线仍为 `v0.11.x`。Releases 中的 `v0.11.0` 是 Skill 版本，`app-preview-0.1.0` 是早期桌面预览，两者都不是这次重构的新 App。公开下载以本仓库标注“桌面版”的 Release 为准。
 
@@ -89,7 +89,7 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端发送�
 
 - 在主对话讨论方向、看阶段成果、补材料、选标题，直接打开当前稿件。
 - 在“稿件与版本”查看历史、比较修改、处理精细调整，并导出 TXT / HTML。
-- 在“运行记录”追溯专家分派、模型请求和工具调用，普通用户不必理解后台字段。
+- 在“运行记录”按时间追溯专家、模型和工具步骤；点击查看已保存的输入、回复、工具参数与结果、Schema 和耗时，帮助定位等待或失败。详情按需加载，支持搜索摘要与加载历史；普通用户仍可只看主对话。记录可能包含文章和材料，分享前请自行检查隐私。
 - 已保存成果保留在本机；停止或失败后可按当前状态继续或重试，不必重新填写全部需求。未保存的生成内容不等于已保存稿件。
 
 事实核查绑定当前版本；正文、标题或证据变化后，旧结论可能需要更新。核查通过也不是“绝对无误”的保证，重要内容仍需人工复核。
@@ -98,9 +98,11 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端发送�
 
 ## 下载与第一次使用
 
-**[查看 rc.58 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.58)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.58/Writing-Agent-Setup-1.0.0-rc.58-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.58/SHA256SUMS.txt)
+**[查看 rc.63 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.63)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.63/Writing-Agent-Setup-1.0.0-rc.63-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.63/SHA256SUMS.txt)
 
 此包未签名，Windows 可能显示“未知发布者”或 SmartScreen 提醒。请核对仓库来源和校验值，不要关闭安全防护。不要把旧 `app-preview-0.1.0` 当作这次新版。
+
+升级前请备份工作区并退出旧版，再运行新安装包。已在干净 Windows Runner 验证 RC58 → RC63 升级及合成测试数据保留，不代表所有历史数据库已穷举；当前没有自动更新。此前本地 RC63 测试包与本次固定提交构建的公开包校验值不同，请以 Release 附件为准。
 
 1. 找到明确标注“桌面版”的 Release，阅读 RC 限制，下载 Windows x64 的 `Writing-Agent-Setup-版本号-x64.exe`。GitHub 自动附带的 `Source code.zip` 是源码，不是安装包。
 2. 安装后进入“设置 → 模型”，选择供应商，填写 Key 与模型 ID，验证连接。
