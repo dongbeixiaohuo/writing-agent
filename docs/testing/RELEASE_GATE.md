@@ -1,10 +1,22 @@
 # Writing Agent 桌面发布门禁
 
-更新：2026-10-03。当前公开桌面版 **1.0.0-rc.63**，为 **Pre-release，不是稳定版**。维护者已授权同步源码与更新下载包，并接受未签名安装包；不修改仓库 latest，不删除旧 Skill 或历史 Release。
+更新：2026-10-04。当前公开桌面版 **1.0.0-rc.68**，为 **Pre-release，不是稳定版**。维护者已授权同步源码与更新下载包，并接受未签名安装包；不修改仓库 latest，不删除旧 Skill 或历史 Release。
 
-当前状态：**[rc.63 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.63)**。源码锁定 `2b31ecc779bc94f9f10164021656771048eae912`，[Windows 候选工作流 37084961515](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/37084961515) 全部通过。执行与资产校验记录见 [rc.63 发布记录](../launch/RC63_RELEASE_EXECUTION.md)。
+当前下载：**[rc.68](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.68)**。源码锁定 `23f2c23c9075b3b0225c02667b6146710d2f56b2`，执行与资产校验记录见 [rc.68 发布记录](../launch/RC68_RELEASE_EXECUTION.md)。
 
-## RC63 本次发布检查
+## RC68 本次发布检查
+
+- [x] 产品修复经 PR #20、升级校验修正经 PR #21 的五项必需检查后合并，没有绕过保护。
+- [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/37141995824)、完整自动检查、安装/启动/卸载通过。
+- [x] RC63 → RC68 原位升级及安装器级合成数据保留通过，升级后桥接协议为 22。
+- [x] 六个附件哈希核对及公开安装包无登录下载校验完成。
+- [x] 固定标签、Pre-release、发布指定不改变 Skill latest；本地最终包位于 `output/desktop` 根目录。
+
+作者上下文接线遗漏和升级测试协议预期过期均在公开前被拦截并修正，保留首次失败记录，不以重新打包替代调查。RC68 的真实模型端到端耗时和文章质量仍待代表性验证，离线字符缩减不能外推同比例速度或费用收益。
+
+## RC63 历史发布基线（2026-10-03）
+
+源码 `2b31ecc779bc94f9f10164021656771048eae912`，[候选工作流 37084961515](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/37084961515) 全部通过，见 [rc.63 发布记录](../launch/RC63_RELEASE_EXECUTION.md)。
 
 - [x] 源码经 PR #18 的五项必需检查后合并，没有绕过分支保护。
 - [x] 最终合并 SHA 在干净 Windows Runner 通过 Runtime、UI、Bridge、Desktop、搜索专项、Python、文档/镜像、依赖审计和打包检查。
@@ -12,7 +24,7 @@
 - [x] 六个公开附件与构建产物校验一致；公开安装包无登录重新下载验证，未签名风险与升级备份要求明确披露。
 - [x] 保留 Skill latest 与历史 Release，桌面 RC 独立命名；首页使用已公开的 RC63 下载链接。
 
-本次过程展示与运行轨迹的验证见 [过程可见性](2026-10-03-process-visibility.md)和[运行轨迹检查器](2026-10-03-run-trace-inspector.md)。自动回归、合成 UI 样例和安装脚本不等于完整人工旅程，也不代表所有模型、文章和历史项目已经验收。以下 RC58 实测仅作为有日期的历史基线，不冒充 RC63 当日重新实测。
+RC63 过程展示与运行轨迹的验证见 [过程可见性](2026-10-03-process-visibility.md)和[运行轨迹检查器](2026-10-03-run-trace-inspector.md)。自动回归、合成 UI 样例和安装脚本不等于完整人工旅程，也不代表所有模型、文章和历史项目已经验收。以下 RC58 实测仅作为有日期的历史基线，不冒充后续 RC 当日重新实测。
 
 ## RC58 历史发布基线（2026-09-30）
 
