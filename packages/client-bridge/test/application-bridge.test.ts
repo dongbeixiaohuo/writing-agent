@@ -870,7 +870,7 @@ describe("Application Service client bridge", () => {
           item.label === "读取参考材料" &&
           item.detail === "已完成"
         ),
-        true,
+        false, // Short material was supplied inline; do not invent a tool read.
       );
       assert.equal(
         timeline.some((item) =>

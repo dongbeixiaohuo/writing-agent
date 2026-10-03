@@ -98,7 +98,18 @@ export interface RunRecordView {
 export type DiagnosticOperationStatus = 'pending' | 'completed' | 'failed' | 'outcome_unknown'
 
 export interface RunDiagnosticModelRequest {
-  stream?: { headersMs: number | null; firstContentMs: number | null; lastContentMs: number | null; contentEvents: number }
+  stream?: {
+    headersMs: number | null
+    /** Optional for compatibility with run records written before reasoning activity timing existed. */
+    firstReasoningMs?: number | null
+    /** Optional for compatibility with run records written before reasoning activity timing existed. */
+    lastReasoningMs?: number | null
+    /** Activity count only; no private reasoning text is persisted. */
+    reasoningEvents?: number
+    firstContentMs: number | null
+    lastContentMs: number | null
+    contentEvents: number
+  }
   transport?: { phase: 'first_response' | 'stream_idle'; timeoutMs: number; elapsedMs: number; firstResponseMs: number | null; lastActivityMs: number | null }
   providerHttpStatus?: number
   id: string

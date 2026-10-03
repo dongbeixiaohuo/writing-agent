@@ -172,7 +172,15 @@ interface ActiveRun {
 }
 
 interface CollectedModelAttempt {
-  readonly stream: { headersMs: number | null; firstContentMs: number | null; lastContentMs: number | null; contentEvents: number };
+  readonly stream: {
+    headersMs: number | null;
+    firstReasoningMs: number | null;
+    lastReasoningMs: number | null;
+    reasoningEvents: number;
+    firstContentMs: number | null;
+    lastContentMs: number | null;
+    contentEvents: number;
+  };
   readonly text: string;
   readonly completedToolCalls: readonly CompletedToolCall[];
   readonly finishReason:
@@ -544,7 +552,15 @@ export class AgentRuntime {
     let usage: TokenUsage | null = null;
     let error: ModelError | null = null;
     const began = performance.now();
-    const stream: CollectedModelAttempt['stream'] = { headersMs: null, firstContentMs: null, lastContentMs: null, contentEvents: 0 };
+    const stream: CollectedModelAttempt['stream'] = {
+      headersMs: null,
+      firstReasoningMs: null,
+      lastReasoningMs: null,
+      reasoningEvents: 0,
+      firstContentMs: null,
+      lastContentMs: null,
+      contentEvents: 0,
+    };
     const preview = (event: ModelEvent | null, lifecycle?: 'started' | 'finished'): void => {
       // Presentation must not affect model execution, persistence or cancellation.
       try { this.#onModelStream?.({ projectId: active.projectId, sessionId: active.sessionId, runId: active.runId, requestId: request.requestId, ...(actor ? { actor } : {}), ...(!request.signal?.aborted && lifecycle ? { lifecycle } : {}), ...(textAudience ? { textAudience } : {}), ...(outputPreview ? { outputPreview } : {}), event: request.signal?.aborted ? null : event }); } catch { /* optional observer */ }
@@ -554,6 +570,9 @@ export class AgentRuntime {
       for await (const event of this.#provider.stream(request)) {
         const elapsed = Math.round(performance.now() - began);
         if (event.type === 'response_activity' && event.phase === 'headers') stream.headersMs ??= elapsed;
+        if (event.type === 'response_activity' && event.phase === 'reasoning') {
+          stream.firstReasoningMs ??= elapsed; stream.lastReasoningMs = elapsed; stream.reasoningEvents++;
+        }
         if ((event.type === 'response_activity' && event.phase === 'content') || (event.type === 'text_delta' && event.delta.length > 0)
           || (event.type === 'tool_call_delta' && event.argumentsDelta.length > 0)) {
           stream.firstContentMs ??= elapsed; stream.lastContentMs = elapsed; stream.contentEvents++;

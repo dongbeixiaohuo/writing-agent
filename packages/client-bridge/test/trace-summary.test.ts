@@ -54,6 +54,32 @@ test('model trace shows a bounded assistant reply without private reasoning', ()
   assert.doesNotMatch(summary, /private|api_key|do-not-show|chain of thought|<think>/iu)
 })
 
+test('model trace keeps reasoning activity separate from effective content and preserves missing legacy timing', () => {
+  const current = runDiagnostics(projection([
+    { type: 'run.started', operationId: 'start', payload: {} },
+    { type: 'request.dispatch_attempted', operationId: 'current', payload: { requestId: 'request-current' } },
+    { type: 'request.completed', operationId: 'current', payload: { stream: {
+      headersMs: 25, firstReasoningMs: 1000, lastReasoningMs: 340000, reasoningEvents: 42,
+      firstContentMs: 344500, lastContentMs: 344900, contentEvents: 3,
+    } } },
+  ]), run).trace?.find(step => step.kind === 'model')
+  assert.deepEqual(current?.stream, {
+    headersMs: 25, firstReasoningMs: 1000, lastReasoningMs: 340000, reasoningEvents: 42,
+    firstContentMs: 344500, lastContentMs: 344900, contentEvents: 3,
+  })
+
+  const legacy = runDiagnostics(projection([
+    { type: 'run.started', operationId: 'start', payload: {} },
+    { type: 'request.dispatch_attempted', operationId: 'legacy', payload: { requestId: 'request-legacy' } },
+    { type: 'request.completed', operationId: 'legacy', payload: { stream: {
+      headersMs: 20, firstContentMs: 500, lastContentMs: 900, contentEvents: 2,
+    } } },
+  ]), run).trace?.find(step => step.kind === 'model')
+  assert.equal(Object.hasOwn(legacy?.stream ?? {}, 'reasoningEvents'), false)
+  assert.equal(Object.hasOwn(legacy?.stream ?? {}, 'firstReasoningMs'), false)
+  assert.equal(Object.hasOwn(legacy?.stream ?? {}, 'lastReasoningMs'), false)
+})
+
 test('model trace hides standalone search credentials in response summaries', () => {
   const result = runDiagnostics(projection([
     { type: 'run.started', operationId: 'start', payload: { purpose: 'writing-pack:draft' } },
@@ -179,6 +205,23 @@ test('known source policy and search precondition codes keep their precise recor
   assert.match(output(String(requestedIndexes.disabled)), /外部事实搜索已关闭/u)
   assert.doesNotMatch(output(String(requestedIndexes.disabled)), /搜索服务请求失败/u)
 })
+
+test('article trace distinguishes a WeChat verification page from model or search failures', () => {
+  const trace = runDiagnostics(projection([
+    { type: 'run.started', operationId: 'start', payload: {} },
+    { type: 'tool.requested', operationId: 'web', payload: { toolName: 'read_author_web', arguments: { url: 'https://mp.weixin.qq.com/s/example' } } },
+    { type: 'tool.failed', operationId: 'web', payload: { error: { code: 'WEB_ARTICLE_ACCESS_RESTRICTED' } } },
+    { type: 'tool.requested', operationId: 'read', payload: { toolName: 'read_author_web', arguments: { url: 'https://mp.weixin.qq.com/s/normal' } } },
+    { type: 'tool.completed', operationId: 'read', payload: { result: { ok: true, toolName: 'read_author_web', result: {
+      title: '测试公众号文章', sourceUrl: 'https://mp.weixin.qq.com/s/normal', totalChars: 3200,
+    } } } },
+  ]), run).trace ?? [];
+  assert.match(trace.find(step => step.status === 'failed')?.inputPreview ?? '', /mp.weixin.qq.com/u);
+  const failure = trace.find(step => step.status === 'failed')?.outputPreview ?? '';
+  assert.match(failure, /微信.*验证|验证.*微信/u);
+  assert.doesNotMatch(failure, /搜索服务请求失败|模型请求未成功/u);
+  assert.match(trace.find(step => step.status === 'completed')?.outputPreview ?? '', /测试公众号文章.*3200/u);
+});
 
 test('tool trace summarizes persisted inputs, replies, evidence, sources, and failures safely', () => {
   const result = runDiagnostics(projection([

@@ -150,7 +150,7 @@ function safeToolInput(toolName: string, args: Readonly<Record<string, unknown>>
     const query = safePreview(args.query)
     return query ? `查询：${query}` : '搜索公开事实（具体查询已隐藏）'
   }
-  if (toolName === 'read_fact_source') {
+  if (toolName === 'read_fact_source' || toolName === 'read_author_web') {
     const host = safeHttpsHost(args.url)
     return host ? `来源域名：${host}` : '读取本轮已授权的事实来源'
   }
@@ -208,6 +208,11 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     return `${mode}${result?.cacheHit === true ? ' · 使用缓存，无新请求' : ''}${attempts ? ` · ${attempts}` : ''}${result?.authorization === 'timeout' ? ' · 等待授权超时，未调用搜索服务' : ''}${hosts.length ? ` · 来源域名（未核实）：${hosts.join('、')}` : ''}${failure ? ` · ${failure}` : ''}${evidence ? ` · 证据：${evidence}` : ''}${notice ? ` · 说明：${notice}` : ''}`
   }
   if (toolName === 'read_material') return '已读取指定材料版本'
+  if (toolName === 'read_author_web') {
+    const title = safePreview(result?.title)
+    const host = safeHttpsHost(result?.sourceUrl)
+    return `已读取并保存网页参考材料${title ? `：${title}` : ''}${count(result?.totalChars) !== null ? ` · ${count(result?.totalChars)} 字符` : ''}${host ? ` · ${host}` : ''}；不代表已核实网页观点`
+  }
   if (toolName === 'read_artifact_version') return '已读取指定稿件版本'
   if (toolName === 'read_fact_source') {
     const host = safeHttpsHost(result?.finalUrl)
@@ -416,7 +421,18 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
       const transport = transportTiming(event.payload.transport)
       if (transport) request.transport = transport
       const stream = object(event.payload.stream)
-      if (stream) request.stream = { headersMs: count(stream.headersMs), firstContentMs: count(stream.firstContentMs), lastContentMs: count(stream.lastContentMs), contentEvents: count(stream.contentEvents) ?? 0 }
+      if (stream) {
+        const reasoningEvents = count(stream.reasoningEvents)
+        request.stream = {
+          headersMs: count(stream.headersMs),
+          ...(Object.hasOwn(stream, 'firstReasoningMs') ? { firstReasoningMs: count(stream.firstReasoningMs) } : {}),
+          ...(Object.hasOwn(stream, 'lastReasoningMs') ? { lastReasoningMs: count(stream.lastReasoningMs) } : {}),
+          ...(reasoningEvents === null ? {} : { reasoningEvents }),
+          firstContentMs: count(stream.firstContentMs),
+          lastContentMs: count(stream.lastContentMs),
+          contentEvents: count(stream.contentEvents) ?? 0,
+        }
+      }
       const httpStatus = count(event.payload.providerHttpStatus)
       if (httpStatus !== null && httpStatus >= 100 && httpStatus <= 599) request.providerHttpStatus = httpStatus
       const usage = object(event.payload.usage)

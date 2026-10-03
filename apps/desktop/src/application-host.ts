@@ -5,6 +5,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 import { WritingApplicationService } from "../../../packages/application/src/index.js";
+import type { AuthorWebFetcher } from "../../../packages/application/src/author-web.js";
 import {
   createApplicationBridge,
 } from "../../../packages/client-bridge/src/application-bridge.js";
@@ -85,6 +86,7 @@ export interface DesktopApplicationHostOptions {
   ) => ModelProvider;
   readonly applicationVersion?: string;
   readonly applicationBuild?: string;
+  readonly authorWebFetcher?: AuthorWebFetcher;
 }
 
 function workspaceId(path: string): string {
@@ -98,6 +100,7 @@ export class DesktopApplicationHost {
   readonly #providerFactory: NonNullable<DesktopApplicationHostOptions["providerFactory"]>;
   readonly #applicationVersion: string;
   readonly #applicationBuild: string;
+  readonly #authorWebFetcher: AuthorWebFetcher | undefined;
   readonly #storage;
   readonly #listeners = new Set<(snapshot: BridgeSnapshot) => void>();
   #service: WritingApplicationService;
@@ -121,6 +124,7 @@ export class DesktopApplicationHost {
     this.#providerFactory = options.providerFactory ?? createConfiguredProvider;
     this.#applicationVersion = options.applicationVersion ?? "development";
     this.#applicationBuild = options.applicationBuild ?? "writing-agent-desktop-v1";
+    this.#authorWebFetcher = options.authorWebFetcher;
     this.#storage = openWorkspaceStorage({ workspacePath: this.#workspacePath });
     this.#providerConfig = loadDesktopProviderProfile(this.#providerProfilePath);
     const runtime = this.#createRuntime(this.#providerConfig, "");
@@ -603,6 +607,7 @@ export class DesktopApplicationHost {
     const service = new WritingApplicationService({
       storage: this.#storage,
       factSearchConfiguration: () => this.#searchSettings.configuration(),
+      ...(this.#authorWebFetcher ? { authorWebFetcher: this.#authorWebFetcher } : {}),
       ...(provider === undefined ? {} : { provider }),
     });
     const bridge = createApplicationBridge({

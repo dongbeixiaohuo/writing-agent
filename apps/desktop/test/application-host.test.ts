@@ -18,6 +18,53 @@ import { openWorkspaceStorage } from "../../../packages/storage/src/index.js";
 import { DesktopClientBridge } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { dispatchDesktopRpc } from '../src/rpc-host.js';
 
+test('desktop URL reader survives provider replacement and imports a first-turn article without a brief', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-desktop-web-'));
+  const url = 'https://93.184.216.34/article';
+  const article = '公众号文章正文，作为第三方参考素材保存。';
+  let fetches = 0;
+  class ReaderProvider extends ModelProviderBase {
+    constructor(id: string) { super(id, 'test', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const result = request.messages.find(message => message.role === 'tool');
+      if (result) assert.ok(result.content.includes(article), 'desktop must inject its reader into every new service');
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId,
+        name: result ? 'respond_writing_intake' : 'read_author_web',
+        argumentsDelta: JSON.stringify(result
+          ? { reply: '已读取正文，先聊聊你的想法。', summary: '已读取参考文章', questions: [] }
+          : { url }) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: join(root, 'provider.json'),
+    credentials: new CredentialBroker({ environment: {} }), providerFactory: config => new ReaderProvider(config.providerId),
+    authorWebFetcher: { async fetchText() {
+      fetches++;
+      return { finalUrl: url, redirectCount: 0, contentType: 'text/html', bodyHash: 'test', content: {
+        text: article, totalChars: article.length, truncated: false, activeContentRemoved: true,
+        trustLabel: 'external_untrusted', instructionAuthority: 'none' } };
+    } } });
+  try {
+    const config = await host.configureProvider({ kind: 'openai_compatible', providerId: 'reader-provider', baseURL: 'https://example.test/v1',
+      model: 'first', models: ['first', 'second'], tools: 'supported', usage: 'unknown', apiKey: 'test', persistence: 'session' });
+    await host.selectProvider(config.activeProfileId!, 'second');
+    await host.bridge.startConversation(`参考这篇公众号文章：${url}`);
+    const deadline = Date.now() + 20_000;
+    while (host.bridge.getSnapshot().connection !== 'ready') {
+      if (Date.now() > deadline) throw new Error('intake did not finish');
+      await new Promise(resolve => setTimeout(resolve, 10));
+      await host.bridge.refresh();
+    }
+    assert.equal(fetches, 1);
+    const audit = openWorkspaceStorage({ workspacePath: root, readOnly: true });
+    try {
+      const projectId = host.bridge.getSnapshot().selectedProjectId;
+      assert.equal(audit.inspectProject(projectId)!.currentBriefVersionId, null);
+      assert.equal(audit.listMaterials(projectId).find(material => material.sourceKind === 'web_snapshot')?.content, article);
+    } finally { audit.close(); }
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test("project deletion only guards executing runs in the target project, not waiting confirmations elsewhere", async () => {
   const root = mkdtempSync(join(tmpdir(), "wa-delete-checkpoint-"));
   const storage = openWorkspaceStorage({ workspacePath: root });

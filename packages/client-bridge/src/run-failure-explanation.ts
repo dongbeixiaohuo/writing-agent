@@ -55,6 +55,39 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
     remediation: '保持模型复核模式并明确披露未联网验证，或在需要联网核查时先启用搜索。',
   }
 
+  if (technicalName === 'read_author_web') {
+    if (code === 'WEB_ARTICLE_ACCESS_RESTRICTED') return {
+      title: '微信返回了验证或访问受限页',
+      detail: '网页请求已执行，但没有取得可确认的文章正文；不是模型未响应，也不是搜索引擎出错。',
+      remediation: '请在浏览器或微信中确认文章能否打开；也可以粘贴正文作为材料。不会自动绕过登录或安全验证。',
+    }
+    if (code === 'WEB_ARTICLE_UNAVAILABLE') return {
+      title: '微信文章已不可用',
+      detail: '来源页面提示内容已删除、违规或无法查看，未保存为可用材料。',
+      remediation: '提供仍可访问的文章链接，或提供你已取得的正文。',
+    }
+    if (code === 'WEB_ARTICLE_CONTENT_MISSING' || code === 'AUTHOR_WEB_CONTENT_EMPTY') return {
+      title: '网页没有返回可读取的正文',
+      detail: '网页获取结束，但未能提取文章内容；不会把菜单或提示页当成文章。',
+      remediation: '核对是否为文章详情链接，或粘贴正文；图文中的图片文字暂不做 OCR。',
+    }
+    if (code === 'AUTHOR_WEB_LIMIT_REACHED') return {
+      title: '本轮网页读取次数已达上限',
+      detail: '每轮最多读取 3 次外部网页；本次未再请求网站。',
+      remediation: '先使用已保存材料，其他链接可以下一轮继续读取。',
+    }
+    if (code === 'ABORTED' || code === 'WEB_REQUEST_ABORTED') return {
+      title: code === 'ABORTED' ? '网页读取已停止' : '网页读取超时或被取消',
+      detail: '本次没有取得并保存完整文章；不是搜索引擎失败。',
+      remediation: '需要时重新读取该链接，或粘贴正文；单次外部读取最长等待 15 秒。',
+    }
+    return {
+      title: '用户提供的网页读取失败',
+      detail: '失败发生在直接网页读取或材料保存阶段；未确认正文可用，不能推断为模型故障或搜索服务故障。',
+      remediation: '查看技术代码和输出详情，核对链接是否为可公开访问的 HTTP(S) 文章；也可以直接粘贴正文。',
+    }
+  }
+
   if (technicalName === 'search_fact_sources') {
     if (code === 'SEARCH_LIMIT_REACHED') return {
       title: '本轮公开搜索次数已达上限',

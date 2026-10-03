@@ -28,11 +28,12 @@ type WorkflowStorage = StoragePort & {
 type ContentStage = Exclude<WritingWorkflowStage, "fact_check">;
 import { FactClaimStatusSchema, FactClaimTypeSchema, parseEvidenceLedger } from '../../writing-core/src/index.js';
 import { isPublicationSelectionCurrent } from './publication-choice.js';
+import { COMPACT_RESEARCH_SCHEMA, expandResearchEvidence } from './research-evidence.js';
 type BodyStage = Extract<ContentStage, "draft" | "central_revision" | "language_review">;
 
 interface SubmitWritingStageArgs {
   readonly stage: ContentStage;
-  readonly content: string;
+  readonly content: string | { [key: string]: JsonValue };
 }
 
 interface SubmitFactCheckArgs {
@@ -64,6 +65,7 @@ export interface WritingWorkflowTools {
   recoverConfirmedBody(runId: string): string | null;
   readonly definitions: readonly ToolDefinition<never, JsonValue>[];
   isReady(runId: string): boolean;
+  approveReadiness(context: ToolExecutionContext, reason: string): JsonValue;
   unreadReadinessArtifactIds(runId: string): readonly string[];
   invalidate(context: ToolExecutionContext, stage: WritingWorkflowStage): readonly WritingWorkflowStage[];
   progress(runId: string): {
@@ -224,7 +226,7 @@ export function assertCleanBodyStageContent(stage: BodyStage, content: string, b
 
 function evidenceLedgerContent(content: string): string {
   try {
-    const parsed = JSON.parse(content) as unknown;
+    const parsed = expandResearchEvidence(JSON.parse(content));
     if (
       parsed !== null &&
       typeof parsed === "object" &&
@@ -249,7 +251,7 @@ function evidenceLedgerContent(content: string): string {
       true,
       {
         correction:
-          "Every claim needs all required fields as non-empty strings: evidence_id (unique E001/E002...), claim_type, claim_text, source_title, source_publisher, source_quote, accessed_at, reliability (high/medium/low), use_boundary, verification_status. Only entries marked verification_status='illustrative' may leave source_quote as an empty string. source_url, when present, must be an http(s) URL. Resubmit the complete corrected ledger JSON.",
+          "Resubmit research content as an object {sources,claims,notes}. Each source needs a unique source_id, source_title, source_publisher, accessed_at and optional http(s) source_url. Each claim must reference an existing source_id and include claim_type, claim_text, source_quote, reliability (high/medium/low), use_boundary, verification_status. evidence_id may be omitted (runtime assigns unique E001/E002...) or explicitly supplied with no duplicates. Only illustrative entries may have an empty source_quote. No claims requires non-empty notes. Legacy flat ledger JSON strings still require all original fields per claim.",
       },
     );
   }
@@ -756,11 +758,9 @@ const WRITING_STAGE_SCHEMA = {
       ],
     },
     content: {
-      type: "string",
-      minLength: 1,
-      maxLength: 1_000_000,
+      anyOf: [{ type: 'string', minLength: 1, maxLength: 1_000_000 }, COMPACT_RESEARCH_SCHEMA],
       description:
-        "Stage output. For research this must be a JSON evidence ledger, never Markdown: claims[].evidence_id uses E001/E002 and each claim includes claim_type, claim_text, source_title, source_publisher, source_quote, accessed_at, reliability, use_boundary, verification_status. Use claims:[] plus non-empty notes when no evidence claim exists. For draft, central_revision, and language_review, submit only the complete Markdown article with its real title; never wrap it in review conclusions, rationale, change lists, or 'final article below' notes.",
+        "Research: prefer a structured {sources,claims,notes} object, not a JSON string. Runtime expands shared sources and assigns omitted evidence IDs before canonical validation. Legacy flat ledger strings remain supported. Other stages require a plain Markdown string; body stages must contain only the complete article, no process commentary.",
     },
   },
   required: ["stage", "content"],
@@ -1018,6 +1018,14 @@ export function createWritingWorkflowTools(options: {
     );
   };
 
+  const approveReadiness = (context: ToolExecutionContext, reason: string): JsonValue => {
+    if (context.projectId !== projectId) throw new ToolExecutionFault('PROJECT_SCOPE_MISMATCH', 'Workflow belongs to another project');
+    if (!reason.trim()) throw new ToolExecutionFault('WRITING_READINESS_INVALID', 'A readiness reason is required');
+    assertReadinessPrerequisites(context);
+    readyInputsByRun.set(context.runId, readinessKey(context.runId));
+    return { status: 'ready', reason: reason.trim(), questions: [], nextStage: nextStageForRun(context.runId) };
+  };
+
   const assessWritingReadiness: ToolDefinition<AssessWritingReadinessArgs, JsonValue> = {
     name: "assess_writing_readiness",
     version: "1.0.0",
@@ -1045,14 +1053,7 @@ export function createWritingWorkflowTools(options: {
             "A ready assessment must not include unresolved questions",
           );
         }
-        assertReadinessPrerequisites(context);
-        readyInputsByRun.set(context.runId, readinessKey(context.runId));
-        return {
-          status: "ready",
-          reason,
-          questions: [],
-          nextStage: nextStageForRun(context.runId),
-        };
+        return approveReadiness(context, reason);
       }
       if (questions.length === 0) {
         throw new ToolExecutionFault(
@@ -1097,7 +1098,12 @@ export function createWritingWorkflowTools(options: {
       assertWritingReady(context);
       assertExpectedStage(storage, context, mode, args.stage);
       assertContinuationContextRead(context, args.stage);
-      if (/^(?:正在|仍在)(?:整理|生成|撰写|提交|保存)(?:文章)?(?:提纲|大纲|正文|稿件|本阶段(?:成果|内容))?[。！!…\s]*$/u.test(args.content.trim())) {
+      if (args.stage !== 'research' && typeof args.content !== 'string') {
+        throw new ToolExecutionFault('TOOL_INPUT_INVALID', 'Only research accepts structured content; this stage requires a complete Markdown string.');
+      }
+      const content = typeof args.content === 'string' ? args.content : JSON.stringify(args.content);
+      if (content.length > 1_000_000) throw new ToolExecutionFault('TOOL_INPUT_INVALID', 'Stage content exceeds the supported size; no content was saved or truncated.');
+      if (/^(?:正在|仍在)(?:整理|生成|撰写|提交|保存)(?:文章)?(?:提纲|大纲|正文|稿件|本阶段(?:成果|内容))?[。！!…\s]*$/u.test(content.trim())) {
         throw new ToolExecutionFault('STAGE_OUTPUT_IS_STATUS_ONLY', 'Return the complete stage deliverable, not an acknowledgement or promise to generate it.');
       }
       if (args.stage === "research" && requiredMaterialIds.length > 0) {
@@ -1123,9 +1129,9 @@ export function createWritingWorkflowTools(options: {
         args.stage === "language_review"
       ) {
         const languageSource = args.stage === "language_review" ? markerPayload(stageMarker(storage, context.projectId, context.runId, "central_revision")) : null;
-        assertCleanBodyStageContent(args.stage, args.content, languageSource === null ? undefined : storage.getArtifactVersion(languageSource.artifactVersionId)?.content);
+        assertCleanBodyStageContent(args.stage, content, languageSource === null ? undefined : storage.getArtifactVersion(languageSource.artifactVersionId)?.content);
       }
-      const artifact = commitStageArtifact(storage, context, args.stage, args.content);
+      const artifact = commitStageArtifact(storage, context, args.stage, content);
       markStage(storage, context, args.stage, artifact.id);
       const nextStage = expectedStage(storage, context.projectId, context.runId, mode);
       const awaitingUserConfirmation =
@@ -1378,6 +1384,7 @@ export function createWritingWorkflowTools(options: {
 
   return {
     isReady,
+    approveReadiness,
     recoverConfirmedBody,
     pendingCheckpoint(runId) {
       seedCarryOnce(runId);

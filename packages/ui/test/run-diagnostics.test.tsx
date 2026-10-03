@@ -48,7 +48,8 @@ test('run trace presents chronological live work instead of repeated run summary
       { id: 'request-1', segmentId: 'segment-1', occurredAt: '2026-10-02T07:13:53.000Z', completedAt: '2026-10-02T07:17:08.000Z',
         kind: 'model' as const, status: 'completed' as const, label: '模型响应', requestId: 'request-director', actorLabel: '写作导演',
         durationMs: 195000, inputPreview: '第 1 次模型请求', outputPreview: '返回 1 个工具调用', errorCode: null,
-        stream: { headersMs: 12, firstContentMs: 850, lastContentMs: 194900, contentEvents: 8 } },
+        stream: { headersMs: 12, firstReasoningMs: 120, lastReasoningMs: 190000, reasoningEvents: 37,
+          firstContentMs: 194000, lastContentMs: 194900, contentEvents: 8 } },
       { id: 'tool-1', segmentId: 'segment-1', occurredAt: '2026-10-02T07:17:08.000Z', completedAt: '2026-10-02T07:17:08.040Z',
         kind: 'tool' as const, status: 'completed' as const, label: '读取参考材料', technicalName: 'read_material', actorLabel: '写作导演',
         durationMs: 40, inputPreview: '材料：需求说明', outputPreview: '已读取指定材料版本', errorCode: null },
@@ -68,7 +69,10 @@ test('run trace presents chronological live work instead of repeated run summary
   assert.match(html, /当前活动/u)
   assert.match(html, /读取参考材料/u)
   assert.match(html, /40 毫秒/u)
-  assert.match(html, /首个内容.*850 毫秒/u)
+  assert.match(html, /连接.*12 毫秒/u)
+  assert.match(html, /推理活动.*120 毫秒.*3 分 10 秒.*37 次/u)
+  assert.match(html, /首个有效内容.*3 分 14 秒/u)
+  assert.match(html, /总耗时.*3 分 15 秒/u)
   assert.doesNotMatch(html, /查看旧版分段统计|run-trace-legacy/u)
   assert.doesNotMatch(html, /模型请求 2\s*\/\s*24|工具调用 1\s*\/\s*32/u)
 })

@@ -32,6 +32,7 @@ import type {
 import { DESKTOP_RPC_METHODS } from "../../../packages/client-bridge/src/desktop-bridge.js";
 import { inspectWorkspaceBackupFile } from "../../../packages/storage/src/index.js";
 import { DesktopApplicationHost } from "./application-host.js";
+import { NetworkAccessPolicy, SecureWebFetcher } from "../../../packages/runtime/tools/src/index.js";
 import { parseDesktopProviderProfileInput } from "./provider-profile.js";
 import { dispatchDesktopRpc, safeDesktopFailure } from "./rpc-host.js";
 import { resolveDesktopRunEnvironment } from "./run-environment.js";
@@ -572,6 +573,10 @@ async function start(): Promise<void> {
     providerProfilePath,
     applicationVersion: app.getVersion(),
     applicationBuild: "writing-agent-desktop-v1",
+    // Identify the installed browser honestly; no session cookies are copied.
+    // Public WeChat article HTML can exceed 2 MiB even when its text is short.
+    authorWebFetcher: new SecureWebFetcher({ policy: new NetworkAccessPolicy({ allowHttp: true }),
+      userAgent: session.defaultSession.getUserAgent(), maxBytes: 8 * 1024 * 1024 }),
   });
   hostUnsubscribe = host.subscribe(broadcast);
   ipcMain.handle(DESKTOP_BRIDGE_CHANNEL, handleRpc);

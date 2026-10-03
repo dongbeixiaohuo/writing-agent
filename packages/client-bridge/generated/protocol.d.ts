@@ -79,6 +79,12 @@ export type DiagnosticOperationStatus = 'pending' | 'completed' | 'failed' | 'ou
 export interface RunDiagnosticModelRequest {
     stream?: {
         headersMs: number | null;
+        /** Optional for compatibility with run records written before reasoning activity timing existed. */
+        firstReasoningMs?: number | null;
+        /** Optional for compatibility with run records written before reasoning activity timing existed. */
+        lastReasoningMs?: number | null;
+        /** Activity count only; no private reasoning text is persisted. */
+        reasoningEvents?: number;
         firstContentMs: number | null;
         lastContentMs: number | null;
         contentEvents: number;

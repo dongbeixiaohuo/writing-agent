@@ -365,7 +365,9 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
                     {isActivePending && <span className="run-trace-current-label">当前活动</span>}<span>{stoppedPending ? stoppedElapsed : isActivePending ? `${step.kind === 'model' ? '已等待' : '已进行'} ${Math.floor(activeElapsed / 1000)} 秒` : duration(step.durationMs)}</span></span>
                   {liveDetail && <span className="run-trace-live-detail">{liveDetail}</span>}{stoppedDetail && <span className="run-trace-live-detail">{stoppedDetail}</span>}
                   {step.inputPreview && <span className="run-trace-preview"><b>输入</b>{step.inputPreview}</span>}{step.outputPreview && !failure && <span className="run-trace-preview"><b>输出</b>{step.outputPreview}</span>}
-                  {step.stream && <span className="run-trace-stream">响应头 {metric(step.stream.headersMs)} · 首个有效内容（首个内容事件） {metric(step.stream.firstContentMs)} · 最后内容 {metric(step.stream.lastContentMs)}</span>}
+                  {step.stream && <span className="run-trace-stream">连接（响应头） {metric(step.stream.headersMs)}
+                    {step.stream.reasoningEvents !== undefined && <> · 推理活动：首次 {metric(step.stream.firstReasoningMs ?? null)} · 最后 {metric(step.stream.lastReasoningMs ?? null)} · {step.stream.reasoningEvents} 次</>}
+                    {' · '}首个有效内容 {metric(step.stream.firstContentMs)} · 最后有效内容 {metric(step.stream.lastContentMs)} · 有效内容事件 {step.stream.contentEvents} 次 · 总耗时 {duration(step.durationMs)}</span>}
                   {failure && <span className="run-trace-failure"><strong>{failure.title}</strong><span>{failure.detail}</span>
                     <span><b>处理建议</b>{failure.remediation}</span><code>技术代码 · {step.errorCode ?? '未记录'}</code></span>}
                 </span>
@@ -406,7 +408,9 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
           {selectedEntry && activeTab === 'timing' && <div className="run-trace-timing"><dl className="run-trace-meta">
             <div><dt>开始</dt><dd>{new Date(selectedStep!.occurredAt).toLocaleString('zh-CN', { hour12: false })}</dd></div><div><dt>完成</dt><dd>{selectedStep!.completedAt ? new Date(selectedStep!.completedAt).toLocaleString('zh-CN', { hour12: false }) : selectedStopped ? '运行已结束，步骤未完成' : '仍在进行'}</dd></div>
             <div><dt>总耗时</dt><dd>{selectedIsCurrent ? `${duration(selectedElapsed)}（进行中）` : duration(selectedStep!.durationMs)}</dd></div><div><dt>HTTP 状态</dt><dd>{selectedStep!.providerHttpStatus ?? '未报告'}</dd></div></dl>
-            {selectedStep!.stream && <dl className="run-trace-waterfall"><div><dt>响应头</dt><dd>{metric(selectedStep!.stream.headersMs)}</dd></div><div><dt>首个有效内容</dt><dd>{metric(selectedStep!.stream.firstContentMs)}</dd></div><div><dt>最后内容</dt><dd>{metric(selectedStep!.stream.lastContentMs)}</dd></div><div><dt>内容事件</dt><dd>{selectedStep!.stream.contentEvents}</dd></div></dl>}
+            {selectedStep!.stream && <dl className="run-trace-waterfall"><div><dt>连接（响应头）</dt><dd>{metric(selectedStep!.stream.headersMs)}</dd></div>
+              {selectedStep!.stream.reasoningEvents !== undefined && <><div><dt>首次推理活动</dt><dd>{metric(selectedStep!.stream.firstReasoningMs ?? null)}</dd></div><div><dt>最后推理活动</dt><dd>{metric(selectedStep!.stream.lastReasoningMs ?? null)}</dd></div><div><dt>推理活动</dt><dd>{selectedStep!.stream.reasoningEvents} 次</dd></div></>}
+              <div><dt>首个有效内容</dt><dd>{metric(selectedStep!.stream.firstContentMs)}</dd></div><div><dt>最后有效内容</dt><dd>{metric(selectedStep!.stream.lastContentMs)}</dd></div><div><dt>有效内容事件</dt><dd>{selectedStep!.stream.contentEvents} 次</dd></div></dl>}
             {selectedStep!.transport && <div className="run-trace-transport"><strong>等待停止</strong><p>{selectedStep!.transport.phase === 'first_response' ? '首次有效响应超时' : '流式内容停滞'} · 本地时限 {duration(selectedStep!.transport.timeoutMs)}</p></div>}
             {!selectedStep!.stream && !selectedStep!.transport && <p className="run-trace-missing">该步骤没有更细的流式时序。</p>}
           </div>}

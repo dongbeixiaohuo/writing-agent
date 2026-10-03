@@ -2,6 +2,38 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConversationStreamPreview, topLevelString, requestMaterialPreviews } from '../src/conversation-stream.js';
 
+test('compact research streams only public notes, including partial escaped text, never raw fields', () => {
+  const view = new ConversationStreamPreview();
+  const base = { projectId: 'p', sessionId: 's', runId: 'r', requestId: 'q', actor: 'research' };
+  view.observe({ ...base, event: { type: 'tool_call_delta', sequence: 1, index: 0, name: 'submit_writing_stage', id: 't',
+    argumentsDelta: '{"stage":"research","content":{"sources":[],"claims":[{"notes":"NOT PUBLIC"}],"notes":"保留原文\\n尚需' } });
+  assert.equal(view.getActivity('p','s','r')?.workPreview?.text, '保留原文\n尚需');
+  view.observe({ ...base, event: { type: 'tool_call_delta', sequence: 2, index: 0, id: 't', argumentsDelta: '核实。"}}' } });
+  assert.equal(view.getActivity('p','s','r')?.workPreview?.text, '保留原文\n尚需核实。');
+  assert.equal(view.get('p','s','r'), null);
+});
+
+test('material previews omit bare links and duplicate excerpts without discarding real article text', () => {
+  const previews = requestMaterialPreviews([{role:'user',content:JSON.stringify({materials:[
+    {contentVersionId:'link1',content:'https://example.com/article'},
+    {contentVersionId:'link2',content:'https://example.com/article'},
+    {contentVersionId:'article',content:'完整文章。'},
+    {contentVersionId:'copy',content:'完整文章。'},
+  ]})}]);
+  assert.deepEqual(previews.map(p=>p.text), ['完整文章。']);
+});
+
+test('pending dispatch preview expires when the expert request actually starts', () => {
+  const view = new ConversationStreamPreview();
+  const base = { projectId:'p',sessionId:'s',runId:'r',requestId:'director',actor:'director' };
+  view.observe({...base,event:{type:'tool_call_delta',sequence:1,index:0,id:'d',name:'director_decide',argumentsDelta:'{"reason":"整理提纲"}'}});
+  assert.match(view.getActivity('p','s','r')!.workPreview!.label, /尚未执行/);
+  view.observe({...base,lifecycle:'finished',event:null});
+  view.observe({...base,requestId:'outline',actor:'outline',lifecycle:'started',event:null});
+  assert.equal(view.getActivity('p','s','r')!.workPreview, undefined);
+  assert.equal(view.getActivity('p','s','r')!.requestOrdinal, 2);
+});
+
 test('waiting previews use only actual public materials injected into the request, never prompts or reasoning', () => {
   const previews = requestMaterialPreviews([{ role: 'system', content: 'PRIVATE SYSTEM' }, { role:'user', content: 'task\nCOLLABORATION_STATE=' + JSON.stringify({
     artifacts: [{ id:'b',kind:'body',content:'# 当前稿\n\n正文。' }, {id:'e',kind:'evidence',content:JSON.stringify({claims:[{secret:'PRIVATE LEDGER'}],notes:'只写个人感受。'})}],

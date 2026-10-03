@@ -25,6 +25,10 @@ function usage(value: { inputTokens: number | null; outputTokens: number | null;
   return `输入 ${value.inputTokens ?? '未报告'} · 输出 ${value.outputTokens ?? '未报告'} · 总计 ${value.totalTokens ?? '未报告'} Token`
 }
 
+function streamTime(value: number | null | undefined): string {
+  return value === undefined ? '未记录' : value === null ? '未收到' : `${(value / 1000).toFixed(1)} 秒`
+}
+
 export function RunDiagnostics({ diagnostics }: { diagnostics: RunDiagnosticsView }) {
   return <div className="run-diagnostics">
     {diagnostics.segments.map(segment => <section className="run-diagnostics-segment" key={segment.id}>
@@ -61,7 +65,9 @@ export function RunDiagnostics({ diagnostics }: { diagnostics: RunDiagnosticsVie
         <ol>{segment.modelRequests.map((request, index) => <li key={request.id}>
           <span>模型请求 {index + 1} · {STATUS[request.status]} · {request.durationMs === null ? '耗时未确定' : `${(request.durationMs / 1000).toFixed(1)} 秒`}</span>
           <small>{usage(request.usage)}{request.errorCode ? ` · ${request.errorCode}` : ''}</small>
-          {request.stream && <small>响应头：{request.stream.headersMs === null ? '未收到' : `${(request.stream.headersMs / 1000).toFixed(1)} 秒`} · 首个有效内容：{request.stream.firstContentMs === null ? '未收到' : `${(request.stream.firstContentMs / 1000).toFixed(1)} 秒`} · 最后内容：{request.stream.lastContentMs === null ? '未收到' : `${(request.stream.lastContentMs / 1000).toFixed(1)} 秒`}</small>}
+          {request.stream && <small>连接（响应头）：{streamTime(request.stream.headersMs)}
+            {request.stream.reasoningEvents !== undefined && <> · 推理活动：首次 {streamTime(request.stream.firstReasoningMs)}，最后 {streamTime(request.stream.lastReasoningMs)}，共 {request.stream.reasoningEvents} 次</>}
+            {' · '}有效内容：首次 {streamTime(request.stream.firstContentMs)}，最后 {streamTime(request.stream.lastContentMs)}，共 {request.stream.contentEvents} 次 · 总耗时：{request.durationMs === null ? '未确定' : `${(request.durationMs / 1000).toFixed(1)} 秒`}</small>}
           {request.transport && <small>客户端停止等待：{request.transport.phase === 'first_response' ? '首次有效响应超时' : '流式内容停滞'} · 时限 {request.transport.timeoutMs / 1000} 秒（不代表服务商返回错误）</small>}
           {request.providerHttpStatus && <small>服务商 HTTP 状态：{request.providerHttpStatus}</small>}
         </li>)}</ol>

@@ -4,6 +4,15 @@ import { conversationWorkingCopy } from './interaction.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import css from './WritingAgentShell.module.css'
 
+const MATERIAL_EXCERPT_LENGTH = 600
+
+function materialExcerpt(text: string) {
+  const normalized = text.trim()
+  return normalized.length > MATERIAL_EXCERPT_LENGTH
+    ? `${normalized.slice(0, MATERIAL_EXCERPT_LENGTH).trimEnd()}…`
+    : normalized
+}
+
 /** One honest status line, not a simulated sequence of model thoughts. */
 export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnapshot; bridge: ClientBridge }) {
   const [now, setNow] = useState(Date.now)
@@ -13,14 +22,8 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
   const materials = snapshot.liveActivity?.materials ?? []
   const materialKey = materials.map(item => item.id).join(':')
   useEffect(() => { setMaterialIndex(0) }, [materialKey])
-  useEffect(() => {
-    if (materials.length < 2 || snapshot.liveReply) return
-    // Present already supplied materials once, then hold the last excerpt.
-    // Never simulate another model request or endlessly replay a progress loop.
-    const timer = setInterval(() => setMaterialIndex(index => Math.min(index + 1, materials.length - 1)), 6000)
-    return () => clearInterval(timer)
-  }, [materialKey, materials.length, !!snapshot.liveReply])
-  const material = materials[Math.min(materialIndex, materials.length - 1)]
+  const selectedMaterialIndex = Math.min(materialIndex, Math.max(0, materials.length - 1))
+  const material = materials[selectedMaterialIndex]
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer) }, [])
   useEffect(() => { setStopping(false); setError(null) }, [snapshot.activeRunId])
   const copy = conversationWorkingCopy(snapshot.liveActivity, now)
@@ -44,10 +47,19 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
       <MarkdownContent content={snapshot.liveActivity.workPreview.text} />
       <small>正在加工；这份临时预览不会作为最终回复留在主对话中。</small>
     </aside>}
-    {material && !snapshot.liveReply && <aside className={css.workPreview} data-material-preview aria-label="已提供素材预览">
-      <strong>{material.label} · {Math.min(materialIndex + 1, materials.length)} / {materials.length}</strong>
-      <MarkdownContent content={material.text} />
-      <small>已提供给当前专家的内容节选，不是模型新回复。最终答复生成后此预览会收起。</small>
+    {material && !snapshot.liveReply && <aside className={css.materialPreview} data-material-preview aria-label="参考材料预览">
+      <div className={css.materialPreviewHeader}>
+        <strong>参考材料预览（{materials.length} 份）</strong>
+        {materials.length > 1 && <select aria-label="选择参考材料" value={selectedMaterialIndex} onChange={event => setMaterialIndex(Number(event.target.value))}>
+          {materials.map((item, index) => <option value={index} key={item.id}>{item.label}</option>)}
+        </select>}
+      </div>
+      <p>这是本轮已提供的材料，不是实际进度，不会自动切换。可手动选择并查看节选。</p>
+      <details data-material-details>
+        <summary>查看“{material.label}”节选</summary>
+        <div className={css.materialExcerpt}><MarkdownContent content={materialExcerpt(material.text)} /></div>
+        <small>仅展示节选，不是模型新回复或任务完成度。</small>
+      </details>
     </aside>}
     {error && <p role="alert">{error}</p>}
   </section>

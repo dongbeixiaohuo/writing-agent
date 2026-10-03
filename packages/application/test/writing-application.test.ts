@@ -729,6 +729,7 @@ function seedWritingInputs(
   service: WritingApplicationService,
   writingBrief: WritingBrief = brief,
   mode: "quick" | "deep" = "quick",
+  materialContent = "下班后我沿着河边走了二十分钟。",
 ): { readonly contentVersionId: string; readonly projectRevision: number } {
   const created = service.createProject({
     operationId: "create-project",
@@ -749,7 +750,7 @@ function seedWritingInputs(
     role: "user_firsthand",
     trustLabel: "user_provided_untrusted",
     permissionScope: "project_only",
-    content: "下班后我沿着河边走了二十分钟。",
+    content: materialContent,
     actor: user,
   });
   assert.equal(imported.ok, true);
@@ -1288,14 +1289,14 @@ describe("WritingApplicationService draft closure", () => {
     }
   });
 
-  it("rejects a ready assessment before all authorized materials are read", async () => {
+  it("rejects a ready assessment before large authorized materials are read", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "writing-ready-before-material-"));
     const storage = openWorkspaceStorage({ workspacePath });
     const bootstrap = new WritingApplicationService({
       storage,
       provider: new MaterialThenDraftProvider("unused", "unused"),
     });
-    const seeded = seedWritingInputs(bootstrap);
+    const seeded = seedWritingInputs(bootstrap, brief, 'quick', '真实的长材料。'.repeat(1000));
     const service = new WritingApplicationService({
       storage,
       provider: new PrematureReadyProvider(),
@@ -1482,8 +1483,8 @@ describe("WritingApplicationService draft closure", () => {
         },
       });
       assert.equal(result.ok, true, JSON.stringify(result));
-      assert.equal(result.modelRequestCount, 29);
-      assert.equal(result.toolCallCount, 29);
+      assert.equal(result.modelRequestCount, 28);
+      assert.equal(result.toolCallCount, 28);
       assert.equal(
         storage.listArtifactVersions("project-1", "review", `review_publish:${result.runId}`).length,
         1,
@@ -1595,7 +1596,7 @@ describe("WritingApplicationService draft closure", () => {
         return typeof execution === "object" && execution !== null && !Array.isArray(execution) &&
           (execution as Readonly<Record<string, unknown>>).toolName === "read_material";
       });
-      assert.equal(repeatedMaterialReads.length, 1);
+      assert.equal(repeatedMaterialReads.length, 0);
     } finally {
       storage.close();
       rmSync(workspacePath, { recursive: true, force: true });
@@ -1640,26 +1641,22 @@ describe("WritingApplicationService draft closure", () => {
       if (!result.ok) return;
       assert.equal(result.validationKind, "mock_verified");
       assert.equal(result.publicationReady, true);
-      assert.equal(result.modelRequestCount, 26);
-      assert.equal(result.toolCallCount, 26);
+      assert.equal(result.modelRequestCount, 25);
+      assert.equal(result.toolCallCount, 25);
       assert.notEqual(result.artifactVersionId, null);
-      assert.equal(provider.requests.length, 26);
+      assert.equal(provider.requests.length, 25);
       assert.equal(
         JSON.stringify(provider.requests[0]).includes("下班后我沿着河边"),
-        false,
+        true,
       );
       assert.equal(
         JSON.stringify(provider.requests[0]).includes("D:\\private"),
         false,
       );
-      const secondToolMessage = provider.requests[1]?.messages.find(
-        (message) => message.role === "tool",
-      );
-      assert.equal(secondToolMessage?.role, "tool");
-      if (secondToolMessage?.role === "tool") {
-        assert.match(secondToolMessage.content, /下班后我沿着河边/);
-        assert.match(secondToolMessage.content, /instructionAuthority/);
-      }
+      const supplied = JSON.parse(provider.requests[0]!.messages.find(m => m.role === 'user')!.content.split('\nCOLLABORATION_STATE=')[1]!).materials[0];
+      assert.match(supplied.content, /下班后我沿着河边/);
+      assert.equal(supplied.instructionAuthority, 'none');
+      assert.equal(supplied.delivery, 'inline_full');
       const version = storage.getArtifactVersion(result.artifactVersionId!);
       assert.match(version?.content ?? "", /鞋底擦过路面的声音/u);
       assert.equal(version?.requestSnapshotId, null);
@@ -1707,7 +1704,6 @@ describe("WritingApplicationService draft closure", () => {
           .filter((event) => event.type === "tool.requested" && event.payload.toolName !== "director_decide")
           .map((event) => (event.payload.arguments as { stage?: string }).stage ?? event.payload.toolName),
         [
-          "read_material",
           "assess_writing_readiness",
           "research",
           "assess_writing_readiness",
@@ -1944,10 +1940,10 @@ describe("WritingApplicationService draft closure", () => {
         0,
       );
       const events = storage.listRunEvents(result.runId);
-      // The unavailable dispatch is now rejected at model schema validation,
-      // before execution, rather than offered and charged as a failed tool.
-      assert.ok(events.some(event => event.type === 'request.failed' && (event.payload.error as any)?.code === 'MODEL_RESPONSE_INVALID'));
-      assert.equal(events.filter(event => event.type === 'tool.requested').length, 0);
+      // Dispatch is now available for an explicit combined readiness decision,
+      // but omitting that decision still cannot start an expert or save output.
+      assert.ok(events.some(event => event.type === 'tool.failed' && (event.payload.result as any)?.error?.code === 'WRITING_READINESS_REQUIRED'));
+      assert.equal(events.filter(event => event.type === 'tool.completed').length, 0);
     } finally {
       storage.close();
       rmSync(workspacePath, { recursive: true, force: true });
