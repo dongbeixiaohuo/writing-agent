@@ -47,7 +47,7 @@ if ($result.status -ne 'ready' -or $result.productName -ne 'Writing Agent') {
     throw 'Desktop smoke returned an invalid product or readiness status'
 }
 if ($result.url -ne 'writing-agent://app/index.html' -or $result.protocolVersion -ne $ExpectedProtocolVersion) {
-    throw 'Desktop smoke returned an unexpected origin or bridge protocol'
+    throw "Desktop smoke returned origin '$($result.url)' and protocol '$($result.protocolVersion)'; expected 'writing-agent://app/index.html' and protocol '$ExpectedProtocolVersion'"
 }
 
 $evidence = [ordered]@{
