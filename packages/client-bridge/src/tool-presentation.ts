@@ -17,6 +17,7 @@ export const TOOL_PRESENTATION: Readonly<Record<string, { label: string; descrip
   ['resume_author_checkpoint', '继续已确认阶段', '流程请求', '依据本轮语义决策恢复同一个写作流程；不重跑已保存阶段，也不代表下一阶段已完成。'],
   ['delegate_author_expert', '委派写作专家', '调度', '把当前任务交给独立上下文的专家；委派成功不等于专家已完成。'],
   ['read_conversation_history', '读取对话历史', '读取', '读取当前会话已保存的历史交流，帮助理解上下文。'],
+  ['read_author_fact_check', '读取已保存核查报告', '读取', '按需读取当前稿件已保存的完整核查结论；不触发搜索或重新核查。'],
   ['attach_author_material', '添加写作材料', '保存', '将用户本轮提供的材料加入项目；不自动认定材料真实或授予新权限。'],
   ['propose_author_revision', '保存局部修改提案', '保存', '保存可供用户预览、接受的局部改稿建议；尚不覆盖当前正文。'],
   ['propose_publication_choices', '保存标题与发布候选', '保存', '保存标题及发布文案候选，供用户比较和选择。'],

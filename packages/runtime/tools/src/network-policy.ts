@@ -3,6 +3,8 @@ import { BlockList, isIP } from "node:net";
 
 export interface NetworkAccessPolicyOptions {
   readonly resolveHost?: (hostname: string) => Promise<readonly string[]>;
+  /** Public source readers may opt into HTTP; credentials, private targets and redirects remain checked. */
+  readonly allowHttp?: boolean;
 }
 
 export interface AllowedNetworkTarget {
@@ -77,9 +79,11 @@ function isBlockedHostname(hostname: string): boolean {
 
 export class NetworkAccessPolicy {
   readonly #resolveHost: (hostname: string) => Promise<readonly string[]>;
+  readonly #allowHttp: boolean;
 
   constructor(options: NetworkAccessPolicyOptions = {}) {
     this.#resolveHost = options.resolveHost ?? defaultResolveHost;
+    this.#allowHttp = options.allowHttp === true;
   }
 
   async assertAllowed(input: string): Promise<AllowedNetworkTarget> {
@@ -89,10 +93,10 @@ export class NetworkAccessPolicy {
     } catch {
       throw new NetworkPolicyError("NETWORK_URL_INVALID", "The network target is invalid");
     }
-    if (target.protocol !== "https:") {
+    if (target.protocol !== "https:" && !(this.#allowHttp && target.protocol === "http:")) {
       throw new NetworkPolicyError(
         "NETWORK_PROTOCOL_DENIED",
-        "Only HTTPS network targets are allowed",
+        this.#allowHttp ? "Only HTTP/HTTPS network targets are allowed" : "Only HTTPS network targets are allowed",
       );
     }
     if (target.username.length > 0 || target.password.length > 0) {

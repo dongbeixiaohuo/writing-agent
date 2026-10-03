@@ -121,4 +121,15 @@ describe("expert instruction migration", () => {
     }
     assert.match(buildExpertInstructions('draft'), /已确认主题.*工作标题/u);
   });
+
+  it('keeps illustration planning concise and optional when generation is unavailable', () => {
+    const instruction = buildExpertInstructions('illustrator');
+    assert.match(instruction, /1张封面.*1—2张正文图/u);
+    assert.match(instruction, /直接复制.*Prompt/u);
+    assert.match(instruction, /不要额外展开禁画清单/u);
+    assert.match(instruction, /不.*再设确认关卡/u);
+    assert.match(instruction, /查看当前稿件→导出文章/u);
+    assert.match(instruction, /配图是可选项.*不阻挡/u);
+    assert.match(instruction, /不声称图片成功/u);
+  });
 });

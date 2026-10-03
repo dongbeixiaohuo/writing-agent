@@ -71,9 +71,18 @@ test('a growing live reply follows its new text without scrolling into the contr
 test('process copy distinguishes provider processing from an actual external search', () => {
   const base = { runId:'r', requestId:'q', actor:'fact_check', phase:'receiving' as const, startedAt:1000, lastActivityAt:65000, receivedEvents:20 };
   const reasoning = interaction.conversationWorkingCopy({ ...base, lastEventKind:'reasoning' }, 66000);
-  assert.match(reasoning.detail, /内部处理.*尚未.*可展示/);
+  assert.match(reasoning.detail, /模型服务.*处理.*尚未.*可展示/);
   const search = interaction.conversationWorkingCopy({ ...base, activeTool:{name:'search_fact_sources', startedAt:60000} }, 66000);
   assert.match(search.title, /搜索/);
   assert.match(search.detail, /6 秒/);
   assert.doesNotMatch(search.detail, /正在等待模型回复/);
+});
+
+test('reasoning activity reports a wait without exposing or inventing private reasoning', () => {
+  const activity = { runId:'r', requestId:'q', actor:'draft', phase:'receiving' as const, startedAt:1000, lastActivityAt:65000, receivedEvents:3, lastEventKind:'reasoning' as const };
+  const copy = interaction.conversationWorkingCopy(activity, 66000);
+  assert.match(copy.detail, /模型服务.*处理/);
+  assert.match(copy.detail, /不会展示或推测私有推理/);
+  assert.match(copy.detail, /可展示答复.*流式显示/);
+  assert.doesNotMatch(copy.detail, /逐步显示.*素材/);
 });

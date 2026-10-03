@@ -21,8 +21,8 @@ function stringAt(source: string, start: number): { value: string; end: number; 
   return { value: value.replace(/[\uD800-\uDBFF]$/u, ''), end: source.length, complete: false };
 }
 
-/** Read one JSON string without exposing nested metadata or unfinished escape syntax. */
-export function topLevelString(source: string, key: string): string | null {
+/** Locate only a direct field, ignoring quoted braces and nested metadata. */
+function topLevelValueStart(source: string, key: string): number | null {
   let depth = 0;
   for (let i = 0; i < source.length; i++) {
     const character = source[i];
@@ -36,12 +36,18 @@ export function topLevelString(source: string, key: string): string | null {
       if (depth === 1 && token.value === key && source[next] === ':') {
         next++;
         while (/\s/u.test(source[next] ?? '') && next < source.length) next++;
-        return source[next] === '"' ? stringAt(source, next).value : null;
+        return next;
       }
       i = token.end - 1;
     }
   }
   return null;
+}
+
+/** Read one JSON string without exposing nested metadata or unfinished escape syntax. */
+export function topLevelString(source: string, key: string): string | null {
+  const start = topLevelValueStart(source, key);
+  return start !== null && source[start] === '"' ? stringAt(source, start).value : null;
 }
 
 export interface LiveConversationReply { runId: string; requestId: string; text: string; id?: string; stage?: string; phase?: 'generating' | 'saving' }
@@ -50,6 +56,7 @@ export interface MaterialPreview { id: string; label: string; text: string }
  * No prompt, conversation history, model reasoning, IDs or raw ledger JSON. */
 export function requestMaterialPreviews(messages: readonly { role: string; content: string }[]): MaterialPreview[] {
   const previews: MaterialPreview[] = [];
+  const seenText = new Set<string>();
   for (const message of messages) {
     if (message.role !== 'user') continue;
     const marker = '\nCOLLABORATION_STATE=';
@@ -58,9 +65,18 @@ export function requestMaterialPreviews(messages: readonly { role: string; conte
     try { state = JSON.parse(offset >= 0 ? message.content.slice(offset + marker.length) : message.content); }
     catch { continue; }
     if (!state || typeof state !== 'object') continue;
+    const requirements = state.writingRequirements as Record<string, unknown> | undefined;
+    for (const [key, label] of [['audience', '目标读者'], ['platform', '发布平台']] as const) {
+      const text = requirements?.[key];
+      if (typeof text !== 'string' || !text.trim() || seenText.has(text)) continue;
+      seenText.add(text);
+      previews.push({ id: `requirement:${key}`, label, text: text.slice(0, 1200) });
+    }
     const artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
     const materials = Array.isArray(state.materials) ? state.materials : Array.isArray(state.authorizedMaterials) ? state.authorizedMaterials : [];
-    for (const item of [...artifacts, ...materials]) {
+    for (const raw of [...artifacts, ...materials]) {
+      const item = raw?.kind === 'evidence' && typeof raw.content === 'object' && raw.content !== null
+        ? { ...raw, content: typeof raw.content.notes === 'string' ? raw.content.notes : '' } : raw;
       if (!item || typeof item.content !== 'string') continue;
       const id = item.id ?? item.contentVersionId;
       if (typeof id !== 'string' || previews.some(p => p.id === id)) continue;
@@ -70,8 +86,14 @@ export function requestMaterialPreviews(messages: readonly { role: string; conte
         text = topLevelString(text, 'notes') ?? '';
       }
       if (!text.trim() || text.trimStart().startsWith('[')) continue;
-      previews.push({ id, label: item.kind === 'body' ? '本次提供的稿件' : item.kind === 'outline' ? '已保存的提纲' : item.kind === 'evidence' ? '研究素材摘要' : '本次提供的参考材料', text: text.slice(0, 1200) });
-      if (previews.length >= 6) return previews;
+      // A link-only author message is not a second copy of the fetched article.
+      if (/^https?:\/\/\S+$/u.test(text.trim()) || seenText.has(text)) continue;
+      seenText.add(text);
+      const title = typeof item.displayName === 'string' && !/^需求对话 /u.test(item.displayName) ? item.displayName : text.replace(/\s+/gu, ' ').trim();
+      const shortTitle = title.length > 32 ? `${title.slice(0, 32)}…` : title;
+      const category = typeof item.materialId === 'string' && item.materialId.startsWith('intake-user-') ? '需求补充' : item.sourceKind === 'web_snapshot' ? '网页素材' : '参考素材';
+      previews.push({ id, label: item.kind === 'body' ? '本次提供的稿件' : item.kind === 'outline' ? '已保存的提纲' : item.kind === 'evidence' ? '研究素材摘要' : `${category} · ${shortTitle}`, text: text.slice(0, 1200) });
+      if (previews.length >= 8) return previews;
     }
   }
   return previews;
@@ -90,7 +112,7 @@ type StreamInput = Parameters<NonNullable<AgentRuntimeOptions['onModelStream']>>
 
 /** Ephemeral preview only: never a committed reply, tool result, or publication authority. */
 export class ConversationStreamPreview {
-  readonly #segments = new Map<string, { projectId: string; sessionId: string; startedAt: number; requests: number; workPreview?: { label: string; text: string } }>();
+  readonly #segments = new Map<string, { projectId: string; sessionId: string; startedAt: number; requests: number; workPreview?: { label: string; text: string }; previewRequestId?: string }>();
   readonly #runs = new Map<string, { projectId: string; sessionId: string; requestId: string; outputPreview?: StreamInput['outputPreview']; phase: 'generating' | 'saving'; carried: boolean; calls: Map<number, { name: string; raw: string }>; plainText: string; text: string; activity: LiveConversationActivity }>();
   observe = (input: StreamInput): void => {
     if (input.event === null && input.lifecycle !== 'started') {
@@ -110,6 +132,12 @@ export class ConversationStreamPreview {
         this.#segments.set(input.runId, segment);
       }
       segment.requests++;
+      // A pending decision/search describes this request, not the next expert.
+      // Readable research excerpts may survive; stale execution claims may not.
+      if (segment.previewRequestId && segment.previewRequestId !== input.requestId) {
+        delete segment.workPreview;
+        delete segment.previewRequestId;
+      }
       const sameOutput = (input.outputPreview && state?.outputPreview?.id === input.outputPreview.id)
         || (input.actor === 'intake' && input.textAudience === 'conversation' && state?.activity.actor === 'intake' && state.phase === 'saving');
       const carry = state?.projectId === input.projectId && state.sessionId === input.sessionId && sameOutput ? state.text : '';
@@ -153,13 +181,16 @@ export class ConversationStreamPreview {
         const preview = { label: processField.label, text: summary.slice(0, 2400) };
         state.activity.workPreview = preview;
         const segment = this.#segments.get(input.runId);
-        if (segment) segment.workPreview = preview;
+        if (segment) { segment.workPreview = preview; segment.previewRequestId = input.requestId; }
       }
     }
     if ((call.name === 'respond_author' && input.actor !== 'fact_check') || call.name === 'respond_writing_intake') text = topLevelString(call.raw, 'reply');
     if (input.actor === 'research' && call.name === 'submit_writing_stage' && [null, 'research'].includes(topLevelString(call.raw, 'stage'))) {
       const content = topLevelString(call.raw, 'content');
-      const readable = content?.trimStart().startsWith('{') ? topLevelString(content, 'notes') : content;
+      const contentStart = topLevelValueStart(call.raw, 'content');
+      const readable = contentStart !== null && call.raw[contentStart] === '{'
+        ? topLevelString(call.raw.slice(contentStart), 'notes')
+        : content?.trimStart().startsWith('{') ? topLevelString(content, 'notes') : content;
       if (readable) {
         const preview = { label: '研究素材 · 整理中，尚非最终结论', text: readable.slice(0, 2400) };
         state.activity.workPreview = preview;

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { openWorkspaceStorage } from "../../storage/src/index.js";
-import type { SecureWebFetchResult } from "../../runtime/tools/src/index.js";
+import { SecureWebFetchError, type SecureWebFetchResult } from "../../runtime/tools/src/index.js";
 import { createFactSourceTool, type FactSourceFetcher } from "../src/fact-web.js";
 
 test('source transport failure is classified without leaking URL credentials or provider text', async () => {
@@ -25,6 +25,41 @@ test('source transport failure is classified without leaking URL credentials or 
 
 const actor = { kind: "user", id: "fact-web-test" } as const;
 const LEDGER_URL = "https://93.184.216.34/report-2026";
+
+test('source HTTP status survives the tool boundary and repeated rejected reads do not hit the website again', async () => {
+  const f = setup(LEDGER_URL);
+  try {
+    let requests = 0;
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p', fetcher: {
+      fetchText: async () => { requests++; throw new SecureWebFetchError('WEB_HTTP_STATUS_REJECTED', 'secret-body', 403); },
+    } });
+    for (let i = 0; i < 2; i++) await assert.rejects(async () => tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never), (error: any) => {
+      assert.equal(error.details.httpStatus, 403);
+      assert.match(error.message, /HTTP 403/);
+      assert.doesNotMatch(error.message, /secret-body/);
+      return true;
+    });
+    assert.equal(requests, 1);
+    await assert.rejects(async () => tool.execute({ url: LEDGER_URL }, { runId: 'new-run' } as never));
+    assert.equal(requests, 2);
+  } finally { f.close(); }
+});
+
+test('known public HTTP sources are read directly, but private networks remain denied', async () => {
+  const httpUrl = LEDGER_URL.replace('https:', 'http:');
+  const f = setup(httpUrl);
+  try {
+    const captured: string[] = [];
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p',
+      isDiscoveredSource: url => url === 'http://127.0.0.1/internal', fetcher: fetcherWith('原文', captured) });
+    const result = await tool.execute({ url: httpUrl }, { runId: 'r' } as never) as { finalUrl: string };
+    assert.deepEqual(captured, [httpUrl]);
+    assert.equal(result.finalUrl, httpUrl);
+    await assert.rejects(async () => tool.execute({ url: 'http://127.0.0.1/internal' }, { runId: 'r' } as never),
+      (error: any) => error.code === 'NETWORK_PRIVATE_TARGET_DENIED');
+    assert.equal(captured.length, 1);
+  } finally { f.close(); }
+});
 
 function setup(ledgerContent: string) {
   const directory = mkdtempSync(join(tmpdir(), "wa-fact-web-"));

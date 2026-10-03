@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { IncomingMessage } from "node:http";
+import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 
@@ -9,6 +9,7 @@ import {
 } from "./network-policy.js";
 import {
   extractUntrustedWebText,
+  UntrustedWebContentError,
   type UntrustedWebText,
 } from "./untrusted-content.js";
 
@@ -16,6 +17,7 @@ const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_CHARS = 100_000;
 const DEFAULT_MAX_REDIRECTS = 5;
 const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_USER_AGENT = "WritingAgent/1.0 secure-source-reader";
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const ALLOWED_CONTENT_TYPES = new Set([
   "application/xhtml+xml",
@@ -24,6 +26,9 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ]);
 
 export type SecureWebFetchErrorCode =
+  | "WEB_ARTICLE_ACCESS_RESTRICTED"
+  | "WEB_ARTICLE_CONTENT_MISSING"
+  | "WEB_ARTICLE_UNAVAILABLE"
   | "WEB_CONTENT_TYPE_DENIED"
   | "WEB_ENCODING_INVALID"
   | "WEB_HTTP_STATUS_REJECTED"
@@ -34,7 +39,7 @@ export type SecureWebFetchErrorCode =
   | "WEB_RESPONSE_TOO_LARGE";
 
 export class SecureWebFetchError extends Error {
-  constructor(public readonly code: SecureWebFetchErrorCode, message: string) {
+  constructor(public readonly code: SecureWebFetchErrorCode, message: string, public readonly httpStatus?: number) {
     super(message);
     this.name = "SecureWebFetchError";
   }
@@ -58,6 +63,7 @@ export interface SecureWebFetcherOptions {
   readonly maxChars?: number;
   readonly maxRedirects?: number;
   readonly timeoutMs?: number;
+  readonly userAgent?: string;
 }
 
 export interface SecureWebFetchResult {
@@ -77,6 +83,16 @@ function assertPositiveSafeInteger(value: number, name: string): void {
 function assertNonNegativeSafeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new TypeError(`${name} must be a non-negative safe integer`);
+  }
+}
+
+function assertValidUserAgent(value: string): void {
+  if (
+    value.trim().length === 0 ||
+    value.length > 1_024 ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new TypeError("userAgent must be a non-empty HTTP header value");
   }
 }
 
@@ -132,6 +148,7 @@ function toUntrustedPlainText(text: string, maxChars: number): UntrustedWebText 
 function createPinnedRequest(
   maxBytes: number,
   timeoutMs: number,
+  userAgent: string,
 ): SecureWebRequest {
   return async (target, signal) => {
     if (signal?.aborted) {
@@ -173,17 +190,18 @@ function createPinnedRequest(
         if (error !== null) reject(error);
         else if (response !== undefined) resolve(response);
       };
-      request = httpsRequest(
+      const requestTransport = targetUrl.protocol === 'http:' ? httpRequest : httpsRequest;
+      request = requestTransport(
         targetUrl,
         {
           method: "GET",
           headers: {
             accept: "text/html, application/xhtml+xml, text/plain;q=0.9",
             "accept-encoding": "identity",
-            "user-agent": "WritingAgent/1.0 secure-source-reader",
+            "user-agent": userAgent,
           },
           lookup,
-          servername: targetUrl.hostname,
+          ...(targetUrl.protocol === 'https:' ? { servername: targetUrl.hostname } : {}),
           timeout: timeoutMs,
         },
         (response) => {
@@ -273,15 +291,17 @@ export class SecureWebFetcher {
     const maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
     const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
     assertPositiveSafeInteger(maxBytes, "maxBytes");
     assertPositiveSafeInteger(maxChars, "maxChars");
     assertNonNegativeSafeInteger(maxRedirects, "maxRedirects");
     assertPositiveSafeInteger(timeoutMs, "timeoutMs");
+    assertValidUserAgent(userAgent);
     this.#policy = options.policy;
     this.#maxBytes = maxBytes;
     this.#maxChars = maxChars;
     this.#maxRedirects = maxRedirects;
-    this.#request = options.request ?? createPinnedRequest(maxBytes, timeoutMs);
+    this.#request = options.request ?? createPinnedRequest(maxBytes, timeoutMs, userAgent);
   }
 
   async fetchText(input: string, signal?: AbortSignal): Promise<SecureWebFetchResult> {
@@ -337,6 +357,7 @@ export class SecureWebFetcher {
         throw new SecureWebFetchError(
           "WEB_HTTP_STATUS_REJECTED",
           "The remote server returned an unsuccessful status",
+          response.status,
         );
       }
 
@@ -350,10 +371,34 @@ export class SecureWebFetcher {
           "The response is not valid UTF-8 text",
         );
       }
-      const content =
-        contentType === "text/plain"
-          ? toUntrustedPlainText(decoded, this.#maxChars)
-          : extractUntrustedWebText(decoded, this.#maxChars);
+      let content: UntrustedWebText;
+      try {
+        content =
+          contentType === "text/plain"
+            ? toUntrustedPlainText(decoded, this.#maxChars)
+            : extractUntrustedWebText(decoded, this.#maxChars, { url: target.url });
+      } catch (error) {
+        if (!(error instanceof UntrustedWebContentError)) throw error;
+        if (
+          error.code === "ARTICLE_ACCESS_RESTRICTED" ||
+          error.code === "ARTICLE_VERIFICATION_REQUIRED"
+        ) {
+          throw new SecureWebFetchError(
+            "WEB_ARTICLE_ACCESS_RESTRICTED",
+            "The article requires interactive access that this reader will not bypass",
+          );
+        }
+        if (error.code === "ARTICLE_REMOVED") {
+          throw new SecureWebFetchError(
+            "WEB_ARTICLE_UNAVAILABLE",
+            "The article is unavailable",
+          );
+        }
+        throw new SecureWebFetchError(
+          "WEB_ARTICLE_CONTENT_MISSING",
+          "The response did not contain an article body",
+        );
+      }
       return Object.freeze({
         finalUrl: target.url,
         redirectCount,

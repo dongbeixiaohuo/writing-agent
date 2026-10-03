@@ -171,6 +171,7 @@ export interface SaveRequestSnapshotInput {
 }
 
 export type RuntimeEventType =
+  | "search.progress"
   | "request.dispatch_attempted"
   | "request.completed"
   | "request.failed"

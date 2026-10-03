@@ -1,5 +1,7 @@
 import type { WritingApplicationService } from '../../application/src/index.js';
 import type { RunTraceDetail } from './protocol.js';
+import { explainRunFailure } from './run-failure-explanation.js';
+import { requestInputBreakdown } from './request-input-breakdown.js';
 
 const REDACTED = '[已隐藏敏感信息]';
 const PRIVATE = '[不展示私有推理或服务商续传数据]';
@@ -44,6 +46,14 @@ function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function terminalErrorCode(payload: Readonly<Record<string, unknown>>): string | null {
+  const error = object(payload.error);
+  const result = object(payload.result);
+  const nested = object(result?.error);
+  for (const value of [error?.code, nested?.code, payload.code]) if (typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/u.test(value)) return value;
+  return null;
+}
+
 export function runTraceDetail(source: ReturnType<WritingApplicationService['getRunTraceSource']>): RunTraceDetail {
   const { step, events, snapshot } = source;
   const isModel = step.type === 'request.dispatch_attempted';
@@ -79,11 +89,28 @@ export function runTraceDetail(source: ReturnType<WritingApplicationService['get
     const schema = snapshot?.toolSchemas.find(tool => tool.name === step.payload.toolName);
     if (schema) add('schema', '当次调用的工具定义', schema);
     else notes.push('当次调用的工具定义未记录；不会用当前定义冒充历史定义。');
-    if (terminal) add('output', '工具实际结果', terminal.payload.result ?? terminal.payload);
+    const searchProgress = events.filter(event => event.type === 'search.progress' && event.operationId === step.operationId)
+      .map(event => ({ at: event.occurredAt, message: event.payload.message }));
+    if (searchProgress.length > 0) add('output', '搜索执行过程与实际结果', {
+      progress: searchProgress, result: terminal ? terminal.payload.result ?? terminal.payload : null,
+    });
+    else if (terminal) add('output', '工具实际结果', terminal.payload.result ?? terminal.payload);
     if (step.payload.origin === 'harness_text_output') notes.push('此调用由程序将模型文本转换为保存操作，不是模型直接发起的工具调用。');
+  }
+  if (terminal && /\.(?:failed|outcome_unknown)$/u.test(terminal.type)) {
+    const status = terminal.type.endsWith('.failed') ? 'failed' : 'outcome_unknown';
+    const transport = object(terminal.payload.transport);
+    const phase = transport?.phase === 'first_response' || transport?.phase === 'stream_idle' ? transport.phase : undefined;
+    const explanation = explainRunFailure({ kind: isModel ? 'model' : step.payload.toolName === 'director_decide' || step.payload.toolName === 'delegate_author_expert' ? 'agent' : 'tool',
+      status, technicalName: typeof step.payload.toolName === 'string' ? step.payload.toolName : undefined,
+      errorCode: terminalErrorCode(terminal.payload), transportPhase: phase });
+    notes.push(`${explanation.title}：${explanation.detail}`);
+    notes.push(`处理建议：${explanation.remediation}`);
+    notes.push(`技术代码：${terminalErrorCode(terminal.payload) ?? '未记录'}`);
   }
   if (!terminal) notes.push('尚未记录完成结果；运行中请等待，若已停止则保留为结果未记录。');
   if (sections.some(section => section.truncated)) notes.push('长内容仅展示前 64,000 字符；本机原始记录未被修改。');
   return { runId: step.runId, stepId: step.id, requestId, callId,
-    provider: snapshot ? redactText(snapshot.provider) : null, model: snapshot ? redactText(snapshot.model) : null, sections, notes };
+    provider: snapshot ? redactText(snapshot.provider) : null, model: snapshot ? redactText(snapshot.model) : null, sections, notes,
+    ...(isModel && snapshot ? { inputBreakdown: requestInputBreakdown(snapshot.request) } : {}) };
 }

@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { SearchSettingsStore } from './search-settings.js';
-import type { FactSearchConfiguration } from '../../../packages/application/src/fact-search.js';
 import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 import { WritingApplicationService } from "../../../packages/application/src/index.js";
+import type { AuthorWebFetcher } from "../../../packages/application/src/author-web.js";
 import {
   createApplicationBridge,
 } from "../../../packages/client-bridge/src/application-bridge.js";
@@ -86,7 +86,7 @@ export interface DesktopApplicationHostOptions {
   ) => ModelProvider;
   readonly applicationVersion?: string;
   readonly applicationBuild?: string;
-  readonly authorizeFactSearchQuery?: FactSearchConfiguration['authorizeQuery'];
+  readonly authorWebFetcher?: AuthorWebFetcher;
 }
 
 function workspaceId(path: string): string {
@@ -100,6 +100,7 @@ export class DesktopApplicationHost {
   readonly #providerFactory: NonNullable<DesktopApplicationHostOptions["providerFactory"]>;
   readonly #applicationVersion: string;
   readonly #applicationBuild: string;
+  readonly #authorWebFetcher: AuthorWebFetcher | undefined;
   readonly #storage;
   readonly #listeners = new Set<(snapshot: BridgeSnapshot) => void>();
   #service: WritingApplicationService;
@@ -114,17 +115,16 @@ export class DesktopApplicationHost {
   #savingPublication = false;
   #providerChanging = false;
   readonly #searchSettings: SearchSettingsStore;
-  readonly #authorizeFactSearchQuery: FactSearchConfiguration['authorizeQuery'];
 
   constructor(options: DesktopApplicationHostOptions) {
     this.#workspacePath = resolve(options.workspacePath);
     this.#providerProfilePath = resolve(options.providerProfilePath);
     this.#credentials = options.credentials ?? createDefaultCredentialBroker();
-    this.#authorizeFactSearchQuery = options.authorizeFactSearchQuery;
     this.#searchSettings = new SearchSettingsStore(join(dirname(this.#providerProfilePath), 'search-settings.json'), this.#credentials);
     this.#providerFactory = options.providerFactory ?? createConfiguredProvider;
     this.#applicationVersion = options.applicationVersion ?? "development";
     this.#applicationBuild = options.applicationBuild ?? "writing-agent-desktop-v1";
+    this.#authorWebFetcher = options.authorWebFetcher;
     this.#storage = openWorkspaceStorage({ workspacePath: this.#workspacePath });
     this.#providerConfig = loadDesktopProviderProfile(this.#providerProfilePath);
     const runtime = this.#createRuntime(this.#providerConfig, "");
@@ -148,6 +148,7 @@ export class DesktopApplicationHost {
 
   async searchStatus() { return this.#searchSettings.status(); }
   async configureSearch(input: SearchSettingsInput) { return this.#searchSettings.save(input); }
+  async testSearchConnection(provider: 'parallel' | 'tavily') { return this.#searchSettings.verify(provider); }
 
   async providerDetails(profileId: string): Promise<DesktopSavedProviderView> {
     const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(p => p.id === profileId);
@@ -605,8 +606,8 @@ export class DesktopApplicationHost {
       : this.#providerFactory(config, this.#credentials);
     const service = new WritingApplicationService({
       storage: this.#storage,
-      factSearchConfiguration: () => ({ ...this.#searchSettings.configuration(),
-        ...(this.#authorizeFactSearchQuery ? { authorizeQuery: this.#authorizeFactSearchQuery } : {}) }),
+      factSearchConfiguration: () => this.#searchSettings.configuration(),
+      ...(this.#authorWebFetcher ? { authorWebFetcher: this.#authorWebFetcher } : {}),
       ...(provider === undefined ? {} : { provider }),
     });
     const bridge = createApplicationBridge({

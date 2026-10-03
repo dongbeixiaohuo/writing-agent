@@ -1,4 +1,4 @@
-export declare const UI_BRIDGE_PROTOCOL_VERSION = 21;
+export declare const UI_BRIDGE_PROTOCOL_VERSION = 22;
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ConnectionState = 'ready' | 'running' | 'offline';
 export type ToolState = 'pending' | 'success' | 'failure' | 'cancelled';
@@ -79,6 +79,12 @@ export type DiagnosticOperationStatus = 'pending' | 'completed' | 'failed' | 'ou
 export interface RunDiagnosticModelRequest {
     stream?: {
         headersMs: number | null;
+        /** Optional for compatibility with run records written before reasoning activity timing existed. */
+        firstReasoningMs?: number | null;
+        /** Optional for compatibility with run records written before reasoning activity timing existed. */
+        lastReasoningMs?: number | null;
+        /** Activity count only; no private reasoning text is persisted. */
+        reasoningEvents?: number;
         firstContentMs: number | null;
         lastContentMs: number | null;
         contentEvents: number;
@@ -157,6 +163,7 @@ export interface RunDiagnosticTraceStep {
     status: DiagnosticOperationStatus;
     label: string;
     technicalName?: string;
+    httpStatus?: number;
     requestId?: string;
     actorLabel?: string;
     durationMs: number | null;
@@ -185,6 +192,15 @@ export interface RunTraceDetail {
     callId: string | null;
     provider: string | null;
     model: string | null;
+    inputBreakdown?: {
+        totalCharacters: number;
+        basis: string;
+        parts: readonly {
+            key: string;
+            label: string;
+            characters: number;
+        }[];
+    };
     sections: readonly {
         id: 'input' | 'output' | 'schema';
         label: string;

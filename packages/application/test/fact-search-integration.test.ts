@@ -36,7 +36,8 @@ class FactSearchInspectionProvider extends ModelProviderBase {
       return
     }
     const artifactReads = toolMessages.filter(message => message.name === 'read_artifact_version')
-    if (artifactReads.length < 2) {
+    const supplied = JSON.parse(request.messages.find(m => m.role === 'user')!.content).artifacts;
+    if (!supplied && artifactReads.length < 2) {
       yield {
         type: 'tool_call_delta', index: 0, id: `read-fact-input-${artifactReads.length}`, name: 'read_artifact_version',
         argumentsDelta: JSON.stringify({ versionId: artifactReads.length === 0 ? this.bodyVersionId : this.evidenceVersionId }),
@@ -152,6 +153,11 @@ test('runFactCheck omits external tools and warns about model-only review when s
     const systemPrompt = first.messages.find(message => message.role === 'system')?.content ?? ''
     assert.match(systemPrompt, new RegExp(MODEL_ONLY_FACT_NOTICE))
     assert.match(systemPrompt, /不调用任何外部网络工具/)
+    const state = JSON.parse(first.messages.find(m => m.role === 'user')!.content);
+    assert.match(state.artifacts.find((a: any) => a.kind === 'body').content, /下班散步/);
+    assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object');
+    assert.ok(Array.isArray(state.materialCatalog));
+    assert.equal(fixture.provider.requests.length, 1, 'save ends the check without rereading or another prose-only model request');
     assert.equal(fixture.provider.requests.flatMap(request => request.messages)
       .some(message => message.role === 'tool' && message.name === 'search_fact_sources'), false)
   } finally {

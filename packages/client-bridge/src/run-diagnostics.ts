@@ -1,6 +1,7 @@
 import type { WritingProjectProjection } from '../../application/src/index.js'
 import type { RunRecord } from '../../runtime/session/src/index.js'
 import type { DiagnosticOperationStatus, RecoverableRunSummary, RunDiagnosticDecision, RunDiagnosticModelRequest, RunDiagnosticToolGroup, RunDiagnosticToolTarget, RunDiagnosticTraceStep, RunDiagnosticsView } from './protocol.js'
+import { explainRunFailure } from './run-failure-explanation.js'
 import { recordedActorLabel, toolPresentation } from './tool-presentation.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
@@ -67,6 +68,12 @@ function errorCode(payload: Readonly<Record<string, unknown>>): string | null {
   return safeCode(object(payload.error)?.code) ?? safeCode(object(object(payload.result)?.error)?.code) ?? safeCode(payload.code)
 }
 
+function sourceHttpStatus(payload: Readonly<Record<string, unknown>>): number | undefined {
+  const error = object(payload.error) ?? object(object(payload.result)?.error)
+  const status = count(object(error?.details)?.httpStatus)
+  return status !== null && status >= 100 && status <= 599 ? status : undefined
+}
+
 function duration(start: string, end: string): number | null {
   const elapsed = Date.parse(end) - Date.parse(start)
   return Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null
@@ -76,14 +83,14 @@ function safeHttpsHost(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 4096 || /[\u0000-\u001f\u007f]/u.test(value)) return null
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' && !url.username && !url.password ? url.hostname : null
+    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.hostname : null
   } catch { return null }
 }
 
 function safeSourceHosts(value: unknown): string[] {
   if (typeof value !== 'string') return []
   const hosts = new Set<string>()
-  for (const match of value.replace(/\\\//gu, '/').matchAll(/https:\/\/[^\s"<>\\]+/gu)) {
+  for (const match of value.replace(/\\\//gu, '/').matchAll(/https?:\/\/[^\s"<>\\]+/gu)) {
     const host = safeHttpsHost(match[0])
     if (host) hosts.add(host)
     if (hosts.size === 3) break
@@ -112,6 +119,7 @@ interface MutableTool {
   outcome: string | null
   status: DiagnosticOperationStatus
   errorCode: string | null
+  httpStatus?: number
   targetId: string | null
   versionId: string | null
   startedAt: string
@@ -149,7 +157,7 @@ function safeToolInput(toolName: string, args: Readonly<Record<string, unknown>>
     const query = safePreview(args.query)
     return query ? `查询：${query}` : '搜索公开事实（具体查询已隐藏）'
   }
-  if (toolName === 'read_fact_source') {
+  if (toolName === 'read_fact_source' || toolName === 'read_author_web') {
     const host = safeHttpsHost(args.url)
     return host ? `来源域名：${host}` : '读取本轮已授权的事实来源'
   }
@@ -179,9 +187,16 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   if (status === 'failed') {
     const code = errorCode(payload)
     const message = safeFailureMessage(payload)
-    return `执行失败${code ? `：${code}` : ''}${message ? ` · ${message}` : ''}`
+    const explanation = explainRunFailure({ kind: toolName === 'director_decide' || toolName === 'delegate_author_expert' ? 'agent' : 'tool',
+      status, technicalName: toolName, errorCode: code, httpStatus: sourceHttpStatus(payload) })
+    return `${explanation.title}：${explanation.detail}${code ? ` · 技术代码：${code}` : ''}${message ? ` · 记录信息：${message}` : ''}`
   }
-  if (status === 'outcome_unknown') return '已发出请求，但无法确认外部结果'
+  if (status === 'outcome_unknown') {
+    const explanation = explainRunFailure({ kind: toolName === 'director_decide' || toolName === 'delegate_author_expert' ? 'agent' : 'tool',
+      status, technicalName: toolName, errorCode: errorCode(payload) })
+    const code = errorCode(payload)
+    return `${explanation.title}：${explanation.detail}${code ? ` · 技术代码：${code}` : ''}`
+  }
   if (status !== 'completed') return null
   const envelope = object(payload.result)
   const result = envelope?.ok === true ? object(envelope.result) : null
@@ -192,9 +207,19 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     const failure = safeCode(result?.failureCode)
     const evidence = safePreview(result?.evidenceText)
     const notice = safePreview(result?.notice)
-    return `${mode}${hosts.length ? ` · 来源域名（未核实）：${hosts.join('、')}` : ''}${failure ? ` · ${failure}` : ''}${evidence ? ` · 证据：${evidence}` : ''}${notice ? ` · 说明：${notice}` : ''}`
+    const attempts = Array.isArray(result?.attempts) ? result.attempts.map(item => {
+      const attempt = object(item)
+      const service = attempt?.provider === 'tavily' ? 'Tavily' : attempt?.provider === 'parallel' ? 'Parallel' : null
+      return service ? `${service}：${count(attempt?.httpRequests) ?? 0} 个 HTTP 请求 · ${attempt?.status === 'completed' ? '成功' : safeCode(attempt?.errorCode) ?? '失败'}` : null
+    }).filter(Boolean).join(' → ') : ''
+    return `${mode}${result?.cacheHit === true ? ' · 使用缓存，无新请求' : ''}${attempts ? ` · ${attempts}` : ''}${result?.authorization === 'timeout' ? ' · 等待授权超时，未调用搜索服务' : ''}${hosts.length ? ` · 来源域名（未核实）：${hosts.join('、')}` : ''}${failure ? ` · ${failure}` : ''}${evidence ? ` · 证据：${evidence}` : ''}${notice ? ` · 说明：${notice}` : ''}`
   }
   if (toolName === 'read_material') return '已读取指定材料版本'
+  if (toolName === 'read_author_web') {
+    const title = safePreview(result?.title)
+    const host = safeHttpsHost(result?.sourceUrl)
+    return `已读取并保存网页参考材料${title ? `：${title}` : ''}${count(result?.totalChars) !== null ? ` · ${count(result?.totalChars)} 字符` : ''}${host ? ` · ${host}` : ''}；不代表已核实网页观点`
+  }
   if (toolName === 'read_artifact_version') return '已读取指定稿件版本'
   if (toolName === 'read_fact_source') {
     const host = safeHttpsHost(result?.finalUrl)
@@ -238,8 +263,12 @@ function toolCallOutput(toolNames: readonly string[]): string {
 }
 
 function modelOutput(payload: Readonly<Record<string, unknown>>, status: DiagnosticOperationStatus, toolNames: readonly string[] = []): string | null {
-  if (status === 'failed') return errorCode(payload) ? `请求失败：${errorCode(payload)}` : '请求失败'
-  if (status === 'outcome_unknown') return '客户端已停止等待，结果尚无法确认'
+  if (status === 'failed' || status === 'outcome_unknown') {
+    const transport = transportTiming(payload.transport)
+    const explanation = explainRunFailure({ kind: 'model', status, errorCode: errorCode(payload), transportPhase: transport?.phase })
+    const code = errorCode(payload)
+    return `${explanation.title}：${explanation.detail}${code ? ` · 技术代码：${code}` : ''}`
+  }
   if (status !== 'completed') return null
   const response = safePreview(payload.responseText, true)
   if (response) return response
@@ -379,6 +408,11 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
       toolOperations.set(event.operationId, tool)
       continue
     }
+    if (event.type === 'search.progress') {
+      const searchTool = toolOperations.get(event.operationId)
+      if (searchTool?.toolName === 'search_fact_sources') searchTool.outputPreview = safePreview(event.payload.message)
+      continue
+    }
     const status = toolStatus(event)
     if (status === null) continue
     if (event.type.startsWith('request.')) {
@@ -394,7 +428,18 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
       const transport = transportTiming(event.payload.transport)
       if (transport) request.transport = transport
       const stream = object(event.payload.stream)
-      if (stream) request.stream = { headersMs: count(stream.headersMs), firstContentMs: count(stream.firstContentMs), lastContentMs: count(stream.lastContentMs), contentEvents: count(stream.contentEvents) ?? 0 }
+      if (stream) {
+        const reasoningEvents = count(stream.reasoningEvents)
+        request.stream = {
+          headersMs: count(stream.headersMs),
+          ...(Object.hasOwn(stream, 'firstReasoningMs') ? { firstReasoningMs: count(stream.firstReasoningMs) } : {}),
+          ...(Object.hasOwn(stream, 'lastReasoningMs') ? { lastReasoningMs: count(stream.lastReasoningMs) } : {}),
+          ...(reasoningEvents === null ? {} : { reasoningEvents }),
+          firstContentMs: count(stream.firstContentMs),
+          lastContentMs: count(stream.lastContentMs),
+          contentEvents: count(stream.contentEvents) ?? 0,
+        }
+      }
       const httpStatus = count(event.payload.providerHttpStatus)
       if (httpStatus !== null && httpStatus >= 100 && httpStatus <= 599) request.providerHttpStatus = httpStatus
       const usage = object(event.payload.usage)
@@ -407,6 +452,8 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
       tool.completedAt = event.occurredAt
       tool.durationMs = duration(tool.startedAt, event.occurredAt)
       tool.errorCode = status === 'completed' ? null : errorCode(event.payload)
+      const httpStatus = sourceHttpStatus(event.payload)
+      if (httpStatus !== undefined) tool.httpStatus = httpStatus
       tool.outputPreview = safeToolOutput(tool.toolName, event.payload, status)
       tool.outcome = null
       const envelope = object(event.payload.result)
@@ -436,7 +483,8 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
       kind: tool.toolName === 'director_decide' || tool.toolName === 'delegate_author_expert' ? 'agent' as const : 'tool' as const,
       status: tool.status, label: toolPresentation(tool.toolName).label, technicalName: tool.toolName,
       ...(tool.caller !== '未记录调用者' ? { actorLabel: tool.caller } : {}), durationMs: tool.durationMs,
-      ...(tool.inputPreview ? { inputPreview: tool.inputPreview } : {}), ...(tool.outputPreview ? { outputPreview: tool.outputPreview } : {}), errorCode: tool.errorCode })),
+      ...(tool.inputPreview ? { inputPreview: tool.inputPreview } : {}), ...(tool.outputPreview ? { outputPreview: tool.outputPreview } : {}), errorCode: tool.errorCode,
+      ...(tool.httpStatus === undefined ? {} : { httpStatus: tool.httpStatus }) })),
   ]).sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.order - right.order)
   const trace = orderedTrace.map(({ order: _order, ...step }) => step)
   return { segments: segments.map(segment => ({ id: segment.id, label: segment.label, startedAt: segment.startedAt,

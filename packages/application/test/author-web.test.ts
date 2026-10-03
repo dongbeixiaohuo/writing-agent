@@ -34,7 +34,7 @@ const initialBrief: WritingBrief = {
   confirmationStatus: "confirmed",
 };
 
-function fixture() {
+function fixture(withBrief = true) {
   const directory = mkdtempSync(join(tmpdir(), "author-web-"));
   const storage = openWorkspaceStorage({ workspacePath: directory });
   assert.equal(storage.createProject({
@@ -44,7 +44,7 @@ function fixture() {
     mode: "quick",
     actor: { kind: "user", id: "user-1" },
   }).ok, true);
-  assert.equal(storage.saveWritingBrief({
+  if (withBrief) assert.equal(storage.saveWritingBrief({
     operationId: "save-brief",
     projectId: "project-1",
     expectedProjectRevision: 0,
@@ -89,6 +89,69 @@ function fetched(overrides: Partial<SecureWebFetchResult> = {}): SecureWebFetchR
 }
 
 describe("author web tool", () => {
+  it('uses Unicode character offsets compatible with read_material for long articles', async () => {
+    const f = fixture(false);
+    try {
+      const text = '😀'.repeat(12_005);
+      const tool = createAuthorWebTool({ storage: f.storage, projectId: 'project-1', bindToBrief: false,
+        authorizedUrls: ['https://93.184.216.34/article'], fetcher: { async fetchText() {
+          return fetched({ content: { ...fetched().content, text, totalChars: 12_005 } });
+        } } });
+      const result = await tool.execute({ url: 'https://93.184.216.34/article' }, context('unicode')) as any;
+      assert.equal(Array.from(result.text).length, 12_000);
+      assert.equal(result.totalChars, 12_005);
+      assert.equal(result.nextOffset, 12_000);
+    } finally { f.close(); }
+  });
+
+  it('caps network reads at three per turn including failed requests', async () => {
+    const f = fixture(false);
+    try {
+      let calls = 0;
+      const tool = createAuthorWebTool({ storage: f.storage, projectId: 'project-1', bindToBrief: false,
+        authorizedUrls: ['https://93.184.216.34/article'], fetcher: { async fetchText() {
+          calls++; throw new SecureWebFetchError('WEB_ARTICLE_ACCESS_RESTRICTED', 'challenge');
+        } } });
+      for (let i = 0; i < 4; i++) await assert.rejects(() => Promise.resolve(tool.execute(
+        { url: 'https://93.184.216.34/article' }, context(`bounded-${i}`))),
+        { code: i < 3 ? 'WEB_ARTICLE_ACCESS_RESTRICTED' : 'AUTHOR_WEB_LIMIT_REACHED' });
+      assert.equal(calls, 3);
+      assert.equal(f.storage.listMaterials('project-1').length, 0);
+    } finally { f.close(); }
+  });
+
+  it("reads material before a writing direction exists without confirming or creating a brief", async () => {
+    const f = fixture(false);
+    try {
+      let receivedSignal: AbortSignal | undefined;
+      const tool = createAuthorWebTool({ storage: f.storage, projectId: 'project-1',
+        authorizedUrls: ['http://93.184.216.34/article'], bindToBrief: false,
+        fetcher: { async fetchText(_url, signal) { receivedSignal = signal; return fetched(); } } });
+      const result = await tool.execute({ url: 'http://93.184.216.34/article' }, context('intake-web')) as any;
+      assert.equal(result.text, fetched().content.text);
+      assert.equal(result.instructionAuthority, 'none');
+      assert.equal(result.briefVersionId, null);
+      assert.ok(receivedSignal);
+      assert.equal(f.storage.listMaterials('project-1').length, 1);
+      assert.equal(f.storage.inspectProject('project-1')!.currentBriefVersionId, null);
+      const replay = await tool.execute({ url: 'http://93.184.216.34/article' }, context('intake-web'));
+      assert.deepEqual(replay, result);
+    } finally { f.close(); }
+  });
+
+  it("never imports a fetch that finishes after cancellation", async () => {
+    const f = fixture(false);
+    try {
+      const controller = new AbortController();
+      const tool = createAuthorWebTool({ storage: f.storage, projectId: 'project-1', bindToBrief: false,
+        authorizedUrls: ['https://93.184.216.34/article'],
+        fetcher: { async fetchText() { controller.abort(); return fetched(); } } });
+      await assert.rejects(() => Promise.resolve(tool.execute({ url: 'https://93.184.216.34/article' },
+        { ...context('cancelled-web'), abortSignal: controller.signal })), { code: 'ABORTED' });
+      assert.equal(f.storage.listMaterials('project-1').length, 0);
+    } finally { f.close(); }
+  });
+
   it("imports one explicitly authorized webpage snapshot and binds it to the latest confirmed brief", async () => {
     const f = fixture();
     try {
@@ -104,6 +167,7 @@ describe("author web tool", () => {
       assert.equal(definition.effect, "local_idempotent");
       assert.deepEqual(definition.permissions, [
         "network:https:read",
+        "network:http:read",
         "material:import",
         "brief:write",
       ]);

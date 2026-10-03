@@ -235,6 +235,8 @@ describe("AgentRuntime reliability", () => {
       constructor() { super('timed', '1', { protocol: 'mock', tools: 'supported', streaming: 'supported', usage: 'unknown' }) }
       protected async *providerStream(): AsyncIterable<ProviderStreamEvent> {
         yield { type: 'response_activity', phase: 'headers' };
+        yield { type: 'response_activity', phase: 'reasoning' };
+        yield { type: 'response_activity', phase: 'reasoning' };
         yield { type: 'text_delta', delta: 'PRIVATE_PARTIAL' };
         yield { type: 'error', error: { code: 'TIMEOUT', message: 'local timeout', retryable: true, transport } };
       }
@@ -247,7 +249,10 @@ describe("AgentRuntime reliability", () => {
       const event = storage.listRunEvents(result.runId).find(e => e.type === 'request.outcome_unknown')!;
       assert.deepEqual(event.payload.transport, transport);
       assert.equal((event.payload.stream as any)?.contentEvents, 1);
+      assert.equal((event.payload.stream as any)?.reasoningEvents, 2);
       assert.equal(typeof (event.payload.stream as any)?.headersMs, 'number');
+      assert.equal(typeof (event.payload.stream as any)?.firstReasoningMs, 'number');
+      assert.equal(typeof (event.payload.stream as any)?.lastReasoningMs, 'number');
       assert.equal(typeof (event.payload.stream as any)?.firstContentMs, 'number');
       assert.doesNotMatch(JSON.stringify(event.payload), /PRIVATE_PARTIAL/);
       assert.equal(seen[0].lifecycle, 'started');

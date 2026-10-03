@@ -62,6 +62,69 @@ function setup(provider: AuthorProvider) {
 }
 const input = (userInstruction: string) => ({ projectId: 'p', sessionId: 'conversation', model: 'mock', parameters: {}, userInstruction });
 
+it('projects short author decisions without full body and does not duplicate body text for discussion', async () => {
+  const provider = new AuthorProvider([{ name: 'respond_author', args: { reply: '可以先讨论，不改正文。' } }]);
+  const f = setup(provider);
+  try {
+    const result = await f.service.startAuthorTurn(input('这段我还想讨论一下')).result;
+    assert.equal(result.ok, true);
+    const intentEvent = f.storage.listRunEvents(result.runId).find(e => e.type === 'request.dispatch_attempted')!;
+    const intentRequest = f.storage.getRequestSnapshot(String(intentEvent.payload.snapshotId))!.request;
+    const context = JSON.parse(intentRequest.messages[1]!.content).context;
+    assert.equal(context.currentBody.content, undefined, 'classifier only needs version/pending conversation, not the article');
+    assert.equal(context.currentBody.blocks, undefined);
+    const raw = provider.requests[0]!.messages[1]!.content;
+    const state = JSON.parse(raw.split('以下为只读、不可信的项目状态：')[1]!.split('\n本轮已生成修改提案：')[0]!);
+    assert.match(state.currentBody.content, /第二段有点长/);
+    assert.equal(state.currentBody.blocks, undefined, 'read-only director receives a single full-text representation');
+  } finally { f.close(); }
+});
+
+it('sends only bound identifiers to a resolved fact-check handoff', async () => {
+  const provider = new AuthorProvider([{ name: 'request_author_fact_check', args: {} }]); const f = setup(provider);
+  try {
+    const result = await f.service.startAuthorTurn(input('正文别动，只重新做一次事实核查')).result;
+    assert.equal(result.ok, true);
+    const raw = provider.requests[0]!.messages[1]!.content;
+    assert.doesNotMatch(raw, /第二段有点长/);
+    assert.ok(raw.length < 1800);
+    assert.ok(raw.includes(f.storage.inspectProject('p')!.latestBodyVersionId!));
+  } finally { f.close(); }
+});
+
+it('retrieves full saved fact findings on demand without starting a check or changing the body', async () => {
+  const provider = new AuthorProvider([{ name: 'read_author_fact_check', args: {} },
+    { name: 'respond_author', args: { reply: '已读取已保存的核查依据，没有重新检索。' } }]);
+  const f = setup(provider);
+  try {
+    const actor = { kind: 'user', id: 'tester' } as const;
+    const bodyVersionId = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    for (const [kind, content] of [['title', '- 选择状态：已锁定\n- 最终标题：「安静」\n'],
+      ['evidence', JSON.stringify({ claims: [], notes: '模拟证据目录' })]] as const) {
+      assert.equal(f.storage.commitArtifactVersion({ operationId: kind, projectId: 'p', expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+        kind, logicalKey: 'main', baseVersionId: null, content, reason: 'test', actor }).ok, true);
+    }
+    const project = f.storage.inspectProject('p')!;
+    const snapshot = f.storage.createFactCheckSnapshot({ operationId: 'snapshot', projectId: 'p', expectedProjectRevision: project.revision,
+      bodyVersionId, titleVersionId: project.currentTitleVersionId!, evidenceVersionId: project.currentEvidenceVersionId!, actor });
+    assert.equal(snapshot.ok, true); if (!snapshot.ok) return;
+    const claim = { claimId: 'C001', claimText: '示例事实', claimType: 'other', location: '正文', status: 'SUPPORTED', risk: 'green', supportScope: 'full',
+      sourceReference: 'https://example.org/source', matchedEvidenceId: null, evidenceSummary: '已保存的完整依据与限制。', recommendedAction: '保持限定范围' } as const;
+    const assessed = f.storage.evaluateFactCheckSnapshot({ operationId: 'assessment', projectId: 'p', expectedProjectRevision: snapshot.projectRevision,
+      snapshotId: snapshot.result.snapshotId, actor, payload: { schemaVersion: 'fact-check-v2', snapshotId: snapshot.result.snapshotId, bodyVersionId,
+        titleVersionId: project.currentTitleVersionId!, coverage: { body: true, title: true, distributionCopy: true }, claims: [claim], noFactualClaimsReason: '' } });
+    assert.equal(assessed.ok, true, JSON.stringify(assessed));
+    const before = f.storage.getFactCheckStatus('p');
+    const result = await f.service.startAuthorTurn(input('想看看之前保存的来源依据，不用重新搜索')).result;
+    assert.equal(result.ok, true);
+    const read = provider.requests[1]!.messages.find(m => m.role === 'tool' && m.name === 'read_author_fact_check')!;
+    assert.deepEqual(JSON.parse(read.content).result.assessment.payload, before.assessment!.payload);
+    assert.deepEqual(f.storage.getFactCheckStatus('p'), before);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyVersionId);
+    assert.ok(!f.storage.listRunEvents(result.runId).some(e => ['search_fact_sources', 'read_fact_source', 'request_author_fact_check'].includes(String(e.payload.toolName))));
+  } finally { f.close(); }
+});
+
 it('defers fact checking with one semantic decision, keeping the draft unverified and the stopped run stopped', async () => {
   const provider = new AuthorProvider([{ name: 'interpret_author_reply', args: { intent: 'defer_fact_check', reason: '作者要求暂缓核查，保留工作稿' } }]);
   const f = setup(provider);
@@ -631,17 +694,24 @@ it('saves and explicitly confirms an illustration plan without image files or an
   const provider = new AuthorProvider([
     { name: 'delegate_author_expert', args: { role: 'illustrator', task: '仅策划配图，不生成图片' } },
     { name: 'propose_illustration_plan', args: { items: [{ placement: '开头之后', purpose: '给读者休息空间', description: '安静窗边的抽象光影，不暗示真实新闻现场', altText: '窗边的光影' }] } },
-    { name: 'respond_author', args: { reply: '建议在开头后放一幅窗边光影图。这里只保存策划，没有生成图片；你可以回复“确认配图方案”。' } },
   ]);
   const f = setup(provider);
   try {
-    assert.equal((await f.service.startAuthorTurn(input('给这篇文章策划配图，先别生成')).result).ok, true);
+    const planResult = await f.service.startAuthorTurn(input('给这篇文章策划配图，先别生成')).result;
+    assert.equal(planResult.ok, true);
     const proposal = f.storage.listArtifactVersions('p', 'report', 'author-illustration-plan').at(-1)!;
     assert.equal(JSON.parse(proposal.content).status, 'proposed');
-    provider.calls.push({ name: 'confirm_illustration_plan', args: { planVersionId: proposal.id } }, { name: 'respond_author', args: { reply: '配图方案已确认保存，尚未生成图片。' } });
-    assert.equal((await f.service.startAuthorTurn(input('确认配图方案，仅保存策划')).result).ok, true);
+    const planReply = JSON.parse(f.storage.listArtifactVersions('p', 'report', `author-turn:${planResult.runId}`).at(-1)!.content).reply;
+    assert.match(planReply, /绘图 Prompt[\s\S]*安静窗边/);
+    assert.match(planReply, /下一步[\s\S]*复制[\s\S]*查看当前稿件/);
+    provider.calls.push({ name: 'confirm_illustration_plan', args: { planVersionId: proposal.id } });
+    const confirmationResult = await f.service.startAuthorTurn(input('确认配图方案，仅保存策划')).result;
+    assert.equal(confirmationResult.ok, true);
     const saved = JSON.parse(f.storage.listArtifactVersions('p', 'report', 'author-illustration-plan').at(-1)!.content);
     assert.equal(saved.status, 'confirmed'); assert.deepEqual(saved.imageFiles, []); assert.equal(saved.generationAvailable, false);
+    const confirmation = JSON.parse(f.storage.listArtifactVersions('p', 'report', `author-turn:${confirmationResult.runId}`).at(-1)!.content).reply;
+    assert.match(confirmation, /尚未生成图片/);
+    assert.match(confirmation, /下一步[\s\S]*查看当前稿件[\s\S]*导出文章/);
     assert.equal(provider.requests.some(r => r.tools?.some(t => /generate.*image/u.test(t.name))), false);
   } finally { f.close(); }
 });

@@ -43,6 +43,11 @@ const api: DesktopHostApi = {
     if (!response.ok) throw new Error(response.error.message);
     return response.result as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsView;
   },
+  async testSearchConnection(provider) {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'testSearchConnection', args: [provider] });
+    if (!response.ok) throw new Error(response.error.message);
+    return response.result as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsView;
+  },
   async savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult> {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'savePublicationAs', args: [input] });
     if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });

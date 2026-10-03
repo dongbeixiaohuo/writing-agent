@@ -444,7 +444,7 @@ const GENRE_LABELS: Readonly<Record<WritingBrief["genre"], string>> = {
   practical_experience: "实用经验",
 };
 
-function stableBriefSummary(
+export function stableBriefSummary(
   storage: StoragePort,
   projectId: string,
   brief: WritingBrief,

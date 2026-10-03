@@ -17,6 +17,7 @@ import {
 export type DesktopRpcMethod =
   | 'searchStatus'
   | 'configureSearch'
+  | 'testSearchConnection'
   | "handshake"
   | "getSnapshot"
   | "getRunTraceDetail"
@@ -62,6 +63,7 @@ export type DesktopRpcMethod =
 export const DESKTOP_RPC_METHODS = Object.freeze([
   'searchStatus',
   'configureSearch',
+  'testSearchConnection',
   "handshake",
   "getSnapshot",
   "getRunTraceDetail",
@@ -304,10 +306,18 @@ export interface SearchSettingsView {
   readonly tavilyEnabled: boolean;
   readonly tavilyKeyConfigured: boolean;
   readonly credentialPersistence: 'system' | 'session' | 'environment' | 'missing';
+  readonly verification?: Partial<Record<'parallel' | 'tavily', SearchConnectionView>>;
+}
+export interface SearchConnectionView {
+  readonly status: 'available' | 'failed';
+  readonly checkedAt: string;
+  readonly elapsedMs: number;
+  readonly message: string;
 }
 export interface DesktopHostConfiguration {
   searchStatus?(): Promise<SearchSettingsView>;
   configureSearch?(input: SearchSettingsInput): Promise<SearchSettingsView>;
+  testSearchConnection?(provider: 'parallel' | 'tavily'): Promise<SearchSettingsView>;
   savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult>;
   revealPublication(receiptId: string): Promise<void>;
   revealProviderConfig(): Promise<void>;

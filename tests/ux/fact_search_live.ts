@@ -8,11 +8,21 @@ import { createConfiguredProvider, createDefaultCredentialBroker } from '../../p
 import { openWorkspaceStorage } from '../../packages/storage/src/index.js';
 import { WritingApplicationService } from '../../packages/application/src/index.js';
 import { createFactSearchTools, type FactSearchConfiguration } from '../../packages/application/src/fact-search.js';
+import { SearchSettingsStore } from '../../apps/desktop/src/search-settings.js';
 
 // Never put a live credential in arguments, fixtures or the persisted workspace.
 const tavilyOnly = process.argv.includes('--tavily-only');
-const tavilyKey = process.env.WA_TAVILY_TEST_KEY;
+const credentials = createDefaultCredentialBroker();
+const searchStore = new SearchSettingsStore(join(process.env.APPDATA!, 'Writing Agent', 'search-settings.json'), credentials);
+const tavilyKey = process.env.WA_TAVILY_TEST_KEY ?? (tavilyOnly ? await searchStore.configuration().getTavilyKey?.() : undefined);
 delete process.env.WA_TAVILY_TEST_KEY;
+if (process.argv.includes('--verify-connections')) {
+  for (const service of ['tavily', 'parallel'] as const) {
+    const status = await searchStore.verify(service);
+    console.log(JSON.stringify({ phase: 'connection_verification', service, result: status.verification?.[service] }));
+  }
+  if (process.argv.includes('--probe-only')) process.exit(0);
+}
 if (tavilyOnly) {
   assert.ok(tavilyKey, 'Set WA_TAVILY_TEST_KEY in the test process environment');
   const requests: Array<{ status: number; elapsedMs: number }> = [];
@@ -34,7 +44,7 @@ if (tavilyOnly) {
   const sources = JSON.parse(result.evidenceText) as Array<{ title: string; url: string; excerpt: string }>;
   assert.ok(sources.length > 0, 'Live search must not be empty');
   assert.ok(sources.some(source => source.excerpt.includes('1949')), 'Search must return relevant excerpts');
-  assert.deepEqual(again, result);
+  assert.deepEqual(again, { ...result, cacheHit: true });
   assert.equal(requests.length, 1, 'Repeated query must reuse cached evidence');
   console.log(JSON.stringify({ phase: 'tavily_search_probe', ok: true, requests,
     resultCount: sources.length, sources: sources.map(({ title, url }) => ({ title, url })),
@@ -73,7 +83,7 @@ for (const parallelEnabled of tavilyOnly ? [false] : process.argv.includes('--pa
     const events = storage.listRunEvents(result.runId);
     const tools = events.filter(e => e.type === 'tool.completed' || e.type === 'tool.failed').map(e => {
       const envelope = e.payload.result as any;
-      return { name: envelope?.toolName, ok: envelope?.ok, searchMode: envelope?.result?.mode, provider: envelope?.result?.provider, error: envelope?.error?.code };
+      return { name: envelope?.toolName, ok: envelope?.ok, searchMode: envelope?.result?.mode, provider: envelope?.result?.provider, attempts: envelope?.result?.attempts, cacheHit: envelope?.result?.cacheHit, error: envelope?.error?.code };
     });
     const assessment = storage.getFactCheckStatus('p');
     assert.ok(!tavilyKey || !JSON.stringify(events).includes(tavilyKey), 'Credential must not enter persistent events');
@@ -85,6 +95,8 @@ for (const parallelEnabled of tavilyOnly ? [false] : process.argv.includes('--pa
     assert.ok(!assessment.assessment?.payload.claims.some(c => c.claimText.includes('温柔的风')));
     assert.equal(tools.some(t => t.name === 'search_fact_sources'), parallelEnabled || tavilyOnly);
     if (tavilyOnly) {
+      assert.ok(events.some(e => e.type === 'search.progress' && String(e.payload.message).includes('Tavily 已发出')), 'Real provider dispatch must be observable');
+      assert.ok(tools.filter(t => t.name === 'search_fact_sources' && !t.cacheHit).length <= 6);
       assert.ok(tools.some(t => t.name === 'search_fact_sources' && t.ok && t.searchMode === 'external' && t.provider === 'tavily'));
       assert.ok(assessment.assessment?.payload.claims.some(c => /https:\/\//.test(JSON.stringify(c))), 'Saved assessment must cite an external source');
     }

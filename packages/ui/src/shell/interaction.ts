@@ -23,7 +23,7 @@ export function conversationWorkingCopy(activity: BridgeSnapshot['liveActivity']
   const idle = activity?.lastActivityAt ? Math.max(0, Math.floor((now - activity.lastActivityAt) / 1000)) : 0
   const detail = !activity ? '有新回复会直接显示在这里。'
     : activity.phase === 'receiving' ? idle >= 30 ? `已收到部分模型数据，${idle} 秒未收到新内容；仍在等待，你可以停止。`
-      : activity.lastEventKind === 'reasoning' ? `已收到模型内部处理活动，尚未收到可展示的答复。已接收 ${activity.receivedEvents ?? 1} 次数据活动；有公开任务说明或素材时会在下方逐步显示。`
+      : activity.lastEventKind === 'reasoning' ? `模型服务仍在处理，尚未收到可展示的答复。已接收 ${activity.receivedEvents ?? 1} 次数据活动；本界面不会展示或推测私有推理，收到可展示答复后会直接流式显示。`
       : activity.lastEventKind === 'tool_arguments' ? '模型正在准备操作。下方逐步展示可公开的任务说明或检索词，操作是否成功以运行记录为准。'
       : '已收到模型数据。下方可展示已读取素材；最终回复会在生成时逐步显示。'
     : activity.phase === 'connected' ? '模型服务已连接，正在等待模型回复。'
