@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +9,114 @@ import test from "node:test";
 
 import { openWorkspaceStorage, StorageOpenError } from "../../../packages/storage/src/index.js";
 import { CURRENT_SCHEMA_VERSION } from "../../../packages/storage/src/schema.js";
-import { describeDesktopStartupFailure, recordDesktopStartupFailure, startDesktopApplicationHost } from "../src/startup.js";
+import { describeDesktopStartupFailure, recordDesktopStartupFailure, registerDesktopProcessDiagnostics, startDesktopApplicationHost } from "../src/startup.js";
+
+function observeProcessEvents(root: string) {
+  const events = new EventEmitter();
+  const renderer = {};
+  const failures: unknown[] = [];
+  let exiting = false;
+  registerDesktopProcessDiagnostics({
+    app: events,
+    logDirectory: root,
+    version: "test-build",
+    isExiting: () => exiting,
+    isMainRenderer: (candidate: unknown) => candidate === renderer,
+    reportRendererFailure: (error: unknown) => failures.push(describeDesktopStartupFailure(error)),
+  });
+  return { events, renderer, failures, exit: () => { exiting = true; } };
+}
+
+test("GPU exit diagnostics persist only allowlisted process details", () => {
+  const root = mkdtempSync(join(tmpdir(), "wa-process-log-"));
+  try {
+    const { events, failures } = observeProcessEvents(root);
+    events.emit("child-process-gone", {}, { type: "GPU", reason: "crashed", exitCode: -2147483645,
+      serviceName: "api-key=secret", name: "private article", url: "https://private.example/?token=secret" });
+    const contents = readFileSync(join(root, "process-events.jsonl"), "utf8");
+    const row = JSON.parse(contents.trim());
+    assert.deepEqual(Object.keys(row).sort(), ["event", "exitCode", "reason", "timestamp", "type", "version"]);
+    assert.equal(row.event, "child-process-gone");
+    assert.equal(row.type, "GPU");
+    assert.equal(row.reason, "crashed");
+    assert.equal(row.exitCode, -2147483645);
+    assert.doesNotMatch(contents, /secret|private article|https:/u);
+    assert.deepEqual(failures, []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("renderer crash reports an actionable error and records safe diagnostics", () => {
+  const root = mkdtempSync(join(tmpdir(), "wa-renderer-log-"));
+  try {
+    const { events, renderer, failures } = observeProcessEvents(root);
+    const reasons = ["abnormal-exit", "crashed", "oom", "launch-failed", "integrity-failure", "memory-eviction"];
+    for (const reason of reasons) {
+      events.emit("render-process-gone", {}, renderer, { reason, exitCode: -1, url: "secret", text: "private article" });
+    }
+    assert.deepEqual(failures, reasons.map(() => describeDesktopStartupFailure({ code: "DESKTOP_RENDERER_FAILED" })));
+    assert.equal((failures[0] as { code: string }).code, "DESKTOP_RENDERER_FAILED");
+    assert.match((failures[0] as { message: string }).message, /重启|重新打开/u);
+    const contents = readFileSync(join(root, "process-events.jsonl"), "utf8");
+    const rows = contents.trim().split("\n").map(line => JSON.parse(line));
+    assert.deepEqual(rows.map(row => row.type), reasons.map(() => "Renderer"));
+    assert.deepEqual(rows.map(row => row.reason), reasons);
+    assert.deepEqual(rows.map(row => row.exitCode), reasons.map(() => -1));
+    assert.doesNotMatch(contents, /secret|private article/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("renderer clean exits, user kills, other renderers and shutdown do not raise failure prompts", () => {
+  const root = mkdtempSync(join(tmpdir(), "wa-process-shutdown-"));
+  try {
+    const observed = observeProcessEvents(root);
+    for (const reason of ["clean-exit", "killed"]) {
+      observed.events.emit("render-process-gone", {}, observed.renderer, { reason, exitCode: 0 });
+    }
+    observed.events.emit("render-process-gone", {}, {}, { reason: "crashed", exitCode: 1 });
+    observed.exit();
+    observed.events.emit("render-process-gone", {}, observed.renderer, { reason: "crashed", exitCode: 1 });
+    assert.deepEqual(observed.failures, []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("unrecognized process fields cannot inject sensitive strings into local logs", () => {
+  const root = mkdtempSync(join(tmpdir(), "wa-process-redact-"));
+  try {
+    const { events } = observeProcessEvents(root);
+    events.emit("child-process-gone", {}, { type: "https://private.example/?key=secret", reason: "private article", exitCode: "secret" });
+    const row = JSON.parse(readFileSync(join(root, "process-events.jsonl"), "utf8").trim());
+    assert.equal(row.type, "Unknown");
+    assert.equal(row.reason, "unknown");
+    assert.equal(row.exitCode, null);
+    assert.doesNotMatch(JSON.stringify(row), /secret|private article|https:/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Electron registers process diagnostics before startup and permits fatal renderer shutdown", () => {
+  const main = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+  assert.match(main, /registerDesktopProcessDiagnostics\(/u);
+  assert.ok(main.indexOf("registerDesktopProcessDiagnostics({") < main.indexOf("void start()"));
+  assert.match(main, /isExiting:.*quitting.*allowClose/u);
+  assert.match(main, /reportRendererFailure:[\s\S]*allowClose = true;[\s\S]*app\.quit\(\)/u);
+});
+
+test("an unwritable diagnostic directory does not suppress the renderer failure prompt", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "wa-process-unwritable-"));
+  try {
+    const blocked = join(root, "logs");
+    writeFileSync(blocked, "fixture blocks log directory");
+    const fallback: string[] = [];
+    t.mock.method(process.stderr, "write", (chunk: string) => { fallback.push(chunk); return true; });
+    const { events, renderer, failures } = observeProcessEvents(blocked);
+    events.emit("render-process-gone", {}, renderer, { reason: "crashed", exitCode: 1, url: "secret" });
+    assert.equal(failures.length, 1);
+    assert.equal((failures[0] as { code: string }).code, "DESKTOP_RENDERER_FAILED");
+    const row = JSON.parse(fallback.join(""));
+    assert.equal(row.reason, "crashed");
+    assert.equal(row.exitCode, 1);
+    assert.doesNotMatch(fallback.join(""), /secret/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 function makeV7Workspace(root: string): string {
   const storage = openWorkspaceStorage({ workspacePath: root });

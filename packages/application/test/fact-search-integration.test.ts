@@ -226,3 +226,65 @@ test('runFactCheck omits external tools and warns about model-only review when s
     rmSync(fixture.workspacePath, { recursive: true, force: true })
   }
 })
+
+test('fact retry reuses extraction and all saved searches in the same run after rebuilding the service', async () => {
+  const workspacePath = mkdtempSync(join(tmpdir(), 'wa-fact-retry-'));
+  const storage = openWorkspaceStorage({ workspacePath });
+  const seeded = seedFactInputs(storage);
+  const originalFetch = globalThis.fetch;
+  let searches = 0;
+  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: true, authorizationMode: 'enabled_services' as const,
+    getTavilyKey: async () => 'synthetic-test-key' });
+  globalThis.fetch = async () => { searches++; return Response.json({ results: [{ title: '已有公开资料', url: `https://example.test/fact/${searches}`, content: '保存下来的完整摘录，不需要再次联网。' }] }); };
+  const requests: ModelRequest[] = [];
+  class InterruptedProvider extends ModelProviderBase {
+    constructor(private readonly resuming: boolean) { super('fact-retry-mock', '1', { protocol: 'mock', tools: 'supported', streaming: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push(structuredClone(request));
+      const state = JSON.parse(request.messages.find(m => m.role === 'user')!.content);
+      const extraction = factPreparationFixtureEvents(request);
+      if (!this.resuming && extraction) { yield* extraction; return; }
+      let name: string, args: unknown;
+      if (!this.resuming) {
+        name = 'search_fact_sources'; args = { query: `公开事实${searches + 1}` };
+      } else {
+        assert.equal(state.factPhase, 'verify', 'no second full-article extraction after an unchanged-input retry');
+        assert.equal(state.searchBudget.used, 6);
+        assert.equal(state.searchBudget.remaining, 0);
+        assert.equal(request.tools?.some(t => t.name === 'search_fact_sources'), false);
+        assert.equal(state.savedSourceRecords.length, 6, 'same-preparation sources must be discoverable without the old conversation');
+        const read = request.messages.find(m => m.role === 'tool' && m.name === 'read_fact_record');
+        if (!read) { name = 'read_fact_record'; args = { callId: state.savedSourceRecords[0].callId, resultIndex: 0 }; }
+        else {
+          assert.match(JSON.parse(read.content).result.text, /保存下来的完整摘录/);
+          name = 'submit_fact_check'; args = { claims: [], noFactualClaimsReason: '全文仅为感受，无外部事实主张。' };
+        }
+      }
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name, argumentsDelta: JSON.stringify(args) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  try {
+    const first = new WritingApplicationService({ storage, provider: new InterruptedProvider(false), factSearchConfiguration: configuration });
+    const stopped = await first.runFactCheck({ projectId: 'project-1', expectedProjectRevision: seeded.projectRevision,
+      model: 'mock', parameters: {}, budget: { maxModelRequests: 7, maxToolCalls: 7, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+    assert.equal(stopped.ok, false);
+    assert.equal(storage.getRun(stopped.runId)?.status, 'budget_exhausted');
+    assert.equal(searches, 6);
+    const resumedApp = new WritingApplicationService({ storage, provider: new InterruptedProvider(true), factSearchConfiguration: configuration });
+    const resumeInput = { projectId: 'project-1', runId: stopped.runId, operationId: 'explicit-fact-retry', decision: 'resume' as const,
+      expectedProjectRevision: storage.inspectProject('project-1')!.revision, model: 'mock', parameters: {} };
+    assert.throws(() => resumedApp.resumeFactCheck({ ...resumeInput, sessionId: 'another-session' }), { code: 'RUN_SCOPE_INVALID' });
+    assert.equal(storage.getRun(stopped.runId)?.status, 'budget_exhausted', 'invalid recovery cannot mutate the paused run');
+    assert.equal(storage.listRunEvents(stopped.runId).some(e => e.type === 'run.resumed'), false);
+    const handle = resumedApp.resumeFactCheck(resumeInput);
+    const result = await handle.result;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.runId, stopped.runId);
+    assert.equal(searches, 6, 'retry cannot issue any extra network search');
+    assert.equal(storage.listRuns('project-1').length, 1);
+    assert.equal(requests.filter(r => JSON.parse(r.messages.find(m => m.role === 'user')!.content).factPhase === 'extract').length, 1);
+    assert.equal(storage.listRunEvents(stopped.runId).filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'prepare_fact_check').length, 1);
+    assert.throws(() => resumedApp.resumeFactCheck({ ...resumeInput, operationId: 'completed-retry' }), { code: 'RUN_NOT_RESUMABLE' });
+  } finally { globalThis.fetch = originalFetch; storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+});

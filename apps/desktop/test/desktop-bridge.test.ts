@@ -83,6 +83,18 @@ class FakeDesktopApi implements DesktopRendererApi {
 }
 
 describe("Desktop renderer bridge", () => {
+  it("preserves explicit checkpoint approval through Electron without a synthetic author reply", async () => {
+    const api = new FakeDesktopApi();
+    const bridge: ClientBridge = new DesktopClientBridge(api, () => 'checkpoint-operation');
+    await bridge.handshake();
+    const checkpointApproval = { eventSeq: 42, bodyVersionId: 'body-v1', briefVersionId: 'brief-v1' };
+    await bridge.resumeRun('waiting-run', 'resume', { checkpointApproval });
+    assert.deepEqual(api.requests.at(-1)?.args, ['waiting-run', 'resume', {
+      operationId: 'checkpoint-operation', checkpointApproval,
+    }]);
+    assert.equal(api.requests.some(request => request.method === 'sendMessage'), false);
+    bridge.dispose();
+  });
   for (const feedback of ['这不是标题，请重新拟三个，正文不要改', '提纲第二部分换个角度', '补充事实：授权材料中只有两项结论']) {
     it(`preserves checkpoint feedback through the desktop transport: ${feedback}`, async () => {
       const api = new FakeDesktopApi();

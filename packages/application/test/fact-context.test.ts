@@ -97,8 +97,8 @@ test('search and source history are bounded excerpts, preserving all locators an
     { type: 'tool.completed', payload: { result: { ok: true, toolName: 'prepare_fact_check', result: { preparationId: 'prep' } } } },
     { type: 'tool.completed', payload: { result: { ...envelope, callId: 'already-in-new-history' } } },
   ] };
-  assert.deepEqual(factRecordCatalog(history, 'run', 'prep').map((row: any) => row.callId), ['search1'],
-    'catalogue contains retired-scope records only; current verification results are already in tool history');
+  assert.deepEqual(factRecordCatalog(history, 'run', 'prep').map((row: any) => row.callId), ['search1', 'already-in-new-history'],
+    'after interruption the fresh model history must still locate sources from the same preparation');
   const reader = createFactContextTools(storage, 'p').find(t => t.name === 'read_fact_record')!;
   const full: any = await reader.execute({ callId: 'search1', resultIndex: 0 } as never, { runId: 'run' } as any);
   assert.equal(full.text, results[0]!.excerpt.slice(0, 4000));

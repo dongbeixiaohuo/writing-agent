@@ -269,7 +269,6 @@ function nestedErrorCode(payload: Readonly<Record<string, unknown>>): string | n
       : null;
   if (error === null) return null;
   const code = error.code;
-  if (code === 'MODEL_RESPONSE_INVALID' && error.message === '模型在工具参数完成前达到输出上限') return 'MODEL_OUTPUT_TRUNCATED';
   return typeof code === "string" && code.length > 0 ? code : null;
 }
 
@@ -367,11 +366,11 @@ function modelFailureDetail(code: string | null, providerDetail: string | null =
     QUOTA_EXCEEDED: "模型账户额度不足，请在服务商后台检查余额或套餐。",
     RATE_LIMITED: "模型请求过于频繁，请稍后重试。",
     TIMEOUT: "大模型未在等待时限内返回完整回复，这一步未完成；已保存内容仍在，请稍后重试。",
-    UNKNOWN_PROVIDER_ERROR: "模型服务返回未知错误，请验证连接并检查服务商状态。",
+    UNKNOWN_PROVIDER_ERROR: "模型请求未完成，具体原因尚未确认；已保存内容仍在。请查看这一步的运行记录，稍后重试。",
   };
   const base = code === null
-    ? "模型请求失败，请在“设置 → 模型”中验证连接后重试。"
-    : messages[code] ?? "模型请求失败，请在“设置 → 模型”中验证连接后重试。";
+    ? "模型请求未完成，具体原因尚未确认；已保存内容仍在。请查看这一步的运行记录，稍后重试。"
+    : messages[code] ?? "模型请求未完成，具体原因尚未确认；已保存内容仍在。请查看这一步的运行记录，稍后重试。";
   return providerDetail === null ? base : `${base}（上游返回：${providerDetail}）`;
 }
 
@@ -823,9 +822,7 @@ function runRecordView(
     displayInstruction,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
-    stopReason: run.stopReason === 'MODEL_RESPONSE_INVALID' && nestedErrorCode(projection.events.findLast(event =>
-      event.runId === run.id && event.type === 'request.failed')?.payload ?? {}) === 'MODEL_OUTPUT_TRUNCATED'
-      ? 'MODEL_OUTPUT_TRUNCATED' : run.stopReason,
+    stopReason: run.stopReason,
     modelRequests: loopBudgetUsage(run, projection.events.filter(event => event.runId === run.id)).modelRequests,
     maxModelRequests: run.budget.maxModelRequests,
     toolCalls: loopBudgetUsage(run, projection.events.filter(event => event.runId === run.id)).toolCalls,
@@ -1773,6 +1770,7 @@ export class ApplicationClientBridge implements ClientBridge {
           const latestCheckpoint = projection.runs.findLast(candidate => candidate.sessionId === run.sessionId &&
             candidate.status === 'waiting_user' && candidate.stopReason === 'CO_CREATION_CHECKPOINT');
           if (latestCheckpoint?.id !== run.id) throw new Error('CHECKPOINT_DECISION_REQUIRED');
+          if (projection.runs.some(candidate => candidate.id !== runId && ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');
           await this.selectSession(projectId, run.sessionId);
           this.#startAuthorReply(projectId, run.sessionId, feedback || '继续下一步', `${operationId}:checkpoint-reply`);
           return;
@@ -1817,9 +1815,14 @@ export class ApplicationClientBridge implements ClientBridge {
           if (!['interrupted', 'waiting_user', 'budget_exhausted'].includes(run.status)) throw new Error('RUN_NOT_RECOVERABLE');
           if (run.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && decision !== 'retry_unknown') throw new Error('UNKNOWN_OUTCOME_REQUIRES_CONFIRMATION');
           if (projection.runs.some(candidate => candidate.id !== runId && ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');
-          this.#service.cancelDraft({ projectId, runId, operationId: `${operationId}:retire`, reason: 'fact_check_retry_authorized' });
+          const handle = this.#service.resumeFactCheck({ projectId, runId, sessionId: run.sessionId, operationId,
+            decision, expectedProjectRevision: projection.project.revision, model: this.#model.model,
+            parameters: this.#model.parameters,
+            ...(this.#model.budget === undefined ? {} : { budget: { ...this.#model.budget, maxMajorRevisions: 0 } }),
+          });
           await this.selectSession(projectId, run.sessionId);
-          await this.runFactCheck({ operationId: `${operationId}:fact-check-retry` });
+          await this.refresh();
+          void handle.result.finally(() => this.refresh()).catch(() => undefined);
           return;
         }
         if (feedback.length > 0 && run.stopReason !== "CO_CREATION_CHECKPOINT" && run.stopReason !== 'WRITING_INPUT_REQUIRED') {

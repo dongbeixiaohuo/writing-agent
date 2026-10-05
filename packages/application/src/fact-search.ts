@@ -107,6 +107,9 @@ export function createFactSearchTools(options: {
   const counts = new Map<string, number>();
   const discovered = new Map<string, Set<string>>();
   const deniedRuns = new Set<string>();
+  const unchargedFailures = new Set(['SEARCH_LIMIT_REACHED', 'SEARCH_NOT_AUTHORIZED', 'SEARCH_APPROVAL_TIMEOUT', 'SEARCH_APPROVAL_FAILED']);
+  const isCharged = (result: FactSearchResult | undefined) =>
+    !result?.cacheHit && result?.mode !== 'model_only' && !unchargedFailures.has(result?.failureCode ?? '');
   function rememberSources(runId: string, evidenceText: string) {
     const urls = discovered.get(runId) ?? new Set<string>();
     for (const match of evidenceText.replace(/\\\//g, '/').matchAll(/https?:\/\/[^\s"<>\\]+/g)) {
@@ -122,7 +125,7 @@ export function createFactSearchTools(options: {
       .filter(event => {
         const completed = events.findLast(item => item.operationId === event.operationId && item.type === 'tool.completed');
         const result = (completed?.payload.result as { result?: FactSearchResult } | undefined)?.result;
-        return !result?.cacheHit && result?.mode !== 'model_only' && result?.failureCode !== 'SEARCH_LIMIT_REACHED';
+        return isCharged(result);
       }).length;
     const used = Math.max(counts.get(runId) ?? 0, charged);
     return { limit: FACT_SEARCH_LIMIT, used, remaining: Math.max(0, FACT_SEARCH_LIMIT - used), scope: 'whole_run_including_rework',
@@ -262,12 +265,10 @@ export function createFactSearchTools(options: {
       const completed = history.findLast(item => item.operationId === event.operationId && item.type === 'tool.completed');
       const result = (completed?.payload.result as { result?: FactSearchResult } | undefined)?.result;
       // Unfinished searches count conservatively, but cache reads and refused over-limit calls do not.
-      return !result?.cacheHit && result?.mode !== 'model_only' && result?.failureCode !== 'SEARCH_LIMIT_REACHED';
+      return isCharged(result);
     });
     const count = Math.max(counts.get(runId) ?? 0, chargedSearches.length);
     if (count >= FACT_SEARCH_LIMIT) return { ...base, mode: 'unavailable', failureCode: 'SEARCH_LIMIT_REACHED', notice: '本轮已达到 6 次事实检索上限（含失败），请利用已有结果完成核查，不再重复请求。未证实不等于错误。' };
-    counts.set(runId, count + 1);
-    base.searchOrdinal = count + 1;
     if (automatic) {
       base.authorizationMs = 0;
       progress('已按搜索设置自动授权本次公开事实检索，不再逐次弹窗；检索词、服务与结果记录在运行记录中。');
@@ -301,6 +302,10 @@ export function createFactSearchTools(options: {
       const boundedSignal = searchDeadline.signal;
       const current = options.configuration();
       if (current.parallelEnabled !== config.parallelEnabled || current.tavilyEnabled !== config.tavilyEnabled) return notAuthorized;
+      // Consent failures never dispatched a provider attempt. Charge only
+      // after authorization, preserving both memory and persisted accounting.
+      counts.set(runId, count + 1);
+      base.searchOrdinal = count + 1;
       for (const [index, provider] of providers.entries()) {
         boundedSignal.throwIfAborted();
         const remaining = Math.max(1, overallTimeoutMs - (Date.now() - networkStartedAt));

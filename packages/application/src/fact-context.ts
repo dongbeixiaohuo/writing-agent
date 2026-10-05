@@ -121,12 +121,11 @@ function searchRows(text: string): Record<string, unknown>[] | null {
 
 /** A new verification scope must still be able to reuse earlier searches in
  * this run. Expose locators, not their long texts or old model conversation. */
-export function factRecordCatalog(storage: Pick<SessionStore, 'listRunEvents'>, runId: string, preparationId?: string): JsonValue[] {
+export function factRecordCatalog(storage: Pick<SessionStore, 'listRunEvents'>, runId: string, _preparationId?: string): JsonValue[] {
   const events = storage.listRunEvents(runId);
-  const boundary = preparationId === undefined ? -1 : events.findLastIndex(event =>
-    event.type === 'tool.completed' && (event.payload.result as any)?.toolName === 'prepare_fact_check' &&
-    (event.payload.result as any)?.result?.preparationId === preparationId);
-  return (boundary < 0 ? events : events.slice(0, boundary)).flatMap(event => {
+  // A fresh runtime does not have the previous verify conversation. Include
+  // locators from BEFORE and AFTER preparation, never the original long text.
+  return events.flatMap(event => {
     const envelope = event.payload.result as any;
     if (event.type !== 'tool.completed' || !envelope?.ok || typeof envelope.callId !== 'string' ||
         !['search_fact_sources', 'read_fact_source'].includes(envelope.toolName)) return [];

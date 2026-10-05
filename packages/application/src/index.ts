@@ -13,6 +13,7 @@ import {
   FinalOutputContinuationRequiredError,
   type AgentRunHandle,
   type AgentRunResult,
+  type AgentRunInput,
   type RunBudget,
 } from "../../runtime/agent/src/index.js";
 import type { ModelParameters, ModelProvider } from "../../runtime/llm/src/index.js";
@@ -158,6 +159,12 @@ export interface RunFactCheckInput {
   readonly signal?: AbortSignal;
   readonly sessionId?: string;
   readonly operationId?: string;
+}
+
+export interface ResumeFactCheckInput extends RunFactCheckInput {
+  readonly runId: string;
+  readonly operationId: string;
+  readonly decision: "resume" | "retry_unknown";
 }
 
 export interface StartConversationTurnInput {
@@ -1546,6 +1553,14 @@ export class WritingApplicationService {
   }
 
   startFactCheck(input: RunFactCheckInput): FactCheckRunHandle {
+    return this.#startFactCheck(input);
+  }
+
+  resumeFactCheck(input: ResumeFactCheckInput): FactCheckRunHandle {
+    return this.#startFactCheck(input, input);
+  }
+
+  #startFactCheck(input: RunFactCheckInput, resume?: ResumeFactCheckInput): FactCheckRunHandle {
     const projectId = requireProjectId(input.projectId);
     if (
       [...this.#activeRuns.values()].some(
@@ -1556,6 +1571,22 @@ export class WritingApplicationService {
         "RUN_ALREADY_ACTIVE",
         "Another run is active for this project",
       );
+    }
+    let recoveredRun: RunRecord | null = null;
+    if (resume) {
+      recoveredRun = this.#storage.getRun(resume.runId);
+      const start = this.#storage.listRunEvents(resume.runId).find(event => event.type === 'run.started');
+      if (!recoveredRun || recoveredRun.projectId !== projectId || start?.payload.purpose !== 'writing-pack:fact-check' ||
+        (input.sessionId !== undefined && input.sessionId !== recoveredRun.sessionId)) {
+        throw new ApplicationServiceError('RUN_SCOPE_INVALID', 'The selected run is not a fact-check run in this conversation');
+      }
+      if (recoveredRun.status === 'running') {
+        this.#storage.recoverProjectRuns(projectId);
+        recoveredRun = this.#storage.getRun(resume.runId);
+      }
+      if (!recoveredRun || !['interrupted', 'waiting_user', 'budget_exhausted'].includes(recoveredRun.status)) {
+        throw new ApplicationServiceError('RUN_NOT_RESUMABLE', 'The fact-check run is not in a recoverable state');
+      }
     }
     const project = this.#storage.inspectProject(projectId);
     if (project === null) {
@@ -1678,7 +1709,7 @@ export class WritingApplicationService {
       writingRequirements: currentBrief ? { constraints: currentBrief.constraints, genre: currentBrief.genre } : null,
       ...factMaterialContext(authorizedMaterials), selectedPublication: selectedPublicationContext(this.#storage, projectId),
     };
-    const handle = runtime.start({
+    const runtimeInput: AgentRunInput = {
       projectId,
       purpose: "writing-pack:fact-check",
       model: input.model,
@@ -1689,10 +1720,23 @@ export class WritingApplicationService {
       expectedBodyVersionId: body.id,
       displayInstruction: "重新核查当前稿件",
       ...(input.operationId === undefined ? {} : { operationId: input.operationId }),
-      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(recoveredRun ? { sessionId: recoveredRun.sessionId } : input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       ...(input.budget === undefined ? {} : { budget: input.budget }),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
-    });
+    };
+    if (resume) {
+      try {
+        this.#storage.resumeRun({ projectId, runId: resume.runId, operationId: resume.operationId,
+          decision: resume.decision, refreshLoopAllowance: true,
+          ...(runtimeInput.displayInstruction === undefined ? {} : { displayInstruction: runtimeInput.displayInstruction }) });
+      } catch (error) {
+        throw new ApplicationServiceError(
+          typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'RUN_RESUME_FAILED',
+          error instanceof Error ? error.message : 'Fact checking could not be resumed',
+        );
+      }
+    }
+    const handle = resume ? runtime.resume(runtimeInput, resume.runId) : runtime.start(runtimeInput);
     const result = handle.result.then((runResult): FactCheckRunResult => ({
       ...runResult,
       publicationReady:

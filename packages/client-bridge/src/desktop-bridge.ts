@@ -594,7 +594,8 @@ export class DesktopClientBridge implements ClientBridge {
       runId,
       decision,
       { operationId: options.operationId ?? this.#operationIdFactory(),
-        ...(options.feedback === undefined ? {} : { feedback: options.feedback }) },
+        ...(options.feedback === undefined ? {} : { feedback: options.feedback }),
+        ...(options.checkpointApproval === undefined ? {} : { checkpointApproval: options.checkpointApproval }) },
     );
   }
 

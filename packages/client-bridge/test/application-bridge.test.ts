@@ -1020,11 +1020,12 @@ describe("Application Service client bridge", () => {
       assert.ok(bridge.getSnapshot().recoverableRuns.some(run => run.runId === 'protected-fact-check'));
       await bridge.resumeRun('protected-fact-check', 'resume', { operationId: 'retry-protected-fact' });
       const restarted = storage.listRuns('project-1').at(-1)!;
+      assert.equal(restarted.id, 'protected-fact-check', 'retry must resume the original fact run and its search budget');
       assert.equal(storage.listRunEvents(restarted.id).find(event => event.type === 'run.started')?.payload.purpose, 'writing-pack:fact-check');
       await waitUntil(() => storage.getRun(restarted.id)?.status === 'completed');
       await bridge.refresh();
       assert.equal(bridge.getSnapshot().previewDocument.version, bodyCount);
-      assert.equal(storage.getRun('protected-fact-check')?.status, 'cancelled');
+      assert.equal(storage.getRun('protected-fact-check')?.status, 'completed');
     } finally {
       bridge.dispose();
       storage.close();

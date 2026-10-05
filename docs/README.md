@@ -20,6 +20,7 @@
 | 当前进度 | [实施进度](architecture/IMPLEMENTATION_PROGRESS.md) | 当前实现和证据索引，不反向覆盖产品合同 |
 | 测试与验收 | [发布门禁](testing/RELEASE_GATE.md)、[最终用户验收清单](testing/FINAL_USER_UAT_CHECKLIST.md) | 区分自动检查、真实模型、桌面安装和人工体验 |
 | 模型输入与核查效率 | [上下文投影与事实核查分段](testing/AGENT_CONTEXT_PROJECTION.md) | 按角色提供输入；区分模拟结果、历史测量与真实模型耗时 |
+| RC72 审查修复 | [2026-10-05 修复与回归](testing/2026-10-05-rc72-review-fixes.md) | 桌面回执、核查恢复、搜索额度和启动诊断；未发布的本地修复 |
 | 发布 | [桌面发布手册](launch/DESKTOP_RELEASE_RUNBOOK.md) | 当前维护者操作入口；单次 RC 记录只是对应版本证据 |
 
 修订优先级按“基础 PRD → CR-001 → CR-002 → CR-003 及其带日期补充”解释；较晚修订只覆盖其明确声明的产品范围，其余要求继续有效。实现记录、历史 `DONE`/`READY`/`BLOCKED` 和发布记录不能替代产品合同，也不能外推为当前状态。

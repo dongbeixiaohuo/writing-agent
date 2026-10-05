@@ -26,7 +26,7 @@ type WorkflowStorage = StoragePort & {
 };
 
 type ContentStage = Exclude<WritingWorkflowStage, "fact_check">;
-import { FactClaimStatusSchema, FactClaimTypeSchema, parseEvidenceLedger } from '../../writing-core/src/index.js';
+import { FactClaimStatusSchema, FactClaimTypeSchema, parseEvidenceLedger, createFactCheckInputSnapshot, evaluateFactCheck } from '../../writing-core/src/index.js';
 import { isPublicationSelectionCurrent } from './publication-choice.js';
 import { COMPACT_RESEARCH_SCHEMA, expandResearchEvidence } from './research-evidence.js';
 type BodyStage = Extract<ContentStage, "draft" | "central_revision" | "language_review">;
@@ -1229,6 +1229,25 @@ export function createWritingWorkflowTools(options: {
       if ((interactionMode === 'co_creation' || selectedTitle?.reason === 'author-publication-selection') && !isPublicationSelectionCurrent(storage, context.projectId)) {
         throw new ToolExecutionFault('PUBLICATION_SELECTION_REQUIRED', '先在主对话确认发布标题，再核查该标题与正文，不得把生成的标题冒充用户选择。');
       }
+      const titleContent = selectedTitle?.reason === 'author-publication-selection' ? selectedTitle.content
+        : `- 选择状态：已锁定\n- 最终标题：「${title}」\n- 选择来源：按自主推进模式代选当前稿件标题\n- 分发文案范围：本次不包含分发文案，核查覆盖其缺省状态\n`;
+      // Run the SAME pure fact policy before any mutation. A rejected model
+      // submission must not change the title pointer, snapshot or extraction
+      // binding. Persisted evaluation below still rechecks the actual versions.
+      try {
+        const preview = createFactCheckInputSnapshot({ snapshotId: `${context.operationId}:preflight`,
+          bodyVersionId: body.id, bodyContent: body.content, evidenceVersionId: evidence.id, evidenceContent: evidence.content,
+          titleVersionId: selectedTitle?.id ?? `${context.operationId}:pending-title`, titleContent });
+        evaluateFactCheck(preview, { bodyContent: body.content, evidenceContent: evidence.content, titleContent }, {
+          schemaVersion: 'fact-check-v2', snapshotId: preview.snapshotId, bodyVersionId: body.id, titleVersionId: preview.titleVersionId,
+          coverage: { body: true, title: true, distributionCopy: true }, claims: [...args.claims], noFactualClaimsReason: args.noFactualClaimsReason,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('FACT_')) {
+          throw new ToolExecutionFault(error.message, '核查提交未通过事实门禁；未改变标题、核查快照或已抽取条目。请修正本次提交后重试，不需重新抽取全文。');
+        }
+        throw error;
+      }
       const titleCommit = selectedTitle?.reason === 'author-publication-selection' ? null : storage.commitArtifactVersion({
         operationId: `${context.operationId}:title`,
         projectId: context.projectId,
@@ -1236,7 +1255,7 @@ export function createWritingWorkflowTools(options: {
         kind: "title",
         logicalKey: "main",
         baseVersionId: project.currentTitleVersionId,
-        content: `- 选择状态：已锁定\n- 最终标题：「${title}」\n- 选择来源：按自主推进模式代选当前稿件标题\n- 分发文案范围：本次不包含分发文案，核查覆盖其缺省状态\n`,
+        content: titleContent,
         reason: "workflow:fact-check-title",
         requestSnapshotId: null,
         actor: actor("fact_check", context.runId),

@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync } from "node:fs";
+import type { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { migrateWorkspaceStorage, StorageOpenError } from "../../../packages/storage/src/index.js";
 import { DesktopApplicationHost, type DesktopApplicationHostOptions } from "./application-host.js";
@@ -39,6 +40,7 @@ const STARTUP_ERRORS: Readonly<Record<string, string>> = {
   EEXIST: "工作区所需目录被同名文件占用，请检查工作区及 .writing-agent/backups 路径。",
   ENOTDIR: "工作区所需路径不是目录，请检查工作区及 .writing-agent/backups 路径。",
   DESKTOP_RENDERER_NOT_READY: "客户端界面未能完成加载，请重试并反馈启动日志。",
+  DESKTOP_RENDERER_FAILED: "客户端界面进程意外停止，程序将退出。请重新打开 Writing Agent；若再次出现，请反馈本地进程日志。已保存的项目仍保留，不要删除工作区或配置文件。",
   DESKTOP_START_FAILED: "客户端启动未完成。请保留项目和配置文件，重试或反馈启动日志；不要删除工作区。",
 };
 
@@ -56,4 +58,47 @@ export function recordDesktopStartupFailure(error: unknown, logDirectory: string
   appendFileSync(path, `${JSON.stringify({ timestamp: new Date().toISOString(), version,
     ...describeDesktopStartupFailure(error) })}\n`, { encoding: "utf8", mode: 0o600 });
   return path;
+}
+
+const PROCESS_TYPES = new Set(["Utility", "Zygote", "Sandbox helper", "GPU", "Pepper Plugin", "Pepper Plugin Broker", "Unknown"]);
+const PROCESS_REASONS = new Set(["clean-exit", "abnormal-exit", "killed", "crashed", "oom", "launch-failed", "integrity-failure", "memory-eviction"]);
+
+/** Attach before app.whenReady() so launch/GPU failures are observable as well. */
+export function registerDesktopProcessDiagnostics(options: {
+  readonly app: Pick<EventEmitter, "on">;
+  readonly logDirectory: string;
+  readonly version: string;
+  readonly isExiting: () => boolean;
+  readonly isMainRenderer: (webContents: unknown) => boolean;
+  readonly reportRendererFailure: (error: unknown) => void;
+}): void {
+  function record(event: "child-process-gone" | "render-process-gone", details: unknown): string {
+    const input = typeof details === "object" && details !== null
+      ? details as Record<string, unknown> : {};
+    // Never copy Electron's name/serviceName, a webContents URL, or raw detail fields.
+    const type = event === "render-process-gone" ? "Renderer"
+      : typeof input.type === "string" && PROCESS_TYPES.has(input.type) ? input.type : "Unknown";
+    const reason = typeof input.reason === "string" && PROCESS_REASONS.has(input.reason)
+      ? input.reason : "unknown";
+    const exitCode = typeof input.exitCode === "number" && Number.isSafeInteger(input.exitCode)
+      ? input.exitCode : null;
+    const row = { timestamp: new Date().toISOString(), version: options.version, event, type, reason, exitCode };
+    try {
+      mkdirSync(options.logDirectory, { recursive: true });
+      appendFileSync(join(options.logDirectory, "process-events.jsonl"), `${JSON.stringify(row)}\n`,
+        { encoding: "utf8", mode: 0o600 });
+    } catch {
+      // A locked/unwritable profile must not prevent a renderer failure prompt.
+      process.stderr.write(`${JSON.stringify(row)}\n`);
+    }
+    return reason;
+  }
+  options.app.on("child-process-gone", (_event: unknown, details: unknown) => {
+    record("child-process-gone", details);
+  });
+  options.app.on("render-process-gone", (_event: unknown, webContents: unknown, details: unknown) => {
+    const reason = record("render-process-gone", details);
+    if (options.isExiting() || !options.isMainRenderer(webContents) || reason === "clean-exit" || reason === "killed") return;
+    options.reportRendererFailure({ code: "DESKTOP_RENDERER_FAILED" });
+  });
 }
