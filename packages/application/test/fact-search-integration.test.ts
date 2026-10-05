@@ -8,6 +8,7 @@ import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '
 import { openWorkspaceStorage } from '../../storage/src/index.js'
 import { MODEL_ONLY_FACT_NOTICE } from '../src/fact-search.js'
 import { WritingApplicationService } from '../src/index.js'
+import { factPreparationFixtureEvents } from './collaboration-fixture.js'
 
 const actor = { kind: 'user', id: 'fact-search-integration' } as const
 
@@ -26,6 +27,8 @@ class FactSearchInspectionProvider extends ModelProviderBase {
 
   protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
     this.requests.push(structuredClone(request))
+    const extraction = factPreparationFixtureEvents(request);
+    if (extraction) { yield* extraction; return; }
     const toolMessages = request.messages.filter(message => message.role === 'tool')
     if (this.useSearch && !toolMessages.some(message => message.name === 'search_fact_sources')) {
       yield {
@@ -103,6 +106,63 @@ async function runFactSearchCase(enabled: boolean) {
   }
 }
 
+test('claim-first check verifies only article facts without resending the article or unused evidence', async () => {
+  const workspacePath = mkdtempSync(join(tmpdir(), 'wa-claim-first-'));
+  const storage = openWorkspaceStorage({ workspacePath });
+  const seeded = seedFactInputs(storage);
+  const body = storage.commitArtifactVersion({ operationId: 'real-fact-body', projectId: 'project-1', expectedProjectRevision: storage.inspectProject('project-1')!.revision,
+    kind: 'body', logicalKey: 'main', baseVersionId: seeded.bodyVersionId, content: '# 一个事实\n\n示例公司在2025年成立。\n\n' + '这是明确的作者感受。'.repeat(600), reason: 'fixture', actor });
+  assert.equal(body.ok, true); if (!body.ok) throw new Error('body fixture');
+  const evidence = storage.commitArtifactVersion({ operationId: 'real-fact-evidence', projectId: 'project-1', expectedProjectRevision: body.projectRevision,
+    kind: 'evidence', logicalKey: 'main', baseVersionId: seeded.evidenceVersionId, content: JSON.stringify({ claims: [
+      { evidence_id: 'E001', claim_type: 'date', claim_text: '示例公司在2025年成立', source_quote: '示例公司在2025年成立。', source_title: '登记资料', source_publisher: '示例登记机构', source_url: 'https://example.test/date', accessed_at: '2026-10-05', reliability: 'high', use_boundary: '仅证明成立年份', verification_status: '待核实' },
+      { evidence_id: 'E002', claim_type: 'other', claim_text: '没有写进文章的资料', source_quote: '未入正文的长原文'.repeat(4000), source_title: '另一资料', source_publisher: '机构', accessed_at: '2026-10-05', reliability: 'medium', use_boundary: '不可作证明', verification_status: '待核实' },
+    ] }), reason: 'fixture', actor });
+  assert.equal(evidence.ok, true); if (!evidence.ok) throw new Error('evidence fixture');
+  const requests: ModelRequest[] = [];
+  class ClaimsProvider extends ModelProviderBase {
+    constructor() { super('claim-first-mock', '1', { protocol: 'mock', tools: 'supported', streaming: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push(structuredClone(request));
+      const state = JSON.parse(request.messages.find(m => m.role === 'user')!.content);
+      let name: string, args: any;
+      if (state.factPhase === 'extract') {
+        assert.deepEqual(request.tools?.map(t => t.name), ['prepare_fact_check']);
+        assert.match(state.artifacts.find((a: any) => a.kind === 'body').content, /示例公司在2025年成立/);
+        assert.equal(JSON.stringify(state).includes('未入正文的长原文'), false);
+        name = 'prepare_fact_check'; args = { claims: [{ claimText: '示例公司在2025年成立', articleQuote: '示例公司在2025年成立', location: 'body', matchedEvidenceIds: ['E001'] }], noFactualClaimsReason: '' };
+      } else {
+        assert.equal(JSON.stringify(state).includes('这是明确的作者感受。'), false);
+        assert.equal(JSON.stringify(state).includes('未入正文的长原文'), false);
+        assert.equal(state.preparedClaims.length, 1);
+        assert.equal(request.messages.some(m => m.role === 'tool' && m.name === 'prepare_fact_check'), false, 'phase boundary retires extraction history');
+        assert.match(JSON.stringify(state.artifacts), /仅证明成立年份/);
+        const searched = request.messages.find(m => m.role === 'tool' && m.name === 'search_fact_sources');
+        if (!searched) { name = 'search_fact_sources'; args = { query: '示例公司 成立 2025 登记资料' }; }
+        else {
+          assert.ok(searched.content.length < 3000);
+          assert.equal(JSON.parse(searched.content).result.sources[0].url, 'https://example.test/date');
+          name = 'submit_fact_check'; args = { claims: [{ claimId: 'C001', claimText: '示例公司在2025年成立', claimType: 'date', location: 'body', status: 'SUPPORTED', risk: 'green', supportScope: 'full', matchedEvidenceId: 'E001', sourceReference: 'https://example.test/date', evidenceSummary: '登记年份与当前成稿一致，仅证明成立年份。', recommendedAction: '无需修改' }], noFactualClaimsReason: '' };
+        }
+      }
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name, argumentsDelta: JSON.stringify(args) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  const originalFetch = globalThis.fetch;
+  let searches = 0;
+  globalThis.fetch = async () => { searches++; return Response.json({ results: [{ title: '示例登记资料', url: 'https://example.test/date', content: '示例公司在2025年成立。'.repeat(2500) }] }); };
+  try {
+    const app = new WritingApplicationService({ storage, provider: new ClaimsProvider(), factSearchConfiguration: () => ({ parallelEnabled: false, tavilyEnabled: true, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-not-a-real-key' }) });
+    const result = await app.runFactCheck({ projectId: 'project-1', expectedProjectRevision: evidence.projectRevision, model: 'mock', parameters: {}, budget: { maxModelRequests: 6, maxToolCalls: 6, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.publicationReady, true);
+    assert.equal(searches, 1);
+    assert.equal(requests.length, 3, 'extract, search, verify/save; no redundant completion request');
+    assert.ok(storage.listRunEvents(result.runId).some(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'prepare_fact_check'));
+  } finally { globalThis.fetch = originalFetch; storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+});
+
 test('runFactCheck exposes and authorizes external fact search only when enabled', async () => {
   const originalFetch = globalThis.fetch
   let networkRequests = 0
@@ -124,7 +184,8 @@ test('runFactCheck exposes and authorizes external fact search only when enabled
     assert.equal(networkRequests, 3)
     const first = fixture.provider.requests[0]
     assert.ok(first)
-    assert.ok(first.tools?.some(tool => tool.name === 'search_fact_sources'))
+    assert.deepEqual(first.tools?.map(tool => tool.name), ['prepare_fact_check'])
+    assert.ok(fixture.provider.requests[1]?.tools?.some(tool => tool.name === 'search_fact_sources'))
     const systemPrompt = first.messages.find(message => message.role === 'system')?.content ?? ''
     assert.match(systemPrompt, /外部事实搜索已启用/)
     assert.match(systemPrompt, /search_fact_sources/)
@@ -157,7 +218,7 @@ test('runFactCheck omits external tools and warns about model-only review when s
     assert.match(state.artifacts.find((a: any) => a.kind === 'body').content, /下班散步/);
     assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object');
     assert.ok(Array.isArray(state.materialCatalog));
-    assert.equal(fixture.provider.requests.length, 1, 'save ends the check without rereading or another prose-only model request');
+    assert.equal(fixture.provider.requests.length, 2, 'one extraction and one verification, no post-save prose-only model request');
     assert.equal(fixture.provider.requests.flatMap(request => request.messages)
       .some(message => message.role === 'tool' && message.name === 'search_fact_sources'), false)
   } finally {

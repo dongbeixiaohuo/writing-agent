@@ -90,6 +90,12 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
   protected async *providerStream(
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
+    if (request.tools?.length === 1 && request.tools[0]?.name === 'prepare_fact_check') {
+      // Explicit offline mock mode: not a semantic fact-check demonstration.
+      yield { type: 'tool_call_delta', index: 0, id: `mock-extract-${request.requestId}`, name: 'prepare_fact_check',
+        argumentsDelta: JSON.stringify({ claims: [], noFactualClaimsReason: '离线合成测试稿无外部事实；此结论仅用于mock工作流验证。' }) };
+      yield { type: 'completed', finishReason: 'tool_calls' }; return;
+    }
     const raw = request.messages.find((message) => message.role === "user")?.content.split("\nCOLLABORATION_STATE=")[1];
     const collaboration = raw === undefined ? null : JSON.parse(raw) as {
       actor: string; stage: string | null; nextStage: string | null; ready: boolean; finished: boolean;

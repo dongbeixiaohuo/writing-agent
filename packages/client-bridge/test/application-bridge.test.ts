@@ -12,7 +12,7 @@ import {
 } from "../../runtime/llm/src/index.js";
 import { openWorkspaceStorage } from "../../storage/src/index.js";
 import type { WritingBrief } from "../../writing-core/src/index.js";
-import { collaborationState } from '../../application/test/collaboration-fixture.js';
+import { collaborationState, factPreparationFixtureEvents } from '../../application/test/collaboration-fixture.js';
 import { collaborationTurn } from './helpers/collaboration-turn.js';
 import {
   createApplicationBridge,
@@ -71,6 +71,8 @@ class BridgeWritingProvider extends ModelProviderBase {
   protected async *providerStream(
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
+    const extraction = factPreparationFixtureEvents(request);
+    if (extraction) { yield* extraction; return; }
     const toolMessages = request.messages.filter((message) => message.role === "tool");
     if (collaborationState(request) !== null) {
       const turn = collaborationTurn(request, {
@@ -108,8 +110,7 @@ class BridgeWritingProvider extends ModelProviderBase {
         evidenceVersionId?: string;
         artifacts: { id: string; kind: string; content: unknown }[];
       };
-      assert.equal(targets.artifacts.find(a => a.id === targets.bodyVersionId)?.content,
-        '# Bridge 持久草稿\n\n这是用户修订后的本地感受。');
+      assert.equal((targets.artifacts.find(a => a.id === targets.bodyVersionId)?.content as any).projection, 'fact_article_catalog');
       assert.ok(targets.artifacts.find(a => a.id === targets.evidenceVersionId)?.content);
       assert.equal(request.tools?.some(tool => tool.name === 'read_artifact_version'), false);
       if (!toolMessages.some((message) => message.role === "tool" && message.name === "submit_fact_check")) {
@@ -1006,7 +1007,7 @@ describe("Application Service client bridge", () => {
       assert.equal(after.runRecords.at(-1)?.publicationReady, true);
       const completion = JSON.stringify(after.timelineBySession[after.selectedSessionId]);
       assert.match(completion, /下一步.*查看当前稿件.*导出文章/u);
-      assert.equal(storage.listRunEvents(checked.runId).filter(event => event.type === 'request.dispatch_attempted').length, 1);
+      assert.equal(storage.listRunEvents(checked.runId).filter(event => event.type === 'request.dispatch_attempted').length, 2);
       assert.deepEqual(
         after.materialProcessWorkspace.reviews.map((review) => review.id),
         processReviewIds,

@@ -1,5 +1,5 @@
 # Writing Agent 1.0 RC 验收记录
-> **当前结论：BLOCKED_CORE_WORKFLOW / BLOCKED_FOR_PUBLIC_RELEASE。** 以下 rc.6 READY 判断已撤回，仅保留历史证据。CR-002 的缺口提问、导演与独立评审没有通过业务验收；原 38 项不足以证明主流程完成，必须补齐 [C02 场景](../../writing-agent-1.0-prd-v1.1-dsh-ui/docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)。
+> **当前结论：BLOCKED_CORE_WORKFLOW / BLOCKED_FOR_PUBLIC_RELEASE。** 以下 rc.6 READY 判断已撤回，仅保留历史证据。CR-002 的缺口提问、导演与独立评审没有通过业务验收；原 38 项不足以证明主流程完成，必须补齐 [C02 场景](../implementation/CR002_INTERACTIVE_COLLABORATION.md)。
 
 候选：`1.0.0-rc.6`  
 日期：2026-09-19  

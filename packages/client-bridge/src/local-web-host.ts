@@ -631,6 +631,18 @@ export async function startLocalWebHost(
       json(response, 200, { result, snapshot: bridge.getSnapshot() });
       return;
     }
+    if (route === "/api/v6/command/rename-project") {
+      if (bridge.renameProject === undefined) {
+        throw new LocalWebRequestError(501, "PROJECT_RENAME_UNSUPPORTED", "Project rename is not supported by this runtime");
+      }
+      await bridge.renameProject(
+        requiredString(body, "projectId", 512),
+        requiredString(body, "name", 60),
+        { operationId: requiredString(body, "operationId", 512) },
+      );
+      json(response, 200, { snapshot: bridge.getSnapshot() });
+      return;
+    }
     if (route === "/api/v6/command/update-brief") {
       const genre = requiredString(body, "genre", 64);
       const interactionMode = requiredString(body, "interactionMode", 32);
@@ -725,10 +737,18 @@ export async function startLocalWebHost(
       }
       const operationId = requiredString(body, "operationId", 512);
       const feedback = optionalString(body, "feedback", 4_000);
+      const approval = body.checkpointApproval as { eventSeq?: unknown; bodyVersionId?: unknown; briefVersionId?: unknown } | undefined;
+      if (approval !== undefined && (!approval || typeof approval !== 'object' ||
+          !Number.isSafeInteger(approval.eventSeq) || Number(approval.eventSeq) < 1 ||
+          !(approval.bodyVersionId === null || typeof approval.bodyVersionId === 'string') ||
+          !(approval.briefVersionId === null || typeof approval.briefVersionId === 'string'))) {
+        throw new LocalWebRequestError(400, 'INVALID_REQUEST', 'Invalid checkpoint approval');
+      }
       await bridge.resumeRun(
         requiredString(body, "runId", 512),
         decision,
-        { operationId, ...(feedback === undefined ? {} : { feedback }) },
+        { operationId, ...(feedback === undefined ? {} : { feedback }),
+          ...(approval === undefined ? {} : { checkpointApproval: approval as import('./protocol.js').CheckpointApproval }) },
       );
       json(response, 200, { snapshot: bridge.getSnapshot() });
       return;

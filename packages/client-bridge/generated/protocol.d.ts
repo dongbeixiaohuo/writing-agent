@@ -1,4 +1,4 @@
-export declare const UI_BRIDGE_PROTOCOL_VERSION = 22;
+export declare const UI_BRIDGE_PROTOCOL_VERSION = 23;
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ConnectionState = 'ready' | 'running' | 'offline';
 export type ToolState = 'pending' | 'success' | 'failure' | 'cancelled';
@@ -29,6 +29,8 @@ export interface SessionSummary {
 export interface ChatMessage {
     stage?: WritingWorkflowStageId;
     actorLabel?: string;
+    /** Recorded stage activity up to this saved result; excludes author waits. */
+    activeDurationMs?: number;
     streaming?: 'generating' | 'saving';
     audience?: 'diagnostic';
     id: string;
@@ -52,6 +54,8 @@ export interface WorkflowStageView {
     label: string;
     status: 'pending' | 'running' | 'completed' | 'failed';
     detail: string;
+    /** Recorded model/tool active time, accumulated across resumes; null for legacy missing actor data. */
+    activeDurationMs?: number | null;
 }
 export interface RunRecordView {
     activity?: readonly TimelineItem[];
@@ -374,6 +378,7 @@ export interface BriefSummary {
     materialCount: number;
 }
 export interface RecoverableRunSummary {
+    checkpointApproval?: CheckpointApproval;
     runId: string;
     sessionId: string;
     status: 'interrupted' | 'waiting_user' | 'budget_exhausted';
@@ -481,6 +486,12 @@ export interface BridgeCommandOptions {
 }
 export interface ResumeRunOptions extends BridgeCommandOptions {
     feedback?: string;
+    checkpointApproval?: CheckpointApproval;
+}
+export interface CheckpointApproval {
+    eventSeq: number;
+    bodyVersionId: string | null;
+    briefVersionId: string | null;
 }
 export type PublicationLayoutPreset = 'clean' | 'editorial' | 'compact';
 export interface ExportPublicationOptions extends BridgeCommandOptions {
@@ -522,6 +533,8 @@ export interface ClientBridge {
     createProject(input: CreateProjectInput, options?: BridgeCommandOptions): Promise<{
         projectId: string;
     }>;
+    /** Optional only for protocol-22 test doubles; protocol-23 hosts implement it. */
+    renameProject?(projectId: string, name: string, options?: BridgeCommandOptions): Promise<void>;
     updateBrief(input: UpdateBriefInput, options?: BridgeCommandOptions): Promise<void>;
     confirmBrief(options?: BridgeCommandOptions): Promise<void>;
     startConversation(text: string, options?: BridgeCommandOptions): Promise<{

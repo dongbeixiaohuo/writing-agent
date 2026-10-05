@@ -152,7 +152,8 @@
   color: var(--dsw-alias-state-business-primary);
 }
 
-.projectDeleteButton {
+.projectDeleteButton,
+.projectRenameButton {
   display: inline-grid;
   flex: none;
   place-items: center;
@@ -165,6 +166,18 @@
   background: transparent;
   cursor: pointer;
   opacity: 0.62;
+}
+
+.projectRenameButton:hover,
+.projectRenameButton:focus-visible {
+  color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent);
+  opacity: 1;
+}
+
+.projectRenameButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: -2px;
 }
 
 .projectDeleteButton:hover,

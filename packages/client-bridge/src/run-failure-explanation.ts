@@ -22,21 +22,31 @@ export interface RunFailureContext {
  */
 export function explainRunFailure(context: RunFailureContext): RunFailureExplanation {
   const { errorCode: code, technicalName, transportPhase } = context
+  if (code === 'CHECKPOINT_REWORK_REQUIRED' || code === 'OUTLINE_REWORK_REQUIRED') return {
+    title: '当前决策记录要求先修改，不能直接进入下一阶段',
+    detail: '模型已返回调度请求，但程序读到的作者决策是“修改当前阶段”，因此拒绝跳步；这不是模型无响应，也不是搜索故障。决策记录可能与作者本意不符，需要核对本轮回复。',
+    remediation: '如果你已认可当前成果，回到对话点击“认可当前阶段，继续”重新明确确认；如果仍要修改，说明修改要求，改好后再确认。无需重新提交材料。',
+  }
   if (context.kind === 'model') {
     if (transportPhase === 'first_response') return {
       title: '模型未在等待时限内返回首个有效内容',
       detail: '失败发生在模型请求阶段；本机记录的是首次有效响应等待超时，未获得可交给后续步骤的模型结果。',
-      remediation: '先查看“时序”中的 HTTP 状态和首个有效内容记录，再核对模型配置与连接后重试。',
+      remediation: '请稍后重试这一步，已保存内容仍在。若反复超时，再查看“时序”并验证模型连接。',
     }
     if (transportPhase === 'stream_idle') return {
       title: '模型响应在传输中停滞',
       detail: '失败发生在模型请求阶段；本机曾收到响应活动，但后续内容超过本地等待时限。',
-      remediation: '查看“时序”的最后内容时间和 HTTP 状态，确认模型端点状态后再重试。',
+      remediation: '请稍后重试这一步，已保存内容仍在。若反复停滞，再查看“时序”的最后内容时间并验证模型连接。',
     }
     if (code === 'MODEL_OUTPUT_TRUNCATED') return {
       title: '模型输出未完整结束',
       detail: '失败发生在模型输出阶段；已记录的结果不足以完成本次步骤。',
       remediation: '查看输出与时序详情，必要时缩小单次任务或提高可用输出上限后重试。',
+    }
+    if (code === 'MODEL_RESPONSE_INVALID') return {
+      title: '模型回复未通过格式校验',
+      detail: '模型请求已有返回，但回复不符合本步骤要求的格式。该结果没有作为正式成果保存。',
+      remediation: '查看本步骤的输出与技术代码，核对服务类型和模型兼容性后重试；无需重新填写写作材料。',
     }
     if (context.status === 'outcome_unknown') return {
       title: '模型请求结果尚未确认',
@@ -48,6 +58,12 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
       detail: '失败发生在模型请求阶段；现有代码不足以判定更具体的外部原因。',
       remediation: '查看本步骤的输出与时序，核对模型配置、账户状态和连接后再重试。',
     }
+  }
+
+  if (technicalName === 'submit_writing_stage' && (code?.startsWith('STAGE_') || code?.startsWith('WORKFLOW_'))) return {
+    title: '写作阶段提交未通过程序校验',
+    detail: '失败发生在本机保存或流程前置条件校验。已保存的上一版成果仍可查看。',
+    remediation: '查看本步骤的技术代码与输出，按具体校验原因修正当前阶段后重试。',
   }
 
   if (code === 'FACT_SEARCH_DISABLED') return {

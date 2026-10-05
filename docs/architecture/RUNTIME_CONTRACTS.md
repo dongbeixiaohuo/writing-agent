@@ -1,5 +1,5 @@
 # Writing Agent 1.0 运行时与领域契约
-> 当前强制增补：[CR-002](CR002_INTERACTIVE_COLLABORATION.md) 和 [CR-003](CR003_CONVERSATION_FIRST_HARNESS.md)。缺口必须转入等待用户；恢复必须重新判定；导演/专家隔离与可交付状态不能用阶段完成替代。澄清运行独立标识用途、无正文写权限，未知字段不补假值；方案确认绑定当前版本，非确认的新反馈使旧方案不可执行。
+> 当前强制增补：[CR-002](../implementation/CR002_INTERACTIVE_COLLABORATION.md) 和 [CR-003](../implementation/CR003_CONVERSATION_FIRST_HARNESS.md)。缺口必须转入等待用户；恢复必须重新判定；导演/专家隔离与可交付状态不能用阶段完成替代。澄清运行独立标识用途、无正文写权限，未知字段不补假值；方案确认绑定当前版本，非确认的新反馈使旧方案不可执行。
 
 文档版本：1.1 · 2026-09-16。配套 [PRD](../prd/WRITING_AGENT_1_0_PRD.md)。本文是建议实现契约，不宣称这些类型或端点已存在。
 
@@ -375,7 +375,7 @@ interface ModuleContext {
 
 ## 15. DSH 前端移植的客户端契约（CR-001）
 
-完整方案见 [FRONTEND_REUSE_PLAN](FRONTEND_REUSE_PLAN.md)。这是新产品在原仓库中维护的客户端，不是 DSH 宿主插件。
+完整方案见 [FRONTEND_REUSE_PLAN](../implementation/FRONTEND_REUSE_PLAN.md)。这是新产品在原仓库中维护的客户端，不是 DSH 宿主插件。
 
 1. **唯一权威来源：**项目、正文版本、Decision、核查门禁仍归 Application Service/Storage。Client model 只镜像和投影已提交数据；React 组件不持有另一套持久业务状态。
 2. **身份映射：**分别保持 workspaceId、projectId、sessionId、runId、artifactVersionId、projectSeq、client generation。初版可每篇默认一个会话，但数据模型不强制一对一。切换项目必须退订旧流并废弃旧页面请求。

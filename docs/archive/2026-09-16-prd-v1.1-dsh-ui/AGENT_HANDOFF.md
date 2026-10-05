@@ -1,4 +1,6 @@
-# 开发 Agent 开工交接
+# 开发 Agent 开工交接（历史）
+
+> 历史快照：原始日期 2026-09-16，后续修订截至 2026-09-24；适用 Writing Agent 1.0 早期实施（PRD 修订 1.1）。2026-10-05 归档，状态和计划仅适用于当时版本。当前要求与替代入口见 [归档映射](README.md)和 [文档中心](../../README.md)。
 > 开工先读 [CR-002](CR002_INTERACTIVE_COLLABORATION.md) 和 [CR-003](CR003_CONVERSATION_FIRST_HARNESS.md)。WA-010 已重新打开，原 READY 结论撤回；必须按 C02-01 至 C02-10 和 C03-01 至 C03-08 提供业务证据，不能只验自动流程、表单可填或 UI 功能。
 
 文档版本：1.1 · 2026-09-16。先读 [PRD](../prd/WRITING_AGENT_1_0_PRD.md) 与 [契约](RUNTIME_CONTRACTS.md)。此文件授予的是实施方向，不是对所有远程/破坏性操作的授权。

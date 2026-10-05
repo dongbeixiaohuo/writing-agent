@@ -4,8 +4,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ExecutablePath,
     [int]$TimeoutSeconds = 30,
-    [int]$ExpectedProtocolVersion = 22,
+    [int]$ExpectedProtocolVersion = 23,
     [string]$EvidencePath,
+    # Use a consistent SQLite online-backup snapshot, never copy an open live DB.
+    [string]$DatabaseFixturePath,
     [switch]$KeepSmokeData
 )
 
@@ -14,6 +16,12 @@ $resolvedExecutable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 $nonce = ([Guid]::NewGuid().ToString('N')).Substring(0, 16)
 $resultPath = Join-Path $env:TEMP "writing-agent-desktop-smoke-result-$nonce.json"
 $smokeRoot = Join-Path $env:TEMP "writing-agent-desktop-smoke-$nonce"
+if ($DatabaseFixturePath) {
+    $fixture = (Resolve-Path -LiteralPath $DatabaseFixturePath).Path
+    $fixtureDirectory = Join-Path $smokeRoot 'workspace\.writing-agent'
+    New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+    Copy-Item -LiteralPath $fixture -Destination (Join-Path $fixtureDirectory 'workspace.sqlite3') -ErrorAction Stop
+}
 
 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.FileName = $resolvedExecutable
@@ -29,16 +37,34 @@ $process.StartInfo = $startInfo
 [void]$process.Start()
 $stdoutTask = $process.StandardOutput.ReadToEndAsync()
 $stderrTask = $process.StandardError.ReadToEndAsync()
+function Write-SmokeFailureEvidence([string]$Reason) {
+    if (-not $EvidencePath) { return }
+    $failurePath = [System.IO.Path]::GetFullPath($EvidencePath)
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $failurePath) | Out-Null
+    [ordered]@{
+        checkedAt = (Get-Date).ToString('o')
+        status = 'failed'
+        reason = $Reason
+        executable = $resolvedExecutable
+        isolatedRoot = $smokeRoot
+        exitCode = $process.ExitCode
+        stdout = $stdoutTask.Result.Trim()
+        stderr = $stderrTask.Result.Trim()
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $failurePath -Encoding utf8
+}
 $completed = $process.WaitForExit($TimeoutSeconds * 1000)
 if (-not $completed) {
     $process.Kill($true)
     $process.WaitForExit()
+    Write-SmokeFailureEvidence 'timeout'
     throw "Desktop smoke timed out after $TimeoutSeconds seconds"
 }
 if ($process.ExitCode -ne 0) {
+    Write-SmokeFailureEvidence 'process_exit'
     throw "Desktop smoke exited with $($process.ExitCode): $($stderrTask.Result.Trim())"
 }
 if (-not (Test-Path -LiteralPath $resultPath)) {
+    Write-SmokeFailureEvidence 'missing_result'
     throw "Desktop smoke result was not created: $resultPath"
 }
 
@@ -55,6 +81,8 @@ $evidence = [ordered]@{
     executable = $resolvedExecutable
     exitCode = $process.ExitCode
     durationMilliseconds = [Math]::Round(((Get-Date) - $startedAt).TotalMilliseconds)
+    isolatedRoot = $smokeRoot
+    usedDatabaseFixture = [bool]$DatabaseFixturePath
     stdout = $stdoutTask.Result.Trim()
     stderr = $stderrTask.Result.Trim()
     result = $result

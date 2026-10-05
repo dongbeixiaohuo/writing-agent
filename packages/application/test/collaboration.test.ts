@@ -10,7 +10,7 @@ import { WritingApplicationService } from "../src/index.js";
 import { collaborationState } from "./collaboration-fixture.js";
 import { getPublicationCandidates, choosePublicationCandidate } from '../src/publication-choice.js';
 import { createApplicationBridge } from '../../client-bridge/src/application-bridge.js';
-import { publicStageFixtureEvents } from './collaboration-fixture.js';
+import { publicStageFixtureEvents, factPreparationFixtureEvents } from './collaboration-fixture.js';
 import { withCheckpointIntent, withIntentFixture } from './intent-fixture.js';
 import { deliveredInlineMaterialIds, inlineMaterialContext } from '../src/material-context.js';
 import { getConversationIntakeState } from '../src/conversation-intake.js';
@@ -22,6 +22,8 @@ export class CollaborationProvider extends ModelProviderBase {
   constructor(readonly blocked = false) { super("collaboration-mock", "1.0.0", { protocol: "mock", tools: "supported", streaming: "supported", usage: "unknown" }); }
   protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
     this.requests.push(structuredClone(request));
+    const extraction = factPreparationFixtureEvents(request);
+    if (extraction) { yield* extraction; return; }
     if (!request.messages.some(m => m.content.includes('COLLABORATION_STATE='))) {
       if (request.tools?.some(t => t.name === 'respond_author')) {
         yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'respond_author', argumentsDelta: JSON.stringify({ reply: '我们先讨论当前这一条，不交接下一位。' }) };
@@ -139,7 +141,7 @@ for (const parallelEnabled of [false, true]) it(`full workflow scopes external f
     const checks = provider.requests.filter(request => collaborationState(request)?.stage === 'fact_check');
     assert.ok(checks.length > 0);
     for (const request of provider.requests) {
-      const expected = parallelEnabled && collaborationState(request)?.stage === 'fact_check';
+      const expected = parallelEnabled && collaborationState(request)?.stage === 'fact_check' && !request.tools?.some(t => t.name === 'prepare_fact_check');
       assert.equal(request.tools?.some(tool => tool.name === 'search_fact_sources') ?? false, expected);
       assert.equal(request.tools?.some(tool => tool.name === 'read_fact_source') ?? false, expected);
     }
@@ -380,7 +382,9 @@ it('fact check has a focused context with complete current body, deduplicated ev
     const request = provider.requests.find(r => collaborationState(r)?.actor === 'fact_check')!;
     const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
     assert.ok(state.materialCatalog.length > 0);
-    assert.ok(state.artifacts.find((a: any) => a.kind === 'body').content.includes('我喜欢这样的安静。'));
+    assert.equal(state.factPhase, 'verify');
+    assert.equal(state.artifacts.find((a: any) => a.kind === 'body').content.projection, 'fact_article_catalog');
+    assert.ok(request.tools?.some(t => t.name === 'read_fact_article'));
     assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object');
     assert.ok(state.authorAuthorization);
     assert.match(request.messages[1]!.content, /数字如有冲突请标明/);
@@ -400,8 +404,65 @@ it('projects evidence and original sources for every downstream expert, with on-
       assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object', actor);
       assert.ok(Array.isArray(state.materialCatalog), actor);
       assert.ok(request.tools?.some(t => t.name === 'read_material'), `${actor} can read omitted material if needed`);
-      assert.ok(!request.tools?.some(t => t.name === 'read_artifact_version'), `${actor} already has complete bound artifacts`);
+      assert.equal(Boolean(request.tools?.some(t => t.name === 'read_artifact_version')), actor.startsWith('review_') || actor === 'language_review',
+        `${actor}: exact quotes remain readable when not included by default`);
     }
+  } finally { f.close(); }
+});
+
+it('keeps director dispatch lean while specialists still receive the complete version-bound article', async () => {
+  const provider = new CollaborationProvider(); const f = setup(provider);
+  try {
+    assert.equal((await f.app.runDraft(f.input)).ok, true);
+    const request = provider.requests.find(r => {
+      const s: any = collaborationState(r);
+      return s?.actor === 'director' && s.artifacts.some((a: any) => a.kind === 'body');
+    })!;
+    const state: any = collaborationState(request);
+    const body = state.artifacts.find((a: any) => a.kind === 'body');
+    assert.equal(body.content.projection, 'artifact_catalog', 'dispatch must not resend the whole article');
+    assert.equal(body.content.contentAvailableVia, 'read_artifact_version');
+    assert.ok(request.tools?.some(t => t.name === 'read_artifact_version'));
+    for (const actor of ['review_editor', 'review_reader', 'central_revision', 'language_review']) {
+      const s: any = collaborationState(provider.requests.find(r => collaborationState(r)?.actor === actor)!);
+      assert.match(s.artifacts.find((a: any) => a.kind === 'body').content, /我喜欢这样的安静/);
+    }
+  } finally { f.close(); }
+});
+
+it('restores referenced discussion through a real scoped tool without exposing reviews to independent reviewers', async () => {
+  class DiscussionProvider extends CollaborationProvider {
+    read = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const s: any = collaborationState(request);
+      if (s?.actor?.startsWith('review_')) assert.ok(!request.tools?.some(t => t.name === 'read_review_discussion'));
+      if (s?.actor === 'central_revision' && !this.read) {
+        const entry = s.authorReviewDiscussion.find((item: any) => item.contentAvailableVia === 'read_review_discussion');
+        assert.ok(entry, 'older assistant report must be indexed, not repeated');
+        this.read = true;
+        yield { type: 'tool_call_delta', index: 0, id: 'read-prior-discussion', name: 'read_review_discussion', argumentsDelta: JSON.stringify({ sequence: entry.sequence }) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      }
+      if (s?.actor === 'central_revision' && this.read) {
+        const result = request.messages.find(m => m.role === 'tool' && m.name === 'read_review_discussion');
+        assert.ok(result);
+        const envelope = JSON.parse(result.content);
+        assert.equal(envelope.ok, true);
+        assert.equal(envelope.result.item.content, '我们先讨论当前这一条，不交接下一位。');
+        assert.equal(envelope.result.instructionAuthority, 'none');
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new DiscussionProvider(); const f = setup(provider);
+  try {
+    for (let i = 0; i < 3; i++) {
+      assert.equal((await f.app.startAuthorTurn({ projectId: 'p', sessionId: 'discussion', model: 'mock', parameters: {},
+        userInstruction: `这次只讨论第${i + 1}段，不修改正文。` }).result).ok, true);
+    }
+    const result = await f.app.runDraft({ ...f.input, sessionId: 'discussion', expectedProjectRevision: f.storage.inspectProject('p')!.revision });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(provider.read, true);
   } finally { f.close(); }
 });
 
@@ -1331,6 +1392,10 @@ it("uses real director decisions and independent same-draft reviews before compl
     assert.doesNotMatch(draftRequest.messages[0]!.content, /带真实标题/u);
     assert.match(languageRequest.messages[0]!.content, /完整.*正文/u);
     assert.match(languageRequest.messages[0]!.content, /不是.*评审报告/u);
+    assert.match(languageRequest.messages[0]!.content, /内部材料标签/u);
+    assert.match(languageRequest.messages[0]!.content, /不虚构来源、不移除实质限定/u);
+    const directorRequest = provider.requests.find(request => collaborationState(request)?.actor === 'director')!;
+    assert.match(directorRequest.messages[0]!.content, /不要.*整理稿/u);
     const decisions = f.storage.listRunEvents(result.runId).filter((event) => event.type === "tool.completed" && (event.payload.result as any)?.toolName === "director_decide");
     assert.ok(decisions.length >= 9);
     const savedRequests = f.storage.listRequestSnapshots(result.runId);

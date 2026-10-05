@@ -141,6 +141,10 @@ export async function dispatchDesktopRpc(
       case "createProject":
         result = await bridge.createProject(...request.args as Parameters<ClientBridge["createProject"]>);
         break;
+      case "renameProject":
+        if (bridge.renameProject === undefined) throw new Error("PROJECT_RENAME_UNSUPPORTED");
+        result = await bridge.renameProject(...request.args as [string, string, { operationId?: string }?]);
+        break;
       case "updateBrief":
         result = await bridge.updateBrief(...request.args as Parameters<ClientBridge["updateBrief"]>);
         break;

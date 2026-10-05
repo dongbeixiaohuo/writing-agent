@@ -9,6 +9,7 @@ import { withoutFirstMarkdownHeading } from '../../writing-core/src/index.js';
 import type { RunRecord } from "../../runtime/session/src/index.js";
 import { loopBudgetUsage } from "../../runtime/session/src/index.js";
 import { recoveryInterruption, runDiagnostics } from './run-diagnostics.js';
+import { stageActiveDurations } from './stage-timing.js';
 import { runTraceDetail } from './run-trace-detail.js';
 import { factCheckCompletionSummary } from './fact-summary.js';
 import { isPublicationSelectionWait, isUsablePublicationTitle } from '../../application/src/publication-choice.js';
@@ -365,7 +366,7 @@ function modelFailureDetail(code: string | null, providerDetail: string | null =
     PROVIDER_UNAVAILABLE: "模型服务暂不可用，请稍后验证连接或重试。",
     QUOTA_EXCEEDED: "模型账户额度不足，请在服务商后台检查余额或套餐。",
     RATE_LIMITED: "模型请求过于频繁，请稍后重试。",
-    TIMEOUT: "模型服务响应超时，请检查网络后重试。",
+    TIMEOUT: "大模型未在等待时限内返回完整回复，这一步未完成；已保存内容仍在，请稍后重试。",
     UNKNOWN_PROVIDER_ERROR: "模型服务返回未知错误，请验证连接并检查服务商状态。",
   };
   const base = code === null
@@ -455,11 +456,21 @@ function timelineForSession(
   const latestToolFailureCodes = new Map<string, string>();
   const latestModelFailureCodes = new Map<string, string>();
   const latestModelFailureDetails = new Map<string, string>();
+  // Bound to the saved result's event boundary, so later rework never changes
+  // the duration shown under an earlier result. Original events are durable.
+  const timingEvents = new Map<string, WritingProjectProjection['events'][number][]>();
+  const savedTiming = (runId: string, stage: WritingWorkflowStage | 'title' | null) => {
+    const duration = stage === null ? undefined : stageActiveDurations(timingEvents.get(runId) ?? [], runId).get(stage);
+    return duration === undefined ? {} : { activeDurationMs: duration };
+  };
   const deliveryReady = (versionId: string | null): boolean => versionId !== null &&
     projection.currentBody?.id === versionId && projection.factCheck.status === 'passed';
 
   for (const event of projection.events) {
     if (event.runId === undefined || !runIds.has(event.runId)) continue;
+    const recorded = timingEvents.get(event.runId) ?? [];
+    recorded.push(event);
+    timingEvents.set(event.runId, recorded);
     const createdAt = timeLabel(event.occurredAt);
     const intake = intakeRunIds.has(event.runId);
     if (event.type === 'tool.requested' && typeof event.payload.previewId === 'string') outputPreviewIds.set(event.operationId, event.payload.previewId);
@@ -482,6 +493,7 @@ function timelineForSession(
         const replyStage = workflowStagePayload(replyResult, 'expertStage');
         const actorLabel = authorActorLabel(replyResult);
         items.push({ id: `${event.id}:reply`, kind: 'message', role: 'assistant', body: reply, createdAt,
+          ...savedTiming(event.runId, replyStage ?? (actorLabel === '标题策划' ? 'title' : null)),
           ...(replyStage ? { stage: replyStage } : {}), ...(actorLabel === null ? {} : { actorLabel }) });
       }
       const collaboration = collaborationResult(event.payload);
@@ -501,6 +513,7 @@ function timelineForSession(
           stageMessageRows.set(`${event.runId}:${stage}`, items.length);
           items.push({ id: outputPreviewIds.get(event.operationId) ?? `${event.id}:artifact`, kind: 'message', role: 'assistant', createdAt,
             stage,
+            ...savedTiming(event.runId, stage),
             body: `**${WORKFLOW_STAGE_LABELS[stage]} · 已保存**\n\n${workflowArtifactView(artifact)?.content ?? artifact.content}` });
           displayedArtifactIds.add(artifactId);
           displayedStageArtifacts.add(stageArtifactKey);
@@ -615,6 +628,7 @@ function timelineForSession(
             ? factCheckCompletionSummary(projection.factCheck.assessment)
             : '工作稿和阶段结果已保存，但尚未达到正式交付条件。请查看当前核查问题，并在这里补充材料或告诉我如何修改。',
           createdAt,
+          ...(deliveryReady(versionId) ? savedTiming(event.runId, 'fact_check') : {}),
         });
       }
     }
@@ -624,6 +638,7 @@ function timelineForSession(
         const pendingQuestions = inputRequest.questions.filter(question => !questionAlreadyCovered(inputRequest.reason, question));
         const questionBlock = pendingQuestions.length === 0 ? '' : `${pendingQuestions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\n\n`;
         items.push({ id: event.id, kind: 'message', role: 'assistant', createdAt,
+          ...(event.payload.kind === 'publication_selection' ? savedTiming(event.runId, 'title') : {}),
           body: `需要补充信息，写作已暂停。\n\n${inputRequest.reason}\n\n${questionBlock}请直接回复下面的问题；收到补充并确认信息充分后才会继续。` });
         continue;
       }
@@ -773,6 +788,7 @@ function runRecordView(
     if (next !== undefined) state.set(next, "running");
   }
   const showStages = sawWorkflowTool || active;
+  const activeDurations = stageActiveDurations(projection.events, run.id);
   const stages: WorkflowStageView[] = showStages
     ? sequence.map((stage) => {
         const status = state.get(stage) ?? "pending";
@@ -780,13 +796,14 @@ function runRecordView(
           id: stage,
           label: WORKFLOW_STAGE_LABELS[stage],
           status,
+          activeDurationMs: activeDurations.get(stage) ?? null,
           detail:
             status === "completed"
               ? "已保存"
               : status === "running"
                 ? "正在处理"
                 : status === "failed"
-                  ? stage === 'fact_check' ? '核查问题待处理' : "此阶段执行失败"
+                  ? stage === 'fact_check' ? '核查问题待处理；正文问题需返回集中修订后重新核查（返工）' : "此阶段执行失败"
                   : "等待前序阶段",
         };
       })
@@ -1227,6 +1244,7 @@ export class ApplicationClientBridge implements ClientBridge {
           operationId: `${operationId}:project`,
           projectId,
           name: input.name,
+          nameSource: "manual",
           mode: input.mode,
           actor,
         }));
@@ -1316,6 +1334,39 @@ export class ApplicationClientBridge implements ClientBridge {
           true,
         );
         return { projectId };
+      },
+    );
+  }
+
+  async renameProject(
+    projectId: string,
+    name: string,
+    options: BridgeCommandOptions = {},
+  ): Promise<void> {
+    this.#ensureLive();
+    const normalizedName = name.trim();
+    if (!normalizedName || Array.from(normalizedName).length > 60) throw new Error("PROJECT_NAME_INVALID");
+    const operationId = options.operationId ?? this.#operationIdFactory();
+    await this.#once(
+      operationId,
+      "project.rename",
+      commandInput("project.rename", [projectId, normalizedName]),
+      async () => {
+        mutationValue(this.#service.renameProject({
+          operationId: `${operationId}:project-name`,
+          projectId,
+          name: normalizedName,
+          source: "manual",
+          actor: { kind: "user", id: "local-ui" },
+        }));
+        this.#replace(this.#buildSnapshot(
+          this.#snapshot.selectedProjectId,
+          this.#snapshot.selectedSessionId,
+          this.#snapshot.generation + 1,
+          this.#snapshot.revision + 1,
+          this.#snapshot.settings,
+          null,
+        ), true);
       },
     );
   }
@@ -1471,7 +1522,7 @@ export class ApplicationClientBridge implements ClientBridge {
     return this.#once(operationId, 'conversation.start', commandInput('conversation.start', [body]), async () => {
       const projectId = `project:${operationId}`;
       mutationValue(this.#service.createProject({ operationId: `${operationId}:project`, projectId,
-        name: body.split(/\r?\n/u)[0]!.slice(0, 40), mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
+        name: '新写作项目', nameSource: 'placeholder', mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
       this.#replace(this.#buildSnapshot(projectId, null, this.#snapshot.generation + 1,
         this.#snapshot.revision + 1, this.#snapshot.settings, null), true);
       return this.#startIntake(projectId, undefined, body, operationId);
@@ -1703,12 +1754,20 @@ export class ApplicationClientBridge implements ClientBridge {
         runId,
         decision,
         feedback,
+        JSON.stringify(options.checkpointApproval ?? null),
       ]),
       async () => {
         const projectId = this.#snapshot.selectedProjectId;
         const projection = this.#service.getProjectProjection(projectId);
         const run = projection.runs.find((candidate) => candidate.id === runId);
         if (run === undefined) throw new Error("RUN_SCOPE_INVALID");
+        if (options.checkpointApproval) {
+          if (decision !== 'resume' || feedback) throw new Error('CHECKPOINT_DECISION_REQUIRED');
+          await this.#service.approveStageCheckpoint({ projectId, runId, operationId,
+            approval: options.checkpointApproval });
+          await this.refresh();
+          return;
+        }
         const waitingEvent = projection.events.filter(event => event.runId === runId && event.type === 'run.waiting_user').at(-1);
         if (run.status === 'waiting_user' && run.stopReason === 'CO_CREATION_CHECKPOINT') {
           const latestCheckpoint = projection.runs.findLast(candidate => candidate.sessionId === run.sessionId &&
@@ -2433,6 +2492,7 @@ export class ApplicationClientBridge implements ClientBridge {
             ? { checkpointStage: null, nextStage: null }
             : checkpointStages(selectedProjection, run.id);
           const interruption = selectedProjection === undefined ? undefined : recoveryInterruption(selectedProjection, run);
+          const approval = this.#service.getCheckpointApproval(selectedProjectId, run.id);
           return {
             runId: run.id,
             sessionId: run.sessionId,
@@ -2440,6 +2500,7 @@ export class ApplicationClientBridge implements ClientBridge {
             stopReason: run.stopReason,
             ...(interruption === undefined ? {} : { interruption }),
             ...checkpoint,
+            ...(approval ? { checkpointApproval: approval } : {}),
           };
         }),
       lastError: lastError ?? (savedHandoffError ? { code: 'CONVERSATION_HANDOFF_FAILED', message: savedHandoffError.message } : null) ?? (this.#handoffError?.projectId === selectedProjectId ? this.#handoffError.error : null),

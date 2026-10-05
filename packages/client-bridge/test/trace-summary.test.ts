@@ -196,6 +196,28 @@ test('failure summaries identify the recorded failing layer without guessing an 
   assert.match(result.find(step => step.technicalName === 'submit_fact_check')?.outputPreview ?? '', /事实核查提交.*门禁/u)
 })
 
+test('model output format failure is distinguished from transport silence', () => {
+  const invalid = explainRunFailure({ kind: 'model', status: 'failed', errorCode: 'MODEL_RESPONSE_INVALID' });
+  assert.match(invalid.title, /格式/);
+  assert.doesNotMatch(invalid.title + invalid.detail, /未.*响应|等待时限|超时/u);
+  const timeout = explainRunFailure({ kind: 'model', status: 'failed', errorCode: 'TIMEOUT', transportPhase: 'first_response' });
+  assert.match(timeout.title, /未.*返回.*有效内容/u);
+  const gate = explainRunFailure({ kind: 'tool', status: 'failed', technicalName: 'submit_writing_stage', errorCode: 'STAGE_OUTPUT_INVALID' });
+  assert.match(gate.title + gate.detail, /校验|前置条件/u);
+  assert.doesNotMatch(gate.title + gate.detail, /模型未响应/u);
+});
+
+test('checkpoint rework gate explains the decision conflict and a usable recovery action', () => {
+  const trace = runDiagnostics(projection([
+    { type:'run.started', operationId:'start', payload:{} },
+    { type:'tool.requested', operationId:'gate', payload:{toolName:'director_decide',arguments:{action:'dispatch',stage:'language_review'}} },
+    { type:'tool.failed', operationId:'gate', payload:{error:{code:'CHECKPOINT_REWORK_REQUIRED'}} },
+  ]), run).trace ?? [];
+  const failed = trace.find(step => step.status === 'failed');
+  assert.match(failed?.outputPreview ?? '', /当前决策记录要求先修改/u);
+  assert.match(failed?.outputPreview ?? '', /不是模型无响应.*不是搜索故障/u);
+});
+
 test('known source policy and search precondition codes keep their precise recorded boundary', () => {
   const failure = (operationId: string, toolName: string, code: string) => [
     { type: 'tool.requested', operationId, payload: { toolName, arguments: {} } },

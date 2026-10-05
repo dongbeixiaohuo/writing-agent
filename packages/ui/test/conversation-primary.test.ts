@@ -1,6 +1,38 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { checkpointCopy } from '../src/shell/interaction.ts'
+import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, conversationWorkingCopy } from '../src/shell/interaction.ts'
+import type { RecoverableRunSummary } from '../../client-bridge/src/protocol.ts'
+
+test('live timer names execution accumulation rather than the current stage and resets at resume boundary', () => {
+  const activity = { runId: 'r', requestId: 'q', actor: 'outline', phase: 'waiting' as const,
+    startedAt: 320000, segmentStartedAt: 0, lastActivityAt: null, requestOrdinal: 1 }
+  const copy = conversationWorkingCopy(activity, 410000)
+  assert.equal(copy.elapsedSeconds, 410)
+  assert.match(copy.detail, /当前请求已等待 90 秒/u)
+  assert.match(copy.detail, /包含此前阶段，不是当前阶段耗时/u)
+  assert.equal(conversationWorkingCopy({ ...activity, segmentStartedAt: 400000, startedAt: 400000 }, 410000).elapsedSeconds, 10)
+})
+
+test('version-bound confirmation and legacy rework gates use a direct action and leave conversation available', () => {
+  for (const stopReason of ['CO_CREATION_CHECKPOINT', 'TOOL_FAILURE_LOOP']) {
+    const recovery: RecoverableRunSummary = { runId:'r', sessionId:'s', status:'waiting_user', stopReason,
+      checkpointStage:'central_revision', nextStage:'language_review',
+      checkpointApproval:{ eventSeq:7, bodyVersionId:'body', briefVersionId:'brief' } }
+    assert.deepEqual(recoveryContinueAction(recovery), {kind:'resume', decision:'resume'})
+    assert.equal(composerRecoveryMode([recovery], 's'), 'answer')
+    assert.match(checkpointCopy(recovery, undefined).primaryAction, /认可当前阶段/u)
+    if (stopReason === 'TOOL_FAILURE_LOOP') assert.match(checkpointCopy(recovery, undefined).description, /不再让模型重新判断按钮含义/u)
+  }
+})
+
+test('checkpoint action names the next expert, including title before fact checking', () => {
+  const checkpoint = (checkpointStage: RecoverableRunSummary['checkpointStage'], nextStage: RecoverableRunSummary['nextStage']) =>
+    checkpointCopy({ runId: 'r', sessionId: 's', status: 'waiting_user', stopReason: 'CO_CREATION_CHECKPOINT', checkpointStage, nextStage }, undefined)
+  assert.match(checkpoint('outline', 'draft').primaryAction, /内容主笔/u)
+  assert.match(checkpoint('language_review', 'fact_check').primaryAction, /标题策划/u)
+  assert.match(checkpoint('language_review', 'fact_check').description, /标题.*事实/u)
+  assert.match(checkpoint('review_editor', 'review_publish').description, /修改.*本阶段|返工/u)
+})
 
 test('version permission failures are explained as program conflicts, not missing user evidence', () => {
   const copy = checkpointCopy({ runId: 'r', sessionId: 's', status: 'waiting_user', stopReason: 'TOOL_FAILURE_LOOP', checkpointStage: null, nextStage: null,

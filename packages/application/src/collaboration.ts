@@ -8,13 +8,13 @@ import { workflowStageSequence, type WritingWorkflowStage } from "../../writing-
 import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
 import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, type WritingWorkflowTools } from "./workflow-tools.js";
 import { getPublicationCandidates, savePublicationCandidates, isPublicationSelectionCurrent, isUsablePublicationTitle,
-  PUBLICATION_SELECTION_WAIT_REASON, type PublicationCandidate } from './publication-choice.js';
+  PUBLICATION_SELECTION_WAIT_REASON, selectedPublicationContext, type PublicationCandidate } from './publication-choice.js';
 import { createFactSourceTool } from './fact-web.js';
 import { createFactSearchTools, type FactSearchConfiguration } from './fact-search.js';
 import { checkpointIntentReceipt } from './conversation-intent.js';
 import { inlineMaterialContext } from './material-context.js';
-import { compactReworkReport, deduplicateReviewDiscussion, factStatusContext, projectInlineRead } from './agent-context.js';
-import { compactFactEvidence, factMaterialContext, FACT_CONTEXT_GUIDANCE } from './fact-context.js';
+import { deduplicateReviewDiscussion, factStatusContext, projectInlineRead, stageArtifactContext } from './agent-context.js';
+import { factMaterialContext, FACT_CONTEXT_GUIDANCE, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionCoversPreparation, factRecordCatalog, type FactBinding } from './fact-context.js';
 
 type Decision = { action: "dispatch" | "ask" | "rework" | "finish"; stage: WritingWorkflowStage | null; reason: string; questions: string[]; inputVersionIds?: string[]; readinessReason?: string };
 
@@ -93,6 +93,17 @@ export function createWritingCollaboration(options: {
       .filter((version) => (version.actor.kind === "agent" && version.actor.runId === runId) || version.id === confirmedBodyVersionId)
       .sort((left, right) => left.createdEventSeq - right.createdEventSeq).at(-1)?.id ?? initialBody;
     return { events, segment, resume, latest, current, nextStage, inputs, ready, finished, expectedBodyVersionId };
+  };
+  const factBinding = (runId: string): FactBinding | null => {
+    const assignment = state(runId).current;
+    if (assignment?.stage !== 'fact_check') return null;
+    const versions = assignment.inputVersionIds.map(id => storage.getArtifactVersion(id));
+    const body = versions.find(v => v?.kind === 'body'), evidence = versions.find(v => v?.kind === 'evidence');
+    const project = storage.inspectProject(projectId);
+    if (!body || !evidence || body.id !== project?.latestBodyVersionId || evidence.id !== project.currentEvidenceVersionId) return null;
+    const publication = selectedPublicationContext(storage, projectId);
+    return { body, evidence, titleVersionId: project.currentTitleVersionId, finalTitle: publication?.finalTitle,
+      distributionCopy: publication?.distributionCopy ?? undefined };
   };
   const definition: ToolDefinition<Decision, JsonValue> = {
     name: "director_decide", version: "1.0.0", effect: "local_idempotent", permissions: ["workflow:submit"],
@@ -226,6 +237,7 @@ export function createWritingCollaboration(options: {
     const inputs = assignment?.inputVersionIds ?? current.inputs;
     const artifacts = inputs.map((id) => storage.getArtifactVersion(id)).filter((item) => item !== null).map((item) => ({ id: item.id, kind: item.kind, content: item.content }));
     const isFactCheck = assignment?.stage === 'fact_check';
+    const prepared = isFactCheck ? factPreparation(storage, runId, factBinding(runId)) : null;
     const authorizedMaterials = storage.listMaterials(projectId).filter(material => options.materialIds.includes(material.id));
     const authorizedVersions = new Map(authorizedMaterials.map(material => [material.id, material.contentVersionId]));
     const materialSlices = new Map<string, JsonValue>();
@@ -240,15 +252,20 @@ export function createWritingCollaboration(options: {
     const cachedIds = new Set([...materialSlices.values()].map(slice => (slice as {materialId: string}).materialId));
     const materials = [...inlineMaterialContext(authorizedMaterials.filter(material => !cachedIds.has(material.id))), ...materialSlices.values()];
     const downstream = actor !== 'research' && artifacts.some(item => item.kind === 'evidence');
-    const projectedArtifacts = artifacts.map(item => ({ ...item, content: item.kind === 'evidence'
-      ? compactFactEvidence(item.content) : item.kind === 'report' ? compactReworkReport(item.content) : item.content }));
+    const artifactContext = stageArtifactContext(actor, artifacts);
     // Non-web author inputs can include fictional scenes, style examples or
     // requirements. Keep them; only external source articles become on-demand.
     const authorMaterialIds = new Set(authorizedMaterials.filter(m => m.sourceKind !== 'web_snapshot' || m.role === 'user_firsthand' || m.id.startsWith('intake-user-')).map(m => m.id));
+    const suppliedMaterials = actor === 'title' ? [] : downstream
+      ? materials.filter(m => authorMaterialIds.has(String((m as { materialId: string }).materialId))) : materials;
     const boundBody = artifacts.find(item => item.kind === 'body')?.content;
     const articleBaseline = boundBody === undefined ? undefined : bodyArticleBaseline(boundBody);
     const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
     const articleTargetCharacters = (briefId ? storage.getWritingBriefVersion(briefId)?.brief.lengthTarget.targetCharacters : undefined) ?? 1800;
+    // Earlier reviews describe an older body after revision. Do not resurrect
+    // those reports in late director scopes or advertise obsolete version IDs.
+    const includeDiscussion = assignment?.stage === 'central_revision' || actor === 'director' &&
+      ['research', 'outline', 'draft', 'central_revision'].includes(current.nextStage ?? '');
     const outputGuidance = {
       articleTargetCharacters,
       outlineTargetCharacters: Math.min(1600, Math.max(200, Math.round(articleTargetCharacters * 0.4))),
@@ -260,30 +277,34 @@ export function createWritingCollaboration(options: {
       outputGuidance,
       unreadArtifactVersionIds: workflow.unreadReadinessArtifactIds(runId),
       ...(assignment?.stage === "fact_check" ? { currentBodyVersionId: storage.inspectProject(projectId)?.latestBodyVersionId ?? null,
-        validEvidenceIds: evidenceIdsFromLedger(artifacts.find(item => item.kind === 'evidence')?.content ?? '') } : {}),
+        validEvidenceIds: evidenceIdsFromLedger(artifacts.find(item => item.kind === 'evidence')?.content ?? ''), searchBudget: factSearch.budget(runId) } : {}),
       ...(assignment?.stage ? { taskInstruction: assignment.reason, expectedArtifact: assignment.expectedArtifact ?? expectedArtifact(assignment.stage) } : {}),
       completedStages: workflow.progress(runId).completedStages,
-      artifacts: projectedArtifacts,
-      materials: actor === 'title' ? [] : downstream ? materials.filter(m => authorMaterialIds.has(String((m as { materialId: string }).materialId))) : materials,
+      artifacts: isFactCheck ? prepared ? factVerificationArtifacts(artifacts, prepared) : factExtractionArtifacts(artifacts) : artifactContext.artifacts,
+      materials: suppliedMaterials,
       ...(downstream ? { materialCatalog: factMaterialContext(authorizedMaterials).materialCatalog } : {}),
       ...(isFactCheck ? { ...factMaterialContext(authorizedMaterials),
+        factPhase: prepared ? 'verify' : 'extract', ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
+          savedSourceRecords: factRecordCatalog(storage, runId, prepared.preparationId) } : {}),
         authorAuthorization: briefId ? storage.getWritingBriefVersion(briefId)?.brief.authorAuthorization : null } : {}),
       ...(assignment?.stage === 'language_review' && articleBaseline !== undefined ? { bodyOutputContract: {
         requiredHeadings: articleBaseline.split(/\r?\n/u).filter(line => /^#{1,6}\s/u.test(line)),
         articleCharacters: articleBaseline.length, legacyProcessPostscript: articleBaseline !== boundBody?.trim(),
         output: 'complete_article_only',
       } } : {}),
-      ...(assignment?.stage === 'central_revision' ? { authorReviewDiscussion: deduplicateReviewDiscussion(options.authorReviewDiscussion ?? [], artifacts) } : {}),
-      ...(assignment?.stage === 'fact_check' ? { selectedPublication: (() => { const id = storage.inspectProject(projectId)?.currentTitleVersionId; return id ? storage.getArtifactVersion(id)?.content : null; })() } : {}),
+      ...(includeDiscussion ? { authorReviewDiscussion: deduplicateReviewDiscussion(options.authorReviewDiscussion ?? [],
+        artifactContext.completeArtifacts, suppliedMaterials, true) } : {}),
+      ...(isFactCheck || actor === 'director' ? { selectedPublication: selectedPublicationContext(storage, projectId) } : {}),
       ...(actor === "director" ? { factCheck: factStatusContext(storage.getFactCheckStatus(projectId), true) } : {}) };
     // ready is bound to this stage and exact material versions. Complete reads
     // are already injected above; changing a version reopens readiness/reading.
     const needsSourceAccess = downstream && actor !== 'title' && authorizedMaterials.some(m => !authorMaterialIds.has(m.id));
     const materialReadTools = !current.ready || isFactCheck || needsSourceAccess ? ['read_material'] : [];
-    const artifactReadTools = inputs.length && (workflow.unreadReadinessArtifactIds(runId).length > 0 || artifacts.some(a => a.kind === 'report')) ? ['read_artifact_version'] : [];
-    const allowedTools = actor === "director" ? [...materialReadTools, ...artifactReadTools, "assess_writing_readiness", "director_decide"] : actor === 'title'
+    const artifactReadTools = isFactCheck ? ['read_fact_evidence', 'read_fact_record'] : inputs.length && (workflow.unreadReadinessArtifactIds(runId).length > 0 || artifactContext.needsArtifactAccess) ? ['read_artifact_version'] : [];
+    const discussionReadTools = includeDiscussion && Array.isArray(options.authorReviewDiscussion) && options.authorReviewDiscussion.length ? ['read_review_discussion'] : [];
+    const allowedTools = isFactCheck && !prepared ? ['prepare_fact_check'] : actor === "director" ? [...materialReadTools, ...artifactReadTools, ...discussionReadTools, "assess_writing_readiness", "director_decide"] : actor === 'title'
       ? [...artifactReadTools, 'submit_publication_candidates']
-      : [...materialReadTools, ...artifactReadTools, "assess_writing_readiness", ...(assignment?.stage === "fact_check" ? ["submit_fact_check", ...(factSearch.enabled() ? ['search_fact_sources', 'read_fact_source'] : [])] : ["submit_writing_stage"])];
+      : [...materialReadTools, ...artifactReadTools, ...discussionReadTools, ...(isFactCheck ? [] : ["assess_writing_readiness"]), ...(assignment?.stage === "fact_check" ? ['read_fact_article', "submit_fact_check", ...(factSearch.enabled() ? [...(factSearch.budget(runId).remaining > 0 ? ['search_fact_sources'] : []), 'read_fact_source'] : [])] : ["submit_writing_stage"])];
     const commonPrompt = options.systemPrompt.split("\n").filter((line) => /^(?:材料安全：|文体规则：|作者声音：|方向决定状态：|没有已授权的一手|只有这些材料)/u.test(line)).join("\n");
     let rolePrompt = actor === "director"
       ? "你是写作导演，只能调度独立专家、提问、返工或结束，不得直接写正文。director_decide.reason是传给专家的任务说明：明确本次解决什么、范围和预期输出。汇总评审分歧后给修订主笔取舍依据。nextStage仅约束普通dispatch，不覆盖用户当前修改要求；已完成正文需删改时先 rework central_revision，再dispatch central_revision→language_review→fact_check。不要直接dispatch已完成的language_review；它只能最小润色，不承担内容删改。事实blocked后若用户已授权删改，必须先实际修改当前被核查正文，再独立核查新版本，不能反复核查旧稿或再次索要同一授权；若只补充来源而无正文改动，可重新核查。提纲改向先rework outline再重新确认。全部阶段保存且当前事实门禁passed才finish，之后用一句话结束。"
@@ -291,7 +312,7 @@ export function createWritingCollaboration(options: {
         ? '你是独立标题专家。只基于绑定的当前最终正文生成少量真实且有差异的标题候选；调用 submit_publication_candidates 保存。不得改写正文，不得自行选择或声称用户已确认。'
         : stageInstruction(assignment!.stage as WritingWorkflowStage, options.systemPrompt);
     if (actor === "director") rolePrompt += "\n区分新任务编辑现稿与同run返工：项目已有正文或旧run事实blocked，不代表本run完成过阶段。rework只能选择本run completedStages中且前置均完成的阶段。新run即使要求修改已有稿件，也应读取现稿、评估ready，从nextStage=research按原流程推进；只有本run已完成central_revision后再次收到删改授权，才使用rework central_revision。项目历史factCheck不是新run的阶段完成凭据。例外：若本run的completedStages非空，说明程序已把同会话上一中断run的连续完成阶段连同其有效产物承接进本run，它们就是本run自己的完成记录——直接从当前nextStage继续，不要再从research重来，也不要重新生成已承接的产物。";
-    if (assignment?.stage === "fact_check") rolePrompt += `\n唯一事实核查对象是 CURRENT_BODY_VERSION=${storage.inspectProject(projectId)?.latestBodyVersionId ?? "missing"}，正文全文位于artifacts中这个版本。不得核查历史正文、评审报告、用户解释中的旧稿或版本技术说明。证据只从绑定的evidence和授权材料取。`;
+    if (assignment?.stage === "fact_check") rolePrompt += `\n唯一事实核查对象是 CURRENT_BODY_VERSION=${storage.inspectProject(projectId)?.latestBodyVersionId ?? "missing"}。extract阶段artifacts提供正文全文；verify阶段preparedClaims提供其中待核实条目及原句，正文仅留目录，必要时按需读取。不得核查历史正文、评审报告、用户解释中的旧稿或版本技术说明。证据只从绑定的evidence和授权材料取。`;
     const drafted = storage.listArtifactVersions(projectId, "report", `workflow:${runId}:draft`).length > 0;
     // Readiness becomes false after each saved stage. That must not resurrect
     // the resume-time list of old bodies/reviews that the current scope forbids.
@@ -309,45 +330,63 @@ export function createWritingCollaboration(options: {
     if (actor === 'director') rolePrompt += '\n可选润色不是必要信息缺口：你认为某个比喻可以更好看、末句可以更贴原典，不等于作者必须再次确认。作者已表明这是现代比喻且未要求修改时，保持原句并安排独立核查区分事实与修辞；不要把核查专家的可选建议升级为新的写作要求。确实需要提问时用日常语言、每次1—2个不同的问题，不向作者暴露C008、rework、central_revision等后台术语，也不重复询问已经明确的选择。';
     if (actor === 'director') rolePrompt += '\n与作者交流一律使用中文角色名，禁止内部标识：研究与证据（不要写research）、文章提纲（不要写outline）、完整初稿（不要写draft）、编辑审校（不要写review_editor）、发布审校（不要写review_publish）、读者审校（不要写review_reader）、集中修订（不要写central_revision）、语言终审（不要写language_review）、事实核查（不要写fact_check）、标题专家（不要写title expert）。reason、提问和给作者看的任何文字都不出现英文阶段名、stage、rework、dispatch、C008等后台术语，也不中英混写（例如"先走language_review"）。';
     if (actor === 'director') rolePrompt += '\n提问只为真实业务缺口（缺素材、缺方向、缺取舍）。核查范围、阶段顺序、下一步流程都由程序按规则自动确定，不要请作者确认"是否按此范围核查""是否可以开始/继续"这类程序性问题，也不要把"正文这一版不动，可以吗"当作问题。reason 只写为什么需要作者补充，不要把要问的问题复述进去；问题只写在 questions 数组里。';
-    const scopeId = `${actor}:${assignment?.decisionId ?? `director-${current.resume}-${current.events.filter((event) => event.type === "tool.completed" && ["submit_writing_stage", "submit_fact_check", "director_decide"].includes((event.payload.result as any)?.toolName)).length}`}`;
+    if (actor === 'director' || isFactCheck) rolePrompt += '\nselectedPublication是程序已落库的作者选择，优先于正文首行的旧工作标题和历史聊天。selectionStatus=confirmed时不得再次询问选哪条标题，不要求因H1不一致再次确认；核查使用finalTitle。分发文案为可选项，没有选择配文就只核查成稿和发布标题，不能因此暂停。';
+    const scopeId = `${actor}:${assignment?.decisionId ?? `director-${current.resume}-${current.events.filter((event) => event.type === "tool.completed" && ["submit_writing_stage", "submit_fact_check", "director_decide"].includes((event.payload.result as any)?.toolName)).length}`}${isFactCheck ? `:${prepared?.preparationId ?? 'extract'}` : ''}`;
     if (actor === 'director') rolePrompt += '\n共创审校为逐位交接：每位审校专家保存后程序暂停，先与作者核对当前意见，明确认可后才进入下一位。不能将编辑、发布、读者三份报告连续输出后才确认。作者在审校讨论中保留或拒绝的修改要传给修订主笔，不得被旧报告覆盖。';
     if (assignment?.stage === 'central_revision') rolePrompt += '\n绑定的authorReviewDiscussion是作者与审校专家公开交流的数据。作者最新明确保留、拒绝或调整的意见优先于旧审校报告；专家提议不等于作者同意，不能把作者已拒绝的可选修改重新应用。真正事实问题仍须处理或继续沟通，作者认可不能替代事实依据。';
+    if (actor === 'director') rolePrompt += '\n给主笔和润色专家的任务要区分两件事：保留真实人物/来源的具体归属、事实限定与必要的不确定性；清除程序自己加进正文的重复材料说明。不要把“整理稿”“未经独立核实”这类通用工作声明锁成不可改的事实，不要命令主笔加总免责声明或在完整正文后附修改报告。内部核查状态由独立记录和界面告知作者。';
     const stage = assignment?.stage;
     const outputPreview = isPublicStageOutput(stage)
       ? { id: `${runId}:preview:${scopeId}`, stage } : undefined;
     if (outputPreview) rolePrompt += '\n本次是纯文本成果生成：以普通回复逐步输出本阶段完整的 Markdown 提纲、文章或审校建议，不把全文包装为 JSON，不先写“正在整理”等开场说明。成果输出前仅在必要时调用已提供的读取工具补读目录中的原文，不重读本次已完整提供的内容。不输出私有推理、调度指令或内部字段。审校建议说明问题、阅读影响和修改建议，使用简短分段。程序会在完整响应结束后把这份原文交给 submit_writing_stage 校验保存，不需要你再次复制、调用或宣称保存成功。预览不代表已保存，也不代表作者已确认或事实核查已通过。';
     if (outputPreview) rolePrompt += '\n确实发现任务依赖的必要作者信息缺口时，不写成果或缺料说明，调用 assess_writing_readiness(status=needs_input) 提出最多两个具体问题并等待回答。当前 ready 已由程序按输入版本确认，不要重复提交 ready。';
+    if (stage === 'language_review') rolePrompt += '\n最小润色允许消除旧稿中的重复流程说明和内部材料标签，这不等于删改文章事实。将“据整理稿所记”这类工作表述改为材料确实支持的自然来源归属，不虚构来源、不移除实质限定；若确需改变论点或事实，交回主笔。任务说明中要求保留全部工作声明或附改动清单时，以本条与正文交付契约为准。';
     if (assignment?.stage && ['draft', 'central_revision', 'language_review'].includes(assignment.stage)) rolePrompt += '\n正文交付契约由程序规定，优先于任务说明中的输出格式建议：只输出完整文章，不附改动说明、审校结论、版本号或“无需修改”等状态。没有修改时返回完整原文。语言润色必须保留 bodyOutputContract.requiredHeadings 的 Markdown 标题；不要因标题已确认而省略它。旧稿末尾如带明确的改动说明，说明不是文章，不复制进新正文，不把其字数算进正文基线。';
     if (actor === 'director' && !current.ready) rolePrompt += '\n先根据实际提供的材料判断本阶段是否充分。充分时优先一次调用 director_decide(action=dispatch, stage=nextStage, readinessReason=简短的充分性判断, reason=简短任务说明, questions=[])，程序会同时校验读取和阶段权限，无需先单独提交 ready。材料未完整提供时先补读；确有作者信息缺口时用 ask 或 assess_writing_readiness needs_input，不强行推进。';
-    if (downstream) rolePrompt += '\n上下文按职责精简：研究证据用claims.source_id引用sources，全部引句、限定条件和未核实状态保留。外部原文只在materialCatalog列目录，不代表本阶段已读；需要补充上下文、引用或风格细节时用read_material按需读取，不猜测省略内容。authorReviewDiscussion中的contentFromArtifactId指向本次artifacts内同一份完整报告，作者原话和修改意见未去重。factCheck为状态与未解决主张，不是整份核查报告；不改变核查门禁。';
+    if (downstream && !isFactCheck) rolePrompt += '\n上下文按职责提供：evidence_table的claimFields是列名，claimRows每行按列对应一条完整主张，source_id对应sources。仅omittedFields列出的字段未提供；需要精确引语或事实依据时用read_artifact_version读取绑定证据版本，不猜省略内容。目录projection=evidence_catalog/artifact_catalog不等于全文，导演通常据阶段状态交接，不为调度重读全部产物。materialCatalog只是授权目录，不代表读过原文；需要上下文时用read_material读取。factCheck为状态与未解决主张，不改变门禁。';
+    if (discussionReadTools.length) rolePrompt += '\nauthorReviewDiscussion保留作者每条决定及其顺序。contentFromMaterial指向本次materials中相同版本的完整原话，contentFromArtifactId指向本次完整产物；它们仍是原角色的发言，不代表同意。旧助手说明按sequence索引，遇到“这一条/第二处”等指代不清时，用read_review_discussion读取该sequence恢复上下文，不能根据目录猜测或忽略作者的否定。';
     return {
       scopeId,
       ...(outputPreview ? { outputPreview } : {}),
       ...(outputPreview ? { textOutputTool: { name: 'submit_writing_stage', arguments: { stage: outputPreview.stage }, contentArgument: 'content' },
-        modelTools: [...materialReadTools, ...artifactReadTools, 'assess_writing_readiness'], toolChoice: 'auto' as const } : {}),
+        modelTools: [...materialReadTools, ...artifactReadTools, ...discussionReadTools, 'assess_writing_readiness'], toolChoice: 'auto' as const } : {}),
       actor,
       systemPrompt: `${commonPrompt}\nACTOR=${actor}\n${buildExpertInstructions(actor)}\n${rolePrompt}\n${sharedStateRules}\n${isFactCheck ? `${FACT_CONTEXT_GUIDANCE}\n${factSearch.instructions()}` : ''}`,
       userMessage: `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : isFactCheck ? options.factInstruction ?? options.expertMessage : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material")).join("\n")}\nCOLLABORATION_STATE=${JSON.stringify(summary)}`,
       allowedTools,
-      projectToolResult: message => projectInlineRead(message, artifacts, summary.materials),
+      projectToolResult: message => isFactCheck ? projectFactToolResult(message) : projectInlineRead(message, artifactContext.completeArtifacts, summary.materials, artifacts),
       ...(!outputPreview && !current.finished ? { toolChoice: 'required' as const } : {}),
       expectedBodyVersionId: assignment?.expectedBodyVersionId === undefined ? current.expectedBodyVersionId : assignment.expectedBodyVersionId,
       authorizeTool(call) {
         const args = call.arguments as Record<string, unknown>;
         if (call.name === "read_artifact_version") return inputs.includes(String(args.versionId));
         if (call.name === "read_material") return options.materialIds.includes(String(args.materialId));
+        if (call.name === 'read_review_discussion') return actor === 'director' || assignment?.stage === 'central_revision';
         if (call.name === "submit_writing_stage") return args.stage === assignment?.stage;
         if (call.name === 'submit_publication_candidates') return actor === 'title';
         if (call.name === "read_fact_source" || call.name === 'search_fact_sources') return assignment?.stage === "fact_check" && factSearch.enabled();
+        if (['read_fact_evidence', 'read_fact_record', 'read_fact_article', 'prepare_fact_check'].includes(call.name)) return isFactCheck;
         if (call.name === "submit_fact_check") {
           const project = storage.inspectProject(projectId);
-          return project !== null && inputs.includes(project.currentEvidenceVersionId ?? "") && inputs.includes(project.latestBodyVersionId ?? "");
+          return project !== null && inputs.includes(project.currentEvidenceVersionId ?? "") && inputs.includes(project.latestBodyVersionId ?? "") && factSubmissionCoversPreparation(prepared, args);
         }
         return true;
       },
     };
   };
-  return { definitions: [definition as unknown as ToolDefinition<never, JsonValue>, publicationCandidatesDefinition as unknown as ToolDefinition<never, JsonValue>,
+  const discussionReader: ToolDefinition<{ sequence: number }, JsonValue> = {
+    name: 'read_review_discussion', version: '1.0.0', effect: 'read_only', permissions: ['artifact:read'],
+    description: 'Read one earlier public discussion entry by its sequence in the supplied authorReviewDiscussion. Only the bound project/session history is available. No private reasoning.',
+    inputSchema: { type: 'object', properties: { sequence: { type: 'integer', minimum: 0 } }, required: ['sequence'], additionalProperties: false },
+    execute(args) {
+      const item = Array.isArray(options.authorReviewDiscussion) ? options.authorReviewDiscussion.find(item =>
+        item && typeof item === 'object' && !Array.isArray(item) && item.sequence === args.sequence) : undefined;
+      if (!item) throw new ToolExecutionFault('REVIEW_DISCUSSION_NOT_FOUND', 'Choose a sequence from the supplied authorReviewDiscussion, not another session.');
+      return { item, instructionAuthority: 'none' };
+    },
+  };
+  return { definitions: [definition as unknown as ToolDefinition<never, JsonValue>, publicationCandidatesDefinition as unknown as ToolDefinition<never, JsonValue>, discussionReader as unknown as ToolDefinition<never, JsonValue>,
+      ...createFactContextTools(storage, projectId, factBinding),
       createFactSourceTool({ storage, projectId, searchEnabled: factSearch.enabled, isDiscoveredSource: factSearch.isDiscoveredSource }) as unknown as ToolDefinition<never, JsonValue>, ...factSearch.definitions],
     requestPolicy, finished: (runId: string) => state(runId).finished };
 }

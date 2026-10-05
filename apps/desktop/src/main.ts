@@ -31,7 +31,8 @@ import type {
 } from "../../../packages/client-bridge/src/desktop-bridge.js";
 import { DESKTOP_RPC_METHODS } from "../../../packages/client-bridge/src/desktop-bridge.js";
 import { inspectWorkspaceBackupFile } from "../../../packages/storage/src/index.js";
-import { DesktopApplicationHost } from "./application-host.js";
+import type { DesktopApplicationHost } from "./application-host.js";
+import { describeDesktopStartupFailure, recordDesktopStartupFailure, startDesktopApplicationHost } from "./startup.js";
 import { NetworkAccessPolicy, SecureWebFetcher } from "../../../packages/runtime/tools/src/index.js";
 import { parseDesktopProviderProfileInput } from "./provider-profile.js";
 import { dispatchDesktopRpc, safeDesktopFailure } from "./rpc-host.js";
@@ -519,7 +520,7 @@ async function runSmoke(window: BrowserWindow): Promise<void> {
   await new Promise<void>((resolve) => window.webContents.once("did-finish-load", () => resolve()));
   await Promise.race([
     rendererHandshakeCompleted,
-    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+    new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error("DESKTOP_RENDERER_NOT_READY")), 8_000)),
   ]);
   // Let Electron deliver the renderer's handshake response before smoke teardown removes IPC handlers.
   await new Promise<void>((resolve) => setTimeout(resolve, 50));
@@ -528,10 +529,12 @@ async function runSmoke(window: BrowserWindow): Promise<void> {
   writeFileSync(resultPath, `${JSON.stringify({
     status: "ready",
     productName: app.getName(),
+    version: app.getVersion(),
     appId: APP_ID,
     url: window.webContents.getURL(),
     protocolVersion: handshake.protocolVersion,
     workspaceId: handshake.workspaceId,
+    projectCount: host.bridge.getSnapshot().projects.length,
     electron: process.versions.electron,
     node: process.versions.node,
   }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -568,7 +571,7 @@ async function start(): Promise<void> {
   });
 
   mkdirSync(workspacePath, { recursive: true });
-  host = new DesktopApplicationHost({
+  host = await startDesktopApplicationHost({
     workspacePath,
     providerProfilePath,
     applicationVersion: app.getVersion(),
@@ -607,7 +610,16 @@ if (ownsInstance) {
     ipcMain.removeHandler(DESKTOP_BRIDGE_CHANNEL);
   });
   void start().catch((error: unknown) => {
-    process.stderr.write(`Writing Agent desktop failed: ${error instanceof Error ? error.name : "DESKTOP_START_FAILED"}\n`);
+    const failure = describeDesktopStartupFailure(error);
+    let logHint = "启动日志未能写入，请记录下面的错误代码。";
+    try {
+      const logPath = recordDesktopStartupFailure(error, join(userDataPath, "logs"), app.getVersion());
+      logHint = `启动日志：${logPath}`;
+    } catch { /* Report failure even when the profile directory is not writable. */ }
+    process.stderr.write(`Writing Agent desktop failed: ${failure.code}\n`);
+    if (runEnvironment.mode !== "smoke") {
+      dialog.showErrorBox("Writing Agent 无法启动", `${failure.message}\n\n错误代码：${failure.code}\n${logHint}`);
+    }
     app.exit(1);
   });
 }

@@ -7,6 +7,16 @@ import {
 } from "../src/expert-instructions.js";
 
 describe("expert instruction migration", () => {
+  it('separates publishable prose from internal material audit notes without erasing factual uncertainty', () => {
+    for (const role of ['director', 'draft', 'central_revision', 'language_review', 'review_editor', 'fact_check'] as const) {
+      const instruction = buildExpertInstructions(role);
+      assert.match(instruction, /正文面向最终读者.*材料审计报告/u);
+      assert.match(instruction, /不自动变成文章开篇免责声明/u);
+      assert.match(instruction, /不得捏造具体出处/u);
+      assert.match(instruction, /争议、不确定性、数字口径和适用条件仍应就事说明/u);
+      assert.match(instruction, /不能靠通用免责声明让它通过/u);
+    }
+  });
   it("exposes the core workflow experts with distinct professional instructions", () => {
     const roles = [
       "research",

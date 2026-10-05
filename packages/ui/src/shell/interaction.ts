@@ -17,7 +17,7 @@ export function conversationWorkingCopy(activity: BridgeSnapshot['liveActivity']
     const seconds = Math.max(0, Math.floor((now - activity.activeTool.startedAt) / 1000))
     const name = activity.activeTool.name
     return { title: name === 'search_fact_sources' ? '正在搜索事实来源' : name === 'read_fact_source' ? '正在读取来源原文' : '正在处理工具操作',
-      detail: `本次工具操作已用时 ${seconds} 秒。${name === 'search_fact_sources' || name === 'read_fact_source' ? '等待外部服务返回；超时会说明未能查证，不会把搜索失败当作核查通过。' : '运行记录可查看具体操作与结果。'}你可以随时停止，已保存稿件不会丢失。`, elapsedSeconds }
+      detail: `本次工具操作已用时 ${seconds} 秒。上方是本次执行累计时间，包含此前阶段。${name === 'search_fact_sources' || name === 'read_fact_source' ? '等待外部服务返回；超时会说明未能查证，不会把搜索失败当作核查通过。' : '运行记录可查看具体操作与结果。'}你可以随时停止，已保存稿件不会丢失。`, elapsedSeconds }
   }
   const requestSeconds = activity ? Math.max(0, Math.floor((now - activity.startedAt) / 1000)) : 0
   const idle = activity?.lastActivityAt ? Math.max(0, Math.floor((now - activity.lastActivityAt) / 1000)) : 0
@@ -35,7 +35,7 @@ export function conversationWorkingCopy(activity: BridgeSnapshot['liveActivity']
     title: '正在结合当前正文拟定标题候选，整理好后会请你选择或提出修改意见。',
   }
   return { title: activity ? labels[activity.actor] ?? '正在处理你的消息' : '已收到，正在处理你的消息',
-    detail: `${activity && context[activity.actor] ? `${context[activity.actor]} ` : ''}${detail}${activity && (activity.requestOrdinal ?? 1) > 1 ? ` 本轮已进行 ${activity.requestOrdinal} 次模型请求，当前请求已等待 ${requestSeconds} 秒；上方计时是整轮累计时间。` : ''}`, elapsedSeconds }
+    detail: `${activity && context[activity.actor] ? `${context[activity.actor]} ` : ''}${detail}${activity ? ` 当前请求已等待 ${requestSeconds} 秒；上方计时是本次执行的累计时间，包含此前阶段，不是当前阶段耗时。` : ''}`, elapsedSeconds }
 }
 
 export function runRecordsTabLabel(count: number, activeRunId: string | null, activity?: BridgeSnapshot['liveActivity']) {
@@ -78,6 +78,14 @@ export function checkpointCopy(
   recovery: RecoverableRunSummary,
   run: RunRecordView | undefined,
 ): CheckpointCopy {
+  if (recovery.stopReason === 'TOOL_FAILURE_LOOP' && recovery.checkpointApproval) return {
+    role: '写作助手', eyebrow: '当前成果仍在 · 需要确认', title: '当前决策记录要求修改，流程已暂停',
+    description: `请核对当前保存的成果。若认可，点击下方按钮直接确认，不再让模型重新判断按钮含义；如仍需修改，在主对话中说明即可。${recovery.checkpointStage === 'language_review'
+      ? '下一步由「标题策划」提出标题候选；确认标题后，再交给「事实核查」专家。核查发现正文问题将返回「内容主笔」集中修订，这是返工。'
+      : recovery.nextStage ? `下一步由「${stageRoleCopy(recovery.nextStage).role}」${stageRoleCopy(recovery.nextStage).action}。` : ''}`,
+    feedbackPlaceholder: '', primaryAction: recovery.checkpointStage === 'language_review' ? '认可当前阶段，交给标题策划'
+      : recovery.nextStage ? `认可当前阶段，交给${stageRoleCopy(recovery.nextStage).role}` : '认可当前阶段，继续',
+  }
   if (recovery.stopReason === 'STAGE_OUTPUT_NOT_SAVED') return {
     role: '写作助手', eyebrow: '保存校验未通过 · 自动重写已停止', title: '这一步未能保存，上一版稿件仍在',
     description: '同一阶段反复未通过保存校验，程序已停止继续生成，避免重复刷屏。不是连接或账户额度问题；无需重新提供材料。可查看运行记录中的具体校验原因，或主动重试当前步骤；重试会产生模型用量。',
@@ -156,15 +164,18 @@ export function checkpointCopy(
         : completedStage?.startsWith('review_')
           ? `${completed?.role}已经完成，先核对这一轮建议好吗？`
           : '当前阶段已经完成，是否继续？',
-    description: next === null
+    description: completedStage === 'language_review'
+      ? '下一步由「标题策划」提出标题候选；你确认标题后，再由「事实核查」专家核查。若核查发现正文问题，将返回「内容主笔」集中修订并重新核查，这是返工。'
+      : next === null
       ? '请先查看当前成果；确认后继续下一步。'
-      : `下一步由「${next.role}」${next.action}。你可以直接认可，也可以带着具体意见继续。`,
+      : `下一步由「${next.role}」${next.action}。你可以直接认可，也可以提出修改要求，返工本阶段后再继续。`,
     feedbackPlaceholder: completedStage === 'outline'
       ? '例如：保留前两部分，把第三部分改成案例拆解，不要写趋势预测'
       : completedStage === 'draft'
         ? '例如：压到 3000 字，开头更直接，结尾不要喊口号'
         : '例如：优先处理事实边界和结构问题，保留现在的语气',
-    primaryAction: '认可当前阶段，继续',
+    primaryAction: completedStage === 'language_review' ? '认可当前阶段，交给标题策划'
+      : next ? `认可当前阶段，交给${next.role}` : '认可当前阶段，继续',
   }
 }
 
@@ -180,6 +191,7 @@ export type RecoveryContinueAction =
   | { readonly kind: 'resume'; readonly decision: 'resume' | 'retry_unknown' }
 
 export function recoveryContinueAction(recovery: RecoverableRunSummary): RecoveryContinueAction {
+  if (recovery.checkpointApproval) return { kind: 'resume', decision: 'resume' }
   if (recovery.stopReason === 'CO_CREATION_CHECKPOINT') {
     return { kind: 'message', text: checkpointResumeInstruction('') }
   }
@@ -191,6 +203,6 @@ export function recoveryContinueAction(recovery: RecoverableRunSummary): Recover
 
 export function composerRecoveryMode(runs: readonly RecoverableRunSummary[], sessionId: string): 'answer' | 'decision' | null {
   const pending = runs.filter(run => run.sessionId === sessionId)
-  if (pending.some(run => run.stopReason === 'WRITING_INPUT_REQUIRED' || run.stopReason === 'CO_CREATION_CHECKPOINT')) return 'answer'
+  if (pending.some(run => run.stopReason === 'WRITING_INPUT_REQUIRED' || run.stopReason === 'CO_CREATION_CHECKPOINT' || run.checkpointApproval)) return 'answer'
   return pending.length > 0 ? 'decision' : null
 }

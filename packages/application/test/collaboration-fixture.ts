@@ -1,6 +1,15 @@
 import type { ModelRequest, ProviderStreamEvent } from "../../runtime/llm/src/index.js";
 import { isPublicStageOutput } from '../../writing-core/src/public-stage-output.js';
 
+/** Workflow mocks don't perform semantic extraction. The extraction contract
+ * itself is covered by fact-context and the claim-first integration test. */
+export function factPreparationFixtureEvents(request: ModelRequest): ProviderStreamEvent[] | null {
+  if (request.tools?.length !== 1 || request.tools[0]?.name !== 'prepare_fact_check') return null;
+  return [{ type: 'tool_call_delta', index: 0, id: `prepare-${request.requestId}`, name: 'prepare_fact_check',
+    argumentsDelta: JSON.stringify({ claims: [], noFactualClaimsReason: '此工作流测试使用已授权的个人感受，不模拟事实语义判断。' }) },
+    { type: 'completed', finishReason: 'tool_calls' }];
+}
+
 /** Public specialists now return prose; structured research/fact fixtures stay tools. */
 export function publicStageFixtureEvents(request: ModelRequest, name: string, args: any): ProviderStreamEvent[] | null {
   const state = collaborationState(request);

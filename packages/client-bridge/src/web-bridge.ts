@@ -320,6 +320,21 @@ export class WebClientBridge implements ClientBridge {
     return { projectId: result.projectId };
   }
 
+  async renameProject(
+    projectId: string,
+    name: string,
+    options: BridgeCommandOptions = {},
+  ): Promise<void> {
+    await this.#ensureHandshake();
+    const response = await this.#sessionRequest("/api/v6/command/rename-project", {
+      generation: this.#snapshot.generation,
+      operationId: options.operationId ?? this.#operationIdFactory(),
+      projectId,
+      name,
+    });
+    this.#accept(responseSnapshot(response.snapshot));
+  }
+
   async confirmBrief(options: BridgeCommandOptions = {}): Promise<void> {
     await this.#ensureHandshake();
     const response = await this.#sessionRequest("/api/v6/command/confirm-brief", {
@@ -430,6 +445,7 @@ export class WebClientBridge implements ClientBridge {
       runId,
       decision,
       ...(options.feedback === undefined ? {} : { feedback: options.feedback }),
+      ...(options.checkpointApproval === undefined ? {} : { checkpointApproval: options.checkpointApproval }),
     });
     this.#accept(responseSnapshot(response.snapshot));
   }

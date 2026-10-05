@@ -1,10 +1,16 @@
 # PRD 修订记录
 
+## 2026-10-05 · 文档合并与维护边界
+
+唯一完整产品维护源为 [Writing Agent 1.0 PRD](WRITING_AGENT_1_0_PRD.md)。CR-001 修订 UI 来源；[CR-002](../implementation/CR002_INTERACTIVE_COLLABORATION.md)增补导演协作和交互验收；[CR-003](../implementation/CR003_CONVERSATION_FIRST_HARNESS.md)及其带日期补充覆盖入口、编排和共创体验的指定范围。后续修订只覆盖明确冲突之处，其余需求、来源与验收继续有效。
+
+旧合订稿、开工说明、任务状态和早期发布计划归入 [2026-09-16 文档包历史归档](../archive/2026-09-16-prd-v1.1-dsh-ui/README.md)。归档状态只适用于原日期和版本；当前实现与测试事实以 [实施进度](../architecture/IMPLEMENTATION_PROGRESS.md)和关联证据为准，不覆盖产品要求。当前一致性检查为 `python -B scripts/check_document_pack.py`，结果可写入 `docs/testing/DOCUMENT_CHECKS.json`。
+
 ## 2026-09-19 · CR-002：导演协作与缺口交互验收纠偏
 
 - F01/F02 原有“迁移、追问、独立评审”未被充分落实到实施与验收，不能把责任归为完全没有需求。
 - F02 明确导演决策、独立上下文、串行也必须隔离评审、材料不足即时提问及同 run 恢复。
-- 新增 [CR-002 合同和 10 条场景](docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)，补充原 AT-01 至 AT-38；WA-010 从 DONE 改为 IN_PROGRESS。
+- 新增 [CR-002 合同和验收场景](../implementation/CR002_INTERACTIVE_COLLABORATION.md)，初始 10 条、后续扩展至 C02-14，补充原 AT-01 至 AT-38；WA-010 的 IN_PROGRESS 为该日期历史状态。
 - rc.6 核心主流程验收就绪结论撤回；保留工程测试历史，不扩大其证明范围。R1 只是交互基础，不代表导演与多角色迁移完成。
 
 ## PRD 1.1 · 2026-09-16 · CR-001：直接复用 DSH 前端 UI
@@ -48,4 +54,4 @@
 
 本次是文档修订与只读源码/官方架构文档核对，未改 GitHub 仓库、未移植应用代码、未生成实际运行截图、未构建安装包、未调用真实模型、未完成人工视觉/可用性验收。
 
-文档内部任务依赖、编号、相对链接、代码块和 JSON 由 `tools/check_document_pack.py` 检查，结果与文件 hash 见 `DOCUMENT_CHECKS.json`。这些检查不等于应用或 UI 已经通过验收。
+当时文档内部任务依赖、编号、相对链接、代码块和 JSON 由原包 `tools/check_document_pack.py` 检查，原报告已归档。当前检查使用 `scripts/check_document_pack.py`。这些检查不等于应用或 UI 已经通过验收。

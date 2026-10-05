@@ -47,6 +47,18 @@ export function isPublicationSelectionCurrent(storage: StoragePort, projectId: s
     // invalidate the fact snapshot, not silently erase the selected title.
     isUsablePublicationTitle(selectedTitle, body.content);
 }
+
+/** Structured author choice must reach the director as well as the checker.
+ * The body H1 remains a working title, not a competing unconfirmed choice. */
+export function selectedPublicationContext(storage: StoragePort, projectId: string) {
+  if (!isPublicationSelectionCurrent(storage, projectId)) return null;
+  const id = storage.inspectProject(projectId)!.currentTitleVersionId!;
+  const content = storage.getArtifactVersion(id)!.content;
+  return { titleVersionId: id, selectionStatus: 'confirmed' as const,
+    finalTitle: content.match(/^- 最终标题：「(.*)」$/mu)![1]!,
+    distributionCopy: content.match(/^- 最终分发文案：(.*)$/mu)?.[1] ?? null,
+    distributionCopyOptional: true, bodyHeadingIsWorkingTitle: true };
+}
 export function publicationSelectionIndex(userText: string, saved: PublicationCandidates | null): number | null {
   if (!saved) return null;
   const exactTitle = saved.candidates.findIndex(candidate => candidate.title === userText.trim());
@@ -84,7 +96,7 @@ export function savePublicationCandidates(storage: StoragePort, projectId: strin
 
 /** The model chooses a proposed index; only the actual user operation can authorize it. */
 export function choosePublicationCandidate(storage: StoragePort, projectId: string, operationId: string, userText: string, candidateVersionId: string | undefined, index: number,
-  interpreted?: { sourceQuote: string; candidateVersionId: string; index: number | null }) {
+  interpreted?: { sourceQuote: string; candidateVersionId: string; index: number | null; includeDistributionCopy?: boolean }) {
   const saved = getPublicationCandidates(storage, projectId);
   const project = storage.inspectProject(projectId)!;
   if (!saved) throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE', 'No saved candidates are available');
@@ -109,11 +121,12 @@ export function choosePublicationCandidate(storage: StoragePort, projectId: stri
   const exact = candidate && [`确认标题：${candidate.title}`, `确认标题:${candidate.title}`, `选用标题：${candidate.title}`].includes(text);
   const semanticSelection = interpreted && interpreted.sourceQuote === userText && interpreted.candidateVersionId === saved.id && interpreted.index === index;
   if (interpreted ? !semanticSelection : !exact && chosenIndex !== index) throw new ToolExecutionFault('USER_SELECTION_REQUIRED', '用户尚未明确选定这个方案。请先回应其疑问或修改意见；只有明确选择才能锁定，不能把讨论、否定或修改要求当成同意。');
+  const distributionCopy = interpreted?.includeDistributionCopy === true ? candidate.distributionCopy : null;
   const content = `- 选择状态：已锁定\n- 最终标题：「${candidate.title}」\n- 选择来源：用户明确选择\n- 候选版本：${saved.id}\n- 对应正文：${body.id}\n` +
-    (candidate.distributionCopy === null ? '- 分发文案范围：本次不包含分发文案\n' : `- 分发文案选择：随所选方案确认\n- 最终分发文案：${candidate.distributionCopy}\n`);
+    (distributionCopy === null ? '- 分发文案范围：本次不包含分发文案（可选，不阻塞核查）\n' : `- 分发文案选择：用户明确选定\n- 最终分发文案：${distributionCopy}\n`);
   const result = value(storage.commitArtifactVersion({ projectId, operationId, expectedProjectRevision: project.revision, kind: 'title', logicalKey: 'main',
     baseVersionId: project.currentTitleVersionId, content, reason: 'author-publication-selection', actor: { kind: 'user', id: 'conversation-user' } }));
-  return { titleVersionId: result.versionId, title: candidate.title, distributionCopy: candidate.distributionCopy, bodyUnchanged: true,
+  return { titleVersionId: result.versionId, title: candidate.title, distributionCopy, bodyUnchanged: true,
     bodyChangedSinceCandidates: saved.bodyVersionId !== body.id,
     openingRequiresSeparateRevisionAcceptance: candidate.opening !== null };
 }

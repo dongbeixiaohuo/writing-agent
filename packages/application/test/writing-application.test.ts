@@ -22,7 +22,7 @@ it('keeps postscript process notes out of body versions and accepts cleanup of l
   assert.throws(() => assertCleanBodyStageContent('language_review', article.replace('# 保留的标题\n\n', ''), legacy), (error: any) => error.code === 'BODY_STAGE_STRUCTURE_MISMATCH' && error.details.requiredHeadings[0] === '# 保留的标题');
   assert.doesNotThrow(() => assertCleanBodyStageContent('language_review', '窗边的风吹进屋里。\n\n我把杯子放下。', '我坐在窗边。\n\n我把杯子放下。'));
 });
-import { collaborationState, directorFixtureTurn, publicStageFixtureEvents } from "./collaboration-fixture.js";
+import { collaborationState, directorFixtureTurn, publicStageFixtureEvents, factPreparationFixtureEvents } from "./collaboration-fixture.js";
 import { getPublicationCandidates, choosePublicationCandidate } from '../src/publication-choice.js';
 
 const user = { kind: "user", id: "user-1" } as const;
@@ -101,6 +101,8 @@ class MaterialThenDraftProvider extends ModelProviderBase {
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
     this.requests.push(structuredClone(request));
+    const extraction = factPreparationFixtureEvents(request);
+    if (extraction) { yield* extraction; return; }
     const directorTurn = directorFixtureTurn(request);
     if (directorTurn !== null) { yield* directorTurn; return; }
     const collaboration = collaborationState(request);
@@ -249,6 +251,8 @@ class FactCheckOnlyProvider extends ModelProviderBase {
   ): AsyncIterable<ProviderStreamEvent> {
     const context = JSON.parse(request.messages.find(message => message.role === 'user')!.content);
     this.requests.push(request);
+    const extraction = factPreparationFixtureEvents(request);
+    if (extraction) { yield* extraction; return; }
     assert.equal(context.materials[0].materialId, 'material-1');
     assert.ok(context.materials[0].content.length > 0);
     assert.equal(context.materials[0].instructionAuthority, 'none');
@@ -257,8 +261,7 @@ class FactCheckOnlyProvider extends ModelProviderBase {
     assert.equal(context.materialCatalog[0].content, undefined);
     assert.equal(context.bodyVersionId, this.bodyVersionId);
     assert.equal(context.evidenceVersionId, this.evidenceVersionId);
-    assert.equal(context.artifacts.find((a: { kind: string }) => a.kind === 'body').content,
-      '# 一次安静的下班散步\n\n我下班后又沿河走了一次，仍只记录自己的感受。');
+    assert.equal(context.artifacts.find((a: { kind: string }) => a.kind === 'body').content.projection, 'fact_article_catalog');
     assert.ok(context.artifacts.find((a: { id: string }) => a.id === this.evidenceVersionId).content);
     assert.ok(request.tools?.some(tool => tool.name === 'read_material'), 'full author sources remain readable on demand');
     assert.equal(request.tools?.some(tool => tool.name === 'read_artifact_version'), false, 'bound artifacts are already complete');
@@ -579,6 +582,8 @@ class CheckpointWorkflowProvider extends ModelProviderBase {
   protected async *providerStream(
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
+    const extraction = factPreparationFixtureEvents(request);
+    if (extraction) { yield* extraction; return; }
     const directorTurn = directorFixtureTurn(request);
     if (directorTurn !== null) { yield* directorTurn; return; }
     const collaboration = collaborationState(request);
@@ -1478,8 +1483,8 @@ describe("WritingApplicationService draft closure", () => {
         },
       });
       assert.equal(result.ok, true, JSON.stringify(result));
-      assert.equal(result.modelRequestCount, 28);
-      assert.equal(result.toolCallCount, 28);
+      assert.equal(result.modelRequestCount, 29);
+      assert.equal(result.toolCallCount, 29);
       assert.equal(
         storage.listArtifactVersions("project-1", "review", `review_publish:${result.runId}`).length,
         1,
@@ -1636,10 +1641,10 @@ describe("WritingApplicationService draft closure", () => {
       if (!result.ok) return;
       assert.equal(result.validationKind, "mock_verified");
       assert.equal(result.publicationReady, true);
-      assert.equal(result.modelRequestCount, 25);
-      assert.equal(result.toolCallCount, 25);
+      assert.equal(result.modelRequestCount, 26);
+      assert.equal(result.toolCallCount, 26);
       assert.notEqual(result.artifactVersionId, null);
-      assert.equal(provider.requests.length, 25);
+      assert.equal(provider.requests.length, 26);
       assert.equal(
         JSON.stringify(provider.requests[0]).includes("下班后我沿着河边"),
         true,
@@ -1714,6 +1719,7 @@ describe("WritingApplicationService draft closure", () => {
           "assess_writing_readiness",
           "language_review",
           "assess_writing_readiness",
+        "prepare_fact_check",
           "submit_fact_check",
         ],
       );
@@ -1781,16 +1787,17 @@ describe("WritingApplicationService draft closure", () => {
       if (currentDraftRead?.role === "tool") {
         const read = JSON.parse(currentDraftRead.content).result;
         assert.equal(read.versionId, initial.artifactVersionId);
-        assert.equal(read.content, undefined, 'do not resend the manuscript in tool history');
-        assert.match(read.contentFrom, /COLLABORATION_STATE\.artifacts/u);
+        assert.equal(read.content, storage.getArtifactVersion(initial.artifactVersionId)!.content,
+          'a director catalogue is not the article: the required full read must remain available');
+        assert.equal(read.contentFrom, undefined, 'never point to a catalogue as if it were full text');
         const userContent = provider.requests[requestOffset + 1]!.messages.find(m => m.role === 'user')!.content;
         const state = JSON.parse(userContent.split('\nCOLLABORATION_STATE=')[1]!);
         const suppliedBody = state.artifacts.find((a: any) => a.id === read.versionId);
-        assert.equal(suppliedBody.content, storage.getArtifactVersion(initial.artifactVersionId)!.content);
-        assert.match(suppliedBody.content, /鞋底擦过路面的声音/u);
+        assert.equal(suppliedBody.content.projection, 'artifact_catalog');
+        assert.match(read.content, /鞋底擦过路面的声音/u);
         const savedRead = storage.listRunEvents(revised.runId).find(e => e.type === 'tool.completed' &&
           (e.payload.result as any)?.toolName === 'read_artifact_version');
-        assert.equal((savedRead?.payload.result as any)?.result.content, suppliedBody.content, 'persist the original read result');
+        assert.equal((savedRead?.payload.result as any)?.result.content, read.content, 'persist the original read result');
       }
     } finally {
       storage.close();
@@ -1858,7 +1865,7 @@ describe("WritingApplicationService draft closure", () => {
         },
       });
       assert.equal(checked.ok, true, JSON.stringify(checked));
-      assert.equal(factProvider.requests.length, 1, 'no duplicate reads or prose-only request after saving');
+      assert.equal(factProvider.requests.length, 2, 'extract then verify; no duplicate full reads or post-save prose request');
       assert.equal(checked.publicationReady, true);
       assert.equal(storage.getFactCheckStatus("project-1").status, "passed");
       assert.equal(storage.listArtifactVersions("project-1", "body", "main").length, 4);

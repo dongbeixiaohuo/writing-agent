@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { savePublicationCandidates, choosePublicationCandidate, getPublicationCandidates, isPublicationSelectionCurrent,
-  isPublicationSelectionWait, isUsablePublicationTitle, publicationSelectionIndex } from '../src/publication-choice.js';
+  isPublicationSelectionWait, isUsablePublicationTitle, publicationSelectionIndex, selectedPublicationContext } from '../src/publication-choice.js';
 
 it('accepts unambiguous everyday title choices without turning objections or questions into consent', () => {
   const saved = { id: 'c', bodyVersionId: 'b', candidates: ['忙不是通行证', '功劳不能兑换特权', '把标准放回原位'].map(title => ({ title, opening: null, distributionCopy: null, rationale: '对比角度' })) };
@@ -13,7 +13,7 @@ it('accepts unambiguous everyday title choices without turning objections or que
   for (const message of ['不要选第二个', '第二个更好吗？', '第二个不错，但还要修改', '就用第二个吧？', '引用原话：就用第二个吧', '选第二个，但把特权换掉', '继续', '选第六个']) assert.equal(publicationSelectionIndex(message, saved), null, message);
 });
 
-it('keeps candidates separate, binds user choice to exact version, and preserves selected distribution copy', () => {
+it('keeps candidates separate, binds title choice to exact version, and leaves distribution copy optional', () => {
   const directory = mkdtempSync(join(tmpdir(), 'publication-choice-'));
   const storage = openWorkspaceStorage({ workspacePath: directory });
   const actor = { kind: 'user', id: 'test' } as const;
@@ -30,7 +30,11 @@ it('keeps candidates separate, binds user choice to exact version, and preserves
     assert.throws(() => choosePublicationCandidate(storage, 'p', 'invented', '请给我两个标题', candidate.id, 2), { code: 'USER_SELECTION_REQUIRED' });
     const selected = choosePublicationCandidate(storage, 'p', 'selected', '我选第二个，正文别动', candidate.id, 2);
     assert.match(storage.getArtifactVersion(selected.titleVersionId)!.content, /最终标题：「窗边」/u);
-    assert.match(storage.getArtifactVersion(selected.titleVersionId)!.content, /最终分发文案：从窗边重新观察日常。/u);
+    assert.doesNotMatch(storage.getArtifactVersion(selected.titleVersionId)!.content, /最终分发文案/u);
+    assert.equal(selected.distributionCopy, null);
+    assert.deepEqual(selectedPublicationContext(storage, 'p'), { titleVersionId: selected.titleVersionId,
+      selectionStatus: 'confirmed', finalTitle: '窗边', distributionCopy: null, distributionCopyOptional: true,
+      bodyHeadingIsWorkingTitle: true });
     assert.equal(storage.inspectProject('p')!.latestBodyVersionId, bodyId);
     assert.equal(isPublicationSelectionCurrent(storage, 'p'), true);
     assert.equal(getPublicationCandidates(storage, 'p')!.id, candidate.id);

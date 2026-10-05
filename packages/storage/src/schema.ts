@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 export const APPLICATION_ID = 0x57414754;
-export const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 8;
 
 export function createSchema(database: DatabaseSync, appliedAt: string): void {
   database.exec(`
@@ -13,6 +13,9 @@ export function createSchema(database: DatabaseSync, appliedAt: string): void {
     CREATE TABLE projects (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      name_source TEXT NOT NULL CHECK (
+        name_source IN ('placeholder', 'agent', 'manual', 'legacy')
+      ),
       mode TEXT NOT NULL CHECK (mode IN ('quick', 'deep')),
       schema_version INTEGER NOT NULL,
       revision INTEGER NOT NULL,
@@ -452,7 +455,8 @@ export function migrateSchema(
     fromVersion !== 3 &&
     fromVersion !== 4 &&
     fromVersion !== 5 &&
-    fromVersion !== 6
+    fromVersion !== 6 &&
+    fromVersion !== 7
   ) {
     throw new Error(`Unsupported schema migration from version ${fromVersion}`);
   }
@@ -787,7 +791,8 @@ export function migrateSchema(
     database.exec("PRAGMA user_version = 6;");
   }
 
-  database.exec(`
+  if (fromVersion <= 6) {
+    database.exec(`
     CREATE TABLE exports (
       id TEXT PRIMARY KEY,
       operation_id TEXT NOT NULL UNIQUE,
@@ -831,10 +836,26 @@ export function migrateSchema(
     ) STRICT;
 
     CREATE INDEX exports_project_idx ON exports(project_id, created_at);
-    UPDATE projects SET schema_version = ${CURRENT_SCHEMA_VERSION};
+    UPDATE projects SET schema_version = 7;
   `);
-  database
-    .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
-    .run(CURRENT_SCHEMA_VERSION, appliedAt);
-  database.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION};`);
+    database
+      .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+      .run(7, appliedAt);
+    database.exec("PRAGMA user_version = 7;");
+  }
+
+  if (fromVersion <= 7) {
+    const projectColumns = database.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;
+    if (!projectColumns.some((column) => column.name === "name_source")) {
+      database.exec(`
+        ALTER TABLE projects ADD COLUMN name_source TEXT NOT NULL DEFAULT 'legacy'
+          CHECK (name_source IN ('placeholder', 'agent', 'manual', 'legacy'));
+      `);
+    }
+    database.exec(`UPDATE projects SET schema_version = ${CURRENT_SCHEMA_VERSION};`);
+    database
+      .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+      .run(CURRENT_SCHEMA_VERSION, appliedAt);
+    database.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION};`);
+  }
 }

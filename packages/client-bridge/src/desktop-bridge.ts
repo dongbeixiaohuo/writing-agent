@@ -25,6 +25,7 @@ export type DesktopRpcMethod =
   | "selectSession"
   | "updateSettings"
   | "createProject"
+  | "renameProject"
   | "updateBrief"
   | "confirmBrief"
   | "sendMessage"
@@ -71,6 +72,7 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "selectSession",
   "updateSettings",
   "createProject",
+  "renameProject",
   "updateBrief",
   "confirmBrief",
   "sendMessage",
@@ -497,6 +499,19 @@ export class DesktopClientBridge implements ClientBridge {
       throw new Error("DESKTOP_BRIDGE_RESPONSE_INVALID");
     }
     return { projectId: result.projectId };
+  }
+
+  async renameProject(
+    projectId: string,
+    name: string,
+    options: BridgeCommandOptions = {},
+  ): Promise<void> {
+    await this.#invoke(
+      "renameProject",
+      projectId,
+      name,
+      { operationId: options.operationId ?? this.#operationIdFactory() },
+    );
   }
 
   async confirmBrief(options: BridgeCommandOptions = {}): Promise<void> {

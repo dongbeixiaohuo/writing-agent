@@ -256,8 +256,17 @@ const RevisionEditsSchema = z
 export const CreateProjectCommandSchema = z.object({
   operationId: NonEmptyIdSchema,
   projectId: NonEmptyIdSchema,
-  name: z.string().trim().min(1),
+  name: z.string().trim().min(1).max(60),
+  nameSource: z.enum(["placeholder", "agent", "manual", "legacy"]).default("manual"),
   mode: ProjectModeSchema,
+  actor: ActorSchema,
+});
+
+export const RenameProjectCommandSchema = z.object({
+  operationId: NonEmptyIdSchema,
+  projectId: NonEmptyIdSchema,
+  name: z.string().trim().min(1).max(60),
+  source: z.enum(["agent", "manual"]),
   actor: ActorSchema,
 });
 
@@ -388,7 +397,8 @@ export type DecisionType = z.infer<typeof DecisionTypeSchema>;
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
 export type FactGateStatus = z.infer<typeof FactGateStatusSchema>;
 export type ProvenanceRelation = z.infer<typeof ProvenanceRelationSchema>;
-export type CreateProjectCommand = z.infer<typeof CreateProjectCommandSchema>;
+export type CreateProjectCommand = z.input<typeof CreateProjectCommandSchema>;
+export type RenameProjectCommand = z.infer<typeof RenameProjectCommandSchema>;
 export type CommitArtifactVersionCommand = z.input<
   typeof CommitArtifactVersionCommandSchema
 >;
@@ -689,6 +699,13 @@ export interface StoragePort {
   createProject(
     command: CreateProjectCommand,
   ): MutationResult<{ projectId: string; revision: number }>;
+  renameProject(
+    command: RenameProjectCommand,
+  ): MutationResult<{
+    projectId: string;
+    name: string;
+    applied: boolean;
+  }>;
   importMaterial(
     command: ImportMaterialCommand,
   ): MutationResult<{

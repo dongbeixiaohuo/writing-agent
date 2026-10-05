@@ -25,6 +25,7 @@ import {
   createFactCheckInputSnapshot,
   CreateFactCheckSnapshotCommandSchema,
   CreateProjectCommandSchema,
+  RenameProjectCommandSchema,
   DeleteProjectCommandSchema,
   evaluateFactCheck,
   EvaluateFactCheckSnapshotCommandSchema,
@@ -54,6 +55,7 @@ import {
   type CommitArtifactVersionCommand,
   type CreateFactCheckSnapshotCommand,
   type CreateProjectCommand,
+  type RenameProjectCommand,
   type DeleteProjectCommand,
   type DecisionRecord,
   type DomainEvent,
@@ -188,6 +190,7 @@ export interface SchemaMigrationResult {
 interface ProjectRow {
   id: string;
   name: string;
+  name_source: "placeholder" | "agent" | "manual" | "legacy";
   mode: "quick" | "deep";
   schema_version: number;
   revision: number;
@@ -2584,13 +2587,14 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
         this.database
           .prepare(
             `INSERT INTO projects(
-               id, name, mode, schema_version, revision, fact_gate_status,
+               id, name, name_source, mode, schema_version, revision, fact_gate_status,
                created_at, updated_at
-             ) VALUES (?, ?, ?, ?, 0, 'not_checked', ?, ?)`,
+             ) VALUES (?, ?, ?, ?, ?, 0, 'not_checked', ?, ?)`,
           )
           .run(
             command.projectId,
             command.name,
+            command.nameSource,
             command.mode,
             CURRENT_SCHEMA_VERSION,
             now,
@@ -2609,6 +2613,94 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
           ok: true,
           projectRevision: 0,
           result: { projectId: command.projectId, revision: 0 },
+        };
+      },
+    );
+  }
+
+  renameProject(
+    commandInput: RenameProjectCommand,
+  ): MutationResult<{
+    projectId: string;
+    name: string;
+    applied: boolean;
+  }> {
+    const parsed = RenameProjectCommandSchema.safeParse(commandInput);
+    const operationId = commandInput.operationId;
+    if (!parsed.success) {
+      return failure(
+        operationId,
+        "INVALID_COMMAND",
+        "Rename project command is invalid",
+        false,
+        { issues: parsed.error.issues },
+      );
+    }
+    const command = parsed.data;
+    return this.runMutation<{
+      projectId: string;
+      name: string;
+      applied: boolean;
+    }>(
+      command.operationId,
+      command.projectId,
+      "rename_project",
+      command,
+      (now) => {
+        const project = this.getProjectRow(command.projectId);
+        if (project === undefined) {
+          return actionFailure("PROJECT_NOT_FOUND", "Project does not exist");
+        }
+        if (command.source === "agent" && project.name_source !== "placeholder") {
+          return {
+            ok: true,
+            projectRevision: project.revision,
+            result: {
+              projectId: project.id,
+              name: project.name,
+              applied: false,
+            },
+          };
+        }
+        const nextNameSource = command.source;
+        if (project.name === command.name && project.name_source === nextNameSource) {
+          return {
+            ok: true,
+            projectRevision: project.revision,
+            result: {
+              projectId: project.id,
+              name: project.name,
+              applied: false,
+            },
+          };
+        }
+        const nextRevision = project.revision + 1;
+        this.database.prepare(
+          `UPDATE projects
+              SET name = ?, name_source = ?, revision = ?, updated_at = ?
+            WHERE id = ?`,
+        ).run(command.name, nextNameSource, nextRevision, now, command.projectId);
+        this.insertEvent(
+          command.projectId,
+          this.nextProjectSeq(command.projectId),
+          "project.renamed",
+          command.actor,
+          command.operationId,
+          {
+            previousName: project.name,
+            name: command.name,
+            source: nextNameSource,
+          },
+          now,
+        );
+        return {
+          ok: true,
+          projectRevision: nextRevision,
+          result: {
+            projectId: command.projectId,
+            name: command.name,
+            applied: true,
+          },
         };
       },
     );
@@ -5566,7 +5658,8 @@ export async function migrateWorkspaceStorage(
       fromVersion !== 3 &&
       fromVersion !== 4 &&
       fromVersion !== 5 &&
-      fromVersion !== 6
+      fromVersion !== 6 &&
+      fromVersion !== 7
     ) {
       throw new StorageOpenError(
         "SCHEMA_MIGRATION_UNSUPPORTED",

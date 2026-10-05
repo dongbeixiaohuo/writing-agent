@@ -49,7 +49,7 @@ test('main conversation links to the current manuscript while export settings li
           {id:'read',kind:'tool',label:'读取参考材料',detail:'已完成',state:'success'},
           {id:'guard',kind:'tool',label:'内部检查',detail:'系统已阻止直接写作',state:'failure'},
           {id:'fail',kind:'tool',label:'运行失败',detail:'网络中断，请重试',state:'failure',audience:'conversation'},
-          {id:'reply',kind:'message',role:'assistant',body:plainCheckpoint?'唯一的提纲正文\\n\\n**这个方向可以吗？确认后我继续写初稿，也可以直接告诉我怎么改。**':'请确认这份提纲',createdAt:'12:00'}]};
+          {id:'reply',kind:'message',role:'assistant',activeDurationMs:61000,body:plainCheckpoint?'唯一的提纲正文\\n\\n**这个方向可以吗？确认后我继续写初稿，也可以直接告诉我怎么改。**':'请确认这份提纲',createdAt:'12:00'}]};
         if(plainCheckpoint) snapshot.materialProcessWorkspace={...snapshot.materialProcessWorkspace,outline:{content:'唯一的提纲正文'}};
         const exportControls=React.createElement(ConversationExportCard,{bridge,snapshot,onInspect:()=>{},onContentChange:()=>{},hostConfiguration:{savePublicationAs:async()=>({cancelled:true})}});
         const html=renderToStaticMarkup(view && !['waiting','background','handoff'].includes(view) ? React.createElement(WritingWorkbenchPanel,{bridge,snapshot,initialView:view,closePanel:()=>{},exportControls}) : React.createElement(WritingAgentShell,{bridge,extensions,
@@ -66,6 +66,7 @@ test('main conversation links to the current manuscript while export settings li
     assert.doesNotMatch(passed, /aria-label="文章导出"|导出文件格式|读取参考材料|系统已阻止直接写作/u);
     assert.match(passed, /网络中断，请重试/u);
     assert.match(passed, /请确认这份提纲/u);
+    assert.match(passed, /本阶段活动耗时 61 秒/u);
     const streaming = render('not_checked', 'running');
     assert.match(streaming, /这是一段正在到达的回复/u);
     assert.match(streaming, /正在生成.*尚未保存/u);
@@ -91,19 +92,19 @@ test('main conversation links to the current manuscript while export settings li
     assert.match(render('not_checked', 'ready', 'UNKNOWN_EXTERNAL_OUTCOME'), /确认重试并继续/u);
     const multiple = render('not_checked', 'ready', 'MULTIPLE');
     assert.match(multiple, /上次外部请求的结果未知/u);
-    assert.match(multiple, />认可当前阶段，继续</u);
+    assert.match(multiple, />认可当前阶段，交给内容主笔</u);
     assert.equal((multiple.match(/>结束本轮</gu) ?? []).length, 2);
-    assert.equal((render('not_checked', 'ready', 'MULTIPLE_CHECKPOINTS').match(/>认可当前阶段，继续</gu) ?? []).length, 1);
-    assert.equal((render('not_checked', 'ready', 'INPUT_AND_CHECKPOINT').match(/>认可当前阶段，继续</gu) ?? []).length, 0);
+    assert.equal((render('not_checked', 'ready', 'MULTIPLE_CHECKPOINTS').match(/>认可当前阶段，交给内容主笔</gu) ?? []).length, 1);
+    assert.equal((render('not_checked', 'ready', 'INPUT_AND_CHECKPOINT').match(/>认可当前阶段，交给内容主笔</gu) ?? []).length, 0);
     const checkpoint = render('not_checked', 'ready', 'CO_CREATION_CHECKPOINT', null, null, true);
     assert.equal((checkpoint.match(/唯一的提纲正文/gu) ?? []).length, 1);
     assert.match(checkpoint, /这个方向可以吗？确认后我继续写初稿/);
     assert.doesNotMatch(checkpoint, /aria-label="共创决策"|本阶段成果|已自动展开|打开稿件与过程/);
     assert.equal((checkpoint.match(/aria-label="写作指令"/gu) ?? []).length, 1);
-    assert.match(checkpoint, />认可当前阶段，继续</);
+    assert.match(checkpoint, />认可当前阶段，交给内容主笔</);
     assert.match(checkpoint, />结束本轮</);
     const runningCheckpoint = render('not_checked', 'running', 'CO_CREATION_CHECKPOINT', null, null, true);
-    assert.match(runningCheckpoint, /<button[^>]*disabled=""[^>]*>认可当前阶段，继续<\/button>/u);
+    assert.match(runningCheckpoint, /<button[^>]*disabled=""[^>]*>认可当前阶段，交给内容主笔<\/button>/u);
     const staleCheckpoint = render('stale', 'ready', 'CO_CREATION_CHECKPOINT', null, null, true);
     assert.match(staleCheckpoint, /这个方向可以吗/);
     assert.doesNotMatch(staleCheckpoint, /当前稿件的核查结果已失效/);

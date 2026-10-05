@@ -66,6 +66,7 @@ import {
   ArrowUpIcon,
   CheckIcon,
   CloseIcon,
+  EditIcon,
   FolderIcon,
   MonitorIcon,
   MoonIcon,
@@ -222,7 +223,9 @@ function Timeline({ items, brand, footer, diagnostic = false }: { items: readonl
             <div><strong>{item.actorLabel}</strong></div>
           </header>}
           <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
-          <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleCopy(item.stage).role + '专家' : item.actorLabel ?? brand.assistantName} · ${item.createdAt}`}</div>
+          <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleCopy(item.stage).role + '专家' : item.actorLabel ?? brand.assistantName} · ${item.createdAt}`}
+            {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 本阶段活动耗时 ${Math.round(item.activeDurationMs / 1000)} 秒（排除等待确认）`}
+          </div>
         </article>
       ) : (
         <div className={css.toolRow} key={item.id}>
@@ -253,6 +256,7 @@ function WorkflowProgress({ run, detailed = false }: { run: RunRecordView; detai
         {run.stages.map(stage => <li key={stage.id} data-stage-status={stage.status}>
           <span className={css.workflowStageIcon}>{stage.status === 'completed' ? <CheckIcon /> : <ToolIcon />}</span>
           <div><strong>{stage.label}</strong><small>{stageRoleCopy(stage.id).role}{detailed ? ` · ${stage.detail}` : ''}</small>
+            {stage.activeDurationMs != null && <small>已记录活动耗时 {Math.round(stage.activeDurationMs / 1000)} 秒（含恢复与返工，排除等待确认）</small>}
             {detailed && <><p>{stageRoleCopy(stage.id).action}</p>
               {(run.diagnostics?.segments.some(segment => segment.decisions.some(decision => decision.stage === stage.id))) && <details>
                 <summary>查看本阶段分派与返工记录</summary>
@@ -287,7 +291,7 @@ function CheckpointDecisionCard({
   const copy = checkpointCopy(recovery, run)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const isCheckpoint = recovery.stopReason === 'CO_CREATION_CHECKPOINT'
+  const isCheckpoint = recovery.stopReason === 'CO_CREATION_CHECKPOINT' || !!recovery.checkpointApproval
   const needsInput = recovery.stopReason === 'WRITING_INPUT_REQUIRED'
   const isTitleDiscussion = recovery.inputRequest?.kind === 'publication_selection'
 
@@ -297,7 +301,8 @@ function CheckpointDecisionCard({
       setBusy(true)
       setError(null)
       const action = recoveryContinueAction(recovery)
-      if (action.kind === 'message') await bridge.sendMessage(action.text)
+      if (recovery.checkpointApproval) await bridge.resumeRun(recovery.runId, 'resume', { checkpointApproval: recovery.checkpointApproval })
+      else if (action.kind === 'message') await bridge.sendMessage(action.text)
       else await bridge.resumeRun(recovery.runId, action.decision)
       onContinued()
     } catch (reason) {
@@ -323,6 +328,7 @@ function CheckpointDecisionCard({
   // Normal confirmation is asked once, at the end of the saved timeline result.
   // Keep cancellation available without creating a second conversation card.
   if (isCheckpoint && !isTitleDiscussion) return <div className={css.checkpointActions} data-conversation-recovery="true" aria-label="共创确认操作">
+    <p className={css.checkpointDescription}>{copy.description}</p>
     <button className={css.textActionNeutral} type="button" disabled={busy || runActive} onClick={() => void stop()}>结束本轮</button>
     {canApproveCheckpoint && <button className={css.primaryAction} type="button" disabled={busy || runActive} onClick={() => void resume()}>
       {busy ? '正在继续…' : copy.primaryAction}
@@ -1153,6 +1159,46 @@ function DeleteProjectDialog({
   </div>
 }
 
+function RenameProjectDialog({ project, bridge, onClose, onRenamed }: {
+  project: BridgeSnapshot['projects'][number]
+  bridge: ClientBridge
+  onClose: () => void
+  onRenamed: (name: string) => void
+}) {
+  const [name, setName] = useState(project.name)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const dialogRef = useModalDialog(onClose)
+  const normalizedName = name.trim()
+  const save = async (): Promise<void> => {
+    if (!normalizedName || Array.from(normalizedName).length > 60 || saving) return
+    try {
+      setSaving(true)
+      setError(null)
+      if (bridge.renameProject === undefined) throw new Error('PROJECT_RENAME_UNSUPPORTED')
+      await bridge.renameProject(project.id, normalizedName)
+      onRenamed(normalizedName)
+      onClose()
+    } catch (reason) {
+      setError(commandErrorMessage(reason, '项目重命名失败，请重试。'))
+    } finally {
+      setSaving(false)
+    }
+  }
+  return <section ref={dialogRef} className={css.setupDialog} role="dialog" aria-modal="true" aria-labelledby="rename-project-title">
+    <header className={css.setupHeader}>
+      <div><h2 id="rename-project-title">重命名项目</h2><p>项目名称只用于侧边栏识别，不会修改文章的发布标题。</p></div>
+      <button className={css.miniButton} type="button" aria-label="关闭项目重命名" onClick={onClose}><CloseIcon /></button>
+    </header>
+    <label className={css.formField}><span>项目名称</span><input data-initial-focus aria-label="项目名称" value={name} maxLength={60} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) void save() }} /></label>
+    {error !== null && <div className={css.setupError} role="alert">{error}</div>}
+    <footer className={css.setupFooter}>
+      <button className={css.secondaryAction} type="button" disabled={saving} onClick={onClose}>取消</button>
+      <button className={css.primaryAction} type="button" disabled={saving || !normalizedName || normalizedName === project.name || Array.from(normalizedName).length > 60} onClick={() => void save()}>{saving ? '保存中…' : '保存名称'}</button>
+    </footer>
+  </section>
+}
+
 function SettingsDialog({
   bridge,
   brand,
@@ -1578,6 +1624,7 @@ export function WritingAgentShell({
   const [navigationError, setNavigationError] = useState<string | null>(null)
   const [projectActionNotice, setProjectActionNotice] = useState<string | null>(null)
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<BridgeSnapshot['projects'][number] | null>(null)
+  const [renameProjectTarget, setRenameProjectTarget] = useState<BridgeSnapshot['projects'][number] | null>(null)
   const [composerHandoff, setComposerHandoff] = useState<{ id: number, draft: string, restoreFocus: boolean } | null>(null)
   const activePanel = activePanelId === null ? undefined : extensions.getPanel(activePanelId)
   const rightOpen = activePanel !== undefined
@@ -1598,7 +1645,7 @@ export function WritingAgentShell({
   const selectedRecoveryKey = selectedRecoveries.map(run => `${run.runId}:${run.status}:${run.stopReason ?? ''}`).join('|')
   const checkpointApprovalRunId = selectedRecoveries.some(run => run.stopReason === 'WRITING_INPUT_REQUIRED')
     ? null
-    : selectedRecoveries.findLast(run => run.stopReason === 'CO_CREATION_CHECKPOINT')?.runId ?? null
+    : selectedRecoveries.findLast(run => run.stopReason === 'CO_CREATION_CHECKPOINT' || run.checkpointApproval)?.runId ?? null
   const modelConfigured = snapshot.settings.credentialReference !== null
   const latestRun = snapshot.runRecords.at(-1)
 
@@ -1799,6 +1846,16 @@ export function WritingAgentShell({
                   >
                     <span className={css.projectIdentity}><FolderIcon /><span>{project.name}</span></span>
                   </button>
+                  <button
+                    className={css.projectRenameButton}
+                    type="button"
+                    aria-label={`重命名项目“${project.name}”`}
+                    title="重命名项目"
+                    onClick={() => {
+                      setProjectActionNotice(null)
+                      setRenameProjectTarget(project)
+                    }}
+                  ><EditIcon /></button>
                   {hostConfiguration !== undefined && <button
                     className={css.projectDeleteButton}
                     type="button"
@@ -1989,6 +2046,12 @@ export function WritingAgentShell({
           setNewProjectIntent(bridge.getSnapshot().selectedProjectId.length === 0)
           setHero(true)
         }}
+      /></div>}
+      {renameProjectTarget !== null && <div className={appFrameCss.overlayLayer}><RenameProjectDialog
+        project={renameProjectTarget}
+        bridge={bridge}
+        onClose={() => setRenameProjectTarget(null)}
+        onRenamed={name => setProjectActionNotice(`项目已重命名为“${name}”。`)}
       /></div>}
     </main>
   )

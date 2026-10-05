@@ -413,13 +413,14 @@ test('unchanged polish retains its own saved stage body and confirmation after t
       kind: 'body', logicalKey: 'main', baseVersionId: null, content: '# 原稿\n\n这段文字无需再改。', reason: 'revision', actor: { kind: 'agent', id: 'writer', runId: 'run' } });
     assert.equal(body.ok, true); if (!body.ok) return;
     for (const stage of ['central_revision', 'language_review']) {
-      f.event('tool.requested', stage, { toolName: 'submit_writing_stage', previewId: `preview:${stage}` });
+      f.event('tool.requested', stage, { toolName: 'submit_writing_stage', arguments: { stage }, previewId: `preview:${stage}` });
       f.event('tool.completed', stage, { result: { ok: true, toolName: 'submit_writing_stage', result: { stage, artifactVersionId: body.result.versionId } } });
     }
     f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'polish-wait', reason: 'CO_CREATION_CHECKPOINT', payload: { stage: 'language_review', nextStage: 'fact_check' } });
     const timeline = (await f.snapshot()).timelineBySession.session!;
     const polish = timeline.find(row => row.id === 'preview:language_review');
     assert.ok(polish?.kind === 'message', 'the saved polish must replace its live preview even when the artifact is unchanged');
+    assert.equal(typeof polish.activeDurationMs, 'number', 'completed stage timing must survive the live preview in the conversation');
     assert.match(polish.body, /这段文字无需再改/);
     assert.match(polish.body, /认可吗/);
     assert.equal(timeline.filter(row => row.kind === 'message' && row.stage === 'language_review').length, 1);

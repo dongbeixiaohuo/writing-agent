@@ -36,7 +36,7 @@
 > **2026-09-20 rc.10 定向修复：** 真实对话形成建议时因模型被要求生成内部元数据导致连续格式校验失败；改为业务偏好契约，由工程层构造材料引用及授权状态。见 [rc.10 记录](../testing/RC10_PROPOSAL_CONTRACT_FIX.md)。真实模型验证未完成，不上调验收状态。
 > **2026-09-20 rc.9 定向修复：** rc.8 澄清回复已保存后多发收尾请求导致内部上限误报；已改为持久回复完成即结束，保留取消/权限/防失控保护。根因和红绿回归见 [rc.9 记录](../testing/RC9_INTAKE_COMPLETION_FIX.md)。不升级整体业务验收结论。
 > **2026-09-20：CR-003 对话优先改造。** 新项目无需必填字段，后台形成可确认简报并在同会话衔接写作；实现与边界测试见 [CR003 结果](../testing/CR003_CONVERSATION_RESULTS.md)。候选软件可用于针对性复测，不代表完整真实写作、交互质量或最终业务验收通过。WA-010 保持 IN_PROGRESS。
-> **2026-09-19 当前状态：BLOCKED_CORE_WORKFLOW。** WA-010 从完成重新打开，旧 20/25（80%）与 READY 结论撤回；其余任务暂不重新认证，不能据此换算产品完成百分比。下面 rc.6 及测试矩阵为历史工程证据，不证明导演/独立评审或缺口交互已实现。当前实施依据：[CR-002](../../writing-agent-1.0-prd-v1.1-dsh-ui/docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)、[分批计划](../plans/2026-09-19-interactive-collaboration.md)。
+> **2026-09-19 当前状态：BLOCKED_CORE_WORKFLOW。** WA-010 从完成重新打开，旧 20/25（80%）与 READY 结论撤回；其余任务暂不重新认证，不能据此换算产品完成百分比。下面 rc.6 及测试矩阵为历史工程证据，不证明导演/独立评审或缺口交互已实现。当前实施依据：[CR-002](../implementation/CR002_INTERACTIVE_COLLABORATION.md)、[分批计划](../plans/2026-09-19-interactive-collaboration.md)。
 
 更新时间：2026-09-28
 
@@ -127,7 +127,7 @@ R2/R3 已实现导演独立请求、同稿隔离评审、持久任务绑定、�
 - WA-024 集中主题/品牌与写作 Slot：`npm run check:ui`、`npm run check:m0`，详见 `docs/testing/WA024_RESULTS.md`
 - WA-025 UI/Bridge 一致性：`python -X utf8 tests/ui-baseline/scripts/wa025_ui_playwright.py --serve-static --upstream-dist <fixed-upstream-dist>`、`npm run test:bridge`、`npm run check:ui`，详见 `docs/testing/UI_BASELINE_RESULTS.md`
 - 整仓 legacy 回归：`npm run check`
-- 需求包一致性：`python -B writing-agent-1.0-prd-v1.1-dsh-ui/tools/check_document_pack.py`
+- 需求包一致性：`python -B scripts/check_document_pack.py`
 - WA-004 详细结果：`docs/testing/WA004_RESULTS.md`
 - WA-005 详细结果：`docs/testing/WA005_RESULTS.md`
 - WA-006 详细结果：`docs/testing/WA006_RESULTS.md`

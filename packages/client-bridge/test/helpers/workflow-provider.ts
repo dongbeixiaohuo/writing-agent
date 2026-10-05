@@ -3,7 +3,7 @@ import {
   type ModelRequest,
   type ProviderStreamEvent,
 } from '../../../runtime/llm/src/index.js'
-import { collaborationState } from '../../../application/test/collaboration-fixture.js'
+import { collaborationState, factPreparationFixtureEvents } from '../../../application/test/collaboration-fixture.js'
 import { collaborationTurn } from './collaboration-turn.js'
 
 export class ImmediateWorkflowProvider extends ModelProviderBase {
@@ -19,6 +19,8 @@ export class ImmediateWorkflowProvider extends ModelProviderBase {
   protected async *providerStream(
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
+    const extraction = factPreparationFixtureEvents(request);
+    if (extraction) { yield* extraction; return; }
     if (collaborationState(request) !== null) {
       const turn = collaborationTurn(request, {
         research: JSON.stringify({ claims: [], notes: '合成测试材料不包含外部事实。' }),

@@ -12,6 +12,7 @@ import { getApprovedAuthorPreferences, setAuthorPreferenceFromUserText } from '.
 import { pendingReviewCheckpoint } from './review-checkpoint.js';
 import { createConversationIntent, pendingCheckpoint } from './conversation-intent.js';
 import { authorContext } from './agent-context.js';
+import { stageArtifact } from './workflow-tools.js';
 
 export const AUTHOR_CONVERSATION_PURPOSE = 'writing-pack:author-conversation';
 const ROLES = ['research', 'outline', 'draft', 'review_editor', 'review_publish', 'review_reader', 'central_revision', 'language_review', 'fact_check',
@@ -225,17 +226,17 @@ export function startAuthorConversation(options: {
         return { ...saved, status: 'awaiting_user_selection' } as unknown as JsonValue;
       },
     }),
-    definition<{ candidateVersionId?: string; index: number }>({
+    definition<{ candidateVersionId?: string; index: number; includeDistributionCopy?: boolean }>({
       name: 'choose_publication', version: '1.0.0', effect: 'local_idempotent', permissions: ['author:propose'],
       description: 'Confirm a previously displayed publication candidate only when the actual user explicitly selects its number or complete title. The tool independently validates the original user message and current article version. Cannot change article paragraphs.',
-      inputSchema: { type: 'object', properties: { candidateVersionId: { type: 'string', description: '可省略：省略时使用当前 publicationCandidates.id。不要填写正文 id；正文 id 会被拒绝并返回正确值。' }, index: { type: 'integer', minimum: 1, maximum: 6 } }, required: ['index'], additionalProperties: false },
+      inputSchema: { type: 'object', properties: { candidateVersionId: { type: 'string', description: '可省略：省略时使用当前 publicationCandidates.id。不要填写正文 id；正文 id 会被拒绝并返回正确值。' }, index: { type: 'integer', minimum: 1, maximum: 6 }, includeDistributionCopy: { type: 'boolean', description: '仅作者明确同时选定分发文案时为true；只选择标题时省略或false。配文是可选项，不向作者追问确认。' } }, required: ['index'], additionalProperties: false },
       execute(args, context) {
         if (intent.result()?.intent !== 'select_title') throw new ToolExecutionFault('USER_SELECTION_REQUIRED', 'Resolve an explicit title selection before saving it');
         if (storage.inspectProject(project.id)?.latestBodyVersionId !== body?.versionId) throw new ToolExecutionFault('INTENT_CONTEXT_STALE', 'The article changed during this author turn');
         const selected = choosePublicationCandidate(storage, project.id, context.operationId, input.userInstruction, args.candidateVersionId, args.index,
-          { sourceQuote: input.userInstruction, candidateVersionId: selectedCandidates?.id ?? '', index: selectionIndex });
+          { sourceQuote: input.userInstruction, candidateVersionId: selectedCandidates?.id ?? '', index: selectionIndex, includeDistributionCopy: args.includeDistributionCopy === true });
         titleSelected = true;
-        const reply = saveReply(`已选定标题「${selected.title}」。正文没有改动。${pendingPublicationSelection ? '接下来核查当前正文、所选标题和分发文案，不再重复拟题。' : '正式导出前仍需核查当前版本。'}`,
+        const reply = saveReply(`已选定标题「${selected.title}」。正文没有改动。${pendingPublicationSelection ? `接下来由事实核查专家核查当前成稿与所选标题${selected.distributionCopy ? '、已选配文' : '；分发文案为可选项，本次跳过'}，不再要求重复确认标题。` : '正式导出前仍需核查当前版本。'}`,
           { ...context, operationId: `${context.operationId}:selection-reply` });
         return { ...selected, ...(reply as Record<string, JsonValue>) };
       },
@@ -345,6 +346,16 @@ export function startAuthorConversation(options: {
       currentBodyVersionId: body?.versionId,
       bodyChangedSinceCandidates: selectedCandidates?.bodyVersionId !== body?.versionId,
       interpretationRule: '先理解对当前问题的回答。历史已处理的写作争论、假设的将来改主意、正文版本变化不否定本轮明确选择。版本变化由保存与核查层处理。否定、追问或要求改标题才是讨论/修改，不能把完整选定标题降级为仅表达倾向。',
+    } : checkpoint ? {
+      currentQuestion: '是否认可刚保存的当前阶段成果并继续？当前回复针对下面这个新成果；之前已经执行的修改不是本轮新要求。',
+      currentCheckpoint: checkpoint,
+      savedResult: pendingReview?.artifact?.content ?? (checkpoint.stage === 'outline'
+        ? stageArtifact(storage, project.id, checkpoint.runId, 'outline')?.content : body?.content) ?? null,
+      // Completed revisions were missing from the old public history. Replaying
+      // old objections without the replacement made a new approval look like
+      // the author was repeating a still-unhandled request.
+      discussionSinceResult: history.filter(item => item.sequence > checkpoint.eventSeq),
+      interpretationRule: '只判定 currentUserMessage 本轮意图。当前成果之前的修改已经处理，不能把旧要求当成本轮要求；如果作者继续追问或要求新修改，保留其完整要求。自然语言认可无需固定措辞。',
     } : authorContext(state, 'intent'), allowedIntents: [
       ...(checkpoint ? ['approve_checkpoint', ...(!pendingReview ? ['revise_checkpoint' as const] : [])] as const : []),
       'discuss', ...(!checkpoint ? ['select_title', 'clarify_title_selection', 'generate_titles', 'plan_illustrations', 'confirm_illustrations', 'fact_check', 'full_writing', 'remember_preference', 'forget_preferences'] as const : []),

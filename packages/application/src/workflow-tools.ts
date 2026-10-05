@@ -103,7 +103,7 @@ function markerKey(runId: string, stage: WritingWorkflowStage): string {
   return `workflow:${runId}:${stage}`;
 }
 
-function stageMarker(
+export function stageMarker(
   storage: StoragePort,
   projectId: string,
   runId: string,
@@ -304,6 +304,11 @@ function markerPayload(marker: ArtifactVersion | null): WorkflowStageMarkerPaylo
   } catch {
     return null;
   }
+}
+
+export function stageArtifact(storage: StoragePort, projectId: string, runId: string, stage: WritingWorkflowStage): ArtifactVersion | null {
+  const payload = markerPayload(stageMarker(storage, projectId, runId, stage));
+  return payload ? storage.getArtifactVersion(payload.artifactVersionId) : null;
 }
 
 function continuationContextStages(
