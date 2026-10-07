@@ -12,6 +12,44 @@ import { factPreparationFixtureEvents } from './collaboration-fixture.js'
 
 const actor = { kind: 'user', id: 'fact-search-integration' } as const
 
+for (const status of ['SUPPORTED', 'CONTRADICTED'] as const) test(`non-standard fact category does not trigger a whole-report model rewrite or change ${status}`, async () => {
+  const workspacePath = mkdtempSync(join(tmpdir(), 'wa-fact-category-'));
+  const storage = openWorkspaceStorage({ workspacePath });
+  const seeded = seedFactInputs(storage);
+  const body = storage.commitArtifactVersion({ operationId: 'category-body', projectId: 'project-1', expectedProjectRevision: seeded.projectRevision,
+    kind: 'body', logicalKey: 'main', baseVersionId: seeded.bodyVersionId, content: '# 示例事件\n\n示例项目在2025年发布。', reason: 'fixture', actor });
+  assert.equal(body.ok, true); if (!body.ok) throw new Error('body fixture');
+  const requests: ModelRequest[] = [];
+  class CategoryProvider extends ModelProviderBase {
+    constructor() { super('category', '1', { protocol: 'mock', tools: 'supported', streaming: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push(request);
+      const extracting = JSON.parse(request.messages[1]!.content).factPhase === 'extract';
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: extracting ? 'prepare_fact_check' : 'submit_fact_check', argumentsDelta: JSON.stringify(extracting ? {
+        claims: [{ claimText: '示例项目在2025年发布', articleQuote: '示例项目在2025年发布', location: 'body', matchedEvidenceIds: [], checkReason: 'key_fact' }], noFactualClaimsReason: '',
+      } : { claims: [{ claimId: 'C001', claimText: '示例项目在2025年发布', claimType: 'quotation_or_interpretation', location: 'body', status,
+        risk: status === 'SUPPORTED' ? 'green' : 'yellow', supportScope: status === 'SUPPORTED' ? 'full' : 'none', matchedEvidenceId: null,
+        sourceReference: 'model-knowledge:unverified', evidenceSummary: status === 'SUPPORTED' ? '模型复核年份一致，未独立联网。' : '模型发现该年份与已知事件有冲突，需要确认。',
+        recommendedAction: status === 'SUPPORTED' ? '无需修改' : '核对年份后重新检查', verificationMethod: 'model_review', verificationRecordIds: [] }], noFactualClaimsReason: '' }) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  try {
+    const app = new WritingApplicationService({ storage, provider: new CategoryProvider() });
+    const result = await app.runFactCheck({ projectId: 'project-1', expectedProjectRevision: body.projectRevision, model: 'mock', parameters: {},
+      budget: { maxModelRequests: 2, maxToolCalls: 2, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+    assert.equal(result.ok, true, 'display-only category must not spend another long model round');
+    const saved = storage.getFactCheckStatus('project-1').assessment!;
+    assert.equal(saved.payload.claims[0]!.claimType, 'other');
+    assert.equal(saved.payload.claims[0]!.status, status);
+    assert.equal(saved.status, status === 'SUPPORTED' ? 'passed' : 'blocked');
+    assert.equal(requests.length, 2);
+    assert.equal(storage.listRunEvents(result.runId).some(e => e.type === 'request.failed'), false);
+    const raw = storage.listRunEvents(result.runId).findLast(e => e.type === 'tool.requested')!;
+    assert.match(JSON.stringify(raw.payload), /quotation_or_interpretation/, 'raw model category remains available for diagnostics');
+  } finally { storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+});
+
 class FactSearchInspectionProvider extends ModelProviderBase {
   readonly requests: ModelRequest[] = []
 
@@ -130,7 +168,7 @@ test('claim-first check verifies only article facts without resending the articl
         assert.deepEqual(request.tools?.map(t => t.name), ['prepare_fact_check']);
         assert.match(state.artifacts.find((a: any) => a.kind === 'body').content, /示例公司在2025年成立/);
         assert.equal(JSON.stringify(state).includes('未入正文的长原文'), false);
-        name = 'prepare_fact_check'; args = { claims: [{ claimText: '示例公司在2025年成立', articleQuote: '示例公司在2025年成立', location: 'body', matchedEvidenceIds: ['E001'] }], noFactualClaimsReason: '' };
+        name = 'prepare_fact_check'; args = { claims: [{ claimText: '示例公司在2025年成立', articleQuote: '示例公司在2025年成立', location: 'body', matchedEvidenceIds: ['E001'], checkReason: 'key_fact' }], noFactualClaimsReason: '' };
       } else {
         assert.equal(JSON.stringify(state).includes('这是明确的作者感受。'), false);
         assert.equal(JSON.stringify(state).includes('未入正文的长原文'), false);
@@ -142,7 +180,7 @@ test('claim-first check verifies only article facts without resending the articl
         else {
           assert.ok(searched.content.length < 3000);
           assert.equal(JSON.parse(searched.content).result.sources[0].url, 'https://example.test/date');
-          name = 'submit_fact_check'; args = { claims: [{ claimId: 'C001', claimText: '示例公司在2025年成立', claimType: 'date', location: 'body', status: 'SUPPORTED', risk: 'green', supportScope: 'full', matchedEvidenceId: 'E001', sourceReference: 'https://example.test/date', evidenceSummary: '登记年份与当前成稿一致，仅证明成立年份。', recommendedAction: '无需修改' }], noFactualClaimsReason: '' };
+          name = 'submit_fact_check'; args = { claims: [{ claimId: 'C001', claimText: '示例公司在2025年成立', claimType: 'date', location: 'body', status: 'SUPPORTED', risk: 'green', supportScope: 'full', matchedEvidenceId: 'E001', sourceReference: 'https://example.test/date', evidenceSummary: '登记年份与当前成稿一致，仅证明成立年份。', recommendedAction: '无需修改', verificationMethod: 'external_source', verificationRecordIds: [searched.role === 'tool' ? searched.toolCallId : ''] }], noFactualClaimsReason: '' };
         }
       }
       yield { type: 'tool_call_delta', index: 0, id: request.requestId, name, argumentsDelta: JSON.stringify(args) };
@@ -159,7 +197,121 @@ test('claim-first check verifies only article facts without resending the articl
     assert.equal(result.publicationReady, true);
     assert.equal(searches, 1);
     assert.equal(requests.length, 3, 'extract, search, verify/save; no redundant completion request');
+    const savedClaim = storage.getFactCheckStatus('project-1').assessment!.payload.claims[0]!;
+    assert.equal(savedClaim.checkReason, 'key_fact');
+    assert.equal(savedClaim.verificationMethod, 'external_source');
+    assert.equal(savedClaim.verificationRecordIds?.length, 1, 'provenance must survive SQLite assessment readback');
     assert.ok(storage.listRunEvents(result.runId).some(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'prepare_fact_check'));
+  } finally { globalThis.fetch = originalFetch; storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+});
+
+test('targeted verification of a suspect year exposes the material error without auditing ordinary background', async () => {
+  const workspacePath = mkdtempSync(join(tmpdir(), 'wa-fact-source-error-'));
+  const storage = openWorkspaceStorage({ workspacePath });
+  const seeded = seedFactInputs(storage);
+  const body = storage.commitArtifactVersion({ operationId: 'event-body', projectId: 'project-1', expectedProjectRevision: seeded.projectRevision,
+    kind: 'body', logicalKey: 'main', baseVersionId: seeded.bodyVersionId,
+    content: '# 发布事件\n\n示例项目在2025年发布。Brett是一名编程20多年的程序员。', reason: 'fixture', actor });
+  assert.equal(body.ok, true); if (!body.ok) throw new Error('body fixture');
+  const evidence = storage.commitArtifactVersion({ operationId: 'event-evidence', projectId: 'project-1', expectedProjectRevision: body.projectRevision,
+    kind: 'evidence', logicalKey: 'main', baseVersionId: seeded.evidenceVersionId,
+    content: JSON.stringify({ claims: [], notes: '用户二手整理材料：示例项目在2025年发布，Brett编程超过20年，未经独立核实。' }), reason: 'fixture', actor });
+  assert.equal(evidence.ok, true); if (!evidence.ok) throw new Error('evidence fixture');
+  let searches = 0;
+  class SourceErrorProvider extends ModelProviderBase {
+    constructor() { super('source-error-mock', '1', { protocol: 'mock', tools: 'supported', streaming: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = JSON.parse(request.messages.find(m => m.role === 'user')!.content);
+      const messages = request.messages.filter(m => m.role === 'tool');
+      let name: string, args: unknown;
+      if (state.factPhase === 'extract') {
+        assert.match(request.messages.filter(m => m.role === 'system').map(m => m.content).join('\n'), /关键事实.*可疑/u);
+        name = 'prepare_fact_check';
+        args = { claims: [{ claimText: '示例项目在2025年发布', articleQuote: '示例项目在2025年发布',
+          location: 'body', matchedEvidenceIds: [], checkReason: 'key_fact' }], noFactualClaimsReason: '' };
+      } else {
+        assert.equal(state.preparedClaims.length, 1, 'a background paraphrase should not create a second verification task');
+        const searched = messages.find(m => m.name === 'search_fact_sources');
+        if (!searched) {
+          name = 'search_fact_sources'; args = { query: '示例项目 原始发布公告 年份' };
+        } else {
+          name = 'submit_fact_check';
+          args = { claims: [{ claimId: 'C001', claimText: '示例项目在2025年发布', claimType: 'date', location: 'body',
+            status: 'CONTRADICTED', risk: 'yellow', supportScope: 'none', matchedEvidenceId: null,
+            sourceReference: 'https://example.test/announcement', evidenceSummary: '原始公告记载发布于2024年，二手素材的年份有误。',
+            recommendedAction: '将2025年纠正为2024年。', verificationMethod: 'external_source', verificationRecordIds: [searched.toolCallId] }], noFactualClaimsReason: '' };
+        }
+      }
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name, argumentsDelta: JSON.stringify(args) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { searches++; return Response.json({ results: [{ title: '原始发布公告', url: 'https://example.test/announcement', content: '示例项目于2024年正式发布。' }] }); };
+  try {
+    const app = new WritingApplicationService({ storage, provider: new SourceErrorProvider(), factSearchConfiguration: () => ({ parallelEnabled: false,
+      tavilyEnabled: true, authorizationMode: 'enabled_services', getTavilyKey: async () => 'fixture-key' }) });
+    const result = await app.runFactCheck({ projectId: 'project-1', expectedProjectRevision: evidence.projectRevision, model: 'mock', parameters: {},
+      budget: { maxModelRequests: 6, maxToolCalls: 6, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.publicationReady, false);
+    assert.equal(searches, 1, 'source reuse and focused selection must not cause repeated searches');
+    const assessment = storage.getFactCheckStatus('project-1').assessment!;
+    assert.equal(assessment.status, 'blocked');
+    assert.equal(assessment.payload.claims[0]!.status, 'CONTRADICTED');
+    assert.equal(assessment.payload.claims[0]!.verificationMethod, 'external_source');
+    assert.equal(assessment.payload.claims.length, 1);
+  } finally { globalThis.fetch = originalFetch; storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+});
+
+test('enabled Tavily does not force public proof of author firsthand facts, and repeated checks reuse the derived title', async () => {
+  const workspacePath = mkdtempSync(join(tmpdir(), 'wa-fact-firsthand-'));
+  const storage = openWorkspaceStorage({ workspacePath });
+  const seeded = seedFactInputs(storage);
+  const body = storage.commitArtifactVersion({ operationId: 'author-body', projectId: 'project-1', expectedProjectRevision: seeded.projectRevision,
+    kind: 'body', logicalKey: 'main', baseVersionId: seeded.bodyVersionId,
+    content: '# 客户会议\n\n昨天我参加了客户会议。', reason: 'fixture', actor });
+  assert.equal(body.ok, true); if (!body.ok) throw new Error('body fixture');
+  let requests = 0, searches = 0;
+  class FirsthandProvider extends ModelProviderBase {
+    constructor() { super('firsthand-mock', '1', { protocol: 'mock', tools: 'supported', streaming: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests++;
+      assert.match(request.messages.filter(m => m.role === 'system').map(m => m.content).join('\n'), /不是论文审稿/u);
+      const state = JSON.parse(request.messages.find(m => m.role === 'user')!.content);
+      const extract = state.factPhase === 'extract';
+      const name = extract ? 'prepare_fact_check' : 'submit_fact_check';
+      const args = extract ? { claims: [{ claimText: '昨天我参加了客户会议', articleQuote: '昨天我参加了客户会议',
+        location: 'body', matchedEvidenceIds: [], checkReason: 'key_fact' }], noFactualClaimsReason: '' }
+        : { claims: [{ claimId: 'C001', claimText: '昨天我参加了客户会议', claimType: 'event', location: 'body',
+          status: 'SUPPORTED', risk: 'green', supportScope: 'full', matchedEvidenceId: null,
+          sourceReference: '作者提供的会议经历', evidenceSummary: '对照作者本人自述，没有新增他人事件或数字。',
+          recommendedAction: '保留，不要求作者提供公开证明。', verificationMethod: 'material_comparison' }], noFactualClaimsReason: '' };
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name, argumentsDelta: JSON.stringify(args) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { searches++; throw new Error('no external requests expected'); };
+  try {
+    const app = new WritingApplicationService({ storage, provider: new FirsthandProvider(), factSearchConfiguration: () => ({ parallelEnabled: false,
+      tavilyEnabled: true, authorizationMode: 'enabled_services', getTavilyKey: async () => 'fixture-key' }) });
+    const input = () => ({ projectId: 'project-1', expectedProjectRevision: storage.inspectProject('project-1')!.revision, model: 'mock', parameters: {},
+      budget: { maxModelRequests: 4, maxToolCalls: 4, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+    const first = await app.runFactCheck(input());
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(first.publicationReady, true);
+    const titleVersionId = storage.inspectProject('project-1')!.currentTitleVersionId;
+    const second = await app.runFactCheck(input());
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(second.publicationReady, true);
+    assert.equal(storage.inspectProject('project-1')!.currentTitleVersionId, titleVersionId, 'same derived title must not create a new version');
+    assert.equal(storage.listArtifactVersions('project-1', 'title', 'main').length, 1);
+    assert.equal(requests, 4, 'two checks each extract and save, no rejection/correction loop');
+    assert.equal(searches, 0);
+    const claim = storage.getFactCheckStatus('project-1').assessment!.payload.claims[0]!;
+    assert.equal(claim.verificationMethod, 'material_comparison');
+    assert.deepEqual(claim.verificationRecordIds, []);
   } finally { globalThis.fetch = originalFetch; storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
 });
 

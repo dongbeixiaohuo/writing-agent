@@ -326,6 +326,9 @@ export interface FactClaimView {
   sourceReference: string | null
   evidenceSummary: string
   recommendedAction: string
+  checkReason?: 'key_fact' | 'suspected_error'
+  verificationMethod?: 'external_source' | 'material_comparison' | 'model_review'
+  verificationRecordIds?: readonly string[]
 }
 
 export interface FactCheckWorkspace {

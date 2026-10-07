@@ -4,7 +4,7 @@ import type { RunTraceDetail } from './protocol.js';
 const labels = { system: '系统与角色说明', task: '当前任务与用户要求', body: '正文与正文分块', evidence: '证据与核查信息', materials: '参考材料与目录', history: '历史对话与工具结果', tools: '工具定义', other: '阶段状态及其他字段' };
 type Category = keyof typeof labels;
 const category = (key: string): Category => /^(currentBody|bodyOutputContract)$/u.test(key) ? 'body'
-  : /^(factCheck|validEvidenceIds|currentExpertReview)$/u.test(key) ? 'evidence'
+  : /^(factCheck|validEvidenceIds|currentExpertReview|preparedClaims|savedSourceRecords|noFactualClaimsReason)$/u.test(key) ? 'evidence'
   : /^(materials|materialCatalog)$/u.test(key) ? 'materials'
   : /^(history|authorReviewDiscussion)$/u.test(key) ? 'history'
   : /^(taskInstruction|currentUserMessage|currentQuestion)$/u.test(key) ? 'task' : 'other';

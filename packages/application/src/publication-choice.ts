@@ -6,6 +6,14 @@ export interface PublicationCandidates { id: string; bodyVersionId: string; cand
 const KEY = 'author-publication-candidates';
 export const PUBLICATION_SELECTION_WAIT_REASON = '正文已润色，正式核查前还需要确认发布标题。当前标题只是候选，不代表你已选择。';
 
+/** The autonomous fallback is derived from the current body, not a new author choice. */
+export function defaultFactTitleContent(bodyContent: string): string {
+  const lines = bodyContent.split(/\r?\n/u).map(line => line.trim());
+  const heading = lines.find(line => /^#{1,6}\s+\S/u.test(line));
+  const title = heading ? heading.replace(/^#{1,6}\s+/u, '').trim() : lines.find(Boolean)?.slice(0, 80) ?? '未命名稿件';
+  return `- 选择状态：已锁定\n- 最终标题：「${title}」\n- 选择来源：按自主推进模式代选当前稿件标题\n- 分发文案范围：本次不包含分发文案，核查覆盖其缺省状态\n`;
+}
+
 function comparableTitle(value: string): string {
   return value.trim().normalize('NFKC');
 }

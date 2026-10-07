@@ -22,6 +22,21 @@ export interface RunFailureContext {
  */
 export function explainRunFailure(context: RunFailureContext): RunFailureExplanation {
   const { errorCode: code, technicalName, transportPhase } = context
+  if (code === 'FACT_EXTERNAL_RECORD_REQUIRED') return {
+    title: '核查提交的查证依据不完整',
+    detail: '模型声称已外部查证，但提交的来源未对应本轮成功搜索或读取记录；这不是模型无响应或搜索超时。',
+    remediation: '修正对应来源记录，或如实改用材料对照/模型复核，不需要为了补引用重复搜索。真实未决问题应说明纠正动作。稿件仍保留。',
+  }
+  if (code === 'FACT_CLAIM_SELECTION_REQUIRED') return {
+    title: '新增待查事实没有说明选择原因',
+    detail: '模型增加了待查条目，但没有记录为什么需要核对；这是提交格式问题，不是模型无响应或搜索故障。',
+    remediation: '为新增条目补充key_fact或suspected_error，保留原待查条目后重新提交，不必重新读取全文。',
+  }
+  if (code === 'FACT_KEY_EXTERNAL_CHECK_REQUIRED') return {
+    title: '旧核查规则拒绝了提交',
+    detail: '这条历史记录来自要求关键事实逐条外部查证的旧规则；当前版本已取消该要求。',
+    remediation: '在当前版本重新核查即可；无需为普通背景或作者自述补充公开证明。稿件仍保留。',
+  }
   if (code === 'CHECKPOINT_REWORK_REQUIRED' || code === 'OUTLINE_REWORK_REQUIRED') return {
     title: '当前决策记录要求先修改，不能直接进入下一阶段',
     detail: '模型已返回调度请求，但程序读到的作者决策是“修改当前阶段”，因此拒绝跳步；这不是模型无响应，也不是搜索故障。决策记录可能与作者本意不符，需要核对本轮回复。',

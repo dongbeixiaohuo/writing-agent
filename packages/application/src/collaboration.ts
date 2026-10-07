@@ -102,8 +102,10 @@ export function createWritingCollaboration(options: {
     const project = storage.inspectProject(projectId);
     if (!body || !evidence || body.id !== project?.latestBodyVersionId || evidence.id !== project.currentEvidenceVersionId) return null;
     const publication = selectedPublicationContext(storage, projectId);
+    const title = project.currentTitleVersionId ? storage.getArtifactVersion(project.currentTitleVersionId) : null;
     return { body, evidence, titleVersionId: project.currentTitleVersionId, finalTitle: publication?.finalTitle,
-      distributionCopy: publication?.distributionCopy ?? undefined };
+      distributionCopy: publication?.distributionCopy ?? undefined,
+      generatedTitleContent: title?.reason === 'workflow:fact-check-title' ? title.content : undefined };
   };
   const definition: ToolDefinition<Decision, JsonValue> = {
     name: "director_decide", version: "1.0.0", effect: "local_idempotent", permissions: ["workflow:submit"],
@@ -354,7 +356,7 @@ export function createWritingCollaboration(options: {
       systemPrompt: `${commonPrompt}\nACTOR=${actor}\n${buildExpertInstructions(actor)}\n${rolePrompt}\n${sharedStateRules}\n${isFactCheck ? `${FACT_CONTEXT_GUIDANCE}\n${factSearch.instructions()}` : ''}`,
       userMessage: `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : isFactCheck ? options.factInstruction ?? options.expertMessage : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material")).join("\n")}\nCOLLABORATION_STATE=${JSON.stringify(summary)}`,
       allowedTools,
-      projectToolResult: message => isFactCheck ? projectFactToolResult(message) : projectInlineRead(message, artifactContext.completeArtifacts, summary.materials, artifacts),
+      projectToolResult: (message, context) => isFactCheck ? projectFactToolResult(message, context) : projectInlineRead(message, artifactContext.completeArtifacts, summary.materials, artifacts),
       ...(!outputPreview && !current.finished ? { toolChoice: 'required' as const } : {}),
       expectedBodyVersionId: assignment?.expectedBodyVersionId === undefined ? current.expectedBodyVersionId : assignment.expectedBodyVersionId,
       authorizeTool(call) {

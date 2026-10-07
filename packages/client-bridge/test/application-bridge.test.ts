@@ -669,7 +669,7 @@ describe("Application Service client bridge", () => {
       kind: "body",
       logicalKey: "main",
       baseVersionId: null,
-      content: "# 核查标题\n\n只有作者感受。",
+      content: "# 核查标题\n\n活动于2025年举行。",
       reason: "fact fixture",
       actor,
     });
@@ -723,8 +723,11 @@ describe("Application Service client bridge", () => {
         bodyVersionId: body.result.versionId,
         titleVersionId: title.result.versionId,
         coverage: { body: true, title: true, distributionCopy: true },
-        claims: [],
-        noFactualClaimsReason: "只有作者感受。",
+        claims: [{ claimId: 'C001', claimText: '活动于2025年举行。', claimType: 'date', location: 'body',
+          status: 'SUPPORTED', risk: 'green', supportScope: 'full', matchedEvidenceId: null,
+          sourceReference: 'https://example.test/activity', evidenceSummary: '合成核查结果：活动年份一致。', recommendedAction: '保留。',
+          checkReason: 'suspected_error', verificationMethod: 'external_source', verificationRecordIds: ['saved-source-record'] }],
+        noFactualClaimsReason: '',
       },
       actor,
     });
@@ -746,6 +749,9 @@ describe("Application Service client bridge", () => {
       assert.equal(fact.status, "passed");
       assert.equal(fact.snapshot?.id, frozen.result.snapshotId);
       assert.equal(fact.assessment?.status, "passed");
+      assert.equal(fact.assessment?.claims[0]?.checkReason, 'suspected_error');
+      assert.equal(fact.assessment?.claims[0]?.verificationMethod, 'external_source');
+      assert.deepEqual(fact.assessment?.claims[0]?.verificationRecordIds, ['saved-source-record']);
       assert.equal(fact.provenance.length, 3);
       assert.match(fact.notice, /不承诺事实绝对正确/u);
 

@@ -8,6 +8,45 @@ import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from "
 import { ToolRegistry, ToolExecutionFault } from "../../tools/src/index.js";
 import { AgentRuntime } from "../src/index.js";
 
+it('provides raw history and the result position for request-only read projections', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'read-history-projection-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  const requests: ModelRequest[] = [];
+  const projectionContexts: { index: number; messages: ModelRequest['messages'] }[] = [];
+  class Provider extends ModelProviderBase {
+    constructor() { super('history', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push(request);
+      if (requests.length < 3) {
+        yield { type: 'tool_call_delta', index: 0, id: `c${requests.length}`, name: 'read', argumentsDelta: '{}' };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      } else { yield { type: 'text_delta', delta: 'done' }; yield { type: 'completed', finishReason: 'stop' }; }
+    }
+  }
+  try {
+    storage.createProject({ operationId: 'p', projectId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage,
+      tools: ToolRegistry.create([{ name: 'read', version: '1.0.0', description: 'read', effect: 'read_only', permissions: [], inputSchema: { type: 'object', properties: {} }, execute() { return { content: 'FULL_PAGE' }; } }]),
+      requestPolicy: () => ({ scopeId: 'fixed', systemPrompt: 'read', userMessage: 'read', allowedTools: ['read'],
+        projectToolResult: (message: any, context: any) => {
+          assert.ok(context, 'a projection must know which batch has just completed');
+          projectionContexts.push(structuredClone(context));
+          return context.index < context.messages.length - 1 ? 'old read receipt' : message.content;
+        } }),
+    });
+    const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'm', parameters: {}, systemPrompt: 'read', userMessage: 'read', grantedPermissions: [], expectedBodyVersionId: null });
+    assert.equal(result.ok, true);
+    assert.match(requests[1]!.messages.find(m => m.role === 'tool')!.content, /FULL_PAGE/);
+    const reads = requests[2]!.messages.filter(m => m.role === 'tool');
+    assert.equal(reads[0]!.content, 'old read receipt');
+    assert.match(reads[1]!.content, /FULL_PAGE/);
+    assert.match(projectionContexts.at(-1)!.messages.find(m => m.role === 'tool')!.content, /FULL_PAGE/, 'later projections see raw history, not earlier projections');
+    assert.match(JSON.stringify(storage.listRunEvents(result.runId).filter(e => e.type === 'tool.completed')), /FULL_PAGE/);
+    const snapshot = storage.getRequestSnapshot(storage.listRunEvents(result.runId).findLast(e => e.type === 'request.dispatch_attempted')!.payload.snapshotId as string);
+    assert.equal(snapshot!.request.messages.find(m => m.role === 'tool')!.content, 'old read receipt', 'diagnostics must reflect what was actually sent');
+  } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('projects duplicate read results for a request without losing original history or persisted tool results', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'read-context-'));
   const storage = openWorkspaceStorage({ workspacePath: dir });

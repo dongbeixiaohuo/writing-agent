@@ -170,6 +170,8 @@ export const FactClaimStatusSchema = z.enum([
 ]);
 export const FactRiskSchema = z.enum(["red", "yellow", "green"]);
 export const FactSupportScopeSchema = z.enum(["full", "partial", "none"]);
+export const FactCheckReasonSchema = z.enum(["key_fact", "suspected_error"]);
+export const FactVerificationMethodSchema = z.enum(["external_source", "material_comparison", "model_review"]);
 export const FactClaimSchema = z.object({
   claimId: z.string().regex(/^C\d{3,}$/u),
   claimText: z.string().trim().min(1),
@@ -182,6 +184,10 @@ export const FactClaimSchema = z.object({
   sourceReference: z.string().trim().min(1).nullable().default(null),
   evidenceSummary: z.string().trim().min(1),
   recommendedAction: z.string().trim().min(1),
+  // Optional for old assessments; a URL alone never upgrades their provenance.
+  checkReason: FactCheckReasonSchema.optional(),
+  verificationMethod: FactVerificationMethodSchema.optional(),
+  verificationRecordIds: z.array(z.string().trim().min(1)).max(12).optional(),
 });
 export const FactCheckCoverageSchema = z.object({
   body: z.literal(true),
@@ -1273,6 +1279,7 @@ export function evaluateFactCheck(
       `- 位置：${claim.location}`,
       `- 依据：${claim.evidenceSummary}`,
       `- 建议：${claim.recommendedAction}`,
+      ...(claim.verificationMethod ? [`- 核查方式：${claim.verificationMethod}`] : []),
       "",
     );
   }

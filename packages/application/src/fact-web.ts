@@ -149,6 +149,7 @@ export function createFactSourceTool(
       } finally { clearTimeout(timer); }
       const text = fetched.content.text;
       return {
+        requestedUrl: args.url,
         finalUrl: fetched.finalUrl,
         redirectCount: fetched.redirectCount,
         contentType: fetched.contentType,

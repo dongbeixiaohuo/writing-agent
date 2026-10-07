@@ -1268,6 +1268,56 @@ it('gives precise repair guidance for dispatch questions without silently discar
   } finally { f.close(); }
 });
 
+it('resumed collaboration fact check retires consumed pages even during schema correction without losing raw trace', async () => {
+  class ContinuedFactProvider extends CollaborationProvider {
+    readonly factRequests: ModelRequest[] = [];
+    invalidSubmissionSent = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state: any = collaborationState(request);
+      if (state?.stage !== 'fact_check' || state.factPhase !== 'verify') { yield* super.providerStream(request); return; }
+      this.requests.push(structuredClone(request));
+      this.factRequests.push(structuredClone(request));
+      const reads = request.messages.filter(m => m.role === 'tool' && m.name === 'read_fact_article');
+      const evidenceRead = request.messages.some(m => m.role === 'tool' && m.name === 'read_fact_evidence');
+      const name = reads.length < 2 ? 'read_fact_article' : !evidenceRead ? 'read_fact_evidence' : 'submit_fact_check';
+      const args = reads.length < 2 ? { offset: reads.length * 8, maxChars: 8 } : !evidenceRead ? { evidenceIds: [] }
+        : { claims: [], noFactualClaimsReason: this.invalidSubmissionSent ? '全文只有作者的感受，无待查关键事实。' : 99 };
+      if (name === 'submit_fact_check') this.invalidSubmissionSent = true;
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name, argumentsDelta: JSON.stringify(args) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  const provider = new ContinuedFactProvider();
+  const f = setup(provider, 'co_creation');
+  try {
+    const first = await f.app.runDraft(f.input);
+    for (let index = 0; index < 6; index++) await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input,
+      expectedProjectRevision: f.storage.inspectProject('p')!.revision, runId: first.runId, operationId: `continuation-${index}`, decision: 'resume', userInstruction: '继续' })).result;
+    const candidates = getPublicationCandidates(f.storage, 'p')!;
+    choosePublicationCandidate(f.storage, 'p', 'continuation-title', '就用第一个', candidates.id, 1);
+    const result = await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input,
+      expectedProjectRevision: f.storage.inspectProject('p')!.revision, runId: first.runId, operationId: 'continuation-fact', decision: 'resume', userInstruction: '标题已确认，请继续核查' })).result;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(f.storage.getFactCheckStatus('p').status, 'passed');
+    assert.equal(provider.factRequests.length, 5, 'two article pages, one evidence read, one invalid submission and one bounded correction');
+    const secondRead = provider.factRequests[1]!.messages.find(m => m.role === 'tool' && m.name === 'read_fact_article')!;
+    assert.equal(JSON.parse(secondRead.content).result.requestProjection, undefined, 'newly requested page is delivered intact');
+    const activePages = provider.factRequests[2]!.messages.filter(m => m.role === 'tool' && m.name === 'read_fact_article');
+    assert.ok(activePages.every(m => JSON.parse(m.content).result.text.length === 8), 'active article pages remain visible together');
+    for (const request of provider.factRequests.slice(3)) {
+      const reads = request.messages.filter(m => m.role === 'tool' && m.name === 'read_fact_article');
+      assert.equal(JSON.parse(reads[0]!.content).result.requestProjection, 'read_receipt_not_source');
+      assert.equal(JSON.parse(reads[1]!.content).result.requestProjection, 'read_receipt_not_source');
+      assert.equal(JSON.parse(request.messages.find(m => m.role === 'tool' && m.name === 'read_fact_evidence')!.content).result.requestProjection, undefined);
+      assert.match(request.messages[0]!.content, /不从头重读完整正文和全部原始素材/);
+    }
+    const rawReads = f.storage.listRunEvents(first.runId).filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'read_fact_article');
+    assert.equal(rawReads.length, 2);
+    assert.equal((rawReads[0]!.payload.result as any).result.text.length, 8, 'request-only projection must not delete the recorded page');
+    assert.equal((rawReads[0]!.payload.result as any).result.requestProjection, undefined);
+  } finally { f.close(); }
+});
+
 it('waits for co-author title selection before fact-checking and preserves that choice', async () => {
   const f = setup(new CollaborationProvider(), 'co_creation');
   try {

@@ -100,7 +100,7 @@ describe("expert instruction migration", () => {
     assert.match(reader, /朋友圈.*熟人.*转发/u);
     assert.match(reader, /模拟读者.*即时感受/u);
     assert.match(reader, /点开.*继续.*弃读.*读完.*转发/u);
-    assert.match(buildExpertInstructions('fact_check'), /可被外部世界证伪[\s\S]*第一人称亲历叙事[\s\S]*不生成 C 编号/u);
+    assert.match(buildExpertInstructions('fact_check'), /易错.*存疑[\s\S]*第一人称亲历叙事[\s\S]*不生成 C 编号/u);
     assert.match(editor, /写作工艺.*结构.*作者声音/u);
     assert.doesNotMatch(editor, /CTR|完读率/u);
     assert.match(publish, /读者价值.*全文承诺.*发布风险/u);
@@ -120,6 +120,20 @@ describe("expert instruction migration", () => {
     assert.match(buildExpertInstructions("memory"), /只有.*user_edit.*用户偏好/u);
     assert.match(buildExpertInstructions("retrospective"), /相关性不能写成因果/u);
     assert.match(buildExpertInstructions("illustrator"), /生成失败.*不写假路径.*不声称图片成功/u);
+  });
+
+  it('fact checks prioritize real errors and key facts, not ordinary-background paraphrase audits', () => {
+    const instructions = buildExpertInstructions('fact_check');
+    assert.match(instructions, /易错.*存疑.*时间.*人物身份.*事件.*数字/u);
+    assert.match(instructions, /Brett.*20.*不.*单独/u);
+    assert.match(instructions, /与材料一致.*不.*真实/u);
+    assert.match(instructions, /不是写论文/u);
+    assert.match(instructions, /没有引用不等于事实错误/u);
+    assert.match(instructions, /不要求每条都联网或有论文/u);
+    assert.match(instructions, /作者自述.*不要求公开证明/u);
+    assert.match(instructions, /不可仅凭URL或主题相关就标SUPPORTED/u);
+    assert.doesNotMatch(instructions, /关键事实.*必须.*外部证明/u);
+    assert.match(instructions, /不.*逐字.*审计/u);
   });
 
   it("defers unsolicited title candidates in outline and draft without discarding an existing author title", () => {

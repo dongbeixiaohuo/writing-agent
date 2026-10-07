@@ -298,6 +298,12 @@ export function toolFailureDetail(code: string | null): string {
       "核查引用的证据编号不在已保存的证据账本中；系统已拒绝这次核查，稿件没有被覆盖。",
     FACT_CHECK_SOURCE_REQUIRED:
       "核查把主张标为已支持，但没有提供账本证据或可复核来源；系统已拒绝保存。",
+    FACT_EXTERNAL_RECORD_REQUIRED:
+      '模型声称已联网查证，但未引用本轮成功获取的对应来源；系统拒绝这次提交，稿件仍保留。',
+    FACT_KEY_EXTERNAL_CHECK_REQUIRED:
+      '这是旧版本逐条外部查证规则留下的拒绝记录；当前版本已取消该要求，可重新核查，无需为普通背景或作者自述补公开证明。',
+    FACT_CLAIM_SELECTION_REQUIRED:
+      '新增待查事实未说明选择原因；补充key_fact或suspected_error后重新提交即可，无需重读全文。',
     FACT_CHECK_CLAIMS_INVALID:
       "核查清单格式不完整；系统已拒绝保存，稿件没有被覆盖。",
     WORKFLOW_STAGE_OUT_OF_ORDER:
@@ -2424,6 +2430,9 @@ export class ApplicationClientBridge implements ClientBridge {
                     sourceReference: claim.sourceReference,
                     evidenceSummary: claim.evidenceSummary,
                     recommendedAction: claim.recommendedAction,
+                    ...(claim.checkReason ? { checkReason: claim.checkReason } : {}),
+                    ...(claim.verificationMethod ? { verificationMethod: claim.verificationMethod } : {}),
+                    ...(claim.verificationRecordIds ? { verificationRecordIds: claim.verificationRecordIds } : {}),
                   }),
                 ),
               },

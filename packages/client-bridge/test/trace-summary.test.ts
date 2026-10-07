@@ -207,6 +207,21 @@ test('model output format failure is distinguished from transport silence', () =
   assert.doesNotMatch(gate.title + gate.detail, /模型未响应/u);
 });
 
+test('fact provenance refusals explain missing evidence rather than implying a model or search outage', () => {
+  const context = { kind: 'tool', status: 'failed', technicalName: 'submit_fact_check' } as const;
+  const external = explainRunFailure({ ...context, errorCode: 'FACT_EXTERNAL_RECORD_REQUIRED' });
+  assert.match(external.title, /查证依据不完整/u);
+  assert.match(external.remediation, /材料对照.*模型复核/u);
+  assert.match(external.remediation, /不需要.*重复搜索/u);
+  assert.doesNotMatch(external.title, /无响应|超时/u);
+  const selection = explainRunFailure({ ...context, errorCode: 'FACT_CLAIM_SELECTION_REQUIRED' });
+  assert.match(selection.title, /选择原因/u);
+  assert.match(selection.remediation, /不必重新读取全文/u);
+  const legacy = explainRunFailure({ ...context, errorCode: 'FACT_KEY_EXTERNAL_CHECK_REQUIRED' });
+  assert.match(legacy.detail, /旧规则.*取消/u);
+  assert.match(legacy.remediation, /无需.*公开证明/u);
+});
+
 test('checkpoint rework gate explains the decision conflict and a usable recovery action', () => {
   const trace = runDiagnostics(projection([
     { type:'run.started', operationId:'start', payload:{} },

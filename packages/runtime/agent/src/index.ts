@@ -113,7 +113,7 @@ export interface AgentRequestPolicy {
   readonly authorizeTool?: (call: CompletedToolCall) => boolean;
   /** Request-only projection of already recorded tool output. Full events and
    * in-memory history stay intact; applications must retain errors and provenance. */
-  readonly projectToolResult?: (message: ModelMessage) => string;
+  readonly projectToolResult?: (message: ModelMessage, context: { readonly messages: readonly ModelMessage[]; readonly index: number }) => string;
 }
 
 export interface AgentRunInput {
@@ -671,11 +671,12 @@ export class AgentRuntime {
       // retrying with the same exhausted budget can only truncate again.
       const escalatedOutputTokens = pendingOutputTokenLimit;
       pendingOutputTokenLimit = null;
+      const requestHistory = structuredClone(messages);
       const request: ModelRequest = {
         requestId,
         model: input.model,
-        messages: structuredClone(messages).map(message => message.role === 'tool' && policy?.projectToolResult
-          ? { ...message, content: policy.projectToolResult(message) } : message),
+        messages: requestHistory.map((message, index) => message.role === 'tool' && policy?.projectToolResult
+          ? { ...message, content: policy.projectToolResult(message, { messages: requestHistory, index }) } : message),
         ...(tools.length === 0 ? {} : { tools }),
         parameters: { ...structuredClone(input.parameters),
           ...(escalatedOutputTokens === null ? {} : { maxOutputTokens: escalatedOutputTokens }),

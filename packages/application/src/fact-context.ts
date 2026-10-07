@@ -1,8 +1,9 @@
-import type { JsonValue, MaterialRecord, StoragePort } from '../../writing-core/src/index.js';
+import type { FactClaim, JsonValue, MaterialRecord, StoragePort } from '../../writing-core/src/index.js';
 import type { ModelMessage } from '../../runtime/llm/src/index.js';
 import type { SessionStore } from '../../runtime/session/src/index.js';
 import { ToolExecutionFault, type ToolDefinition } from '../../runtime/tools/src/index.js';
 import { inlineMaterialContext } from './material-context.js';
+import { defaultFactTitleContent } from './publication-choice.js';
 
 /** Lossless request projection only: the persisted ledger and fact gate are unchanged.
  * No claim selection by lexical matching, no quote clipping, no inferred verification. */
@@ -63,10 +64,12 @@ export function factEvidenceCatalog(content: string): JsonValue {
 }
 
 type FactArtifact = { id: string; kind: string; content: string };
-export type FactBinding = { body: FactArtifact; evidence: FactArtifact; titleVersionId: string | null; finalTitle?: string | undefined; distributionCopy?: string | undefined };
-type PreparedClaim = { claimId: string; claimText: string; articleQuote: string; location: 'body' | 'title' | 'distributionCopy'; matchedEvidenceIds: string[] };
+export type FactBinding = { body: FactArtifact; evidence: FactArtifact; titleVersionId: string | null; finalTitle?: string | undefined; distributionCopy?: string | undefined;
+  generatedTitleContent?: string | undefined };
+type PreparedClaim = { claimId: string; claimText: string; articleQuote: string; location: 'body' | 'title' | 'distributionCopy'; matchedEvidenceIds: string[];
+  checkReason?: 'key_fact' | 'suspected_error' };
 export type FactPreparation = { bodyVersionId: string; evidenceVersionId: string; titleVersionId: string | null; preparationId: string;
-  claims: PreparedClaim[]; noFactualClaimsReason: string };
+  claims: PreparedClaim[]; noFactualClaimsReason: string; defaultTitleContent?: string };
 type FactStore = StoragePort & Pick<SessionStore, 'listRunEvents'>;
 
 /** Persist extraction, not a fact conclusion. Reopening a bridge/run can reuse
@@ -76,13 +79,26 @@ export function factPreparation(storage: Pick<SessionStore, 'listRunEvents'>, ru
   const event = storage.listRunEvents(runId).findLast(e => e.type === 'tool.completed' && (e.payload.result as any)?.ok === true && (e.payload.result as any)?.toolName === 'prepare_fact_check');
   const saved = (event?.payload.result as any)?.result as FactPreparation | undefined;
   return saved && saved.bodyVersionId === binding.body.id && saved.evidenceVersionId === binding.evidence.id &&
-    saved.titleVersionId === binding.titleVersionId ? saved : null;
+    (saved.titleVersionId === binding.titleVersionId ||
+      (saved.defaultTitleContent !== undefined && saved.defaultTitleContent === binding.generatedTitleContent)) ? saved : null;
+}
+
+/** Older outputs may discover a real error without the optional reason. Preserve
+ * that finding without a correction round; unclassified successful extras do not
+ * acquire a selection reason merely from a source URL or material agreement. */
+function submittedSelectionReason(claim: Partial<FactClaim>): PreparedClaim['checkReason'] {
+  if (claim.checkReason === 'key_fact' || claim.checkReason === 'suspected_error') return claim.checkReason;
+  if (['UNSUPPORTED', 'CONTRADICTED', 'BROKEN_LINK', 'NEEDS_USER_SOURCE'].includes(claim.status ?? '') ||
+    claim.risk === 'red' || claim.supportScope === 'partial' || claim.supportScope === 'none') return 'suspected_error';
+  return undefined;
 }
 
 export function factSubmissionCoversPreparation(prepared: FactPreparation | null, argumentsValue: unknown): boolean {
   if (!prepared || !argumentsValue || typeof argumentsValue !== 'object') return false;
-  const submitted = (argumentsValue as { claims?: { claimId: string; claimText: string }[] }).claims;
-  return Array.isArray(submitted) && prepared.claims.every(c => submitted.some(s => s.claimId === c.claimId && s.claimText === c.claimText));
+  const submitted = (argumentsValue as { claims?: Partial<FactClaim>[] }).claims;
+  return Array.isArray(submitted) && prepared.claims.every(c => submitted.some(s => s.claimId === c.claimId && s.claimText === c.claimText)) &&
+    submitted.every(s => prepared.claims.some(c => s.claimId === c.claimId && s.claimText === c.claimText) ||
+      submittedSelectionReason(s) !== undefined);
 }
 
 /** The extraction turn sees the complete final article but only an evidence
@@ -107,7 +123,7 @@ export function factVerificationArtifacts(artifacts: readonly FactArtifact[], pr
     const claims = ledger && Array.isArray(ledger.claims) ? ledger.claims.filter(c => ids.has(String((c as any).evidence_id))) : [];
     const fields = [...new Set(claims.flatMap(c => Object.keys(c as object)))];
     const sourceIds = new Set(claims.map(c => (c as any).source_id));
-    return { id: a.id, kind: a.kind, content: { projection: 'fact_selected_evidence', claimFields: fields,
+    return { id: a.id, kind: a.kind, content: { projection: 'fact_selected_evidence', delivery: 'selected_full', claimFields: fields,
       claimRows: claims.map(c => fields.map(k => (c as any)[k] ?? null)),
       sources: Array.isArray(ledger?.sources) ? ledger.sources.filter(s => sourceIds.has((s as any).source_id)) : [],
       sharedNotesAvailableVia: 'read_fact_evidence', legacyLedger: ledger === null,
@@ -117,6 +133,65 @@ export function factVerificationArtifacts(artifacts: readonly FactArtifact[], pr
 
 function searchRows(text: string): Record<string, unknown>[] | null {
   try { const value = JSON.parse(text); return Array.isArray(value) ? value : Array.isArray(value.results) ? value.results : null; } catch { return null; }
+}
+
+/** Citation wrappers/fragments identify the same fetched page. Preserve balanced
+ * parentheses in real URLs (e.g. journal article IDs) and both HTTP/HTTPS. */
+function sourceUrl(value: string): string | null {
+  let raw = value.replace(/[.,;!?，。；！？、’”」』]+$/gu, '');
+  for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}'], ['（', '）'], ['【', '】']]) {
+    while (raw.endsWith(close!) && raw.split(close!).length > raw.split(open!).length) raw = raw.slice(0, -1);
+  }
+  try {
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    url.hash = '';
+    return url.href;
+  } catch { return null; }
+}
+
+function sourceUrls(text: string): string[] {
+  return (text.replace(/\\\//gu, '/').match(/https?:\/\/[^\s"<>\\]+/gu) ?? [])
+    .map(sourceUrl).filter((url): url is string => url !== null);
+}
+
+/** Network provenance is established by successful tool records, not a model's
+ * assertion or a URL copied from supplied material. This is NOT semantic proof. */
+export function normalizeFactVerification(
+  events: readonly { type: string; payload: Readonly<Record<string, unknown>> }[],
+  prepared: Pick<FactPreparation, 'claims'> | null,
+  claims: readonly FactClaim[],
+): FactClaim[] {
+  const records = new Map<string, string[]>();
+  for (const event of events) {
+    const envelope = event.payload.result as any;
+    if (event.type !== 'tool.completed' || envelope?.ok !== true || typeof envelope.callId !== 'string') continue;
+    const result = envelope.result;
+    if (envelope.toolName === 'search_fact_sources' && result?.mode === 'external' && typeof result.evidenceText === 'string') {
+      const rows = searchRows(result.evidenceText);
+      records.set(envelope.callId, rows ? rows.filter(row => String(row.excerpt ?? row.content ?? '').trim())
+        .flatMap(row => sourceUrls(String(row.url ?? ''))) : sourceUrls(result.evidenceText));
+    } else if (envelope.toolName === 'read_fact_source' && typeof result?.text === 'string' && result.text.trim() && typeof result.finalUrl === 'string') {
+      records.set(envelope.callId, [result.finalUrl, ...(typeof result.requestedUrl === 'string' ? [result.requestedUrl] : [])].flatMap(sourceUrls));
+    }
+  }
+  return claims.map(claim => {
+    const selected = prepared?.claims.find(c => c.claimId === claim.claimId && c.claimText === claim.claimText);
+    const checkReason = selected?.checkReason ?? submittedSelectionReason(claim);
+    if (prepared && !selected && checkReason !== 'key_fact' && checkReason !== 'suspected_error') {
+      throw new ToolExecutionFault('FACT_CLAIM_SELECTION_REQUIRED', '新发现的待查事实须填写checkReason=key_fact或suspected_error，说明为何需要核对；保留原有待查条目，可直接修正本次提交，不必重读全文。');
+    }
+    const urls = sourceUrls(claim.sourceReference ?? '');
+    const recordIds = [...new Set(claim.verificationRecordIds ?? [])];
+    const hasRecords = recordIds.length > 0 && recordIds.every(id => records.get(id)?.some(url => urls.includes(url)));
+    let verificationMethod = claim.verificationMethod;
+    if (verificationMethod === 'external_source' && !hasRecords) {
+      throw new ToolExecutionFault('FACT_EXTERNAL_RECORD_REQUIRED', '不能把与材料一致写成已联网查证。external_source必须引用本轮成功搜索/读取的callId及同一具体来源URL；否则使用material_comparison或model_review，并如实保留不确定项。');
+    }
+    if (!verificationMethod) verificationMethod = claim.sourceReference === 'model-knowledge:unverified' ? 'model_review' : 'material_comparison';
+    return { ...claim, ...(checkReason ? { checkReason } : {}), verificationMethod,
+      verificationRecordIds: verificationMethod === 'external_source' ? recordIds : [] };
+  });
 }
 
 /** A new verification scope must still be able to reuse earlier searches in
@@ -141,14 +216,49 @@ export function factRecordCatalog(storage: Pick<SessionStore, 'listRunEvents'>, 
   });
 }
 
+/** Identify an active paged source without mixing versions or search rows. */
+function factReadResource(message: ModelMessage): string | null {
+  if (message.role !== 'tool') return null;
+  try {
+    const envelope = JSON.parse(message.content), r = envelope.result;
+    if (envelope.ok !== true || !r) return null;
+    if (message.name === 'read_fact_article' && typeof r.bodyVersionId === 'string') return JSON.stringify([message.name, r.bodyVersionId]);
+    if (message.name === 'read_material' && typeof r.materialId === 'string' && typeof r.contentVersionId === 'string')
+      return JSON.stringify([message.name, r.materialId, r.contentVersionId]);
+    if (message.name === 'read_fact_record' && typeof r.callId === 'string') return JSON.stringify([message.name, r.callId, r.source ?? null]);
+  } catch { /* Unknown legacy results stay conservative. */ }
+  return null;
+}
+
 /** Request-only excerpt; original tool events are retained in SQLite. All URL
  * locators survive. Exact passages are readable locally without another search. */
-export function projectFactToolResult(message: ModelMessage): string {
-  if (message.role !== 'tool' || !['search_fact_sources', 'read_fact_source'].includes(message.name ?? '')) return message.content;
+export function projectFactToolResult(message: ModelMessage, context?: { readonly messages: readonly ModelMessage[]; readonly index: number }): string {
+  if (message.role !== 'tool') return message.content;
+  const localRead = ['read_fact_article', 'read_fact_evidence', 'read_material', 'read_fact_record'].includes(message.name ?? '');
+  if (!localRead && !['search_fact_sources', 'read_fact_source'].includes(message.name ?? '')) return message.content;
   try {
     const envelope = JSON.parse(message.content);
     if (envelope.ok !== true || !envelope.result) return message.content;
     const result = envelope.result;
+    if (localRead) {
+      // The latest parallel batch and all pages of its active resources remain
+      // jointly visible. Other old reads become locators, never evidence.
+      // A schema-correction user message does not consume the latest batch.
+      const latestBatch = context?.messages.findLastIndex(m => m.role === 'assistant' && (m.toolCalls?.length ?? 0) > 0);
+      if (!context || latestBatch === undefined || latestBatch < 0 || context.index > latestBatch) return message.content;
+      const resource = factReadResource(message);
+      if (resource !== null && context.messages.slice(latestBatch + 1).some(m => factReadResource(m) === resource)) return message.content;
+      const invocation = context.messages.slice(0, context.index).findLast(m => m.role === 'assistant' &&
+        m.toolCalls?.some(call => call.id === message.toolCallId));
+      const call = invocation?.role === 'assistant' ? invocation.toolCalls?.find(c => c.id === message.toolCallId && c.name === message.name) : undefined;
+      if (!call) return message.content;
+      const metadata = Object.fromEntries(['bodyVersionId', 'evidenceVersionId', 'materialId', 'contentVersionId', 'callId', 'resultIndex',
+        'offset', 'nextOffset', 'totalChars', 'truncated', 'instructionAuthority'].filter(k => k in result).map(k => [k, result[k]]));
+      return JSON.stringify({ ok: true, toolName: message.name, callId: message.toolCallId, result: { ...metadata,
+        ...(message.name === 'read_fact_evidence' ? { evidenceIds: Array.isArray(result.claims) ? result.claims.map((c: any) => c.evidence_id) : [] } : {}),
+        contentAvailableVia: { tool: message.name, arguments: call.arguments }, requestProjection: 'read_receipt_not_source',
+        instruction: '定位记录不是证据；旧全文不重复传入，需要限定时按相同参数本地重读。' } });
+    }
     const text = message.name === 'search_fact_sources' ? result.evidenceText : result.text;
     if (typeof text !== 'string' || !text) return message.content;
     const metadata = Object.fromEntries(['mode', 'provider', 'finalUrl', 'notice', 'errorCode', 'cached'].filter(k => k in result).map(k => [k, result[k]]));
@@ -167,11 +277,12 @@ export function projectFactToolResult(message: ModelMessage): string {
 export function createFactContextTools(storage: FactStore, projectId: string, bindingForRun?: (runId: string) => FactBinding | null): ToolDefinition<never, JsonValue>[] {
   const prepare: ToolDefinition<{ claims: Omit<PreparedClaim, 'claimId'>[]; noFactualClaimsReason: string }, JsonValue> = {
     name: 'prepare_fact_check', version: '1.0.0', effect: 'local_idempotent', permissions: ['fact:submit'],
-    description: 'Extract all verifiable claims from the COMPLETE current article/selected title before searching. articleQuote must be an exact passage there, never a previous draft or conversation. Extraction is NOT verification.',
+    description: 'Lightweight factual review for self-media articles, not academic citation auditing. Screen the COMPLETE final article, select error-prone important facts and suspected errors only. Omit stable common knowledge, ordinary background, author-confirmed firsthand facts and wording differences unless genuinely suspect. Each selected claim needs checkReason; articleQuote locates it, not a verbatim source comparison.',
     inputSchema: { type: 'object', properties: { claims: { type: 'array', maxItems: 80, items: { type: 'object', properties: {
       claimText: { type: 'string', minLength: 1, maxLength: 600 }, articleQuote: { type: 'string', minLength: 1, maxLength: 1200 },
       location: { type: 'string', enum: ['body', 'title', 'distributionCopy'] }, matchedEvidenceIds: { type: 'array', maxItems: 3, uniqueItems: true, items: { type: 'string', minLength: 1 } },
-    }, required: ['claimText', 'articleQuote', 'location', 'matchedEvidenceIds'], additionalProperties: false } }, noFactualClaimsReason: { type: 'string', maxLength: 500 } }, required: ['claims', 'noFactualClaimsReason'], additionalProperties: false },
+      checkReason: { type: 'string', enum: ['key_fact', 'suspected_error'], description: 'key_fact: error-prone or uncertain dates, identities/events, figures or quotations important to this article. suspected_error: possible invention, contradiction or changed factual meaning, even a minor detail. Not every factual sentence needs a citation.' },
+    }, required: ['claimText', 'articleQuote', 'location', 'matchedEvidenceIds', 'checkReason'], additionalProperties: false } }, noFactualClaimsReason: { type: 'string', maxLength: 500 } }, required: ['claims', 'noFactualClaimsReason'], additionalProperties: false },
     execute(args, context) {
       const binding = bindingForRun?.(context.runId);
       if (!binding || context.projectId !== projectId) throw new ToolExecutionFault('FACT_INPUTS_CHANGED', '核查绑定版本不存在或已变化，需要重新提取当前成稿。');
@@ -186,6 +297,7 @@ export function createFactContextTools(storage: FactStore, projectId: string, bi
       const existing = factPreparation(storage, context.runId, binding);
       if (existing) return existing as unknown as JsonValue;
       const prepared: FactPreparation = { bodyVersionId: binding.body.id, evidenceVersionId: binding.evidence.id, titleVersionId: binding.titleVersionId,
+        ...(binding.titleVersionId === null || binding.generatedTitleContent !== undefined ? { defaultTitleContent: defaultFactTitleContent(binding.body.content) } : {}),
         preparationId: context.operationId, claims: args.claims.map((c, i) => ({ ...c, claimId: `C${String(i + 1).padStart(3, '0')}` })), noFactualClaimsReason: args.noFactualClaimsReason };
       // Runtime settles the tool result and persists it atomically. No second
       // event-write transaction or ephemeral in-memory preparation state.
@@ -248,4 +360,8 @@ export function createFactContextTools(storage: FactStore, projectId: string, bi
   return [evidence, record, prepare, article] as unknown as ToolDefinition<never, JsonValue>[];
 }
 
-export const FACT_CONTEXT_GUIDANCE = '核查分为extract和verify两个步骤。extract收到完整当前成稿和已选标题，只提取其中实际出现的全部可核实事实，调用prepare_fact_check：给主张、连续原句articleQuote、位置和匹配证据编号，未匹配用空列表；不核查旧稿、未入正文的账本条目或文风。verify只收到待核实条目、选中证据的全部引文与限定；逐条查证后提交submit_fact_check，保留preparedClaims中每条claimId和claimText，不删掉未证实条目来制造通过。此时正文全文不重复传入，需看上下文用read_fact_article，其他证据用read_fact_evidence，旧格式账本用空编号读取。索引不是依据，不能猜测省略内容已经支持。搜索历史只提供短摘录，按callId用read_fact_record回读完整本地记录的必要段落，不重复搜索同一事实；摘录不足不能判为支持。能共用同一来源的事实合并检索，优先关键日期、数字和引语，searchBudget耗尽后使用已有结果并诚实说明未验证项。分发文案可选，未选择则不核查、不等待确认。材料目录不代表已读原文，必要时读取授权材料。';
+export const FACT_CONTEXT_GUIDANCE = '这是公众号、头条等文章的轻量事实复核，不是论文审稿，不要求每个点都有出处或论文引用。extract收到完整当前成稿与已选标题，筛查关键事实与可疑信息：易错、时效性强或存疑的重要时间、人物身份、事件、数字、引语记key_fact；明显矛盾、疑似幻觉或含义改变记suspected_error。普通背景、稳定常识、作者确认的亲历和同义转述无疑点时不单独列项；没有引用不等于事实错误。调用prepare_fact_check，提供定位原句articleQuote、位置、checkReason及匹配证据编号（无则空列表）；完整筛查后没有待查事实可用空claims并说明范围与理由。verify只收到待查条目及相关证据，保留所有preparedClaims的claimId/claimText；新发现的问题可在提交中补充并给checkReason，不删掉实际问题来制造通过。按需要用已有材料、模型知识或联网结果判断，不因启用搜索就强制所有条目联网；作者自述不要求公开证明。缺少论文本身不阻断，真实矛盾、疑似虚构或仍无法判断的重要事实要说明问题和最小纠正动作。verificationMethod如实记录material_comparison、model_review或external_source；外部方式附成功工具callId和对应具体URL，只证明取得该来源，是否支持事实仍由模型判断。正文上下文用read_fact_article，证据用read_fact_evidence，本轮来源用read_fact_record按需回读；索引或网址不等于已读原文，短摘录足够核实简单事实时不强求全文，关键限定不足时再读。不查旧稿或未使用条目，不重复搜索；共用来源合并检索，searchBudget耗尽使用已有结果并说明真正的未决问题。分发文案可选，未选择不核查、不等待确认。' + [
+  '\nverify阶段不是第二次全文筛查：不从头重读完整正文和全部原始素材。preparedClaims已包含当前成稿待查原句，fact_selected_evidence中claimFields是列名、claimRows逐行按列对应完整证据，引句和适用边界都已提供，不重复读取这些已提供的证据。先用它们判断；只在具体主张缺少关键限定或上下文时补读相应段落。旧格式ledger未提供选中引句时可以按需补读。',
+  'read_receipt_not_source定位记录不是证据，也不表示事实已核实；完整原文保留在本地，可用contentAvailableVia中的参数重读。最新一批补读片段仍完整提供，先完成这些主张的判断，不机械分页遍历整个素材。多个待查点共用相同来源时一次读取或检索，不为已足够的信息追加工具轮。',
+  'evidenceSummary只写核对的关键结果与必要限制，不逐字抄回长引文或整段材料；recommendedAction写实际问题的最小处理。无问题时用短句，不交长篇审计报告。分类不在约定类型时用other，事实结论和核查方式仍须严格使用约定值。',
+].join('\n');
