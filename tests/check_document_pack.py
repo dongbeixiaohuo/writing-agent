@@ -111,7 +111,7 @@ def check(root: Path) -> dict:
     files = []
     report_files = set(md_files)
     report_files.update((root / ARCHIVE_ROOT).rglob('*'))
-    report_files.update((prd_path, backlog_path, root / 'scripts/check_document_pack.py'))
+    report_files.update((prd_path, backlog_path, root / 'tests/check_document_pack.py'))
     for file in sorted(report_files):
         if not file.is_file() or file.resolve() == (root / REPORT_PATH).resolve() or '__pycache__' in file.parts:
             continue

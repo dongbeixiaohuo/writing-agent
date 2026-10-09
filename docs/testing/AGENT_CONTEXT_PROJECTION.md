@@ -43,7 +43,7 @@ npx tsc --noEmit -p tsconfig.runtime.json
 ## 本地只读测量
 
 ```powershell
-node --import tsx scripts/measure_agent_context.ts '<workspace.sqlite3 的路径>' '<请求快照 ID>'
+node --import tsx tests/measure_agent_context.ts '<workspace.sqlite3 的路径>' '<请求快照 ID>'
 ```
 
 只读取 SQLite 与不可变产物，不改用户工作区、不调用外部模型、不输出文章原文。比较时固定旧请求的系统提示词、工具定义及对话轮次，替换产物/讨论/读取结果的投影。旧工具结果中的全文引用先还原，再按新规则投影，不能将被省略的内容计为已提供。因此下表是**上下文投影差值**，不是新版本实际发出的完整请求，更不是 Token、费用、耗时或质量测量。

@@ -47,7 +47,7 @@ npm run check:ui
 npm run check:m0
 npm run check
 npm audit --omit=dev --audit-level=high
-python -B scripts/check_document_pack.py
+python -B tests/check_document_pack.py
 python C:\Users\Dante\.agents\skills\webapp-testing\scripts\with_server.py --server "npm run ui:dev:mock -- --host 127.0.0.1 --port 4173" --port 4173 -- python output/wa014_playwright_check.py
 ```
 

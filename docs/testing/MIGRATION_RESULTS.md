@@ -60,7 +60,7 @@ npm run check:m0
 npm run check
 npm run check:ui
 npm audit --omit=dev --audit-level=high
-python -B scripts/check_document_pack.py
+python -B tests/check_document_pack.py
 git diff --check
 ```
 

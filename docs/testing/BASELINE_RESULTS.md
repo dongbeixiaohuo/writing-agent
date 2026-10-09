@@ -33,7 +33,7 @@ DSH 上游声明 Node `^22.19.0 || >=24.0.0` 和 pnpm `11.7.0`；固定 checkout
 
 ```powershell
 $env:PYTHONUTF8='1'
-python scripts\check_document_pack.py
+python tests\check_document_pack.py
 ```
 
 结果：`PASS`

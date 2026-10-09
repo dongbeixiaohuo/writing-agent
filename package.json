@@ -18,7 +18,7 @@
     "generate-image": "tsx scripts/generate_image.ts",
     "export:html": "tsx scripts/export_markdown_to_html.ts",
     "validate:workflow": "python -B scripts/validate_workflow.py",
-    "check:docs": "python -B scripts/validate_workflow.py --targets docs && python -B scripts/check_document_pack.py",
+    "check:docs": "python -B scripts/validate_workflow.py --targets docs && python -B tests/check_document_pack.py",
     "sync:claude-runtime": "python -B scripts/sync_claude_runtime.py",
     "check:claude-runtime": "python -B scripts/check_claude_runtime_sync.py",
     "bootstrap:workspace": "python -B scripts/bootstrap_workspace.py",

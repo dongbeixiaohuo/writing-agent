@@ -1,6 +1,6 @@
 /** Offline, read-only comparison. Never calls a model, changes the workspace,
  * or prints manuscript/source content. Usage:
- * node --import tsx scripts/measure_agent_context.ts <workspace.sqlite3> <snapshot-id> [...]
+ * node --import tsx tests/measure_agent_context.ts <workspace.sqlite3> <snapshot-id> [...]
  */
 import { DatabaseSync } from 'node:sqlite';
 import { stageArtifactContext, deduplicateReviewDiscussion, projectInlineRead } from '../packages/application/src/agent-context.js';

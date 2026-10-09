@@ -25,6 +25,6 @@
 | `AGENT_HANDOFF.md` | 早期 M0/M1 交接归档 | [文档中心](../../README.md)与[当前实施进度](../../architecture/IMPLEMENTATION_PROGRESS.md) |
 | `BACKLOG.json` | 25 项任务状态快照归档 | [当前实施进度](../../architecture/IMPLEMENTATION_PROGRESS.md)和各测试记录 |
 | `GITHUB_AND_LAUNCH_PLAN.md` | 早期分支/传播计划归档 | [桌面发布手册](../../launch/DESKTOP_RELEASE_RUNBOOK.md) |
-| `DOCUMENT_CHECKS.json` | 原包检查报告归档 | `python -B scripts/check_document_pack.py`；需要快照时加 `--write-report` |
+| `DOCUMENT_CHECKS.json` | 原包检查报告归档 | `python -B tests/check_document_pack.py`；需要快照时加 `--write-report` |
 
 归档保留原文以便审计，内部旧相对路径可能指向原包结构；导航和当前事实请使用上表链接。

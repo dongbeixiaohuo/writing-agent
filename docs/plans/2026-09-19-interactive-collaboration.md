@@ -21,7 +21,7 @@ Task 1 已落盘；Task 2/3 的 R1 源码及本地自动验证已完成，独立
 - 新增 CR-002 权威补充，现维护于 `docs/implementation/CR002_INTERACTIVE_COLLABORATION.md`。
 - PRD、Runtime Contracts、交接、合订本接入 CR-002；BACKLOG 的 WA-010 从 DONE 改为 IN_PROGRESS，补充 DoD。
 - IMPLEMENTATION_PROGRESS、RC_RESULTS、FINAL_USER_UAT_CHECKLIST、PRODUCT_PARITY_RECOVERY_PLAN 撤回当前 READY。旧运行证据标记为历史，保留不删除。
-- 执行 `python -B scripts/check_document_pack.py --write-report`（现维护路径；原包报告保留在历史归档）。
+- 执行 `python -B tests/check_document_pack.py --write-report`（现维护路径；原包报告保留在历史归档）。
 
 ## Task 2：R1 强制 readiness 与暂停（先红后绿）
 

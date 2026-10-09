@@ -127,7 +127,7 @@ R2/R3 已实现导演独立请求、同稿隔离评审、持久任务绑定、�
 - WA-024 集中主题/品牌与写作 Slot：`npm run check:ui`、`npm run check:m0`，详见 `docs/testing/WA024_RESULTS.md`
 - WA-025 UI/Bridge 一致性：`python -X utf8 tests/ui-baseline/scripts/wa025_ui_playwright.py --serve-static --upstream-dist <fixed-upstream-dist>`、`npm run test:bridge`、`npm run check:ui`，详见 `docs/testing/UI_BASELINE_RESULTS.md`
 - 整仓 legacy 回归：`npm run check`
-- 需求包一致性：`python -B scripts/check_document_pack.py`
+- 需求包一致性：`python -B tests/check_document_pack.py`
 - WA-004 详细结果：`docs/testing/WA004_RESULTS.md`
 - WA-005 详细结果：`docs/testing/WA005_RESULTS.md`
 - WA-006 详细结果：`docs/testing/WA006_RESULTS.md`

@@ -43,7 +43,7 @@
 ## 文档检查
 
 ```powershell
-python -B scripts/check_document_pack.py
+python -B tests/check_document_pack.py
 npm run check:docs
 ```
 
