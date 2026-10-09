@@ -1,10 +1,20 @@
 # Writing Agent 桌面发布门禁
 
-更新：2026-10-04。当前公开桌面版 **1.0.0-rc.68**，为 **Pre-release，不是稳定版**。维护者已授权同步源码与更新下载包，并接受未签名安装包；不修改仓库 latest，不删除旧 Skill 或历史 Release。
+更新：2026-10-10。当前公开桌面版 **1.0.0-rc.80**，为 **Pre-release，不是稳定版**。维护者已授权同步源码与更新下载包，并接受未签名安装包；不修改仓库 latest，不删除旧 Skill 或历史 Release。
 
-当前下载：**[rc.68](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.68)**。源码锁定 `23f2c23c9075b3b0225c02667b6146710d2f56b2`，执行与资产校验记录见 [rc.68 发布记录](../launch/RC68_RELEASE_EXECUTION.md)。
+当前下载：**[rc.80](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.80)**。源码锁定 `79062b6c80027df0685c4a91f69f6c0a2a41949e`，执行与资产校验记录见 [rc.80 发布记录](../launch/RC80_RELEASE_EXECUTION.md)。
 
-## RC68 本次发布检查
+## RC80 本次发布检查
+
+- [x] PR #24 五项必需检查后合并，没有绕过分支保护；文档镜像和高危审计门禁失败经实质修复后重验。
+- [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/37963782888)全部通过，覆盖 Runtime / UI / Bridge / Desktop / 搜索专项、Python、脚本、文档/镜像、依赖高危审计、打包。
+- [x] 全新安装、启动、卸载，以及 RC68 → RC80 原位升级、安装器级合成数据保留均 PASS，桥接协议为 23。
+- [x] 六个公开附件的 GitHub digest、大小与本地构建产物一致；公开安装包无登录重新下载校验 PASS；固定标签、Pre-release、未签名风险、备份要求和 Skill latest 保留。
+- [x] 公开构建包放在 `output/desktop` 根目录；旧本地测试包及证据另存保留，不提交安装包到源码历史。
+
+真实模型耗时、正常 GPU 的完整人工旅程和系统剪贴板偶发异常不在本次自动验证结论内。source-map-js 升至 1.2.2 后高危阈值通过，仍有低/中危依赖报告，不宣称零漏洞。
+
+## RC68 历史发布基线（2026-10-04）
 
 - [x] 产品修复经 PR #20、升级校验修正经 PR #21 的五项必需检查后合并，没有绕过保护。
 - [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/37141995824)、完整自动检查、安装/启动/卸载通过。
