@@ -49,7 +49,7 @@ test('main conversation links to the current manuscript while export settings li
           {id:'read',kind:'tool',label:'读取参考材料',detail:'已完成',state:'success'},
           {id:'guard',kind:'tool',label:'内部检查',detail:'系统已阻止直接写作',state:'failure'},
           {id:'fail',kind:'tool',label:'运行失败',detail:'网络中断，请重试',state:'failure',audience:'conversation'},
-          {id:'reply',kind:'message',role:'assistant',activeDurationMs:61000,body:plainCheckpoint?'唯一的提纲正文\\n\\n**这个方向可以吗？确认后我继续写初稿，也可以直接告诉我怎么改。**':'请确认这份提纲',createdAt:'12:00'}]};
+          {id:'reply',kind:'message',role:'assistant',stage:'fact_check',activeDurationMs:61000,body:plainCheckpoint?'唯一的提纲正文\\n\\n**这个方向可以吗？确认后我继续写初稿，也可以直接告诉我怎么改。**':'请确认这份提纲',createdAt:'12:00'}]};
         if(plainCheckpoint) snapshot.materialProcessWorkspace={...snapshot.materialProcessWorkspace,outline:{content:'唯一的提纲正文'}};
         const exportControls=React.createElement(ConversationExportCard,{bridge,snapshot,onInspect:()=>{},onContentChange:()=>{},hostConfiguration:{savePublicationAs:async()=>({cancelled:true})}});
         const html=renderToStaticMarkup(view && !['waiting','background','handoff'].includes(view) ? React.createElement(WritingWorkbenchPanel,{bridge,snapshot,initialView:view,closePanel:()=>{},exportControls}) : React.createElement(WritingAgentShell,{bridge,extensions,
@@ -67,6 +67,7 @@ test('main conversation links to the current manuscript while export settings li
     assert.match(passed, /网络中断，请重试/u);
     assert.match(passed, /请确认这份提纲/u);
     assert.match(passed, /本阶段活动耗时 61 秒/u);
+    assert.match(passed, /事实核查专员/u);
     const streaming = render('not_checked', 'running');
     assert.match(streaming, /这是一段正在到达的回复/u);
     assert.match(streaming, /正在生成.*尚未保存/u);

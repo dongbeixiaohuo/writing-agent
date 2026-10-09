@@ -99,7 +99,7 @@ const WORKFLOW_STAGE_LABELS: Readonly<Record<WritingWorkflowStage, string>> = {
   draft: "完整初稿",
   review_editor: "编辑审校",
   review_publish: "发布审校",
-  review_reader: "读者审校",
+  review_reader: "模拟读者",
   central_revision: "集中修订",
   language_review: "语言终审",
   fact_check: "事实核查",
@@ -113,7 +113,7 @@ const AUTHOR_ACTOR_LABELS: Readonly<Record<string, string>> = {
   draft: "内容主笔",
   review_editor: "编辑审校",
   review_publish: "发布审校",
-  review_reader: "读者审校",
+  review_reader: "模拟读者",
   central_revision: "修订主笔",
   language_review: "语言终审",
   fact_check: "事实核查",
@@ -193,6 +193,11 @@ function checkpointStages(
   const event = [...projection.events].reverse().find(
     (candidate) => candidate.runId === runId && candidate.type === "run.waiting_user",
   );
+  if (event?.payload.stopReason === 'FACT_SEARCH_DECISION_REQUIRED' && event.payload.kind === 'search_recovery') {
+    const searchRecovery = event.payload.searchRecovery as unknown as NonNullable<NonNullable<RecoverableRunSummary['inputRequest']>['searchRecovery']>;
+    return { checkpointStage: null, nextStage: 'fact_check', inputRequest: { kind: 'search_recovery',
+      reason: searchRecovery.reason, questions: [], searchRecovery } };
+  }
   if (event && isPublicationSelectionWait(event.payload)) {
     const saved = projection.publicationCandidates;
     // Keep displayed ordinals identical to the persisted choices. A partly
@@ -362,6 +367,7 @@ function modelFailureDetail(code: string | null, providerDetail: string | null =
     AUTH_FAILED: "API Key 无效或没有访问权限，请在“设置 → 模型”中更新 Key 并验证连接。",
     INVALID_REQUEST: "模型服务拒绝了请求，请检查服务类型、API 地址和模型 ID。",
     MODEL_RESPONSE_INVALID: "模型回复未通过格式校验，本轮未完成；你的输入仍保留，可以重试。若反复出现，请反馈运行记录，无需重新填写资料。",
+    PARALLEL_TEXT_ALL_FAILED: '三个模拟读者都没有返回可用感受，本阶段未保存。可以稍后重试读者阶段；已保存的文章和前面审校结果仍在。具体模型错误可查看运行记录。',
     MODEL_REQUIRED_TOOL_MISSING: "模型尚未提交本轮需要保存的操作，不能标为完成。你的输入与已保存内容仍保留，可以重试这一步。",
     STAGE_OUTPUT_NOT_SAVED: "这一阶段的内容反复未通过保存校验，已停止自动重写。上一版稿件仍保留；不是模型账户额度或网络故障。请反馈此阶段的运行记录，不必重新填写材料。",
     TOOL_FAILURE_LOOP: "程序提交反复被同一门禁拒绝，已停止自动重试。已保存的内容仍保留；这不是模型账户额度或网络故障。请反馈这条运行记录，或重试当前步骤。",
@@ -458,6 +464,7 @@ function timelineForSession(
   const intakeRunIds = new Set(projection.events.filter(event => event.type === 'run.started' &&
     ['writing-pack:intake', 'writing-pack:author-conversation'].includes(String(event.payload.purpose))).map(event => event.runId));
   const savedIntakeReplyRunIds = new Set<string>();
+  const displayedFactRunIds = new Set<string>();
   const latestToolFailureCodes = new Map<string, string>();
   const latestModelFailureCodes = new Map<string, string>();
   const latestModelFailureDetails = new Map<string, string>();
@@ -511,6 +518,16 @@ function timelineForSession(
       const result = successfulToolResult(event.payload);
       const stage = result === null ? null : workflowStagePayload(result, 'stage');
       const artifactId = result === null ? null : textPayload(result, 'artifactVersionId');
+      if (stage === 'fact_check' && result !== null && typeof result.snapshotId === 'string') {
+        const assessment = projection.factAssessments?.find(report => report.snapshotId === result.snapshotId) ??
+          (projection.factCheck.assessment?.snapshotId === result.snapshotId ? projection.factCheck.assessment : null);
+        if (assessment !== null) {
+          items.push({ id: `${event.id}:fact-report`, kind: 'message', role: 'assistant', stage: 'fact_check', createdAt,
+            ...savedTiming(event.runId, 'fact_check'), body: factCheckCompletionSummary(assessment) });
+          displayedFactRunIds.add(event.runId);
+          modelRows.delete(event.runId);
+        }
+      }
       const stageArtifactKey = `${event.runId}:${stage}:${artifactId}`;
       if (stage !== null && artifactId !== null && !displayedStageArtifacts.has(stageArtifactKey)) {
         const artifact = [...projection.workflowArtifacts, ...projection.bodyVersions].find(version => version.id === artifactId);
@@ -614,7 +631,7 @@ function timelineForSession(
     }
     if (event.type === "run.completed") {
       const versionId = textPayload(event.payload, "artifactVersionId");
-      if (versionId !== null) {
+      if (versionId !== null && !displayedFactRunIds.has(event.runId)) {
         const savedBody = projection.bodyVersions.find((version) => version.id === versionId);
         if (savedBody !== undefined && savedBody.content.trim().length > 0 && !displayedArtifactIds.has(versionId)) {
           items.push({
@@ -638,6 +655,12 @@ function timelineForSession(
       }
     }
     if (event.type === "run.waiting_user") {
+      if (event.payload.stopReason === 'FACT_SEARCH_DECISION_REQUIRED') {
+        const request = event.payload.searchRecovery as any;
+        items.push({ id: event.id, kind: 'message', role: 'assistant', createdAt,
+          body: `事实搜索已暂停。${request.reason}\n\n检索词：${request.query}\n检索额度：${request.used}/${request.limit}；网络尝试：${request.attemptsUsed}/${request.attemptsLimit}。\n\n请使用下方按钮选择继续搜索或不追加。已取得的来源和稿件仍保留；不再搜索时会说明实际未联网核查的范围。` });
+        continue;
+      }
       const inputRequest = writingInputRequest(event.payload);
       if (inputRequest !== null) {
         const pendingQuestions = inputRequest.questions.filter(question => !questionAlreadyCovered(inputRequest.reason, question));
@@ -649,6 +672,11 @@ function timelineForSession(
       }
       const reason = textPayload(event.payload, "stopReason");
       const stage = textPayload(event.payload, "stage");
+      if (reason === 'PARALLEL_TEXT_ALL_FAILED') {
+        items.push({ id:event.id, kind:'tool', audience:'conversation', label:'模拟读者未完成',
+          detail:'三个模拟读者都未返回可用反应，未保存读者反馈，也未自动重试。请查看运行记录；稍后可重试当前读者阶段，之前的稿件与审校仍保留。', state:'failure' });
+        continue;
+      }
       if (reason === 'STAGE_OUTPUT_NOT_SAVED') {
         items.push({ id:event.id, kind:'tool', audience:'conversation', label:'自动重写已暂停',
           detail:'本阶段保存校验反复未通过；上一版稿件仍保留，可查看原因或重试这一步。', state:'failure' });
@@ -664,7 +692,7 @@ function timelineForSession(
           : stage === 'draft' ? '初稿这样写可以吗？确认后我继续审校，也可以直接告诉我怎么改。'
           : stage === 'review_editor' ? `编辑审校的建议你认可吗？可以先讨论、调整；确认后才交给${textPayload(event.payload, 'nextStage') === 'review_publish' ? '发布' : '读者'}审校专家。`
           : stage === 'review_publish' ? '发布审校的建议你认可吗？可以先讨论、调整；确认后才交给读者审校专家。'
-          : stage === 'review_reader' ? '读者审校的建议你认可吗？可以先讨论、调整；确认后主笔才按已确认的意见修订。'
+          : stage === 'review_reader' ? '这三个模拟读者的感受，你怎么看？可以先讨论；确认后写作导演会结合你的取舍解读，再交给修订主笔，不会按票数改稿。'
           : stage === 'central_revision' ? '集中修订后的全文这样可以吗？确认后才交给去 AI 味与语言润色专家；也可以直接提出修改。'
           : stage === 'language_review' ? '润色后的这一版你认可吗？确认后再继续标题与事实核查；需要调整可以直接说。'
           : '这一阶段的结果可以吗？确认后我继续下一步，也可以直接告诉我怎么改。';
@@ -909,7 +937,7 @@ const PROCESS_ARTIFACT_LABELS = {
   outline: "文章提纲",
   review_editor: "编辑审校",
   review_publish: "发布审校",
-  review_reader: "读者审校",
+  review_reader: "模拟读者",
 } as const;
 
 function workflowArtifactView(
@@ -1758,12 +1786,15 @@ export class ApplicationClientBridge implements ClientBridge {
         decision,
         feedback,
         JSON.stringify(options.checkpointApproval ?? null),
+        JSON.stringify(options.factSearchDecision ?? null),
       ]),
       async () => {
         const projectId = this.#snapshot.selectedProjectId;
         const projection = this.#service.getProjectProjection(projectId);
         const run = projection.runs.find((candidate) => candidate.id === runId);
         if (run === undefined) throw new Error("RUN_SCOPE_INVALID");
+        if ((run.stopReason === 'FACT_SEARCH_DECISION_REQUIRED' || options.factSearchDecision) &&
+          (decision !== 'resume' || feedback || options.checkpointApproval)) throw new Error('FACT_SEARCH_DECISION_REQUIRED');
         if (options.checkpointApproval) {
           if (decision !== 'resume' || feedback) throw new Error('CHECKPOINT_DECISION_REQUIRED');
           await this.#service.approveStageCheckpoint({ projectId, runId, operationId,
@@ -1822,6 +1853,7 @@ export class ApplicationClientBridge implements ClientBridge {
           if (run.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && decision !== 'retry_unknown') throw new Error('UNKNOWN_OUTCOME_REQUIRES_CONFIRMATION');
           if (projection.runs.some(candidate => candidate.id !== runId && ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');
           const handle = this.#service.resumeFactCheck({ projectId, runId, sessionId: run.sessionId, operationId,
+            ...(options.factSearchDecision ? { factSearchDecision: options.factSearchDecision } : {}),
             decision, expectedProjectRevision: projection.project.revision, model: this.#model.model,
             parameters: this.#model.parameters,
             ...(this.#model.budget === undefined ? {} : { budget: { ...this.#model.budget, maxMajorRevisions: 0 } }),
@@ -1852,13 +1884,14 @@ export class ApplicationClientBridge implements ClientBridge {
           runId,
           operationId,
           decision,
+          ...(options.factSearchDecision ? { factSearchDecision: options.factSearchDecision } : {}),
           expectedProjectRevision: projection.project.revision,
           expectedBriefVersionId: projection.brief.id,
           model: this.#model.model,
           parameters: this.#model.parameters,
           // Retrying transport is not a new author instruction. A synthetic
           // instruction would invalidate the still-pending expert assignment.
-          ...((decision === 'retry_unknown' || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP'].includes(run.stopReason ?? '')) && feedback.length === 0 ? {} : {
+          ...((decision === 'retry_unknown' || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP', 'PARALLEL_TEXT_ALL_FAILED', 'FACT_SEARCH_DECISION_REQUIRED'].includes(run.stopReason ?? '')) && feedback.length === 0 ? {} : {
             userInstruction: feedback.length > 0
               ? feedback
               : run.stopReason === "CO_CREATION_CHECKPOINT"

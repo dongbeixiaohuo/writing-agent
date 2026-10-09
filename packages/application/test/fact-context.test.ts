@@ -1,7 +1,38 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compactFactEvidence, factMaterialContext, factEvidenceCatalog, projectFactToolResult, createFactContextTools, factPreparation, factVerificationArtifacts, factSubmissionCoversPreparation, factRecordCatalog, normalizeFactVerification, FACT_CONTEXT_GUIDANCE } from '../src/fact-context.js';
+import { compactFactEvidence, factMaterialContext, factEvidenceCatalog, projectFactToolResult, createFactContextTools, factPreparation, factVerificationArtifacts, factSubmissionCoversPreparation, factSubmissionError, factRecordCatalog, normalizeFactVerification, FACT_CONTEXT_GUIDANCE } from '../src/fact-context.js';
 import { defaultFactTitleContent } from '../src/publication-choice.js';
+
+test('incomplete submission names missing and mismatched claims without masking it as role permission', () => {
+  const prepared: any = { claims: [{ claimId: 'C001', claimText: '2025年发布' }, { claimId: 'C002', claimText: '负责人是甲' }] };
+  const error = factSubmissionError(prepared, { claims: [{ claimId: 'C001', claimText: '2024年发布' }] })!;
+  assert.equal(error.code, 'FACT_SUBMISSION_INCOMPLETE');
+  assert.deepEqual(error.details.missingClaimIds, ['C002']);
+  assert.deepEqual(error.details.mismatchedClaimIds, ['C001']);
+  assert.match(error.details.correction!, /不|保留/);
+  assert.equal(factSubmissionError(prepared, { claims: prepared.claims }), null);
+  assert.deepEqual(factSubmissionError(prepared, { claims: [...prepared.claims, prepared.claims[0]] })!.details.duplicateClaimIds, ['C001']);
+  assert.equal(factSubmissionError(null, { claims: [] })!.code, 'FACT_PREPARATION_REQUIRED');
+});
+
+test('selected_full evidence replaces even latest read with a locator, but notes, unselected evidence and other versions stay full', () => {
+  const claim = { evidence_id: 'E001', source_quote: '完整引句和限定'.repeat(500) };
+  const call: any = { role: 'assistant', content: '', toolCalls: [{ id: 'read', name: 'read_fact_evidence', arguments: { evidenceIds: ['E001'] } }] };
+  const result = { evidenceVersionId: 'v1', claims: [claim], sources: [] };
+  const message = (data: any): any => ({ role: 'tool', name: 'read_fact_evidence', toolCallId: 'read', content: JSON.stringify({ ok: true, result: data }) });
+  const project = (data: any, ids = ['E001'], versionId = 'v1') => {
+    const m = message(data), original = m.content;
+    const output = projectFactToolResult(m, { messages: [call, m], index: 1 }, { versionId, evidenceIds: ids });
+    assert.equal(m.content, original, 'SQLite/raw history must not be rewritten');
+    return output;
+  };
+  const projected = JSON.parse(project(result)).result;
+  assert.equal(projected.requestProjection, 'read_receipt_not_source');
+  assert.deepEqual(projected.evidenceIds, ['E001']);
+  assert.match(project({ ...result, notes: '共同适用边界' }), /共同适用边界|完整引句/);
+  assert.match(project(result, ['E002']), /完整引句/);
+  assert.match(project(result, ['E001'], 'v2'), /完整引句/);
+});
 
 test('fact continuation retires consumed read pages, keeps the latest parallel batch and all failures', () => {
   const read = (id: string, name: string, result: any): any => ({ role: 'tool', name, toolCallId: id,
@@ -140,6 +171,75 @@ test('external provenance accepts Parallel text, Tavily JSON and HTTP redirects,
     { mode: 'unavailable', evidenceText: `检索失败：${url}` },
   ]) assert.throws(() => normalizeFactVerification([event('search_fact_sources', result)], null, [claim]),
     { code: 'FACT_EXTERNAL_RECORD_REQUIRED' });
+});
+
+test('Parallel excerpts arrays are valid source text, but titles, empty excerpts and malformed values are not', () => {
+  const url = 'https://example.test/announcement';
+  const claim: any = { claimId: 'C005', claimText: '事件发生于2024年', status: 'SUPPORTED',
+    verificationMethod: 'external_source', verificationRecordIds: ['parallel-search'], sourceReference: url };
+  const event = (rows: unknown[], ok = true, mode = 'external'): any => ({ type: 'tool.completed', payload: { result: {
+    ok, callId: 'parallel-search', toolName: 'search_fact_sources', result: { mode, provider: 'parallel', evidenceText: JSON.stringify({ results: rows }) },
+  } } });
+  const row = { url, title: '事件公告', publish_date: '2024-01-01', excerpts: ['事件发生于2024年。', '仅适用于本次事件。'] };
+  const original = JSON.stringify(row);
+  assert.doesNotThrow(() => normalizeFactVerification([event([row])], null, [claim]));
+  for (const invalid of [undefined, [], ['  '], [null, 0, false, {}], { text: '不是摘录数组' }]) {
+    assert.throws(() => normalizeFactVerification([event([{ ...row, excerpts: invalid }])], null, [claim]),
+      { code: 'FACT_EXTERNAL_RECORD_REQUIRED' });
+  }
+  assert.throws(() => normalizeFactVerification([event([row], false)], null, [claim]), { code: 'FACT_EXTERNAL_RECORD_REQUIRED' });
+  assert.throws(() => normalizeFactVerification([event([row], true, 'unavailable')], null, [claim]), { code: 'FACT_EXTERNAL_RECORD_REQUIRED' });
+  assert.throws(() => normalizeFactVerification([event([row])], null, [{ ...claim, sourceReference: 'https://example.test/other' }]),
+    { code: 'FACT_EXTERNAL_RECORD_REQUIRED' });
+  assert.throws(() => normalizeFactVerification([event([row])], null, [{ ...claim, verificationRecordIds: ['previous-run'] }]),
+    { code: 'FACT_EXTERNAL_RECORD_REQUIRED' });
+  assert.doesNotThrow(() => normalizeFactVerification([event([null, 42, row])], null, [claim]), 'malformed sibling rows must not hide a valid source');
+  assert.equal(JSON.stringify(row), original, 'raw search rows must not be rewritten');
+});
+
+test('Parallel excerpts are visible in bounded previews and lossless paged local record reads', async () => {
+  const row = { title: '事件公告', url: 'https://example.test/announcement', excerpts: ['原始公告正文'.repeat(100), '仅适用于本次事件，不代表其他年份。'] };
+  const result = { mode: 'external', provider: 'parallel', evidenceText: JSON.stringify({ results: [row] }) };
+  const message: any = { role: 'tool', name: 'search_fact_sources', toolCallId: 'parallel-search', content: JSON.stringify({ ok: true, result }) };
+  const original = message.content;
+  const preview = JSON.parse(projectFactToolResult(message)).result.sources[0];
+  assert.equal(preview.excerpt, row.excerpts.join('\n').slice(0, 240));
+  assert.equal(preview.excerptTruncated, true);
+  const events: any[] = [{ type: 'tool.completed', payload: { result: { ok: true, toolName: message.name, callId: message.toolCallId, result } } }];
+  const tool = createFactContextTools({ listRunEvents: () => events } as any, 'p').find(t => t.name === 'read_fact_record')!;
+  const context: any = { projectId: 'p', runId: 'r' };
+  const text = row.excerpts.join('\n');
+  const first: any = await tool.execute({ callId: 'parallel-search', resultIndex: 0, maxChars: 200 } as never, context);
+  const rest: any = await tool.execute({ callId: 'parallel-search', resultIndex: 0, offset: first.nextOffset, maxChars: 4000 } as never, context);
+  assert.equal(first.text + rest.text, text, 'all excerpts and trailing qualifiers remain available without another search');
+  assert.equal(first.totalChars, text.length);
+  assert.equal(rest.truncated, false);
+  assert.deepEqual(first.source, { title: row.title, url: row.url });
+  assert.equal(message.content, original);
+  assert.equal(events[0].payload.result.result.evidenceText, result.evidenceText);
+});
+
+test('external provenance rejection identifies every invalid claim and its record or URL mismatch', () => {
+  const url = 'https://example.test/announcement';
+  const event: any = { type: 'tool.completed', payload: { result: { ok: true, toolName: 'read_fact_source', callId: 'source',
+    result: { finalUrl: url, text: '事件发生于2024年。' } } } };
+  const base: any = { claimId: 'C001', claimText: '事件发生于2024年', status: 'SUPPORTED', verificationMethod: 'external_source',
+    verificationRecordIds: ['source'], sourceReference: url };
+  assert.throws(() => normalizeFactVerification([event], null, [base,
+    { ...base, claimId: 'C002', verificationRecordIds: ['previous-run'] },
+    { ...base, claimId: 'C003', sourceReference: 'https://example.test/other' },
+    { ...base, claimId: 'C004', verificationRecordIds: [] },
+  ]), (error: any) => {
+    assert.equal(error.code, 'FACT_EXTERNAL_RECORD_REQUIRED');
+    assert.deepEqual(error.details.invalidClaimIds, ['C002', 'C003', 'C004']);
+    assert.deepEqual(error.details.invalidClaims[0].missingRecordIds, ['previous-run']);
+    assert.deepEqual(error.details.invalidClaims[1].mismatchedRecordIds, ['source']);
+    assert.deepEqual(error.details.invalidClaims[1].recordedSourceUrls, [url]);
+    assert.equal(error.details.invalidClaims[2].reason, 'missing_record_ids');
+    assert.match(error.message, /C002.*C003.*C004/);
+    assert.match(error.details.correction, /不.*重复搜索/);
+    return true;
+  });
 });
 
 test('persisting an identical body-derived title preserves preparation, actual author/title/input changes do not', async () => {

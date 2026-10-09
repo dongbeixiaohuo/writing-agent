@@ -10,7 +10,7 @@ import { WritingApplicationService } from "../src/index.js";
 import { collaborationState } from "./collaboration-fixture.js";
 import { getPublicationCandidates, choosePublicationCandidate } from '../src/publication-choice.js';
 import { createApplicationBridge } from '../../client-bridge/src/application-bridge.js';
-import { publicStageFixtureEvents, factPreparationFixtureEvents } from './collaboration-fixture.js';
+import { publicStageFixtureEvents, factPreparationFixtureEvents, readerSimulationFixtureEvents } from './collaboration-fixture.js';
 import { withCheckpointIntent, withIntentFixture } from './intent-fixture.js';
 import { deliveredInlineMaterialIds, inlineMaterialContext } from '../src/material-context.js';
 import { getConversationIntakeState } from '../src/conversation-intake.js';
@@ -22,6 +22,8 @@ export class CollaborationProvider extends ModelProviderBase {
   constructor(readonly blocked = false) { super("collaboration-mock", "1.0.0", { protocol: "mock", tools: "supported", streaming: "supported", usage: "unknown" }); }
   protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
     this.requests.push(structuredClone(request));
+    const reader = readerSimulationFixtureEvents(request);
+    if (reader) { yield* reader; return; }
     const extraction = factPreparationFixtureEvents(request);
     if (extraction) { yield* extraction; return; }
     if (!request.messages.some(m => m.content.includes('COLLABORATION_STATE='))) {
@@ -145,7 +147,8 @@ for (const parallelEnabled of [false, true]) it(`full workflow scopes external f
       assert.equal(request.tools?.some(tool => tool.name === 'search_fact_sources') ?? false, expected);
       assert.equal(request.tools?.some(tool => tool.name === 'read_fact_source') ?? false, expected);
     }
-    assert.match(checks[0]!.messages[0]!.content, parallelEnabled ? /外部事实搜索已启用/ : /仅由大模型.*未联网验证/);
+    const verification = checks.find(request => (collaborationState(request) as any)?.factPhase === 'verify')!;
+    assert.match(verification.messages[0]!.content, parallelEnabled ? /需要联网.*公开事实/u : /未启用外部搜索.*未联网/u);
   } finally { f.close(); }
 });
 
@@ -374,23 +377,25 @@ it('scopes research to supplied evidence without demanding unavailable searches 
   } finally { f.close(); }
 });
 
-it('fact check has a focused context with complete current body, deduplicated evidence and explicit author boundaries', async () => {
+it('fact check uses selected facts and evidence, without repeating writing instructions or original materials', async () => {
   const provider = new CollaborationProvider(); const f = setup(provider, 'autonomous', 1);
   try {
     const result = await f.app.runDraft({ ...f.input, userInstruction: '数字如有冲突请标明，保留我的判断。' });
     assert.equal(result.ok, true);
     const request = provider.requests.find(r => collaborationState(r)?.actor === 'fact_check')!;
     const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
-    assert.ok(state.materialCatalog.length > 0);
+    assert.equal(state.materialCatalog, undefined);
     assert.equal(state.factPhase, 'verify');
     assert.equal(state.artifacts.find((a: any) => a.kind === 'body').content.projection, 'fact_article_catalog');
     assert.ok(request.tools?.some(t => t.name === 'read_fact_article'));
     assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object');
-    assert.ok(state.authorAuthorization);
-    assert.match(request.messages[1]!.content, /数字如有冲突请标明/);
+    assert.equal(state.authorAuthorization, undefined);
+    assert.ok(Array.isArray(state.preparedClaims));
+    assert.match(request.messages[0]!.content, /重要、易错或疑似错误/u);
+    assert.ok(request.messages[0]!.content.length < 1400);
     assert.doesNotMatch(request.messages[1]!.content, /必须先用 read_material|约 800 字符/);
     assert.ok(!request.tools?.some(t => t.name === 'read_artifact_version'), 'no reread tool when bound artifacts already provided in full');
-    assert.ok(request.tools?.some(t => t.name === 'read_material'), 'original material stays available when a specific claim requires it');
+    assert.equal(request.tools?.some(t => t.name === 'read_material'), false, 'specialist compares prepared facts, not the original writing packet');
   } finally { f.close(); }
 });
 
@@ -398,7 +403,7 @@ it('projects evidence and original sources for every downstream expert, with on-
   const provider = new CollaborationProvider(); const f = setup(provider, 'autonomous', 1, 'quick', '外部资料原文', 'web_snapshot');
   try {
     assert.equal((await f.app.runDraft(f.input)).ok, true);
-    for (const actor of ['outline', 'draft', 'review_editor', 'review_reader', 'central_revision', 'language_review']) {
+    for (const actor of ['outline', 'draft', 'review_editor', 'central_revision', 'language_review']) {
       const request = provider.requests.find(r => collaborationState(r)?.actor === actor)!;
       const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
       assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object', actor);
@@ -423,9 +428,16 @@ it('keeps director dispatch lean while specialists still receive the complete ve
     assert.equal(body.content.projection, 'artifact_catalog', 'dispatch must not resend the whole article');
     assert.equal(body.content.contentAvailableVia, 'read_artifact_version');
     assert.ok(request.tools?.some(t => t.name === 'read_artifact_version'));
-    for (const actor of ['review_editor', 'review_reader', 'central_revision', 'language_review']) {
+    for (const actor of ['review_editor', 'central_revision', 'language_review']) {
       const s: any = collaborationState(provider.requests.find(r => collaborationState(r)?.actor === actor)!);
       assert.match(s.artifacts.find((a: any) => a.kind === 'body').content, /我喜欢这样的安静/);
+    }
+    const readers = provider.requests.filter(r => r.messages[0]?.content.startsWith('READER_SIMULATION_V1='));
+    assert.equal(readers.length, 3);
+    for (const reader of readers) {
+      assert.match(reader.messages[1]!.content, /我喜欢这样的安静/);
+      assert.doesNotMatch(reader.messages[1]!.content, /evidence|materialCatalog|SECRET_OPINION/);
+      assert.equal(reader.tools?.length ?? 0, 0);
     }
   } finally { f.close(); }
 });
@@ -753,7 +765,7 @@ it('does not carry stages from a completed run or into another session', async (
 
     const sameSession = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, sessionId, userInstruction: '再写一篇' });
     const sameSessionStates = provider.requests.map(request => collaborationState(request)).filter(state => state !== null);
-    const sameSessionStart = sameSessionStates.findLast(state => state.completedStages.length === 0);
+    const sameSessionStart = sameSessionStates.findLast(state => state.actor === 'director' && state.completedStages.length === 0);
     assert.ok(sameSessionStart, 'a completed run never carries: the next run starts empty');
     assert.equal(sameSessionStart!.nextStage, 'research');
 
@@ -903,7 +915,7 @@ it('repairs an agent-introduced unsupported detail internally and rechecks the n
   } finally { f.close(); }
 });
 
-for (const targetStage of ['outline', 'draft', 'review_editor', 'review_publish', 'review_reader', 'central_revision', 'language_review']) {
+for (const targetStage of ['outline', 'draft', 'review_editor', 'review_publish', 'central_revision', 'language_review']) {
 it('streams public ' + targetStage + ' before saving with stable identity', async () => {
   // Language review must preserve the previous body, not replace it with a test outline.
   const partial = targetStage === 'language_review' ? '# 安静\n\n我喜欢' : '# 大纲\n\n第一段';
@@ -1015,7 +1027,7 @@ it('asks for each co-creation confirmation once at the end of the saved result, 
   try {
     const result = await f.app.runDraft(f.input);
     await bridge.selectSession('p', result.sessionId);
-    for (const [index, phrase] of ['这个方向可以吗？', '初稿这样写可以吗？', '编辑审校的建议你认可吗？', '读者审校的建议你认可吗？', '集中修订后的全文这样可以吗？', '润色后的这一版你认可吗？'].entries()) {
+    for (const [index, phrase] of ['这个方向可以吗？', '初稿这样写可以吗？', '编辑审校的建议你认可吗？', '这三个模拟读者的感受，你怎么看？', '集中修订后的全文这样可以吗？', '润色后的这一版你认可吗？'].entries()) {
       if (index > 0) await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: result.runId, operationId: `inline-confirm-${index}`, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
       await bridge.refresh();
       const check = () => {
@@ -1038,7 +1050,7 @@ it('reuses version-bound material reads across confirmations without exhausting 
     repeated = false;
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       const state = collaborationState(request) as ReturnType<typeof collaborationState> & { materials: { materialId: string }[] };
-      if (state!.actor === 'title') { yield* super.providerStream(request); return; }
+      if (state!.actor === 'title' || state!.actor === 'review_reader') { yield* super.providerStream(request); return; }
       const seen = new Set([...state!.materials.map(m => m.materialId), ...request.messages.flatMap(m => m.role === 'tool' && m.name === 'read_material' ? [JSON.parse(m.content).result?.materialId] : [])]);
       const unread = this.materials.filter(m => !seen.has(m.id));
       const reread = state!.actor === 'research' && !this.repeated;
@@ -1068,7 +1080,7 @@ it('reuses version-bound material reads across confirmations without exhausting 
       (e.payload.error as any)?.code === 'MODEL_RESPONSE_INVALID'), 'unadvertised reread is rejected before tool execution');
     assert.ok(provider.requests.filter(r => collaborationState(r)?.actor === 'research').every(r => !r.tools?.some(t => t.name === 'read_material')));
     for (const request of provider.requests) {
-      const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
+      const state = collaborationState(request)!;
       assert.ok(state.materials.length <= 15, 'injected material slices must not accumulate duplicate copies');
     }
   } finally { f.close(); }
@@ -1230,9 +1242,9 @@ it('fact specialist contract explicitly separates uncertain evidence from schema
     assert.ok(request);
     assert.match(request.messages[0]!.content, /NEEDS_USER_SOURCE/);
     assert.match(request.messages[0]!.content, /UNSUPPORTED/);
-    assert.match(request.messages[0]!.content, /passed_with_minor_notes/);
-    assert.match(request.messages[0]!.content, /claimType.*strong_assertion.*other/);
-    assert.deepEqual((collaborationState(request) as any).validEvidenceIds, []);
+    assert.match(request.messages[0]!.content, /中低风险忽略.*不阻断/u);
+    assert.match(request.messages[0]!.content, /external_source.*callId.*URL/u);
+    assert.ok(request.tools?.some(tool => tool.name === 'submit_fact_check'));
     assert.equal(request.parameters.toolChoice, 'required');
     const director = provider.requests.find(r => collaborationState(r)?.actor === 'director' && !collaborationState(r)?.ready)!;
     assert.equal(director.parameters.toolChoice, 'required', 'readiness must be a tool call, not repeated prose about readiness');
@@ -1309,7 +1321,7 @@ it('resumed collaboration fact check retires consumed pages even during schema c
       assert.equal(JSON.parse(reads[0]!.content).result.requestProjection, 'read_receipt_not_source');
       assert.equal(JSON.parse(reads[1]!.content).result.requestProjection, 'read_receipt_not_source');
       assert.equal(JSON.parse(request.messages.find(m => m.role === 'tool' && m.name === 'read_fact_evidence')!.content).result.requestProjection, undefined);
-      assert.match(request.messages[0]!.content, /不从头重读完整正文和全部原始素材/);
+      assert.match(request.messages[0]!.content, /不从头重读完整正文和原始素材/);
     }
     const rawReads = f.storage.listRunEvents(first.runId).filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'read_fact_article');
     assert.equal(rawReads.length, 2);
@@ -1390,7 +1402,7 @@ it('continues the same waiting workflow after the user selects the publication t
   class TitleConversationProvider extends CollaborationProvider {
     selected = false;
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
-      if (request.messages.some(m => m.role === 'user' && m.content.includes('\nCOLLABORATION_STATE='))) { yield* super.providerStream(request); return; }
+      if (collaborationState(request)) { yield* super.providerStream(request); return; }
       const name = this.selected ? 'respond_author' : 'choose_publication';
       const args = this.selected ? { reply: '已确认标题，将继续原写作任务的核查。' } : { candidateVersionId: candidateId, index: 1 };
       this.selected = true;
@@ -1420,17 +1432,19 @@ it("uses real director decisions and independent same-draft reviews before compl
     const result = await f.app.runDraft(f.input);
     assert.equal(result.ok, true, JSON.stringify(result));
     const editor = provider.requests.find((request) => request.messages[0]?.content.includes("ACTOR=review_editor"))!;
-    const reader = provider.requests.find((request) => request.messages[0]?.content.includes("ACTOR=review_reader"))!;
+    const reader = provider.requests.find((request) => request.messages[0]?.content.startsWith('READER_SIMULATION_V1='))!;
     assert.ok(editor); assert.ok(reader);
     for (const request of provider.requests) {
       const role = collaborationState(request)?.actor;
-      if (role) assert.ok(request.messages[0]!.content.includes(buildExpertInstructions(role)), `${role} must receive migrated professional instructions`);
+      if (role === 'review_reader') assert.match(request.messages[0]!.content, /模拟反应.*不是真实用户调研/u);
+      else if (role === 'fact_check') assert.match(request.messages[0]!.content, /事实核查专员|写作助手.*提取/u);
+      else if (role) assert.ok(request.messages[0]!.content.includes(buildExpertInstructions(role)), `${role} must receive migrated professional instructions`);
     }
     assert.equal(JSON.stringify(reader.messages).includes("SECRET_OPINION_review_editor"), false);
     const revision = provider.requests.find((request) => request.messages[0]?.content.includes("ACTOR=central_revision"))!;
     assert.match(revision.messages[1]!.content, /taskInstruction.*综合独立意见/u);
-    assert.equal(reader.tools?.some((tool) => tool.name === "director_decide"), false);
-    for (const request of provider.requests.filter((request) => collaborationState(request)?.actor !== "director")) {
+    assert.equal(reader.tools?.some((tool) => tool.name === "director_decide") ?? false, false);
+    for (const request of provider.requests.filter((request) => !['director', 'fact_check', 'review_reader'].includes(collaborationState(request)?.actor ?? ''))) {
       assert.match(request.messages[1]!.content, /taskInstruction/u);
       assert.match(request.messages[1]!.content, /expectedArtifact/u);
       assert.doesNotMatch(request.messages[0]!.content, /你是 Writing Agent 的主笔|并非已隔离|每个新开始或恢复的执行段/u);
@@ -1451,11 +1465,12 @@ it("uses real director decisions and independent same-draft reviews before compl
     const savedRequests = f.storage.listRequestSnapshots(result.runId);
     const savedReader = savedRequests.find((snapshot) => collaborationState(snapshot.request)?.stage === "review_reader")!;
     assert.ok(savedReader);
-    assert.match(savedReader.request.messages[1]!.content, /taskInstruction.*expectedArtifact/u);
+    assert.match(savedReader.request.messages[1]!.content, /READER_ARTICLE=/u);
     assert.equal(JSON.stringify(savedReader.request.messages).includes("SECRET_OPINION_review_editor"), false);
-    assert.deepEqual(savedReader.toolSchemas.map((tool) => tool.name), savedReader.request.tools!.map((tool) => tool.name));
+    assert.deepEqual(savedReader.toolSchemas, []);
+    assert.equal(savedReader.request.tools?.length ?? 0, 0);
     const savedEditor = savedRequests.find((snapshot) => collaborationState(snapshot.request)?.stage === "review_editor")!;
-    assert.deepEqual(collaborationState(savedEditor.request)?.inputVersionIds, collaborationState(savedReader.request)?.inputVersionIds);
+    assert.ok(collaborationState(savedEditor.request)?.inputVersionIds.includes(collaborationState(savedReader.request)!.inputVersionIds[0]!));
     assert.equal(f.storage.getRun(result.runId)?.status, "completed");
   } finally { f.close(); }
 });
@@ -1792,8 +1807,8 @@ it("retires an old editing baseline after a new draft and binds fact checking to
     assert.equal(JSON.stringify(fact.request.messages).includes(old.result.versionId), false);
     const state = JSON.parse(fact.request.messages[1]!.content.split("\nCOLLABORATION_STATE=")[1]!);
     assert.equal(state.artifacts.filter((artifact: any) => artifact.kind === "body").length, 1);
-    assert.equal(state.currentBodyVersionId, f.storage.inspectProject("p")!.latestBodyVersionId);
-    assert.match(fact.request.messages[0]!.content, /唯一.*核查对象/u);
+    assert.equal(state.artifacts.find((artifact: any) => artifact.kind === 'body').id, f.storage.inspectProject("p")!.latestBodyVersionId);
+    assert.match(fact.request.messages[0]!.content, /prepare_fact_check/u);
     const lateDirector = snapshots.filter((snapshot) => collaborationState(snapshot.request)?.actor === "director").at(-1)!;
     assert.equal(JSON.stringify(lateDirector.request.messages).includes(old.result.versionId), false);
   } finally { f.close(); }

@@ -83,6 +83,23 @@ class FakeDesktopApi implements DesktopRendererApi {
 }
 
 describe("Desktop renderer bridge", () => {
+  for (const action of ['retry', 'extend', 'continue'] as const) {
+    it(`preserves the current fact-search ${action} decision through Electron`, async () => {
+      const api = new FakeDesktopApi();
+      const bridge: ClientBridge = new DesktopClientBridge(api, () => 'search-operation');
+      try {
+        await bridge.handshake();
+        const factSearchDecision = { requestId: 'current-search-request', action };
+        await bridge.resumeRun('waiting-run', 'resume', { factSearchDecision });
+        assert.deepEqual(api.requests.at(-1), {
+          protocolVersion: UI_BRIDGE_PROTOCOL_VERSION,
+          method: 'resumeRun',
+          args: ['waiting-run', 'resume', { operationId: 'search-operation', factSearchDecision }],
+        });
+        assert.equal(api.requests.some(request => request.method === 'sendMessage'), false);
+      } finally { bridge.dispose(); }
+    });
+  }
   it("preserves explicit checkpoint approval through Electron without a synthetic author reply", async () => {
     const api = new FakeDesktopApi();
     const bridge: ClientBridge = new DesktopClientBridge(api, () => 'checkpoint-operation');

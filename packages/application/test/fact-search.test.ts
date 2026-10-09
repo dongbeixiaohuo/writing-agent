@@ -7,6 +7,38 @@ import { join } from 'node:path';
 import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { createToolPermissionGrant } from '../../runtime/tools/src/index.js';
 
+test('search defaults tolerate cross-border latency and the host can configure the query budget', async () => {
+  assert.equal(search.DEFAULT_SEARCH_REQUEST_TIMEOUT_MS, 20_000);
+  assert.equal(search.DEFAULT_SEARCH_PROVIDER_TIMEOUT_MS, 30_000);
+  assert.equal(search.DEFAULT_SEARCH_TIMEOUT_MS, 60_000);
+  let requests = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
+    searchLimit: 2, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
+    fetch: async () => { requests++; return Response.json({ results: [] }); } });
+  await scope.search('first'); await scope.search('second');
+  assert.equal((await scope.search('third')).failureCode, 'SEARCH_LIMIT_REACHED');
+  assert.equal(scope.budget('direct').limit, 2);
+  assert.equal(requests, 2);
+});
+
+test('pure transport timeouts do not consume query budget, but failures are cached and attempts remain bounded', async () => {
+  let requests = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
+    searchLimit: 1, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
+    requestTimeoutMs: 5, overallTimeoutMs: 30,
+    fetch: async () => { requests++; return await new Promise<Response>(() => undefined); } });
+  const timer = setTimeout(() => undefined, 2000);
+  try {
+    const first = await scope.search('timeout');
+    assert.equal(first.quotaCharged, false);
+    assert.equal(scope.budget('direct').used, 0);
+    assert.equal((await scope.search('timeout')).cacheHit, true);
+    for (let i = 0; i < 3; i++) await scope.search(`another timeout ${i}`);
+    assert.equal((await scope.search('attempt cap')).failureCode, 'SEARCH_LIMIT_REACHED');
+    assert.equal(requests, 4);
+  } finally { clearTimeout(timer); }
+});
+
 test('HTTP sources returned by search remain discovered without changing their protocol', async () => {
   const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
     getTavilyKey: async () => 'test-key', authorizeQuery: async () => true }),

@@ -64,8 +64,7 @@ function verificationKind(claim: UnknownRecord): 'external_source' | 'material_c
 }
 
 function isProblem(claim: UnknownRecord): boolean {
-  return claim.status !== 'SUPPORTED' || claim.risk === 'red' ||
-    (claim.supportScope !== undefined && claim.supportScope !== 'full');
+  return claim.risk === 'red';
 }
 
 /**
@@ -103,6 +102,14 @@ export function factCheckCompletionSummary(assessment: unknown): string {
     blocked ? '事实核查已完成，仍有问题需要处理，暂不能正式导出。' : '这版文章已完成事实核查，可以导出。',
     `核查范围：${coverageLabels.length === 3 ? `${coverageLabels[0]}、${coverageLabels[1]}和${coverageLabels[2]}` : coverageLabels.length > 0 ? coverageLabels.join('、') : '旧记录没有保存具体范围'}`,
   ];
+  if (claims.some(claim => claim.risk === 'green' || claim.risk === 'yellow')) {
+    lines.push('中低风险记录不阻断交付，不要求逐条补出处；详细记录仅供参考。');
+  }
+  if (blocked && problems.length === 0) {
+    lines.push('这份旧报告按此前的严格规则阻断了交付。请点击“重新核查当前稿件”，按轻量规则生成新报告；无需逐条处理旧报告的中低风险提示。');
+  }
+  const declinedSearch = Array.isArray(payload.searchLimitations) && payload.searchLimitations.length > 0;
+  if (declinedSearch) lines.push('搜索说明：你选择了不再搜索，已使用现有结果完成复核；联网核查范围如下，未核实不能写成已证实。');
 
   if (claims.length === 0) {
     const reason = text(payload.noFactualClaimsReason);
@@ -144,6 +151,9 @@ export function factCheckCompletionSummary(assessment: unknown): string {
   const externalCount = claims.filter(claim => verificationKind(claim) === 'external_source').length;
   const materialCount = claims.filter(claim => verificationKind(claim) === 'material_comparison').length;
   const unknownCount = claims.length - externalCount - materialCount - modelOnlyCount;
+  if (declinedSearch) lines.push(externalCount === 0
+    ? '联网限制：本次所列条目未经过联网核查，仅作材料对照或模型复核；仍可能遗漏事实错误。'
+    : `联网限制：${externalCount} 条已有外部来源核对记录；其余 ${claims.length - externalCount} 条未经过联网核查。已有成功结果保留，不把整篇文章声称为全部联网验证。`);
   lines.push(`核查方式：外部来源核对 ${externalCount} 条，材料对照 ${materialCount} 条，模型复核 ${modelOnlyCount} 条${unknownCount > 0 ? `，另 ${unknownCount} 条未记录核查方式` : ''}。以上一致性结论由核查模型判断，不是程序认证；来源网址本身不代表已联网查证。`);
   if (modelOnlyCount === claims.length) {
     lines.push('方式与限制：本次仅模型复核，未联网验证；模型知识不是外部证据。这次核查通过不代表事实绝对正确。');
@@ -153,6 +163,7 @@ export function factCheckCompletionSummary(assessment: unknown): string {
     lines.push('方式与限制：以上结论依据已保存的材料或来源；这次核查通过不代表事实绝对正确，时效性信息仍应在发布前复验。');
   }
   return [...lines, blocked
-    ? '**下一步：请针对上面的问题提出修改或补充来源；处理后重新核查。当前稿件仍保留，不需要重新填写全部材料。**'
+    ? problems.length === 0 ? '**下一步：点击“查看当前稿件”，在“核查与来源”选择“重新核查当前稿件”；按轻量规则重新生成报告，无需逐条补证。**'
+      : '**下一步：请针对上面的重要事实问题提出修改或补充必要信息；处理后重新核查。当前稿件仍保留，不需要重新填写全部材料。**'
     : NEXT_ACTION].join('\n\n');
 }

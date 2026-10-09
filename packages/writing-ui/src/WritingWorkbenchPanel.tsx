@@ -189,6 +189,9 @@ function FactCheckPanel({
   run: (action: () => Promise<unknown>) => Promise<void>
 }) {
   const workspace = snapshot.factCheckWorkspace
+  const importantClaims = workspace.assessment?.claims.filter(claim => claim.risk === 'red') ?? []
+  const backgroundClaims = workspace.assessment?.claims.filter(claim => claim.risk !== 'red') ?? []
+  const legacyBlocked = workspace.status === 'blocked' && importantClaims.length === 0
   const statusLabels = {
     not_checked: '尚未核查',
     checking: '核查中',
@@ -201,7 +204,7 @@ function FactCheckPanel({
     not_checked: '当前项目还没有与正文、标题和证据账本绑定的核查快照。',
     checking: '输入已经冻结，等待核查结果写入。',
     passed: '此输入快照通过既定核查流程；这不等于承诺事实绝对正确。',
-    blocked: '至少一项事实没有满足完整支持条件，不能作为正式交付依据。',
+    blocked: legacyBlocked ? '旧报告按此前的严格规则阻断。请重新核查当前稿件，应用轻量规则；无需逐条处理中低风险提示。' : '重要事实存在错误或关键疑点，请处理高风险项后重新核查。',
     error: '核查流程没有形成可用结果，应重新核查。',
     stale: '核查后输入发生变化；历史报告保留，但不能冒充当前结果。',
   } as const
@@ -229,7 +232,7 @@ function FactCheckPanel({
       <section className={css.factSummary} data-fact-status={workspace.status}>
         <div className={css.factSummaryHeader}>
           <strong>{statusLabels[workspace.status]}</strong>
-          <span>{workspace.assessment?.blockers.length ?? 0} 项阻断</span>
+          <span>{legacyBlocked ? '旧策略记录' : `${importantClaims.length} 项高风险问题`}</span>
         </div>
         <p>{statusDetails[workspace.status]}</p>
         <div className={css.editorActions}>
@@ -260,7 +263,7 @@ function FactCheckPanel({
         <h3>核查结论</h3>
         {workspace.assessment.claims.length === 0
           ? <p className={css.factEmpty}>没有识别到需要外部来源支持的事实主张；系统仍已完整覆盖正文和标题。</p>
-          : <div className={css.claimList}>{workspace.assessment.claims.map(claim => (
+          : <><div className={css.claimList}>{importantClaims.map(claim => (
               <article className={clsx(css.claimCard, workspace.assessment?.blockers.includes(claim.claimId) && css.claimBlocked)} key={claim.claimId}>
                 <div><strong>{factClaimStatusLabel(claim)}</strong><span>{claim.location} · 风险 {claim.risk === 'red' ? '高' : claim.risk === 'yellow' ? '中' : '低'}</span></div>
                 <p>{claim.claimText}</p>
@@ -268,7 +271,15 @@ function FactCheckPanel({
                 <small>建议处理：{claim.recommendedAction}</small>
                 <small>来源：{claim.sourceReference ?? claim.evidenceId ?? '尚未提供'}</small>
               </article>
-            ))}</div>}
+            ))}</div>
+            {importantClaims.length === 0 && <p>没有高风险核查问题。中低风险记录忽略，不要求补充来源。</p>}
+            {backgroundClaims.length > 0 && <details className={css.factTechnical}>
+              <summary>中低风险记录（{backgroundClaims.length} 条，忽略、不阻断新报告）</summary>
+              <div className={css.claimList}>{backgroundClaims.map(claim => <article className={css.claimCard} key={claim.claimId}>
+                <div><strong>{factClaimStatusLabel(claim)}</strong><span>风险 {claim.risk === 'yellow' ? '中' : '低'}</span></div>
+                <p>{claim.claimText}</p><small>记录依据：{claim.evidenceSummary}</small>
+              </article>)}</div>
+            </details>}</>}
         <details className={css.factTechnical}>
           <summary>查看报告校验值</summary>
           <div className={css.factHashes}>

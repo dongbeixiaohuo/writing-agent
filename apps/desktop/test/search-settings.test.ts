@@ -8,6 +8,27 @@ import { SearchSettingsStore } from '../src/search-settings.js';
 import { CredentialBroker } from '../../../packages/runtime/credentials/src/index.js';
 import { createFactSearchTools } from '../../../packages/application/src/fact-search.js';
 
+test('search limit persists, old settings default to six, and invalid changes leave credentials and flags intact', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-search-limit-'));
+  const keys = new Map<string, string>();
+  const credentials = new CredentialBroker({ systemBackend: { isAvailable: async () => true,
+    read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
+  const path = join(root, 'search-settings.json');
+  try {
+    writeFileSync(path, JSON.stringify({ parallelEnabled: false, tavilyEnabled: false }));
+    const store = new SearchSettingsStore(path, credentials);
+    assert.equal((await store.status()).searchLimit, 6);
+    await store.save({ parallelEnabled: false, tavilyEnabled: true, searchLimit: 12, tavilyApiKey: 'test-key' });
+    assert.equal(new SearchSettingsStore(path, credentials).configuration().searchLimit, 12);
+    await store.save({ parallelEnabled: true, tavilyEnabled: true });
+    assert.equal((await store.status()).searchLimit, 12, 'older API clients must not reset a saved custom limit');
+    const before = readFileSync(path, 'utf8');
+    for (const searchLimit of [0, 31, 1.2, NaN]) await assert.rejects(store.save({ parallelEnabled: false, tavilyEnabled: false, searchLimit, tavilyApiKey: 'replacement' }), /SEARCH_SETTINGS_INVALID/);
+    assert.equal(readFileSync(path, 'utf8'), before);
+    assert.deepEqual([...keys.values()], ['test-key']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('saved search switches authorize repeated public searches without per-query dialogs; disabling stops egress', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-search-auto-'));
   const keys = new Map<string, string>();
@@ -141,6 +162,7 @@ test('failed settings replacement restores the previous Tavily key and flags', a
       tavilyEnabled: true,
       tavilyKeyConfigured: true,
       credentialPersistence: 'system',
+      searchLimit: 6,
     });
     assert.deepEqual([...keys.values()], [oldKey]);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -165,6 +187,7 @@ test('failed first settings replacement removes the newly created Tavily key', a
       tavilyEnabled: false,
       tavilyKeyConfigured: false,
       credentialPersistence: 'missing',
+      searchLimit: 6,
     });
     assert.equal(keys.size, 0);
   } finally { rmSync(root, { recursive: true, force: true }); }

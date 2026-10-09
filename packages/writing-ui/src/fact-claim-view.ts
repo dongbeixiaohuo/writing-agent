@@ -4,7 +4,7 @@ export function factClaimStatusLabel(
   claim: Pick<FactClaimView, 'status' | 'supportScope' | 'risk' | 'verificationMethod' | 'verificationRecordIds'>,
 ): string {
   if (claim.status === 'SUPPORTED') {
-    if (claim.supportScope === 'partial') return '仅部分支持，仍会阻断'
+    if (claim.supportScope === 'partial') return claim.risk === 'red' ? '仅部分支持，高风险待处理' : '仅部分支持（中低风险，不阻断）'
     if (claim.supportScope === 'none') return '未获得有效支持'
     if (claim.risk === 'red') return '高风险主张，仍会阻断'
     if (claim.verificationMethod === 'model_review') return '仅模型复核，未联网验证'

@@ -737,6 +737,10 @@ export async function startLocalWebHost(
       }
       const operationId = requiredString(body, "operationId", 512);
       const feedback = optionalString(body, "feedback", 4_000);
+      const searchDecision = body.factSearchDecision as import('./protocol.js').ResumeRunOptions['factSearchDecision'];
+      if (searchDecision !== undefined && (!searchDecision || typeof searchDecision !== 'object' ||
+        typeof searchDecision.requestId !== 'string' || !searchDecision.requestId.trim() || searchDecision.requestId.length > 512 ||
+        !['retry', 'extend', 'continue'].includes(searchDecision.action))) throw new LocalWebRequestError(400, 'INVALID_REQUEST', 'Invalid search decision');
       const approval = body.checkpointApproval as { eventSeq?: unknown; bodyVersionId?: unknown; briefVersionId?: unknown } | undefined;
       if (approval !== undefined && (!approval || typeof approval !== 'object' ||
           !Number.isSafeInteger(approval.eventSeq) || Number(approval.eventSeq) < 1 ||
@@ -748,6 +752,7 @@ export async function startLocalWebHost(
         requiredString(body, "runId", 512),
         decision,
         { operationId, ...(feedback === undefined ? {} : { feedback }),
+          ...(searchDecision === undefined ? {} : { factSearchDecision: searchDecision }),
           ...(approval === undefined ? {} : { checkpointApproval: approval as import('./protocol.js').CheckpointApproval }) },
       );
       json(response, 200, { snapshot: bridge.getSnapshot() });

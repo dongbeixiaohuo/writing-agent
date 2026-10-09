@@ -202,6 +202,7 @@ export const FactCheckClaimsPayloadSchema = z.object({
   coverage: FactCheckCoverageSchema,
   claims: z.array(FactClaimSchema),
   noFactualClaimsReason: z.string(),
+  searchLimitations: z.array(z.object({ query: z.string(), reason: z.string(), userDeclined: z.literal(true) })).optional(),
 });
 
 export const BODY_BLOCK_PARSER_VERSION = "markdown-blocks-v1" as const;
@@ -832,11 +833,12 @@ export function contentHash(content: string): string {
 }
 
 export const FACT_CHECK_SCHEMA_VERSION = "fact-check-v2" as const;
-export const FACT_CHECK_POLICY_VERSION = "fact-check-v2-ts-v1" as const;
+export const LEGACY_FACT_CHECK_POLICY_VERSION = "fact-check-v2-ts-v1" as const;
+export const FACT_CHECK_POLICY_VERSION = "fact-check-v2-ts-v2-high-risk" as const;
 
 export interface FactCheckInputSnapshot {
   readonly schemaVersion: typeof FACT_CHECK_SCHEMA_VERSION;
-  readonly policyVersion: typeof FACT_CHECK_POLICY_VERSION;
+  readonly policyVersion: typeof FACT_CHECK_POLICY_VERSION | typeof LEGACY_FACT_CHECK_POLICY_VERSION;
   readonly snapshotId: string;
   readonly bodyVersionId: string;
   readonly bodyHash: string;
@@ -1243,6 +1245,7 @@ export function evaluateFactCheck(
       throw new Error("FACT_CHECK_EVIDENCE_REFERENCE_INVALID");
     }
     if (
+      snapshot.policyVersion === LEGACY_FACT_CHECK_POLICY_VERSION &&
       claim.status === "SUPPORTED" &&
       claim.matchedEvidenceId === null &&
       claim.sourceReference === null
@@ -1253,9 +1256,9 @@ export function evaluateFactCheck(
   const blockers = parsedClaims.data
     .filter(
       (claim) =>
-        claim.status !== "SUPPORTED" ||
-        claim.risk === "red" ||
-        claim.supportScope !== "full",
+        snapshot.policyVersion === LEGACY_FACT_CHECK_POLICY_VERSION
+          ? claim.status !== "SUPPORTED" || claim.risk === "red" || claim.supportScope !== "full"
+          : claim.risk === "red",
     )
     .map((claim) => claim.claimId);
   const status = blockers.length === 0 ? "passed" : "blocked";
@@ -1269,7 +1272,9 @@ export function evaluateFactCheck(
     `- 输入快照：${snapshot.snapshotId}`,
     `- 阻断问题：${blockers.length}`,
     "",
-    "结论由运行时根据事实清单计算；无法验证的事实不得放行。",
+    snapshot.policyVersion === LEGACY_FACT_CHECK_POLICY_VERSION
+      ? "历史严格策略：未完整支持的条目阻断。"
+      : "仅高风险事实问题阻断；中低风险记录不要求补证，不等于事实已经联网证实。",
     "",
   ];
   for (const claim of parsedClaims.data) {
@@ -1353,7 +1358,7 @@ export function validatePublicationGate(
     throw new Error("FACT_SNAPSHOT_NOT_CURRENT");
   }
   if (
-    snapshot.policyVersion !== FACT_CHECK_POLICY_VERSION ||
+    ![FACT_CHECK_POLICY_VERSION, LEGACY_FACT_CHECK_POLICY_VERSION].includes(snapshot.policyVersion) ||
     snapshot.schemaVersion !== FACT_CHECK_SCHEMA_VERSION
   ) {
     throw new Error("FACT_POLICY_MISMATCH");

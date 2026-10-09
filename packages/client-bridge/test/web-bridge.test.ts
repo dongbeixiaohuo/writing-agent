@@ -485,6 +485,10 @@ describe("Web client bridge ordering", () => {
       await bridge.resumeRun("run-1", "resume", { checkpointApproval });
       assert.deepEqual(commandBody?.checkpointApproval, checkpointApproval);
       assert.equal(commandBody?.feedback, undefined, 'button confirmation is a structured action, not a synthetic NLP message');
+      const factSearchDecision = { requestId: 'search-operation', action: 'extend' as const };
+      await bridge.resumeRun('run-1', 'resume', { factSearchDecision });
+      assert.deepEqual(commandBody?.factSearchDecision, factSearchDecision);
+      assert.equal(commandBody?.checkpointApproval, undefined, 'search decision is not article approval');
     } finally {
       bridge.dispose();
     }

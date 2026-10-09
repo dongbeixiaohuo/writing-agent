@@ -212,7 +212,10 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
       const service = attempt?.provider === 'tavily' ? 'Tavily' : attempt?.provider === 'parallel' ? 'Parallel' : null
       return service ? `${service}：${count(attempt?.httpRequests) ?? 0} 个 HTTP 请求 · ${attempt?.status === 'completed' ? '成功' : safeCode(attempt?.errorCode) ?? '失败'}` : null
     }).filter(Boolean).join(' → ') : ''
-    return `${mode}${result?.cacheHit === true ? ' · 使用缓存，无新请求' : ''}${attempts ? ` · ${attempts}` : ''}${result?.authorization === 'timeout' ? ' · 等待授权超时，未调用搜索服务' : ''}${hosts.length ? ` · 来源域名（未核实）：${hosts.join('、')}` : ''}${failure ? ` · ${failure}` : ''}${evidence ? ` · 证据：${evidence}` : ''}${notice ? ` · 说明：${notice}` : ''}`
+    const quota = result?.quotaCharged === false ? ' · 不占检索额度' : result?.quotaCharged === true ? ' · 计入1次检索' : ''
+    const recovery = object(result?.recoveryRequired)
+    const decision = recovery ? ` · 等待选择${recovery.kind === 'limit' ? '追加3次或不追加' : '重试或不再搜索'}（检索 ${count(recovery.used)}/${count(recovery.limit)}；网络尝试 ${count(recovery.attemptsUsed)}/${count(recovery.attemptsLimit)}）` : ''
+    return `${mode}${result?.cacheHit === true ? ' · 使用缓存，无新请求' : quota}${attempts ? ` · ${attempts}` : ''}${decision}${result?.authorization === 'timeout' ? ' · 等待授权超时，未调用搜索服务' : ''}${hosts.length ? ` · 来源域名（未核实）：${hosts.join('、')}` : ''}${failure ? ` · ${failure}` : ''}${evidence ? ` · 证据：${evidence}` : ''}${notice ? ` · 说明：${notice}` : ''}`
   }
   if (toolName === 'read_material') return '已读取指定材料版本'
   if (toolName === 'read_author_web') {

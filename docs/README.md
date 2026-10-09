@@ -5,6 +5,7 @@
 ## 用户入口
 
 - [桌面快速开始](QUICKSTART_1_0.md)：下载、首次配置、备份、升级和常见限制。
+- [Windows 复制粘贴异常采集](testing/CLIPBOARD_DIAGNOSTICS.md)：手动采集占用进程与系统环境，不读取剪贴板内容。
 - [桌面版与原版 Skill 能力对照](DESKTOP_SKILL_COMPARISON.md)：选择适合自己的入口。
 - 原版使用说明见 [Claude Code 指南](CLAUDE_CODE_GUIDE.md)。个人资料不纳入版本化产品入口。
 
@@ -20,6 +21,7 @@
 | 当前进度 | [实施进度](architecture/IMPLEMENTATION_PROGRESS.md) | 当前实现和证据索引，不反向覆盖产品合同 |
 | 测试与验收 | [发布门禁](testing/RELEASE_GATE.md)、[最终用户验收清单](testing/FINAL_USER_UAT_CHECKLIST.md) | 区分自动检查、真实模型、桌面安装和人工体验 |
 | 模型输入与核查效率 | [上下文投影与事实核查分段](testing/AGENT_CONTEXT_PROJECTION.md) | 按角色提供输入；区分模拟结果、历史测量与真实模型耗时 |
+| 模拟读者修订 | [三个并行模拟读者](implementation/READER_SIMULATION.md) | 普通读者反应、隔离与恢复；导演解读不冒充读者意见 |
 | RC72 审查修复 | [2026-10-05 修复与回归](testing/2026-10-05-rc72-review-fixes.md) | 桌面回执、核查恢复、搜索额度和启动诊断；未发布的本地修复 |
 | 发布 | [桌面发布手册](launch/DESKTOP_RELEASE_RUNBOOK.md) | 当前维护者操作入口；单次 RC 记录只是对应版本证据 |
 

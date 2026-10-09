@@ -6,7 +6,10 @@ import {
   ToolExecutionFault,
   type SecureWebFetchResult,
   type ToolDefinition,
+  type ToolExecutionError,
 } from "../../runtime/tools/src/index.js";
+import type { CompletedToolCall } from '../../runtime/llm/src/index.js';
+import { canonicalJson, contentHash } from '../../writing-core/src/index.js';
 import type { JsonValue, StoragePort } from "../../writing-core/src/index.js";
 
 export interface FactSourceFetcher {
@@ -22,10 +25,29 @@ export interface CreateFactSourceToolOptions {
   readonly isDiscoveredSource?: (url: string, runId: string) => boolean;
   /** Hard bound for policy resolution, redirects and transport. Primarily configurable for deterministic tests. */
   readonly timeoutMs?: number;
+  /** Per-request network inactivity bound, capped by the overall deadline. */
+  readonly requestTimeoutMs?: number;
 }
 
 const MAX_RESULT_CHARS = 20_000;
-const DEFAULT_SOURCE_TIMEOUT_MS = 20_000;
+const DEFAULT_SOURCE_TIMEOUT_MS = 60_000;
+const DEFAULT_SOURCE_REQUEST_TIMEOUT_MS = 30_000;
+const SOURCE_UNAVAILABLE_CODES = new Set([
+  'FACT_SOURCE_TIMEOUT', 'FACT_SOURCE_FETCH_UNAVAILABLE', 'NETWORK_TARGET_UNRESOLVED',
+  'WEB_REQUEST_FAILED', 'WEB_REQUEST_TIMEOUT', 'WEB_HTTP_STATUS_REJECTED',
+  'WEB_ARTICLE_ACCESS_RESTRICTED', 'WEB_ARTICLE_CONTENT_MISSING', 'WEB_ARTICLE_UNAVAILABLE',
+  'WEB_CONTENT_TYPE_DENIED', 'WEB_ENCODING_INVALID', 'WEB_RESPONSE_TOO_LARGE',
+  'WEB_REDIRECT_INVALID', 'WEB_REDIRECT_LIMIT_EXCEEDED',
+]);
+
+/** Independent unavailable pages are not repeated submission-gate failures.
+ * Blind retries of the same page are still bounded; security/contract denials
+ * retain the runtime's default grouping, even when a model changes arguments. */
+export function factToolFailureLoopKey(call: CompletedToolCall, error: ToolExecutionError): string {
+  const base = `${call.name}:${error.code}`;
+  return call.name === 'read_fact_source' && SOURCE_UNAVAILABLE_CODES.has(error.code)
+    ? `${base}:${contentHash(canonicalJson(call.arguments))}` : base;
+}
 
 class FactSourceTimeoutError extends Error {
   constructor() {
@@ -34,9 +56,9 @@ class FactSourceTimeoutError extends Error {
   }
 }
 
-function sourceTimeout(value: number | undefined): number {
-  const resolved = value ?? DEFAULT_SOURCE_TIMEOUT_MS;
-  if (!Number.isSafeInteger(resolved) || resolved <= 0) throw new TypeError('timeoutMs must be a positive safe integer');
+function sourceTimeout(value: number | undefined, fallback: number, name: string): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) throw new TypeError(`${name} must be a positive safe integer`);
   return resolved;
 }
 
@@ -80,8 +102,9 @@ export function createFactSourceTool(
   options: CreateFactSourceToolOptions,
 ): ToolDefinition<{ url: string }, JsonValue> {
   const policy = new NetworkAccessPolicy({ allowHttp: true });
-  const fetcher = options.fetcher ?? new SecureWebFetcher({ policy });
-  const timeoutMs = sourceTimeout(options.timeoutMs);
+  const timeoutMs = sourceTimeout(options.timeoutMs, DEFAULT_SOURCE_TIMEOUT_MS, 'timeoutMs');
+  const requestTimeoutMs = Math.min(timeoutMs, sourceTimeout(options.requestTimeoutMs, DEFAULT_SOURCE_REQUEST_TIMEOUT_MS, 'requestTimeoutMs'));
+  const fetcher = options.fetcher ?? new SecureWebFetcher({ policy, timeoutMs: requestTimeoutMs });
   // Do not spend more network calls on the same rejected page in this run.
   // A new run can try again. Authorization is always checked before this cache.
   const rejectedReads = new Map<string, ToolExecutionFault>();
@@ -112,6 +135,13 @@ export function createFactSourceTool(
       const cacheKey = JSON.stringify([context.runId, args.url]);
       const rejected = rejectedReads.get(cacheKey);
       if (rejected) throw new ToolExecutionFault(rejected.code, `本轮此来源已读取失败，未重复请求网站。${rejected.message}`, false, { ...rejected.details, cacheHit: true });
+      const rememberFailure = (fault: ToolExecutionFault): ToolExecutionFault => {
+        if (SOURCE_UNAVAILABLE_CODES.has(fault.code)) {
+          if (rejectedReads.size >= 32) rejectedReads.delete(rejectedReads.keys().next().value!);
+          rejectedReads.set(cacheKey, fault);
+        }
+        return fault;
+      };
       let fetched: SecureWebFetchResult;
       const timeoutController = new AbortController();
       const timer = setTimeout(() => timeoutController.abort(new FactSourceTimeoutError()), timeoutMs);
@@ -128,8 +158,12 @@ export function createFactSourceTool(
         if (parentSignal?.aborted) {
           throw new ToolExecutionFault('ABORTED', '来源原文读取已取消。');
         }
-        if (timeoutController.signal.aborted || error instanceof FactSourceTimeoutError) {
-          throw new ToolExecutionFault('FACT_SOURCE_TIMEOUT', '来源原文读取超时。可以使用已取得的搜索摘录并明确说明限制；不得声称已核对原文，不要反复重试同一来源。');
+        if (timeoutController.signal.aborted || error instanceof FactSourceTimeoutError ||
+            (error instanceof SecureWebFetchError && error.code === 'WEB_REQUEST_TIMEOUT')) {
+          const overall = timeoutController.signal.aborted || error instanceof FactSourceTimeoutError;
+          const bound = overall ? timeoutMs : requestTimeoutMs;
+          throw rememberFailure(new ToolExecutionFault('FACT_SOURCE_TIMEOUT', `来源原文读取${overall ? '整次等待' : '网络等待'} ${bound / 1_000} 秒后超时。这不是大模型未响应，也不是搜索引擎超时。可以使用已取得的搜索摘录继续核查并注明未读取原文；不要反复重试同一来源。`, false,
+            { timeoutMs: bound, timeoutPhase: overall ? 'overall' : 'transport' }));
         }
         // Keep the security denial, but never echo transport diagnostics or URL secrets.
         const code = error instanceof NetworkPolicyError || error instanceof SecureWebFetchError
@@ -141,11 +175,9 @@ export function createFactSourceTool(
             : status === 404 ? '来源页面不存在' : status === 429 ? '来源网站限制请求频率'
             : status >= 500 ? '来源网站服务异常' : '来源网站未返回成功响应';
           const fault = new ToolExecutionFault(code, `来源网站返回 HTTP ${status}：${meaning}。不是禁止 http:// 链接，也不是模型或搜索引擎故障。使用已有摘录并注明未读原文，或改用其他来源；不要重试同一页面。`, false, { httpStatus: status });
-          if (rejectedReads.size >= 32) rejectedReads.delete(rejectedReads.keys().next().value!);
-          rejectedReads.set(cacheKey, fault);
-          throw fault;
+          throw rememberFailure(fault);
         }
-        throw new ToolExecutionFault(code, '来源原文未能读取。可以使用已取得的搜索摘录并明确说明限制；不得声称已核对原文，不要反复重试同一来源。');
+        throw rememberFailure(new ToolExecutionFault(code, '来源原文未能读取。可以使用已取得的搜索摘录继续核查并明确说明限制；不得声称已核对原文，不要反复重试同一来源。'));
       } finally { clearTimeout(timer); }
       const text = fetched.content.text;
       return {

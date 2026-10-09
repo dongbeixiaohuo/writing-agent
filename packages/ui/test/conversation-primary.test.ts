@@ -3,6 +3,27 @@ import test from 'node:test'
 import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, conversationWorkingCopy } from '../src/shell/interaction.ts'
 import type { RecoverableRunSummary } from '../../client-bridge/src/protocol.ts'
 
+test('all-reader failure has an explicit retry action, not author-approval or input homework', () => {
+  const recovery:RecoverableRunSummary = {runId:'r', sessionId:'s', status:'waiting_user', stopReason:'PARALLEL_TEXT_ALL_FAILED', checkpointStage:null, nextStage:null};
+  const copy = checkpointCopy(recovery, undefined);
+  assert.equal(copy.role, '模拟读者');
+  assert.equal(copy.primaryAction, '重试模拟读者');
+  assert.match(copy.description, /只重试读者阶段/);
+  assert.deepEqual(recoveryContinueAction(recovery), {kind:'resume', decision:'resume'});
+  assert.equal(composerRecoveryMode([recovery], 's'), 'decision');
+})
+
+test('reader confirmation invites author reactions rather than editorial instructions', () => {
+  const recovery:RecoverableRunSummary = {runId:'r', sessionId:'s', status:'waiting_user', stopReason:'CO_CREATION_CHECKPOINT',
+    checkpointStage:'review_reader', nextStage:'central_revision'};
+  const copy = checkpointCopy(recovery, undefined);
+  assert.equal(copy.role, '模拟读者');
+  assert.match(copy.title, /感受.*怎么看/);
+  assert.doesNotMatch(copy.title, /建议/);
+  assert.match(copy.description, /写作导演.*你的取舍/);
+  assert.match(copy.feedbackPlaceholder, /我更希望/);
+})
+
 test('live timer names execution accumulation rather than the current stage and resets at resume boundary', () => {
   const activity = { runId: 'r', requestId: 'q', actor: 'outline', phase: 'waiting' as const,
     startedAt: 320000, segmentStartedAt: 0, lastActivityAt: null, requestOrdinal: 1 }
@@ -141,6 +162,29 @@ test('agent handling and an existing author question suppress duplicate fact not
   assert.equal(publicationGateNotice(factWorkspace(), 'agent_handling'), null)
   assert.equal(publicationGateNotice(factWorkspace(), 'author_question'), null)
   assert.equal(publicationGateNotice(factWorkspace({ status: 'stale' }), 'agent_handling'), null)
+})
+
+test('old medium/low blockers ask for a fresh lightweight review, not source homework', () => {
+  const original = factWorkspace();
+  const workspace = factWorkspace({ assessment: { ...original.assessment!, claims: [{ ...original.assessment!.claims[0]!, risk: 'yellow' }] } });
+  const notice = publicationGateNotice(workspace);
+  assert.match(notice!.title, /轻量规则重新核查/u);
+  assert.deepEqual(notice!.items, []);
+  assert.match(notice!.description, /无需逐条处理/u);
+  assert.equal(workspace.status, 'blocked', 'historic immutable gate is not silently rewritten');
+})
+
+test('mixed historic blockers count only important facts in the conversation notice', () => {
+  const original = factWorkspace();
+  const important = original.assessment!.claims[0]!;
+  const workspace = factWorkspace({ assessment: { ...original.assessment!,
+    claims: [important, { ...important, claimId: 'ordinary', risk: 'yellow' }],
+    blockers: [important.claimId, 'ordinary'],
+  } });
+  const notice = publicationGateNotice(workspace)!;
+  assert.match(notice.title, /1 项核查问题/u);
+  assert.deepEqual(notice.items.map(item => item.id), [important.claimId]);
+  assert.deepEqual(workspace.assessment!.blockers, [important.claimId, 'ordinary'], 'history is retained');
 })
 
 test('stale and passed gates are distinguished without a false blocker', () => {

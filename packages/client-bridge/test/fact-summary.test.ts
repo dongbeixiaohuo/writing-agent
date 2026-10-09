@@ -14,6 +14,29 @@ const passedAssessment = (claims: readonly Record<string, unknown>[], noFactualC
 });
 
 describe('fact-check completion summary', () => {
+  it('does not turn medium/low unverified notes into author tasks', () => {
+    const summary = factCheckCompletionSummary(passedAssessment([
+      { claimId: 'C001', claimText: '整理稿反复出现两次', risk: 'yellow', status: 'NEEDS_USER_SOURCE', supportScope: 'none' },
+      { claimId: 'C002', claimText: '职业背景转述', risk: 'green', status: 'UNSUPPORTED', supportScope: 'partial' },
+    ]));
+    assert.doesNotMatch(summary, /整理稿反复|职业背景转述|需要处理|暂不能/u);
+    assert.match(summary, /中低风险.*不阻断/u);
+    assert.match(summary, /下一步.*查看当前稿件/u);
+  });
+  it('discloses declined searching without erasing successful external checks or actual blockers', () => {
+    const material = { claimId: 'C001', claimText: '年份', status: 'SUPPORTED', supportScope: 'full', verificationMethod: 'material_comparison' };
+    const partial: any = passedAssessment([material]);
+    partial.payload.searchLimitations = [{ query: '年份', reason: '搜索超时', userDeclined: true }];
+    assert.match(factCheckCompletionSummary(partial), /你选择了不再搜索/);
+    assert.match(factCheckCompletionSummary(partial), /未经过联网核查/);
+    partial.payload.claims.push({ ...material, claimId: 'C002', claimText: '姓名', verificationMethod: 'external_source', verificationRecordIds: ['source'] });
+    const summary = factCheckCompletionSummary(partial);
+    assert.match(summary, /1 条已有外部来源核对记录/);
+    assert.doesNotMatch(summary, /本次所列条目未经过联网核查/);
+    partial.payload.claims[0].status = 'CONTRADICTED';
+    partial.payload.claims[0].risk = 'red';
+    assert.match(factCheckCompletionSummary(partial), /暂不能正式导出/);
+  });
   it('keeps ordinary supported background in details, not a verbose main-chat audit', () => {
     const summary = factCheckCompletionSummary(passedAssessment([
       { claimId: 'C001', claimText: 'Brett 是一名编程 20 多年的程序员。', claimType: 'person',
@@ -35,7 +58,7 @@ describe('fact-check completion summary', () => {
       ...Array.from({ length: 10 }, (_, i) => ({ claimId: `C${i}`, claimText: `普通背景${i}`,
         status: 'SUPPORTED', risk: 'green', supportScope: 'full', verificationMethod: 'material_comparison' })),
       { claimId: 'C011', claimText: '报道把发生年份写成2025年。', checkReason: 'suspected_error',
-        status: 'CONTRADICTED', risk: 'yellow', supportScope: 'none',
+        status: 'CONTRADICTED', risk: 'red', supportScope: 'none',
         evidenceSummary: '原始公告记载为2024年。', recommendedAction: '将年份纠正为2024年。' },
     ]);
     assessment.status = 'blocked';
@@ -114,7 +137,7 @@ describe('fact-check completion summary', () => {
 
   it('shows the remaining problem count after the first eight items', () => {
     const summary = factCheckCompletionSummary({ ...passedAssessment(Array.from({ length: 11 }, (_, i) => ({
-      claimText: `问题${i + 1}`, status: 'CONTRADICTED', risk: 'yellow', supportScope: 'none',
+      claimText: `问题${i + 1}`, status: 'CONTRADICTED', risk: 'red', supportScope: 'none',
     }))), status: 'blocked' });
     assert.match(summary, /还有 3 条问题.*事实核查.*详情/u);
     assert.doesNotMatch(summary, /可以导出/u);

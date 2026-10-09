@@ -30,6 +30,7 @@ import { FactClaimStatusSchema, FactClaimTypeSchema, parseEvidenceLedger, create
 import { defaultFactTitleContent, isPublicationSelectionCurrent } from './publication-choice.js';
 import { COMPACT_RESEARCH_SCHEMA, expandResearchEvidence } from './research-evidence.js';
 import { normalizeFactVerification } from './fact-context.js';
+import { factSearchLimitations } from './fact-search-recovery.js';
 type BodyStage = Extract<ContentStage, "draft" | "central_revision" | "language_review">;
 
 interface SubmitWritingStageArgs {
@@ -1171,7 +1172,7 @@ export function createWritingWorkflowTools(options: {
     name: "submit_fact_check",
     version: "1.0.0",
     description:
-      "Evaluate the final body against the saved evidence ledger. Unsupported claims remain blockers; the model cannot self-approve the gate.",
+      "Compare prepared important facts with available sources. Only red-risk significant errors or unresolved critical facts block delivery; medium/low risks do not. Runtime validates the report and provenance.",
     inputSchema: FACT_CHECK_SCHEMA,
     effect: "local_idempotent",
     permissions: ["workflow:submit", "fact:submit"],
@@ -1203,6 +1204,7 @@ export function createWritingWorkflowTools(options: {
         throw new ToolExecutionFault("FACT_INPUTS_INCOMPLETE", "Evidence ledger could not be read");
       }
       const runEvents = storage.listRunEvents(context.runId);
+      const searchLimitations = factSearchLimitations(runEvents);
       const preparation = (runEvents.findLast(event => event.type === 'tool.completed' &&
         (event.payload.result as any)?.ok === true && (event.payload.result as any)?.toolName === 'prepare_fact_check')?.payload.result as any)?.result;
       const claims = normalizeFactVerification(runEvents, preparation?.bodyVersionId === body.id && preparation?.evidenceVersionId === evidence.id ? preparation : null,
@@ -1298,6 +1300,7 @@ export function createWritingWorkflowTools(options: {
           coverage: { body: true, title: true, distributionCopy: true },
           claims,
           noFactualClaimsReason: args.noFactualClaimsReason,
+          ...(searchLimitations.length ? { searchLimitations } : {}),
         },
         actor: actor("fact_check", context.runId),
       });

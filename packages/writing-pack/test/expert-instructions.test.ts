@@ -97,18 +97,18 @@ describe("expert instruction migration", () => {
     const editor = buildExpertInstructions("review_editor");
     const publish = buildExpertInstructions("review_publish");
     const reader = buildExpertInstructions("review_reader");
-    assert.match(reader, /朋友圈.*熟人.*转发/u);
     assert.match(reader, /模拟读者.*即时感受/u);
-    assert.match(reader, /点开.*继续.*弃读.*读完.*转发/u);
+    assert.match(reader, /点开.*划走.*读完.*转发/u);
     assert.match(buildExpertInstructions('fact_check'), /易错.*存疑[\s\S]*第一人称亲历叙事[\s\S]*不生成 C 编号/u);
     assert.match(editor, /写作工艺.*结构.*作者声音/u);
     assert.doesNotMatch(editor, /CTR|完读率/u);
     assert.match(publish, /读者价值.*全文承诺.*发布风险/u);
     assert.match(reader, /公众号.*今日头条.*知乎.*平台未知/u);
-    assert.match(reader, /传播目标.*不适用.*跳过.*分享.*收藏.*互动/u);
-    assert.match(reader, /公众号.*卡片承诺.*首屏承接/u);
-    assert.match(reader, /今日头条.*信息流一致性.*前三屏推进/u);
-    assert.match(reader, /知乎.*问答贴合.*专业密度/u);
+    assert.match(reader, /并行.*相互隔离/u);
+    assert.match(reader, /禁止编辑术语.*修改建议/u);
+    assert.match(reader, /不冒充真实用户调研/u);
+    assert.match(reader, /不得升级为真实 reader_feedback/u);
+    assert.doesNotMatch(reader, /提出可讨论的调整建议|每个判断引用/u);
     assert.equal(new Set([editor, publish, reader]).size, 3);
 
     assert.match(buildExpertInstructions("position"), /推翻.*最强反例.*适用边界/u);

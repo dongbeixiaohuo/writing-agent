@@ -14,7 +14,7 @@ describe('fact claim presentation', () => {
   it('never labels a partial supported claim as fully supported', () => {
     assert.equal(
       factClaimStatusLabel({ status: 'SUPPORTED', supportScope: 'partial', risk: 'yellow' }),
-      '仅部分支持，仍会阻断',
+      '仅部分支持（中低风险，不阻断）',
     )
     assert.equal(
       factClaimStatusLabel({ status: 'SUPPORTED', supportScope: 'full', risk: 'green' }),

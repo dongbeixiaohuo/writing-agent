@@ -82,7 +82,7 @@ import {
 import css from './WritingAgentShell.module.css'
 import { aboutVersionView } from './about.ts'
 import { conversationFollowTarget, CONVERSATION_FOLLOW_THRESHOLD } from './conversation-follow.ts'
-import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, runRecordsTabLabel } from './interaction.ts'
+import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, stageRoleLabel, runRecordsTabLabel } from './interaction.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import { runProgressSummary, runDisplayStatus, runSavedStageLabel, runStopReasonLabel } from './run-records.ts'
 import { publicationGateNotice, factVerificationNotice } from './publication-gate.ts'
@@ -216,14 +216,14 @@ function Timeline({ items, brand, footer, diagnostic = false }: { items: readonl
         >
           {item.role === 'assistant' && item.stage && <header className={css.expertHeading} data-expert-stage={item.stage}>
             <span className={css.expertBadge} aria-hidden="true">{stageRoleCopy(item.stage).role.slice(0, 1)}</span>
-            <div><strong>{stageRoleCopy(item.stage).role}专家</strong><span>{stageRoleCopy(item.stage).action}</span></div>
+            <div><strong>{stageRoleLabel(item.stage)}</strong><span>{stageRoleCopy(item.stage).action}</span></div>
           </header>}
           {item.role === 'assistant' && !item.stage && item.actorLabel && <header className={css.expertHeading} data-actor-label={item.actorLabel}>
             <span className={css.expertBadge} aria-hidden="true">{item.actorLabel.slice(0, 1)}</span>
             <div><strong>{item.actorLabel}</strong></div>
           </header>}
           <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
-          <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleCopy(item.stage).role + '专家' : item.actorLabel ?? brand.assistantName} · ${item.createdAt}`}
+          <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleLabel(item.stage) : item.actorLabel ?? brand.assistantName} · ${item.createdAt}`}
             {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 本阶段活动耗时 ${Math.round(item.activeDurationMs / 1000)} 秒（排除等待确认）`}
           </div>
         </article>
@@ -271,7 +271,7 @@ function WorkflowProgress({ run, detailed = false }: { run: RunRecordView; detai
   </section>
 }
 
-function CheckpointDecisionCard({
+export function CheckpointDecisionCard({
   bridge,
   recovery,
   run,
@@ -294,6 +294,17 @@ function CheckpointDecisionCard({
   const isCheckpoint = recovery.stopReason === 'CO_CREATION_CHECKPOINT' || !!recovery.checkpointApproval
   const needsInput = recovery.stopReason === 'WRITING_INPUT_REQUIRED'
   const isTitleDiscussion = recovery.inputRequest?.kind === 'publication_selection'
+  const searchRecovery = recovery.inputRequest?.kind === 'search_recovery' ? recovery.inputRequest.searchRecovery : undefined
+
+  const decideSearch = async (action: 'retry' | 'extend' | 'continue'): Promise<void> => {
+    if (busy || !searchRecovery) return
+    try {
+      setBusy(true); setError(null)
+      await bridge.resumeRun(recovery.runId, 'resume', { factSearchDecision: { requestId: searchRecovery.requestId, action } })
+      onContinued()
+    } catch (reason) { setError(commandErrorMessage(reason, '搜索决定未能保存，请重试。')) }
+    finally { setBusy(false) }
+  }
 
   const resume = async (): Promise<void> => {
     if (busy) return
@@ -337,12 +348,13 @@ function CheckpointDecisionCard({
   </div>
 
   return <section className={css.checkpointCard} data-conversation-recovery="true"
-    aria-label={isTitleDiscussion ? '待选标题' : needsInput ? '待补充信息' : isCheckpoint ? '共创决策' : '写作暂停'}>
+    aria-label={searchRecovery ? '搜索恢复决定' : isTitleDiscussion ? '待选标题' : needsInput ? '待补充信息' : isCheckpoint ? '共创决策' : '写作暂停'}>
     <div className={css.checkpointHeader}>
       <div className={css.checkpointRole} aria-hidden="true">{copy.role.slice(0, 1)}</div>
       <div><span>{copy.role} · {copy.eyebrow}</span><h2>{copy.title}</h2></div>
     </div>
     <p className={css.checkpointDescription}>{copy.description}</p>
+    {searchRecovery && <p>检索词：{searchRecovery.query}<br />检索额度 {searchRecovery.used}/{searchRecovery.limit} · 网络尝试 {searchRecovery.attemptsUsed}/{searchRecovery.attemptsLimit}。不再搜索不会丢弃已有来源，结论会明确说明未联网核对的条目。</p>}
     {needsInput && !!recovery.inputRequest?.questions.length && <ol>{recovery.inputRequest.questions.map((question, index) => <li key={index}>{question}</li>)}</ol>}
     {isTitleDiscussion && !!recovery.inputRequest?.candidates?.length && <ol aria-label="标题候选">
       {recovery.inputRequest.candidates.map((candidate, index) => <li key={index}><strong>{candidate.title}</strong>
@@ -358,7 +370,9 @@ function CheckpointDecisionCard({
       <button className={css.textActionNeutral} type="button" disabled={busy || runActive} onClick={() => void stop()}>结束本轮</button>
       <div>
         <button className={css.secondaryAction} type="button" disabled={busy} onClick={onInspect}>打开稿件与过程</button>
-        {!isCheckpoint && !needsInput && <button className={css.primaryAction} type="button" disabled={busy || runActive} onClick={() => void resume()}>
+        {searchRecovery && <><button className={css.secondaryAction} type="button" disabled={busy || runActive} onClick={() => void decideSearch('continue')}>不再搜索，继续核查</button>
+          <button className={css.primaryAction} type="button" disabled={busy || runActive} onClick={() => void decideSearch(searchRecovery.kind === 'limit' ? 'extend' : 'retry')}>{searchRecovery.kind === 'limit' ? '追加3次搜索' : '重试本次搜索'}</button></>}
+        {!searchRecovery && !isCheckpoint && !needsInput && <button className={css.primaryAction} type="button" disabled={busy || runActive} onClick={() => void resume()}>
           {busy ? '正在继续…' : copy.primaryAction}
         </button>}
       </div>

@@ -18,10 +18,8 @@ export function factStatusContext(status: FactCheckStatusView, includeFindings =
     assessment: assessment ? { id: assessment.id, status: assessment.status,
       blockers: assessment.blockers, claimCount: assessment.payload.claims.length,
       coverage: assessment.payload.coverage,
-      // Match the gate's status, scope AND risk rules; SUPPORTED alone does not
-      // mean the finding is resolved. Preserve explicit legacy blockers too.
-      ...(includeFindings ? { claims: assessment.payload.claims.filter(c => c.status !== 'SUPPORTED' ||
-        c.supportScope !== 'full' || c.risk === 'red' || assessment.blockers.includes(c.claimId)),
+      // The saved policy owns blockers. Advisory notes must not restart revision.
+      ...(includeFindings ? { claims: assessment.payload.claims.filter(c => assessment.blockers.includes(c.claimId)),
         noFactualClaimsReason: assessment.payload.noFactualClaimsReason } : {}),
     } : null,
     invalidations: status.invalidations.map(i => ({ reason: i.reason, changedVersionId: i.changedVersionId })),

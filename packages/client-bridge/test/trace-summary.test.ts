@@ -4,6 +4,7 @@ import type { WritingProjectProjection } from '../../application/src/index.js'
 import type { RunRecord } from '../../runtime/session/src/index.js'
 import { runDiagnostics } from '../src/run-diagnostics.js'
 import { explainRunFailure } from '../src/run-failure-explanation.js'
+import { recordedActorLabel } from '../src/tool-presentation.js'
 
 const run = {
   id: 'run', sessionId: 'session', projectId: 'project', status: 'completed', planVersion: 'test',
@@ -20,6 +21,18 @@ function projection(events: Array<{ type: string; operationId: string; payload: 
   } as unknown as WritingProjectProjection
 }
 
+test('parallel reader requests have distinct ordinary persona labels and preserve their individual failures', () => {
+  assert.equal(recordedActorLabel('review_reader_a'), '模拟读者 A · 匆忙路人');
+  assert.equal(recordedActorLabel('review_reader_b'), '模拟读者 B · 目标读者');
+  assert.equal(recordedActorLabel('review_reader_c'), '模拟读者 C · 懂行读者');
+  const step = runDiagnostics(projection([
+    { type:'request.dispatch_attempted', operationId:'reader-c', payload:{actor:'review_reader_c', requestId:'c'} },
+    { type:'request.failed', operationId:'reader-c', payload:{actor:'review_reader_c', error:{code:'PARALLEL_TASK_TIMEOUT'}} },
+  ]), run).trace!.find(s=>s.kind==='model')!;
+  assert.equal(step.errorCode, 'PARALLEL_TASK_TIMEOUT');
+  assert.match(explainRunFailure(step).detail, /其他.*读者|其他.*反应/);
+})
+
 test('source HTTP failures retain structured status through the trace and UI explanation, including public HTTP hosts', () => {
   for (const httpStatus of [403, 404, 429, 503]) {
     const step = runDiagnostics(projection([
@@ -34,6 +47,18 @@ test('source HTTP failures retain structured status through the trace and UI exp
     assert.match(explainRunFailure(step).title, new RegExp(`HTTP ${httpStatus}`));
     assert.match(explainRunFailure(step).detail, /不是禁止 http/);
   }
+});
+
+test('source timeout trace clearly separates a webpage timeout from model and search service failure', () => {
+  const step = runDiagnostics(projection([
+    { type:'tool.requested', operationId:'source', payload:{ toolName:'read_fact_source', arguments:{ url:'https://public.example/article' } } },
+    { type:'tool.failed', operationId:'source', payload:{ result:{ ok:false, toolName:'read_fact_source', error:{ code:'FACT_SOURCE_TIMEOUT', message:'来源原文读取等待30秒后超时。', details:{ timeoutMs:30000, timeoutPhase:'transport' } } } } },
+  ]), run).trace!.find(s => s.kind === 'tool')!;
+  const explanation = explainRunFailure(step);
+  assert.match(explanation.title, /来源原文读取超时/);
+  assert.match(explanation.detail, /不是.*模型.*搜索/);
+  assert.match(explanation.remediation, /摘录.*未.*原文/);
+  assert.match(step.outputPreview!, /30秒/);
 });
 
 test('search trace exposes the current provider before completion and fallback attempts afterwards', () => {
@@ -214,12 +239,28 @@ test('fact provenance refusals explain missing evidence rather than implying a m
   assert.match(external.remediation, /材料对照.*模型复核/u);
   assert.match(external.remediation, /不需要.*重复搜索/u);
   assert.doesNotMatch(external.title, /无响应|超时/u);
+  assert.match(external.detail, /关联校验/u);
+  assert.doesNotMatch(external.detail, /模型声称/u, 'a parser compatibility fault must not be attributed to the model');
   const selection = explainRunFailure({ ...context, errorCode: 'FACT_CLAIM_SELECTION_REQUIRED' });
   assert.match(selection.title, /选择原因/u);
   assert.match(selection.remediation, /不必重新读取全文/u);
   const legacy = explainRunFailure({ ...context, errorCode: 'FACT_KEY_EXTERNAL_CHECK_REQUIRED' });
   assert.match(legacy.detail, /旧规则.*取消/u);
   assert.match(legacy.remediation, /无需.*公开证明/u);
+});
+
+test('fact provenance trace exposes the offending claim IDs in the recorded failure message', () => {
+  const trace = runDiagnostics(projection([
+    { type: 'run.started', operationId: 'start', payload: {} },
+    { type: 'tool.requested', operationId: 'submit', payload: { toolName: 'submit_fact_check', arguments: {} } },
+    { type: 'tool.failed', operationId: 'submit', payload: { result: { ok: false, toolName: 'submit_fact_check', error: {
+      code: 'FACT_EXTERNAL_RECORD_REQUIRED', message: 'C005：成功记录中的来源URL未与提交对应。请修正本次提交，不需要重复搜索。',
+      details: { invalidClaimIds: ['C005'] },
+    } } } },
+  ]), run).trace ?? [];
+  const failed = trace.find(step => step.status === 'failed')!;
+  assert.match(failed.outputPreview!, /C005.*来源URL/u);
+  assert.doesNotMatch(failed.outputPreview!, /模型声称/u);
 });
 
 test('checkpoint rework gate explains the decision conflict and a usable recovery action', () => {

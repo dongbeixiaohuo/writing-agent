@@ -299,11 +299,13 @@ export type DesktopPublicationSaveResult =
   | { readonly cancelled: false; readonly receiptId: string; readonly savedPath: string; readonly fileName: string };
 
 export interface SearchSettingsInput {
+  readonly searchLimit?: number;
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;
   readonly tavilyApiKey?: string;
 }
 export interface SearchSettingsView {
+  readonly searchLimit?: number;
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;
   readonly tavilyKeyConfigured: boolean;
@@ -595,7 +597,8 @@ export class DesktopClientBridge implements ClientBridge {
       decision,
       { operationId: options.operationId ?? this.#operationIdFactory(),
         ...(options.feedback === undefined ? {} : { feedback: options.feedback }),
-        ...(options.checkpointApproval === undefined ? {} : { checkpointApproval: options.checkpointApproval }) },
+        ...(options.checkpointApproval === undefined ? {} : { checkpointApproval: options.checkpointApproval }),
+        ...(options.factSearchDecision === undefined ? {} : { factSearchDecision: options.factSearchDecision }) },
     );
   }
 

@@ -24,7 +24,7 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
   const { errorCode: code, technicalName, transportPhase } = context
   if (code === 'FACT_EXTERNAL_RECORD_REQUIRED') return {
     title: '核查提交的查证依据不完整',
-    detail: '模型声称已外部查证，但提交的来源未对应本轮成功搜索或读取记录；这不是模型无响应或搜索超时。',
+    detail: '提交的外部来源未通过记录关联校验，具体条目与原因见记录信息和输出详情；这不是模型无响应或搜索超时。',
     remediation: '修正对应来源记录，或如实改用材料对照/模型复核，不需要为了补引用重复搜索。真实未决问题应说明纠正动作。稿件仍保留。',
   }
   if (code === 'FACT_CLAIM_SELECTION_REQUIRED') return {
@@ -43,6 +43,14 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
     remediation: '如果你已认可当前成果，回到对话点击“认可当前阶段，继续”重新明确确认；如果仍要修改，说明修改要求，改好后再确认。无需重新提交材料。',
   }
   if (context.kind === 'model') {
+    if (code === 'PARALLEL_TASK_TIMEOUT') return {
+      title:'该模拟读者未在本阶段时限内返回完整感受', detail:'仅此读者响应缺失，不等于文章丢失；其他模拟读者可以继续。',
+      remediation:'本次不会自动反复请求此读者；若全部读者都失败，可稍后重试本阶段。',
+    }
+    if (code === 'PARALLEL_TEXT_INVALID') return {
+      title:'该模拟读者没有返回符合要求的口语感受', detail:'未保存残缺回复或编辑诊断，也未编造此人的反应；其他模拟读者可以继续。',
+      remediation:'查看输出详情；本次未自动重试，全部失败时可重试读者阶段。',
+    }
     if (transportPhase === 'first_response') return {
       title: '模型未在等待时限内返回首个有效内容',
       detail: '失败发生在模型请求阶段；本机记录的是首次有效响应等待超时，未获得可交给后续步骤的模型结果。',
@@ -121,10 +129,15 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
   }
 
   if (technicalName === 'search_fact_sources') {
+    if (code === 'SEARCH_TIMEOUT' || code === 'SEARCH_REQUEST_TIMEOUT') return {
+      title: '搜索服务等待超时',
+      detail: '本次没有取得可用搜索结果；这是搜索网络等待超时，不是大模型未响应。各服务尝试及耗时保留在输出和时序中。',
+      remediation: '在当前搜索提示选择“重试本次搜索”，或“不再搜索，继续核查”；停止搜索后会说明未联网核对的范围。',
+    }
     if (code === 'SEARCH_LIMIT_REACHED') return {
       title: '本轮公开搜索次数已达上限',
       detail: '这是本轮检索次数门禁；本次未发起新的搜索服务请求。',
-      remediation: '使用本轮已有搜索结果完成核查，不要重复搜索；未证实的主张应保持不确定标记。',
+      remediation: '在当前搜索提示选择“追加3次搜索”，或“不再搜索，继续核查”；已有结果会保留，未证实的主张仍须如实说明。',
     }
     if (code === 'SEARCH_APPROVAL_TIMEOUT' || code === 'SEARCH_APPROVAL_FAILED' || code === 'SEARCH_NOT_AUTHORIZED') return {
       title: '公开搜索尚未执行',
@@ -134,7 +147,7 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
     return {
       title: '公开搜索服务请求失败',
       detail: '失败发生在公开搜索工具阶段；现有记录不表示模型未响应，也不足以推断更具体的外部原因。',
-      remediation: '查看该步骤的搜索进度与输出，在搜索设置中检查对应服务连接后再重试。',
+      remediation: '查看各搜索服务的进度与输出，检查搜索设置；在当前提示选择重试或不再搜索，不必重新填写写作材料。',
     }
   }
 
@@ -146,8 +159,8 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
     }
     if (code === 'FACT_SOURCE_TIMEOUT') return {
       title: '已授权来源原文读取超时',
-      detail: '失败发生在来源原文读取阶段；本次没有取得可确认的原文内容。',
-      remediation: '使用已取得的搜索摘录并明确标注未核对原文，或改用其他已授权来源。',
+      detail: '来源网页读取等待超时，本次没有取得可确认的原文内容；这不是大模型未响应，也不是搜索引擎超时。',
+      remediation: '已有搜索摘录足够时继续核查，并明确标注未读取原文；关键内容仍不足时改用其他已授权来源，不要反复重试同一页面。',
     }
     if (code === 'NETWORK_PRIVATE_TARGET_DENIED' || code === 'NETWORK_CREDENTIALS_DENIED') return {
       title: '来源读取被本机安全规则拒绝',

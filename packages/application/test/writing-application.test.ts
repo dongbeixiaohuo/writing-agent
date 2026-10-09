@@ -253,17 +253,13 @@ class FactCheckOnlyProvider extends ModelProviderBase {
     this.requests.push(request);
     const extraction = factPreparationFixtureEvents(request);
     if (extraction) { yield* extraction; return; }
-    assert.equal(context.materials[0].materialId, 'material-1');
-    assert.ok(context.materials[0].content.length > 0);
-    assert.equal(context.materials[0].instructionAuthority, 'none');
-    assert.equal(context.materials[0].role, 'user_firsthand');
-    assert.equal(context.materialCatalog[0].materialId, 'material-1');
-    assert.equal(context.materialCatalog[0].content, undefined);
+    assert.equal(context.materials, undefined, 'verification uses prepared facts, not original author materials');
+    assert.equal(context.materialCatalog, undefined);
     assert.equal(context.bodyVersionId, this.bodyVersionId);
     assert.equal(context.evidenceVersionId, this.evidenceVersionId);
     assert.equal(context.artifacts.find((a: { kind: string }) => a.kind === 'body').content.projection, 'fact_article_catalog');
     assert.ok(context.artifacts.find((a: { id: string }) => a.id === this.evidenceVersionId).content);
-    assert.ok(request.tools?.some(tool => tool.name === 'read_material'), 'full author sources remain readable on demand');
+    assert.equal(request.tools?.some(tool => tool.name === 'read_material'), false);
     assert.equal(request.tools?.some(tool => tool.name === 'read_artifact_version'), false, 'bound artifacts are already complete');
     const factSubmitted = request.messages.some(
       (message) => message.role === "tool" && message.name === "submit_fact_check",
@@ -1483,7 +1479,7 @@ describe("WritingApplicationService draft closure", () => {
         },
       });
       assert.equal(result.ok, true, JSON.stringify(result));
-      assert.equal(result.modelRequestCount, 29);
+      assert.equal(result.modelRequestCount, 31, 'three readers replace one serial reader');
       assert.equal(result.toolCallCount, 29);
       assert.equal(
         storage.listArtifactVersions("project-1", "review", `review_publish:${result.runId}`).length,
@@ -1641,10 +1637,10 @@ describe("WritingApplicationService draft closure", () => {
       if (!result.ok) return;
       assert.equal(result.validationKind, "mock_verified");
       assert.equal(result.publicationReady, true);
-      assert.equal(result.modelRequestCount, 26);
+      assert.equal(result.modelRequestCount, 28, 'all three parallel readers share the parent budget');
       assert.equal(result.toolCallCount, 26);
       assert.notEqual(result.artifactVersionId, null);
-      assert.equal(provider.requests.length, 26);
+      assert.equal(provider.requests.length, 28);
       assert.equal(
         JSON.stringify(provider.requests[0]).includes("下班后我沿着河边"),
         true,

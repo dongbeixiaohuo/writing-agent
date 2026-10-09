@@ -8,6 +8,34 @@ import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from "
 import { ToolRegistry, ToolExecutionFault } from "../../tools/src/index.js";
 import { AgentRuntime } from "../src/index.js";
 
+it('specific tool validation feeds one correction back without weakening role authorization', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tool-specific-validation-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  let calls = 0, executed = 0, validations = 0;
+  class Provider extends ModelProviderBase {
+    constructor() { super('validation', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      calls++;
+      if (calls === 2) assert.match(request.messages.findLast(m => m.role === 'tool')!.content, /FACT_SUBMISSION_INCOMPLETE.*C002/);
+      if (calls === 3) assert.match(request.messages.findLast(m => m.role === 'tool')!.content, /TOOL_PERMISSION_DENIED/);
+      if (calls === 4) { yield { type: 'text_delta', delta: 'done' }; yield { type: 'completed', finishReason: 'stop' }; return; }
+      yield { type: 'tool_call_delta', index: 0, id: `call-${calls}`, name: calls === 2 ? 'outside' : 'submit', argumentsDelta: '{}' };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  try {
+    storage.createProject({ projectId: 'p', operationId: 'p', name: 'Validation', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    const tool = (name: string): any => ({ name, version: '1.0.0', description: name, effect: 'read_only', permissions: [], inputSchema: { type: 'object', properties: {} }, execute: () => { executed++; return {}; } });
+    const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage, tools: ToolRegistry.create([tool('submit'), tool('outside')]),
+      requestPolicy: () => ({ scopeId: 'fact', systemPrompt: 'fact', userMessage: 'claims', allowedTools: ['submit', 'outside'], authorizeTool: call => call.name !== 'outside',
+        toolValidationError: () => { validations++; return calls === 1 ? { code: 'FACT_SUBMISSION_INCOMPLETE', message: '补齐C002', retryable: false, details: { missingClaimIds: ['C002'] } } : null; } }) });
+    const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'm', parameters: {}, systemPrompt: 'fact', userMessage: 'claims', grantedPermissions: [], expectedBodyVersionId: null });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(executed, 1, 'incomplete and forbidden calls must never execute');
+    assert.equal(validations, 2, 'forbidden roles must not reach argument validation');
+  } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('provides raw history and the result position for request-only read projections', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'read-history-projection-'));
   const storage = openWorkspaceStorage({ workspacePath: dir });
@@ -44,6 +72,39 @@ it('provides raw history and the result position for request-only read projectio
     assert.match(JSON.stringify(storage.listRunEvents(result.runId).filter(e => e.type === 'tool.completed')), /FULL_PAGE/);
     const snapshot = storage.getRequestSnapshot(storage.listRunEvents(result.runId).findLast(e => e.type === 'request.dispatch_attempted')!.payload.snapshotId as string);
     assert.equal(snapshot!.request.messages.find(m => m.role === 'tool')!.content, 'old read receipt', 'diagnostics must reflect what was actually sent');
+  } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('projects paired history only for requests, retaining raw durable results and accurate snapshots', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'request-history-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  const requests: ModelRequest[] = [];
+  class Provider extends ModelProviderBase {
+    constructor() { super('history', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push(request);
+      if (requests.length < 3) {
+        yield { type: 'tool_call_delta', index: 0, id: `c${requests.length}`, name: 'read', argumentsDelta: '{}' };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      } else { yield { type: 'text_delta', delta: 'done' }; yield { type: 'completed', finishReason: 'stop' }; }
+    }
+  }
+  try {
+    storage.createProject({ operationId: 'p', projectId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage,
+      tools: ToolRegistry.create([{ name: 'read', version: '1.0.0', description: 'read', effect: 'read_only', permissions: [], inputSchema: { type: 'object', properties: {} }, execute() { return { text: 'RAW_CONTENT' }; } }]),
+      requestPolicy: () => ({ scopeId: 'fixed', systemPrompt: 'read', userMessage: 'read', allowedTools: ['read'],
+        projectHistory: messages => requests.length < 2 ? messages : messages.filter(m =>
+          !(m.role === 'assistant' && m.toolCalls?.some(c => c.id === 'c1')) && !(m.role === 'tool' && m.toolCallId === 'c1')) }),
+    });
+    const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'm', parameters: {}, systemPrompt: 'read', userMessage: 'read', grantedPermissions: [], expectedBodyVersionId: null });
+    assert.equal(result.ok, true);
+    assert.equal(requests[2]!.messages.filter(m => m.role === 'tool').length, 1);
+    assert.equal(requests[2]!.messages.find(m => m.role === 'tool')!.toolCallId, 'c2');
+    assert.equal(storage.listRunEvents(result.runId).filter(e => e.type === 'tool.completed').length, 2);
+    assert.match(JSON.stringify(storage.listRunEvents(result.runId)), /RAW_CONTENT/);
+    const snapshot = storage.getRequestSnapshot(storage.listRunEvents(result.runId).findLast(e => e.type === 'request.dispatch_attempted')!.payload.snapshotId as string);
+    assert.deepEqual(snapshot!.request.messages, requests[2]!.messages);
   } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -138,6 +199,49 @@ it('stops resubmitting after the same tool gate rejection repeats', async () => 
     assert.equal(storage.listRunEvents(result.runId).at(-1)?.payload.attempts, 3);
   } finally {storage.close(); rmSync(dir,{recursive:true,force:true});}
 });
+
+for (const repeatSameSource of [false, true]) {
+it(`counts source read failures by target without weakening submission gates: same source=${repeatSameSource}`, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'source-failure-scope-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  let requests = 0;
+  class Provider extends ModelProviderBase {
+    constructor() { super('source-fallback', '1', { protocol:'mock', streaming:'supported', tools:'supported', usage:'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests++;
+      if (requests === 1) {
+        for (let index = 0; index < 3; index++) yield { type:'tool_call_delta', index, id:`read-${index}`, name:'read_fact_source',
+          argumentsDelta:JSON.stringify({ url: `https://source.example/${repeatSameSource ? 'same' : index}` }) };
+        yield { type:'completed', finishReason:'tool_calls' };
+      } else {
+        assert.equal(request.messages.filter(m => m.role === 'tool').length, 3, 'all failed read receipts must reach the checker');
+        yield { type:'tool_call_delta', index:0, id:'submit', name:'submit_fact_check', argumentsDelta:'{}' };
+        yield { type:'completed', finishReason:'tool_calls' };
+      }
+    }
+  }
+  try {
+    storage.createProject({operationId:'p',projectId:'p',name:'fixture',mode:'quick',actor:{kind:'user',id:'u'}});
+    const tools = ToolRegistry.create([
+      { name:'read_fact_source',version:'1.0.0',description:'read',effect:'read_only',permissions:[],
+        inputSchema:{type:'object',properties:{url:{type:'string'}},required:['url']},
+        execute() { throw new ToolExecutionFault('WEB_REQUEST_FAILED','use the already saved search excerpt; original page unavailable'); } },
+      { name:'submit_fact_check',version:'1.0.0',description:'submit',effect:'local_idempotent',permissions:[],
+        inputSchema:{type:'object',properties:{}}, execute() { return { saved:true }; } },
+    ]);
+    const runtime = new AgentRuntime({provider:new Provider(),sessions:storage,tools,
+      requestPolicy:()=>({scopeId:'fact',actor:'fact_check',systemPrompt:'check',userMessage:'saved search excerpts',allowedTools:['read_fact_source','submit_fact_check'],
+        toolFailureLoopKey:(call: any, error: any)=>`${call.name}:${error.code}:${call.arguments.url ?? ''}`}),
+      completeAfterTool:result=>result.ok && result.toolName === 'submit_fact_check' ? {artifactVersionId:'body',content:'checked using saved excerpts; original unread'} : null});
+    const result = await runtime.run({projectId:'p',purpose:'test',model:'m',parameters:{},systemPrompt:'root',userMessage:'root',grantedPermissions:[],expectedBodyVersionId:null,
+      budget:{maxModelRequests:4,maxToolCalls:8,maxRetriesPerRequest:0,maxMajorRevisions:0}});
+    assert.equal(result.ok, !repeatSameSource, JSON.stringify(result));
+    assert.equal(requests, repeatSameSource ? 1 : 2);
+    assert.equal(storage.getRun(result.runId)!.status, repeatSameSource ? 'waiting_user' : 'completed');
+    assert.equal(storage.getRun(result.runId)!.stopReason, repeatSameSource ? 'TOOL_FAILURE_LOOP' : null);
+  } finally {storage.close(); rmSync(dir,{recursive:true,force:true});}
+});
+}
 
 for (const scenario of ['save', 'cancel', 'truncated', 'timeout', 'revoked', 'permission', 'empty'] as const) {
 it(`harness text save retains tool safety boundaries: ${scenario}`, async () => {

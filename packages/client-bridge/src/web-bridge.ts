@@ -446,6 +446,7 @@ export class WebClientBridge implements ClientBridge {
       decision,
       ...(options.feedback === undefined ? {} : { feedback: options.feedback }),
       ...(options.checkpointApproval === undefined ? {} : { checkpointApproval: options.checkpointApproval }),
+      ...(options.factSearchDecision === undefined ? {} : { factSearchDecision: options.factSearchDecision }),
     });
     this.#accept(responseSnapshot(response.snapshot));
   }

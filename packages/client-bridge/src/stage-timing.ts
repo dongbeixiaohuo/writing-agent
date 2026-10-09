@@ -29,7 +29,7 @@ export function stageActiveDurations(events: readonly TimingEvent[], runId: stri
     const time = Date.parse(event.occurredAt)
     if (event.type === 'request.dispatch_attempted' || event.type === 'tool.requested') {
       const args = event.payload.arguments as Record<string, unknown> | undefined
-      const actor = event.payload.actor
+      const actor = /^review_reader_[abc]$/u.test(String(event.payload.actor)) ? 'review_reader' : event.payload.actor
       const stage = typeof actor === 'string' && stages.has(actor as TimedStage) ? actor as TimedStage
         : event.payload.toolName === 'submit_fact_check' ? 'fact_check'
         : event.payload.toolName === 'submit_writing_stage' && stages.has(args?.stage as WritingWorkflowStageId) ? args!.stage as WritingWorkflowStageId : null

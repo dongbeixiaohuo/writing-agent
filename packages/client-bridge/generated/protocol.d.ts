@@ -304,6 +304,9 @@ export interface FactClaimView {
     sourceReference: string | null;
     evidenceSummary: string;
     recommendedAction: string;
+    checkReason?: 'key_fact' | 'suspected_error';
+    verificationMethod?: 'external_source' | 'material_comparison' | 'model_review';
+    verificationRecordIds?: readonly string[];
 }
 export interface FactCheckWorkspace {
     status: FactGateViewStatus;
@@ -400,7 +403,17 @@ export interface RecoverableRunSummary {
     inputRequest?: {
         reason: string;
         questions: readonly string[];
-        kind?: 'publication_selection';
+        kind?: 'publication_selection' | 'search_recovery';
+        searchRecovery?: {
+            requestId: string;
+            kind: 'timeout' | 'failure' | 'limit';
+            query: string;
+            used: number;
+            limit: number;
+            attemptsUsed: number;
+            attemptsLimit: number;
+            reason: string;
+        };
         candidates?: readonly {
             title: string;
             rationale: string;
@@ -485,6 +498,10 @@ export interface BridgeCommandOptions {
     operationId?: string;
 }
 export interface ResumeRunOptions extends BridgeCommandOptions {
+    factSearchDecision?: {
+        requestId: string;
+        action: 'retry' | 'extend' | 'continue';
+    };
     feedback?: string;
     checkpointApproval?: CheckpointApproval;
 }

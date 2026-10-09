@@ -2,6 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConversationStreamPreview, topLevelString, requestMaterialPreviews } from '../src/conversation-stream.js';
 
+test('parallel reader progress has one stable activity, counts three requests once, and never exposes child JSON', () => {
+  const view = new ConversationStreamPreview();
+  const base = {projectId:'p', sessionId:'s', runId:'r', requestId:'parallel:batch', actor:'review_reader'};
+  view.observe({...base, lifecycle:'started', event:null, parallelTextProgress:{requests:3, completed:0, failed:0, total:3}});
+  assert.equal(view.getActivity('p','s','r')!.requestOrdinal, 3);
+  assert.match(view.getActivity('p','s','r')!.workPreview!.text, /仍在阅读 3/);
+  view.observe({...base, event:null, parallelTextProgress:{requests:3, completed:1, failed:1, total:3}});
+  assert.equal(view.getActivity('p','s','r')!.requestOrdinal, 3);
+  assert.match(view.getActivity('p','s','r')!.workPreview!.text, /已完成 1 \/ 3；未返回 1；仍在阅读 1/);
+  assert.equal(view.get('p','s','r'), null);
+  view.observe({...base, lifecycle:'finished', event:null, parallelTextProgress:{requests:3, completed:2, failed:1, total:3}});
+  assert.equal(view.getActivity('p','s','r')!.requestOrdinal, 3);
+  view.observe({...base, requestId:'', event:null});
+  assert.equal(view.getActivity('p','s','r'), null);
+});
+
 test('input previews distinguish source articles, confirmed requirements and unclassified conversation additions', () => {
   const previews = requestMaterialPreviews([{ role: 'user', content: JSON.stringify({
     writingRequirements: { audience: '普通患者和家属', platform: '今日头条' },

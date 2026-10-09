@@ -90,6 +90,12 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
   protected async *providerStream(
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
+    if (/^READER_SIMULATION_V1=[abc]/u.test(request.messages[0]?.content ?? '')) {
+      // Explicit offline simulation, not a real audience or model evaluation.
+      yield { type:'text_delta', delta:JSON.stringify({whyOpen:'主题让我好奇', leaveAt:'没有特别想划走的地方',
+        verdict:'还行，能读懂', shareOrSave:'可能留着再读', memorableLine:'没有特别记住的一句'}) };
+      yield { type:'completed', finishReason:'stop' }; return;
+    }
     if (request.tools?.length === 1 && request.tools[0]?.name === 'prepare_fact_check') {
       // Explicit offline mock mode: not a semantic fact-check demonstration.
       yield { type: 'tool_call_delta', index: 0, id: `mock-extract-${request.requestId}`, name: 'prepare_fact_check',
@@ -99,10 +105,21 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
     const raw = request.messages.find((message) => message.role === "user")?.content.split("\nCOLLABORATION_STATE=")[1];
     const collaboration = raw === undefined ? null : JSON.parse(raw) as {
       actor: string; stage: string | null; nextStage: string | null; ready: boolean; finished: boolean;
-      inputVersionIds: string[]; materials: Array<{ content: string }>;
+      inputVersionIds: string[]; materials?: Array<{ content: string }>;
     };
     const expert = collaboration !== null && collaboration.actor !== "director";
     const toolMessages = request.messages.filter((message) => message.role === "tool");
+    if (collaboration?.stage === 'fact_check') {
+      // Fact verification deliberately omits raw materials. This offline fixture
+      // confirms its synthetic no-facts preparation, not real-world correctness.
+      yield {
+        type: 'tool_call_delta', index: 0, id: `mock-fact-check-${request.requestId}`,
+        name: 'submit_fact_check', argumentsDelta: JSON.stringify({ claims: [],
+          noFactualClaimsReason: '离线合成测试稿无外部事实；此结论仅用于mock工作流验证。' }),
+      };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+      return;
+    }
     if (collaboration?.actor === "director") {
       if (collaboration.finished) {
         yield { type: "text_delta", delta: "完整写作工作流和事实门禁已通过。" };
@@ -119,7 +136,7 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
     const materialMessage = toolMessages.find(
       (message) => message.role === "tool" && message.name === "read_material",
     );
-    if (!expert && materialMessage === undefined && (collaboration?.materials.length ?? 0) === 0) {
+    if (!expert && materialMessage === undefined && (collaboration?.materials?.length ?? 0) === 0) {
       yield {
         type: "tool_call_delta",
         index: 0,
@@ -136,7 +153,7 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
       return;
     }
 
-    const payload = materialMessage === undefined ? { result: { content: collaboration?.materials.map((material) => material.content).join("\n") } } : JSON.parse(materialMessage.content) as {
+    const payload = materialMessage === undefined ? { result: { content: collaboration?.materials?.map((material) => material.content).join("\n") } } : JSON.parse(materialMessage.content) as {
       result?: { content?: unknown };
     };
     const materialContent = payload.result?.content;
@@ -180,7 +197,7 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
       ...(deepMode
         ? [["review_publish", "必须修改：无。\n\n可选优化：发布前检查标题。\n\n建议保留：不夸大材料。"]] as const
         : []),
-      ["review_reader", "必须修改：无。\n\n可选优化：开头可更快进入现场。\n\n建议保留：清晰的阅读节奏。"],
+      ["review_reader", "# 模拟读者反应\n\n离线模拟：还行，能读懂，可能留着再读。"],
       ["central_revision", this.draftTemplate.replaceAll("{{material}}", materialContent)],
       ["language_review", this.draftTemplate.replaceAll("{{material}}", materialContent)],
     ];

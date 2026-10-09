@@ -40,3 +40,16 @@ test('title planning has its own persisted activity duration', () => {
     occurredAt: new Date(seconds * 1000).toISOString(), payload: { actor: 'title' } })
   assert.equal(stageActiveDurations([event('request.dispatch_attempted', 5), event('request.completed', 30)], 'r').get('title'), 25000)
 })
+
+test('three overlapping reader requests show wall time once, not the sum of three model durations', () => {
+  const event = (type:string, id:string, seconds:number, actor:string) => ({type, operationId:id, runId:'r',
+    occurredAt:new Date(seconds * 1000).toISOString(), payload:{actor}})
+  assert.equal(stageActiveDurations([
+    event('request.dispatch_attempted', 'a', 5, 'review_reader_a'),
+    event('request.dispatch_attempted', 'b', 6, 'review_reader_b'),
+    event('request.dispatch_attempted', 'c', 7, 'review_reader_c'),
+    event('request.completed', 'b', 25, 'review_reader_b'),
+    event('request.failed', 'c', 27, 'review_reader_c'),
+    event('request.completed', 'a', 30, 'review_reader_a'),
+  ], 'r').get('review_reader'), 25000)
+})
