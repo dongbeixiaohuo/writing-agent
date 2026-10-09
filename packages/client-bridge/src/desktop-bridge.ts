@@ -25,6 +25,7 @@ export type DesktopRpcMethod =
   | "selectSession"
   | "updateSettings"
   | "createProject"
+  | "renameProject"
   | "updateBrief"
   | "confirmBrief"
   | "sendMessage"
@@ -71,6 +72,7 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "selectSession",
   "updateSettings",
   "createProject",
+  "renameProject",
   "updateBrief",
   "confirmBrief",
   "sendMessage",
@@ -297,11 +299,13 @@ export type DesktopPublicationSaveResult =
   | { readonly cancelled: false; readonly receiptId: string; readonly savedPath: string; readonly fileName: string };
 
 export interface SearchSettingsInput {
+  readonly searchLimit?: number;
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;
   readonly tavilyApiKey?: string;
 }
 export interface SearchSettingsView {
+  readonly searchLimit?: number;
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;
   readonly tavilyKeyConfigured: boolean;
@@ -499,6 +503,19 @@ export class DesktopClientBridge implements ClientBridge {
     return { projectId: result.projectId };
   }
 
+  async renameProject(
+    projectId: string,
+    name: string,
+    options: BridgeCommandOptions = {},
+  ): Promise<void> {
+    await this.#invoke(
+      "renameProject",
+      projectId,
+      name,
+      { operationId: options.operationId ?? this.#operationIdFactory() },
+    );
+  }
+
   async confirmBrief(options: BridgeCommandOptions = {}): Promise<void> {
     await this.#invoke(
       "confirmBrief",
@@ -579,7 +596,9 @@ export class DesktopClientBridge implements ClientBridge {
       runId,
       decision,
       { operationId: options.operationId ?? this.#operationIdFactory(),
-        ...(options.feedback === undefined ? {} : { feedback: options.feedback }) },
+        ...(options.feedback === undefined ? {} : { feedback: options.feedback }),
+        ...(options.checkpointApproval === undefined ? {} : { checkpointApproval: options.checkpointApproval }),
+        ...(options.factSearchDecision === undefined ? {} : { factSearchDecision: options.factSearchDecision }) },
     );
   }
 

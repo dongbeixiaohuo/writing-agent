@@ -65,7 +65,7 @@ npx tsc --noEmit --noUnusedLocals --noUnusedParameters -p tsconfig.runtime.json
 npm run check:m0
 npm run check
 npm audit --omit=dev --audit-level=high
-python -B writing-agent-1.0-prd-v1.1-dsh-ui/tools/check_document_pack.py
+python -B tests/check_document_pack.py
 python -B scripts/check_claude_runtime_sync.py
 git diff --check
 ```

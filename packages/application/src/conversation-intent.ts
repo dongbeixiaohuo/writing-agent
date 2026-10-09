@@ -2,6 +2,8 @@ import type { AgentRequestPolicy } from '../../runtime/agent/src/index.js';
 import { ToolExecutionFault, type ToolDefinition } from '../../runtime/tools/src/index.js';
 import type { JsonValue, StoragePort } from '../../writing-core/src/index.js';
 import type { SessionStore } from '../../runtime/session/src/index.js';
+import { stageMarker } from './workflow-tools.js';
+import type { WritingWorkflowStage } from '../../writing-pack/src/index.js';
 
 export const AUTHOR_INTENTS = ['approve_checkpoint', 'revise_checkpoint', 'confirm_direction', 'revise_direction', 'propose_direction',
   'select_title', 'clarify_title_selection', 'generate_titles', 'plan_illustrations', 'confirm_illustrations', 'fact_check', 'defer_fact_check', 'full_writing', 'remember_preference', 'forget_preferences', 'discuss'] as const;
@@ -10,15 +12,28 @@ export interface ReplyIntent { intent: AuthorIntent; sourceQuote?: string; selec
 type IntentStorage = StoragePort & SessionStore;
 
 export function pendingCheckpoint(storage: IntentStorage, projectId: string, sessionId?: string) {
-  const run = storage.listRuns(projectId, sessionId).findLast(r => r.status === 'waiting_user' && r.stopReason === 'CO_CREATION_CHECKPOINT');
-  const wait = run && storage.listRunEvents(run.id).filter(e => e.type === 'run.waiting_user').at(-1);
-  return run && wait ? { runId: run.id, eventSeq: wait.projectSeq, stage: String(wait.payload.stage), nextStage: wait.payload.nextStage ?? null } : null;
+  for (const run of storage.listRuns(projectId, sessionId).reverse()) {
+    if (run.status !== 'waiting_user') continue;
+    const events = storage.listRunEvents(run.id);
+    const latest = events.findLast(e => e.type === 'run.waiting_user');
+    const reworkGate = run.stopReason === 'TOOL_FAILURE_LOOP' &&
+      ['CHECKPOINT_REWORK_REQUIRED', 'OUTLINE_REWORK_REQUIRED'].includes(String(latest?.payload.validationCode));
+    if (run.stopReason !== 'CO_CREATION_CHECKPOINT' && !reworkGate) continue;
+    const wait = events.findLast(e => e.type === 'run.waiting_user' && e.payload.stopReason === 'CO_CREATION_CHECKPOINT');
+    if (!wait) continue;
+    // A legacy misclassified approval can be answered again, but never revive
+    // a checkpoint whose result was invalidated/replaced by an actual rework.
+    const marker = stageMarker(storage, projectId, run.id, wait.payload.stage as WritingWorkflowStage);
+    if (reworkGate && (!marker || marker.createdEventSeq > wait.projectSeq)) continue;
+    return { runId: run.id, eventSeq: wait.projectSeq, stage: String(wait.payload.stage), nextStage: wait.payload.nextStage ?? null };
+  }
+  return null;
 }
 
 /** Language interpretation is model-owned; identity, scope, versions and single-use handoff are runtime-owned. */
 export function createConversationIntent(options: {
   storage: IntentStorage; projectId: string; sessionId: string | undefined; userMessage: string;
-  context: unknown; allowedIntents: readonly AuthorIntent[];
+  context: unknown; allowedIntents: readonly AuthorIntent[]; decisionSource?: 'explicit_checkpoint_button';
 }) {
   const { storage, projectId, userMessage } = options;
   const project = storage.inspectProject(projectId)!;
@@ -47,7 +62,7 @@ export function createConversationIntent(options: {
         throw new ToolExecutionFault('INTENT_CONTEXT_STALE', 'The pending question or manuscript changed. Interpret the new context instead.');
       if (['approve_checkpoint', 'revise_checkpoint'].includes(args.intent) && !checkpoint)
         throw new ToolExecutionFault('INTENT_CONTEXT_INVALID', 'No pending stage to approve or revise');
-      const data = { ...args, checkpoint, sessionId: storage.getRun(context.runId)?.sessionId, bodyVersionId: project.latestBodyVersionId,
+      const data = { ...args, ...(options.decisionSource ? { decisionSource: options.decisionSource } : {}), checkpoint, sessionId: storage.getRun(context.runId)?.sessionId, bodyVersionId: project.latestBodyVersionId,
         briefVersionId: project.currentBriefVersionId, userMessage, sourceRunId: context.runId };
       const saved = storage.commitArtifactVersion({ projectId, operationId: context.operationId, expectedProjectRevision: current.revision,
         kind: 'report', logicalKey: `author-intent:${context.runId}`, baseVersionId: null, content: JSON.stringify(data),
@@ -73,7 +88,7 @@ export function createConversationIntent(options: {
 
 export function checkpointIntentReceipt(storage: IntentStorage, projectId: string, runId: string, userMessage: string, receiptId?: string) {
   const run = storage.getRun(runId);
-  const wait = storage.listRunEvents(runId).filter(e => e.type === 'run.waiting_user').at(-1);
+  const wait = storage.listRunEvents(runId).findLast(e => e.type === 'run.waiting_user' && e.payload.stopReason === 'CO_CREATION_CHECKPOINT');
   const project = storage.inspectProject(projectId);
   const candidates = receiptId ? [storage.getArtifactVersion(receiptId)] : storage.listRuns(projectId, run?.sessionId).reverse()
     .flatMap(r => storage.listArtifactVersions(projectId, 'report', `author-intent:${r.id}`));

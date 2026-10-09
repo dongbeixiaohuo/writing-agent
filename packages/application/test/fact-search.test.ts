@@ -7,6 +7,38 @@ import { join } from 'node:path';
 import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { createToolPermissionGrant } from '../../runtime/tools/src/index.js';
 
+test('search defaults tolerate cross-border latency and the host can configure the query budget', async () => {
+  assert.equal(search.DEFAULT_SEARCH_REQUEST_TIMEOUT_MS, 20_000);
+  assert.equal(search.DEFAULT_SEARCH_PROVIDER_TIMEOUT_MS, 30_000);
+  assert.equal(search.DEFAULT_SEARCH_TIMEOUT_MS, 60_000);
+  let requests = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
+    searchLimit: 2, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
+    fetch: async () => { requests++; return Response.json({ results: [] }); } });
+  await scope.search('first'); await scope.search('second');
+  assert.equal((await scope.search('third')).failureCode, 'SEARCH_LIMIT_REACHED');
+  assert.equal(scope.budget('direct').limit, 2);
+  assert.equal(requests, 2);
+});
+
+test('pure transport timeouts do not consume query budget, but failures are cached and attempts remain bounded', async () => {
+  let requests = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
+    searchLimit: 1, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
+    requestTimeoutMs: 5, overallTimeoutMs: 30,
+    fetch: async () => { requests++; return await new Promise<Response>(() => undefined); } });
+  const timer = setTimeout(() => undefined, 2000);
+  try {
+    const first = await scope.search('timeout');
+    assert.equal(first.quotaCharged, false);
+    assert.equal(scope.budget('direct').used, 0);
+    assert.equal((await scope.search('timeout')).cacheHit, true);
+    for (let i = 0; i < 3; i++) await scope.search(`another timeout ${i}`);
+    assert.equal((await scope.search('attempt cap')).failureCode, 'SEARCH_LIMIT_REACHED');
+    assert.equal(requests, 4);
+  } finally { clearTimeout(timer); }
+});
+
 test('HTTP sources returned by search remain discovered without changing their protocol', async () => {
   const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
     getTavilyKey: async () => 'test-key', authorizeQuery: async () => true }),
@@ -78,10 +110,53 @@ test('enabled-services authorization replaces an old denied receipt without drop
     assert.equal(result.authorizationMs, 0);
     assert.equal((await invoke('public fact')).cacheHit, true);
     for (let i = 0; i < 7; i++) await invoke(`another fact ${i}`);
-    assert.equal(requests, 5, 'historical attempt still counts toward the six-search run limit');
+    assert.equal(requests, 6, 'a historical refusal without a network attempt does not consume the six-search run limit');
     assert.equal((await invoke('over limit')).failureCode, 'SEARCH_LIMIT_REACHED');
   } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+for (const failure of ['denied', 'timeout', 'failed'] as const) {
+  test(`authorization ${failure} consumes no in-memory or restored search quota`, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wa-search-no-dispatch-'));
+    const storage = openWorkspaceStorage({ workspacePath: root });
+    storage.createProject({ projectId: 'p', operationId: 'create', name: 'Search test', mode: 'quick', actor: { kind: 'user', id: 'test' } });
+    storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'fact-check' });
+    storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', planVersion: 'test' });
+    let automatic = false, requests = 0;
+    const makeScope = () => search.createFactSearchTools({ storage, configuration: () => ({
+      parallelEnabled: false, tavilyEnabled: true, getTavilyKey: async () => 'test-key',
+      ...(automatic ? { authorizationMode: 'enabled_services' as const } : {}),
+      authorizeQuery: async () => {
+        if (failure === 'timeout') return new Promise<boolean>(() => undefined);
+        if (failure === 'failed') throw new Error('synthetic host failure');
+        return false;
+      },
+    }), approvalTimeoutMs: 10, fetch: async () => { requests++; return Response.json({ results: [] }); } });
+    let scope = makeScope(), operation = 0;
+    const invoke = async (query: string) => {
+      const operationId = `attempt-${++operation}`;
+      storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId, type: 'tool.requested', payload: { toolName: 'search_fact_sources', arguments: { query } } });
+      const result = await scope.search(query, undefined, 'r', { projectId: 'p', runId: 'r', operationId,
+        abortSignal: new AbortController().signal, expectedBodyVersionId: null,
+        permissionGrant: createToolPermissionGrant({ projectId: 'p', runId: 'r', permissions: ['network:https:read'] }) });
+      storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId, type: 'tool.completed', payload: { result: { toolName: 'search_fact_sources', ok: true, result } } });
+      return result;
+    };
+    try {
+      const refused = await invoke('public fact');
+      assert.equal(refused.failureCode, failure === 'denied' ? 'SEARCH_NOT_AUTHORIZED' : failure === 'timeout' ? 'SEARCH_APPROVAL_TIMEOUT' : 'SEARCH_APPROVAL_FAILED');
+      assert.equal(requests, 0);
+      assert.equal(scope.budget('r').used, 0);
+      automatic = true;
+      scope = makeScope();
+      assert.equal(scope.budget('r').used, 0, 'a recreated runtime must not count persisted approval failures');
+      for (let i = 0; i < 6; i++) assert.equal((await invoke(`fact ${i}`)).searchOrdinal, i + 1);
+      assert.equal((await invoke('over limit')).failureCode, 'SEARCH_LIMIT_REACHED');
+      assert.equal(requests, 6);
+      assert.equal(makeScope().budget('r').used, 6, 'only the real provider attempts survive accounting replay');
+    } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+}
 
 test('time spent approving a query does not consume the provider search deadline', async () => {
   let requests = 0;

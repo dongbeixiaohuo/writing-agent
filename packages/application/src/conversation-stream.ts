@@ -115,7 +115,7 @@ export class ConversationStreamPreview {
   readonly #segments = new Map<string, { projectId: string; sessionId: string; startedAt: number; requests: number; workPreview?: { label: string; text: string }; previewRequestId?: string }>();
   readonly #runs = new Map<string, { projectId: string; sessionId: string; requestId: string; outputPreview?: StreamInput['outputPreview']; phase: 'generating' | 'saving'; carried: boolean; calls: Map<number, { name: string; raw: string }>; plainText: string; text: string; activity: LiveConversationActivity }>();
   observe = (input: StreamInput): void => {
-    if (input.event === null && input.lifecycle !== 'started') {
+    if (input.event === null && input.lifecycle !== 'started' && !input.parallelTextProgress) {
       // Empty requestId is the runtime's execution-segment finally, including
       // pauses/cancellation. An individual failed request must not reset time.
       if (!input.requestId) this.#segments.delete(input.runId);
@@ -131,7 +131,7 @@ export class ConversationStreamPreview {
         segment = { projectId: input.projectId, sessionId: input.sessionId, startedAt: Date.now(), requests: 0 };
         this.#segments.set(input.runId, segment);
       }
-      segment.requests++;
+      segment.requests += input.parallelTextProgress?.requests ?? 1;
       // A pending decision/search describes this request, not the next expert.
       // Readable research excerpts may survive; stale execution claims may not.
       if (segment.previewRequestId && segment.previewRequestId !== input.requestId) {
@@ -149,6 +149,14 @@ export class ConversationStreamPreview {
       this.#runs.set(input.runId, state);
     }
     const event = input.event;
+    if (input.parallelTextProgress) {
+      const p = input.parallelTextProgress;
+      state.activity.actor = 'review_reader';
+      state.activity.workPreview = { label:'三个模拟读者 · 并行阅读',
+        text:`已完成 ${p.completed} / ${p.total}；未返回 ${p.failed}；仍在阅读 ${p.total - p.completed - p.failed}。每人独立阅读，完成后合并显示，不作投票。` };
+      if (input.lifecycle === 'finished') state.phase = 'saving';
+      return;
+    }
     if (event === null) return;
     if (event.type === 'response_activity' && event.phase === 'headers' && state.activity.phase === 'waiting') state.activity.phase = 'connected';
     if ((event.type === 'response_activity' && (event.phase === 'content' || event.phase === 'reasoning')) || (event.type === 'text_delta' && event.delta.length > 0)

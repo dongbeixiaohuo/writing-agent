@@ -55,6 +55,7 @@ const publicMessages: Readonly<Record<string, string>> = {
   WRITING_BRIEF_REQUIRED: "A writing brief is required before writing",
   WRITING_INPUT_ANSWER_REQUIRED: "Answer the pending writing questions before continuing",
   CHECKPOINT_FEEDBACK_TOO_LONG: "Writing feedback must not exceed 4,000 characters",
+  CHECKPOINT_FEEDBACK_NOT_ALLOWED: '当前不是可反馈的共创节点，请刷新后查看最新进度。',
   DIAGNOSTIC_CONFIRMATION_MISMATCH: "The diagnostic preview no longer matches; preview it again",
   DIAGNOSTIC_FILE_NAME_INVALID: "The diagnostic file name is invalid",
   DIAGNOSTIC_PREPARATION_REQUIRED: "Preview the diagnostic bundle before exporting it",
@@ -140,6 +141,10 @@ export async function dispatchDesktopRpc(
         break;
       case "createProject":
         result = await bridge.createProject(...request.args as Parameters<ClientBridge["createProject"]>);
+        break;
+      case "renameProject":
+        if (bridge.renameProject === undefined) throw new Error("PROJECT_RENAME_UNSUPPORTED");
+        result = await bridge.renameProject(...request.args as [string, string, { operationId?: string }?]);
         break;
       case "updateBrief":
         result = await bridge.updateBrief(...request.args as Parameters<ClientBridge["updateBrief"]>);

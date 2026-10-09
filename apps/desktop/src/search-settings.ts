@@ -4,12 +4,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CredentialBroker } from '../../../packages/runtime/credentials/src/index.js';
 import type { SearchSettingsInput, SearchSettingsView, SearchConnectionView } from '../../../packages/client-bridge/src/desktop-bridge.js';
-import { createFactSearchTools, SEARCH_TEST_QUERY, type SearchProvider, type FactSearchConfiguration } from '../../../packages/application/src/fact-search.js';
+import { createFactSearchTools, SEARCH_TEST_QUERY, FACT_SEARCH_LIMIT, MAX_FACT_SEARCH_LIMIT, type SearchProvider, type FactSearchConfiguration } from '../../../packages/application/src/fact-search.js';
 
-const flags = z.object({ parallelEnabled: z.boolean(), tavilyEnabled: z.boolean() }).strict();
+const flags = z.object({ parallelEnabled: z.boolean(), tavilyEnabled: z.boolean(),
+  searchLimit: z.number().int().min(1).max(MAX_FACT_SEARCH_LIMIT).default(FACT_SEARCH_LIMIT) }).strict();
 const inputSchema = flags.extend({ tavilyApiKey: z.string().max(2048).optional() });
 export class SearchSettingsStore {
-  #flags = { parallelEnabled: false, tavilyEnabled: false };
+  #flags = { parallelEnabled: false, tavilyEnabled: false, searchLimit: FACT_SEARCH_LIMIT };
   readonly #credentialId: string;
   #saving = false;
   #generation = 0;
@@ -64,12 +65,13 @@ export class SearchSettingsStore {
     if (this.#saving) throw new Error('SEARCH_SETTINGS_BUSY');
     this.#saving = true;
     try {
-      const parsed = inputSchema.safeParse(input);
+      const parsed = inputSchema.safeParse({ ...input,
+        ...(input.searchLimit === undefined ? { searchLimit: this.#flags.searchLimit } : {}) });
       if (!parsed.success) throw new Error('SEARCH_SETTINGS_INVALID');
       const key = parsed.data.tavilyApiKey?.trim();
       const credentialRef = `managed:${this.#credentialId}`;
       if (parsed.data.tavilyEnabled && !key && !(await this.credentials.resolve(credentialRef))) throw new Error('SEARCH_API_KEY_REQUIRED');
-      const value = { parallelEnabled: parsed.data.parallelEnabled, tavilyEnabled: parsed.data.tavilyEnabled };
+      const value = { parallelEnabled: parsed.data.parallelEnabled, tavilyEnabled: parsed.data.tavilyEnabled, searchLimit: parsed.data.searchLimit };
       mkdirSync(dirname(this.path), { recursive: true });
       const temp = `${this.path}.${randomUUID()}.tmp`;
       writeFileSync(temp, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 });

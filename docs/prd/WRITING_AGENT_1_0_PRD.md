@@ -18,11 +18,11 @@
 
 **本次变更 CR-001：用户明确否决利旧 `writing-agent-app` 0.1.0 的 UI 路线。新版必须直接移植并维护 DSH 的前端页面、布局、主题、组件与交互基础，而不是重新设计一套相似页面。旧桌面版只作为历史版本、数据迁移来源与旧行为参考，不再作为新版 UI、应用壳或启动链基线。**
 
-产品版本仍为 1.0，文档修订版本为 1.1。该决定覆盖初稿中“复用旧 React/Tauri 页面”“接回已有 Tauri 壳”“DSH UI 仅可选借鉴”等表述。前端方向已确定，不得未经维护者批准退回旧 UI；桌面容器的具体工程方案不与 UI 来源混为一谈。完整实施边界见 [DSH 前端复用方案](../implementation/FRONTEND_REUSE_PLAN.md)，修订摘要见 [变更记录](../../CHANGELOG_PRD.md)。
+产品版本仍为 1.0，文档修订版本为 1.1。该决定覆盖初稿中“复用旧 React/Tauri 页面”“接回已有 Tauri 壳”“DSH UI 仅可选借鉴”等表述。前端方向已确定，不得未经维护者批准退回旧 UI；桌面容器的具体工程方案不与 UI 来源混为一谈。完整实施边界见 [DSH 前端复用方案](../implementation/FRONTEND_REUSE_PLAN.md)，修订摘要见 [变更记录](CHANGELOG.md)。
 
 本文中“必须”是验收约束；“默认”是无需反复澄清即可推进的建议；“可选”不计入首版承诺。数字门槛是本项目的建议验收目标，不是现有实测或行业标准。
 
-配套文档：[运行时契约](../implementation/RUNTIME_CONTRACTS.md)、[Agent 交接](../implementation/AGENT_HANDOFF.md)、[任务清单](../implementation/BACKLOG.json)、[GitHub 与传播](../roadmap/GITHUB_AND_LAUNCH_PLAN.md)、[来源基线](../research/SOURCE_BASELINE.md)。后文 `[Sxx]` 均指来源基线中的条目。
+配套文档：[运行时契约](../architecture/RUNTIME_CONTRACTS.md)、[CR-002](../implementation/CR002_INTERACTIVE_COLLABORATION.md)、[CR-003](../implementation/CR003_CONVERSATION_FIRST_HARNESS.md)、[来源基线](../architecture/SOURCE_BASELINE.md)、[当前实施进度](../architecture/IMPLEMENTATION_PROGRESS.md)、[发布手册](../launch/DESKTOP_RELEASE_RUNBOOK.md)。早期 [Agent 交接](../archive/2026-09-16-prd-v1.1-dsh-ui/AGENT_HANDOFF.md)、[任务快照](../archive/2026-09-16-prd-v1.1-dsh-ui/BACKLOG.json)与[传播计划](../archive/2026-09-16-prd-v1.1-dsh-ui/GITHUB_AND_LAUNCH_PLAN.md)仅供追溯。后文 `[Sxx]` 均指来源基线中的条目。
 
 ---
 
@@ -345,7 +345,7 @@ DSH UI 移植是首要工程工作，不等待后端全部完成才开始。M1 �
 
 ## 8. 领域模型与状态原则
 
-技术细节以 [RUNTIME_CONTRACTS](../implementation/RUNTIME_CONTRACTS.md) 为准。最低实体包括：`WritingProject`、`WritingBrief`、`Material`、`Session`、`Run`、`RequestSnapshot`、`Artifact`、`ArtifactVersion`、`Decision`、`RevisionProposal`、`Review`、`FactCheckSnapshot`、`ExportRecord`、`ProvenanceEdge`。
+技术细节以 [RUNTIME_CONTRACTS](../architecture/RUNTIME_CONTRACTS.md) 为准。最低实体包括：`WritingProject`、`WritingBrief`、`Material`、`Session`、`Run`、`RequestSnapshot`、`Artifact`、`ArtifactVersion`、`Decision`、`RevisionProposal`、`Review`、`FactCheckSnapshot`、`ExportRecord`、`ProvenanceEdge`。
 
 不要把项目、会话和一次模型调用混成一个对象：一篇文章可能跨多个会话和多次 run；一个 run 可能包含很多模型步骤；一个正文版本可被多个只读评审使用。
 
@@ -495,7 +495,7 @@ writing-agent/
 
 ## 13. GitHub 与产品传播原则
 
-完整方案见 [GITHUB_AND_LAUNCH_PLAN](../roadmap/GITHUB_AND_LAUNCH_PLAN.md)。此节为不可偏离的要求。
+当前发布实施方案见 [桌面发布手册](../launch/DESKTOP_RELEASE_RUNBOOK.md)，早期传播计划见 [历史 GITHUB_AND_LAUNCH_PLAN](../archive/2026-09-16-prd-v1.1-dsh-ui/GITHUB_AND_LAUNCH_PLAN.md)。此节的有效要求继续作为产品约束。
 
 保留同一个仓库 identity 和历史；`main` 在新版本验证前保留稳定可用入口；`next/runtime` 承载集成，各功能从它开短期分支。旧版 release/tag 和迁移前备份不可被覆盖；如需保留维护分支，明确有限维护范围。
 

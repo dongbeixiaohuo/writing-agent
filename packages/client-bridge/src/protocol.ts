@@ -1,4 +1,4 @@
-export const UI_BRIDGE_PROTOCOL_VERSION = 22
+export const UI_BRIDGE_PROTOCOL_VERSION = 23
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type ConnectionState = 'ready' | 'running' | 'offline'
@@ -34,6 +34,8 @@ export interface SessionSummary {
 export interface ChatMessage {
   stage?: WritingWorkflowStageId
   actorLabel?: string
+  /** Recorded stage activity up to this saved result; excludes author waits. */
+  activeDurationMs?: number
   streaming?: 'generating' | 'saving'
   audience?: 'diagnostic'
   id: string
@@ -70,6 +72,8 @@ export interface WorkflowStageView {
   label: string
   status: 'pending' | 'running' | 'completed' | 'failed'
   detail: string
+  /** Recorded model/tool active time, accumulated across resumes; null for legacy missing actor data. */
+  activeDurationMs?: number | null
 }
 
 export interface RunRecordView {
@@ -322,6 +326,9 @@ export interface FactClaimView {
   sourceReference: string | null
   evidenceSummary: string
   recommendedAction: string
+  checkReason?: 'key_fact' | 'suspected_error'
+  verificationMethod?: 'external_source' | 'material_comparison' | 'model_review'
+  verificationRecordIds?: readonly string[]
 }
 
 export interface FactCheckWorkspace {
@@ -402,6 +409,7 @@ export interface BriefSummary {
 }
 
 export interface RecoverableRunSummary {
+  checkpointApproval?: CheckpointApproval
   runId: string
   sessionId: string
   status: 'interrupted' | 'waiting_user' | 'budget_exhausted'
@@ -410,7 +418,8 @@ export interface RecoverableRunSummary {
   nextStage: WritingWorkflowStageId | null
   validationFailure?: { code: string; tool: string; explanation: string }
   interruption?: { source: 'model' | 'tool'; cause: 'timeout' | 'unknown'; replyAccepted: boolean; timeoutPhase?: 'first_response' | 'stream_idle'; timeoutMs?: number }
-  inputRequest?: { reason: string; questions: readonly string[]; kind?: 'publication_selection';
+  inputRequest?: { reason: string; questions: readonly string[]; kind?: 'publication_selection' | 'search_recovery';
+    searchRecovery?: { requestId: string; kind: 'timeout' | 'failure' | 'limit'; query: string; used: number; limit: number; attemptsUsed: number; attemptsLimit: number; reason: string };
     candidates?: readonly { title: string; rationale: string; distributionCopy: string | null }[] }
 }
 
@@ -456,7 +465,15 @@ export interface BridgeCommandOptions {
 }
 
 export interface ResumeRunOptions extends BridgeCommandOptions {
+  factSearchDecision?: { requestId: string; action: 'retry' | 'extend' | 'continue' }
   feedback?: string
+  checkpointApproval?: CheckpointApproval
+}
+
+export interface CheckpointApproval {
+  eventSeq: number
+  bodyVersionId: string | null
+  briefVersionId: string | null
 }
 
 export type PublicationLayoutPreset = 'clean' | 'editorial' | 'compact'
@@ -505,6 +522,8 @@ export interface ClientBridge {
     input: CreateProjectInput,
     options?: BridgeCommandOptions,
   ): Promise<{ projectId: string }>
+  /** Optional only for protocol-22 test doubles; protocol-23 hosts implement it. */
+  renameProject?(projectId: string, name: string, options?: BridgeCommandOptions): Promise<void>
   updateBrief(input: UpdateBriefInput, options?: BridgeCommandOptions): Promise<void>
   confirmBrief(options?: BridgeCommandOptions): Promise<void>
   startConversation(text: string, options?: BridgeCommandOptions): Promise<{ runId: string }>

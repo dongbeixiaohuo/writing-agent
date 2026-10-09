@@ -333,6 +333,21 @@ class ClaudeRuntimeSyncTests(unittest.TestCase):
 class PackageMetadataTests(unittest.TestCase):
     repository_root = Path(__file__).resolve().parents[1]
 
+    def test_development_checks_stay_outside_skill_runtime_mirrors(self) -> None:
+        self.assertEqual([], find_runtime_drift(self.repository_root))
+        for filename in ("check_document_pack.py", "measure_agent_context.ts"):
+            self.assertTrue((self.repository_root / "tests" / filename).is_file())
+            for runtime_scripts in (
+                self.repository_root / "scripts",
+                self.repository_root / "claude-runtime" / "scripts",
+                self.repository_root / "plugins" / "writing-agent" / "scripts",
+            ):
+                self.assertFalse((runtime_scripts / filename).exists())
+        package = json.loads((self.repository_root / "package.json").read_text(encoding="utf-8"))
+        self.assertIn("tests/check_document_pack.py", package["scripts"]["check:docs"])
+        workflow = (self.repository_root / ".github" / "workflows" / "desktop-rc.yml").read_text(encoding="utf-8")
+        self.assertIn("tests/check_document_pack.py", workflow)
+
     def test_package_is_private_and_has_a_bounded_pack_scope(self) -> None:
         package = json.loads((self.repository_root / "package.json").read_text(encoding="utf-8"))
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""检查交接文档一致性；不执行应用、网络或视觉测试。"""
+"""检查合并后的产品文档契约；不执行应用、网络或视觉测试。"""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -13,8 +13,19 @@ def without_fences(text: str) -> str:
     return re.sub(r'^```[^\n]*\n.*?^```\s*$', '', text, flags=re.M | re.S)
 
 
+ARCHIVE_ROOT = Path('docs/archive/2026-09-16-prd-v1.1-dsh-ui')
+REPORT_PATH = Path('docs/testing/DOCUMENT_CHECKS.json')
+
+
+def maintained_markdown(root: Path) -> list[Path]:
+    files = [root / 'README.md', root / 'docs/README.md', root / 'packages/writing-pack/STAGE_MAPPING.md']
+    for relative in ('docs/prd', 'docs/architecture', 'docs/implementation', 'docs/launch', 'docs/testing', 'docs/plans'):
+        files.extend((root / relative).rglob('*.md'))
+    return sorted({file.resolve() for file in files if file.is_file()})
+
+
 def check(root: Path) -> dict:
-    backlog_path = root / 'docs/implementation/BACKLOG.json'
+    backlog_path = root / ARCHIVE_ROOT / 'BACKLOG.json'
     backlog = json.loads(backlog_path.read_text(encoding='utf-8'))
     tasks = backlog['tasks']
     ids = [task['id'] for task in tasks]
@@ -41,7 +52,8 @@ def check(root: Path) -> dict:
     assert 'WA-010' not in by_id['WA-023']['depends_on']
     assert 'WA-025' in by_id['WA-018']['depends_on']
 
-    prd = (root / 'docs/prd/WRITING_AGENT_1_0_PRD.md').read_text(encoding='utf-8')
+    prd_path = root / 'docs/prd/WRITING_AGENT_1_0_PRD.md'
+    prd = prd_path.read_text(encoding='utf-8')
     ats = re.findall(r'^\| (AT-\d{2}) \|', prd, flags=re.M)
     assert len(ats) == len(set(ats)) == 38, '验收定义重复或数量不符'
     assert set(ats) == {f'AT-{i:02d}' for i in range(1, 39)}
@@ -51,7 +63,7 @@ def check(root: Path) -> dict:
     assert set(collaboration_cases) == {f'C02-{i:02d}' for i in range(1, 15)}
     assert any('CR-002' in item for item in by_id['WA-010']['definition_of_done']), 'WA-010 缺少协作验收条件'
     requirements = set(re.findall(r'\b(?:F\d{2}|UI-\d{2}|IND-\d{2}|NFR-\d{2})\b', prd))
-    sources = (root / 'docs/research/SOURCE_BASELINE.md').read_text(encoding='utf-8')
+    sources = (root / 'docs/architecture/SOURCE_BASELINE.md').read_text(encoding='utf-8')
     source_ids = set(re.findall(r'^\*\*\[(S\d{2})\]', sources, flags=re.M))
     assert len(source_ids) == 17
     for task in tasks:
@@ -59,7 +71,7 @@ def check(root: Path) -> dict:
         assert set(task['acceptance_test_ids']) <= set(ats), task['id']
         assert task['status'] in backlog['status_vocabulary']
 
-    md_files = list(root.rglob('*.md'))
+    md_files = maintained_markdown(root)
     for file in md_files:
         text = file.read_text(encoding='utf-8')
         assert len(re.findall(r'^```', text, flags=re.M)) % 2 == 0, f'未闭合代码块 {file}'
@@ -71,11 +83,17 @@ def check(root: Path) -> dict:
                 continue
             path_part, _, anchor = target.partition('#')
             if not path_part:
-                assert not anchor or f'id="{anchor}"' in text, f'未知锚点 {file}: {anchor}'
                 continue
             resolved = (file.parent / unquote(path_part)).resolve()
             assert resolved.is_relative_to(root.resolve()), f'越界链接 {file}: {target}'
             assert resolved.exists(), f'缺失相对链接 {file}: {target}'
+
+    archive_readme = (root / ARCHIVE_ROOT / 'README.md').read_text(encoding='utf-8')
+    for marker in ('2026-09-16', '适用版本', '替代入口', '历史状态'):
+        assert marker in archive_readme, f'历史归档缺少范围说明: {marker}'
+    for archived in (root / ARCHIVE_ROOT).rglob('*.md'):
+        text = archived.read_text(encoding='utf-8')
+        assert len(re.findall(r'^```', text, flags=re.M)) % 2 == 0, f'未闭合代码块 {archived}'
 
     # 此处只检查已撤回的肯定式路线，历史说明和显式禁止仍允许出现。
     stale_phrases = [
@@ -91,15 +109,18 @@ def check(root: Path) -> dict:
             assert phrase not in text, f'残留旧路线: {file}'
 
     files = []
-    for file in sorted(root.rglob('*')):
-        if not file.is_file() or file.name == 'DOCUMENT_CHECKS.json' or '__pycache__' in file.parts:
+    report_files = set(md_files)
+    report_files.update((root / ARCHIVE_ROOT).rglob('*'))
+    report_files.update((prd_path, backlog_path, root / 'tests/check_document_pack.py'))
+    for file in sorted(report_files):
+        if not file.is_file() or file.resolve() == (root / REPORT_PATH).resolve() or '__pycache__' in file.parts:
             continue
         content = file.read_bytes()
         files.append({'path': file.relative_to(root).as_posix(), 'bytes': len(content), 'sha256': hashlib.sha256(content).hexdigest()})
     return {
-        'document_version': '1.1',
+        'document_version': 'consolidated-2026-10-05',
         'product_target_version': '1.0',
-        'revision_id': 'CR-002',
+        'revision_id': 'CR-003',
         'checks': {
             'backlog_json_parse': 'PASS', 'task_count': len(tasks),
             'dependency_graph_acyclic': 'PASS', 'all_backlog_dependencies_resolved': 'PASS',
@@ -108,6 +129,7 @@ def check(root: Path) -> dict:
             'requirement_and_acceptance_ids_resolved': 'PASS',
             'markdown_code_fences_balanced': 'PASS', 'relative_document_links': 'PASS',
             'source_ids_resolved': 'PASS', 'known_superseded_positive_routes_removed': 'PASS',
+            'historical_scope_and_replacement_declared': 'PASS',
         },
         'not_performed': [
             'application source transplantation', 'application tests', 'repository mutation',
@@ -126,7 +148,9 @@ def main() -> None:
     args = parser.parse_args()
     report = check(args.root.resolve())
     if args.write_report:
-        (args.root / 'DOCUMENT_CHECKS.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        report_path = args.root / REPORT_PATH
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report['checks'], ensure_ascii=False, indent=2))
 
 

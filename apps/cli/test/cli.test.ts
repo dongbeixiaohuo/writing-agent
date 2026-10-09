@@ -545,6 +545,12 @@ describe("minimal runtime CLI", () => {
           stderr: (line) => stderr.push(line),
         },
       );
+      if (exitCode !== 0) {
+        const diagnostics = openWorkspaceStorage({ workspacePath, readOnly: true });
+        try {
+          assert.fail(JSON.stringify({ stdout, stderr, events: diagnostics.listEvents('project-1').slice(-8) }));
+        } finally { diagnostics.close(); }
+      }
       assert.equal(exitCode, 0);
       assert.deepEqual(stderr, []);
       const output = JSON.parse(stdout.join("\n")) as {

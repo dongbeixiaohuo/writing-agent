@@ -2,7 +2,7 @@
 
 文档版本：1.1 · 2026-09-16 · 关联变更：CR-001。目标产品仍为 Writing Agent 1.0。
 
-配套：[PRD](../prd/WRITING_AGENT_1_0_PRD.md)、[运行时契约](RUNTIME_CONTRACTS.md)、[任务清单](BACKLOG.json)、[源码基线](../research/SOURCE_BASELINE.md)。本文件是待实施契约，未构建或运行前端，不包含已经通过的视觉测试。
+配套：[PRD](../prd/WRITING_AGENT_1_0_PRD.md)、[运行时契约](../architecture/RUNTIME_CONTRACTS.md)、[历史任务快照](../archive/2026-09-16-prd-v1.1-dsh-ui/BACKLOG.json)、[源码基线](../architecture/SOURCE_BASELINE.md)。本文件是待实施契约，未构建或运行前端，不包含已经通过的视觉测试。
 
 ## 1. 已确定的决定，不重新讨论
 

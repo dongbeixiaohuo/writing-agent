@@ -7,7 +7,7 @@ import type {
   ProjectMode,
   StoragePort,
 } from "../../writing-core/src/index.js";
-import type { RunRecord } from "../../runtime/session/src/index.js";
+import type { RunRecord, SessionStore } from "../../runtime/session/src/index.js";
 import {
   workflowStageSequence,
   type WritingWorkflowStage,
@@ -20,15 +20,17 @@ import {
 
 // The workflow layer needs run history for cross-run stage carry-over; the
 // concrete workspace storage implements both ports.
-type WorkflowStorage = StoragePort & {
+type WorkflowStorage = StoragePort & Pick<SessionStore, 'listRunEvents'> & {
   getRun(runId: string): RunRecord | null;
   listRuns(projectId: string, sessionId?: string): RunRecord[];
 };
 
 type ContentStage = Exclude<WritingWorkflowStage, "fact_check">;
-import { FactClaimStatusSchema, FactClaimTypeSchema, parseEvidenceLedger } from '../../writing-core/src/index.js';
-import { isPublicationSelectionCurrent } from './publication-choice.js';
+import { FactClaimStatusSchema, FactClaimTypeSchema, parseEvidenceLedger, createFactCheckInputSnapshot, evaluateFactCheck } from '../../writing-core/src/index.js';
+import { defaultFactTitleContent, isPublicationSelectionCurrent } from './publication-choice.js';
 import { COMPACT_RESEARCH_SCHEMA, expandResearchEvidence } from './research-evidence.js';
+import { normalizeFactVerification } from './fact-context.js';
+import { factSearchLimitations } from './fact-search-recovery.js';
 type BodyStage = Extract<ContentStage, "draft" | "central_revision" | "language_review">;
 
 interface SubmitWritingStageArgs {
@@ -103,7 +105,7 @@ function markerKey(runId: string, stage: WritingWorkflowStage): string {
   return `workflow:${runId}:${stage}`;
 }
 
-function stageMarker(
+export function stageMarker(
   storage: StoragePort,
   projectId: string,
   runId: string,
@@ -304,6 +306,11 @@ function markerPayload(marker: ArtifactVersion | null): WorkflowStageMarkerPaylo
   } catch {
     return null;
   }
+}
+
+export function stageArtifact(storage: StoragePort, projectId: string, runId: string, stage: WritingWorkflowStage): ArtifactVersion | null {
+  const payload = markerPayload(stageMarker(storage, projectId, runId, stage));
+  return payload ? storage.getArtifactVersion(payload.artifactVersionId) : null;
 }
 
 function continuationContextStages(
@@ -731,16 +738,6 @@ function seedCarriedStageMarkers(
   }
 }
 
-function titleFromBody(content: string): string {
-  const heading = content
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .find((line) => /^#{1,6}\s+\S/u.test(line));
-  if (heading !== undefined) return heading.replace(/^#{1,6}\s+/u, "").trim();
-  const firstLine = content.split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
-  return firstLine?.slice(0, 80) ?? "未命名稿件";
-}
-
 const WRITING_STAGE_SCHEMA = {
   type: "object",
   properties: {
@@ -799,7 +796,9 @@ const FACT_CHECK_SCHEMA = {
           claimText: { type: "string", minLength: 1 },
           claimType: {
             type: "string",
-            enum: FactClaimTypeSchema.options,
+            minLength: 1,
+            maxLength: 80,
+            description: `Display category: prefer ${FactClaimTypeSchema.options.join(', ')}. Other non-empty labels are saved as other; this never changes status, risk, evidence or verification.`,
           },
           location: { type: "string", minLength: 1 },
           status: {
@@ -821,6 +820,11 @@ const FACT_CHECK_SCHEMA = {
           },
           evidenceSummary: { type: "string", minLength: 1 },
           recommendedAction: { type: "string", minLength: 1 },
+          checkReason: { type: 'string', enum: ['key_fact', 'suspected_error'], description: 'Preserve the prepared selection reason; required for newly discovered facts. Do not add normal background just for citation completeness.' },
+          verificationMethod: { type: 'string', enum: ['external_source', 'material_comparison', 'model_review'],
+            description: 'Material agreement is NOT external verification. external_source requires successful tool call IDs and the same specific URL in sourceReference.' },
+          verificationRecordIds: { type: 'array', maxItems: 12, uniqueItems: true, items: { type: 'string', minLength: 1 },
+            description: 'callId values from successful search_fact_sources/read_fact_source results in THIS run, not evidence IDs or failed calls.' },
         },
         required: [
           "claimId",
@@ -1168,7 +1172,7 @@ export function createWritingWorkflowTools(options: {
     name: "submit_fact_check",
     version: "1.0.0",
     description:
-      "Evaluate the final body against the saved evidence ledger. Unsupported claims remain blockers; the model cannot self-approve the gate.",
+      "Compare prepared important facts with available sources. Only red-risk significant errors or unresolved critical facts block delivery; medium/low risks do not. Runtime validates the report and provenance.",
     inputSchema: FACT_CHECK_SCHEMA,
     effect: "local_idempotent",
     permissions: ["workflow:submit", "fact:submit"],
@@ -1199,6 +1203,15 @@ export function createWritingWorkflowTools(options: {
       if (evidence === null || evidence.kind !== "evidence") {
         throw new ToolExecutionFault("FACT_INPUTS_INCOMPLETE", "Evidence ledger could not be read");
       }
+      const runEvents = storage.listRunEvents(context.runId);
+      const searchLimitations = factSearchLimitations(runEvents);
+      const preparation = (runEvents.findLast(event => event.type === 'tool.completed' &&
+        (event.payload.result as any)?.ok === true && (event.payload.result as any)?.toolName === 'prepare_fact_check')?.payload.result as any)?.result;
+      const claims = normalizeFactVerification(runEvents, preparation?.bodyVersionId === body.id && preparation?.evidenceVersionId === evidence.id ? preparation : null,
+        // Category is presentation metadata, not a factual verdict. Avoid a
+        // full model rewrite just for an invented label; all gate/provenance
+        // fields retain their existing strict validation. Raw args stay in trace.
+        args.claims.map(claim => FactClaimTypeSchema.safeParse(claim.claimType).success ? claim : { ...claim, claimType: 'other' as const }));
       const validEvidenceIds = evidenceIdsFromLedger(evidence.content);
       const validEvidenceIdSet = new Set(validEvidenceIds);
       const invalidEvidenceIds = [...new Set(args.claims
@@ -1219,19 +1232,38 @@ export function createWritingWorkflowTools(options: {
           },
         );
       }
-      const title = titleFromBody(body.content);
       const selectedTitle = project.currentTitleVersionId ? storage.getArtifactVersion(project.currentTitleVersionId) : null;
       if ((interactionMode === 'co_creation' || selectedTitle?.reason === 'author-publication-selection') && !isPublicationSelectionCurrent(storage, context.projectId)) {
         throw new ToolExecutionFault('PUBLICATION_SELECTION_REQUIRED', '先在主对话确认发布标题，再核查该标题与正文，不得把生成的标题冒充用户选择。');
       }
-      const titleCommit = selectedTitle?.reason === 'author-publication-selection' ? null : storage.commitArtifactVersion({
+      const titleContent = selectedTitle?.reason === 'author-publication-selection' ? selectedTitle.content
+        : defaultFactTitleContent(body.content);
+      // Run the SAME pure fact policy before any mutation. A rejected model
+      // submission must not change the title pointer, snapshot or extraction
+      // binding. Persisted evaluation below still rechecks the actual versions.
+      try {
+        const preview = createFactCheckInputSnapshot({ snapshotId: `${context.operationId}:preflight`,
+          bodyVersionId: body.id, bodyContent: body.content, evidenceVersionId: evidence.id, evidenceContent: evidence.content,
+          titleVersionId: selectedTitle?.id ?? `${context.operationId}:pending-title`, titleContent });
+        evaluateFactCheck(preview, { bodyContent: body.content, evidenceContent: evidence.content, titleContent }, {
+          schemaVersion: 'fact-check-v2', snapshotId: preview.snapshotId, bodyVersionId: body.id, titleVersionId: preview.titleVersionId,
+          coverage: { body: true, title: true, distributionCopy: true }, claims, noFactualClaimsReason: args.noFactualClaimsReason,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('FACT_')) {
+          throw new ToolExecutionFault(error.message, '核查提交未通过事实门禁；未改变标题、核查快照或已抽取条目。请修正本次提交后重试，不需重新抽取全文。');
+        }
+        throw error;
+      }
+      const titleCommit = selectedTitle?.reason === 'author-publication-selection' ||
+        (selectedTitle?.reason === 'workflow:fact-check-title' && selectedTitle.content === titleContent) ? null : storage.commitArtifactVersion({
         operationId: `${context.operationId}:title`,
         projectId: context.projectId,
         expectedProjectRevision: project.revision,
         kind: "title",
         logicalKey: "main",
         baseVersionId: project.currentTitleVersionId,
-        content: `- 选择状态：已锁定\n- 最终标题：「${title}」\n- 选择来源：按自主推进模式代选当前稿件标题\n- 分发文案范围：本次不包含分发文案，核查覆盖其缺省状态\n`,
+        content: titleContent,
         reason: "workflow:fact-check-title",
         requestSnapshotId: null,
         actor: actor("fact_check", context.runId),
@@ -1266,8 +1298,9 @@ export function createWritingWorkflowTools(options: {
           bodyVersionId: body.id,
           titleVersionId: titleValue.versionId,
           coverage: { body: true, title: true, distributionCopy: true },
-          claims: [...args.claims],
+          claims,
           noFactualClaimsReason: args.noFactualClaimsReason,
+          ...(searchLimitations.length ? { searchLimitations } : {}),
         },
         actor: actor("fact_check", context.runId),
       });

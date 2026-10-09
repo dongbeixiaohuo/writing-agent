@@ -29,7 +29,7 @@ Invoke-Check 'desktop' 'npm.cmd' @('run', 'check:desktop')
 Invoke-Check 'python' 'npm.cmd' @('run', 'test:py')
 if (-not $SkipLegacyWorkflow) { Invoke-Check 'legacy-workflow' 'npm.cmd' @('run', 'check') }
 Invoke-Check 'production-audit' 'npm.cmd' @('audit', '--omit=dev', '--audit-level=high')
-Invoke-Check 'prd-pack' 'python' @('-B', 'writing-agent-1.0-prd-v1.1-dsh-ui/tools/check_document_pack.py')
+Invoke-Check 'prd-pack' 'python' @('-B', 'tests/check_document_pack.py')
 
 if ($InstallerPath) {
     & (Join-Path $PSScriptRoot 'test_desktop_installer.ps1') -InstallerPath $InstallerPath -EvidencePath 'output/desktop-installer-test.json' | Out-Null

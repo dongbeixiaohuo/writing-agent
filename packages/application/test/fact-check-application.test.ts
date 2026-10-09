@@ -11,6 +11,7 @@ import {
 } from "../../runtime/llm/src/index.js";
 import { openWorkspaceStorage } from "../../storage/src/index.js";
 import { WritingApplicationService } from "../src/index.js";
+import { createFactCheckOnlyTools } from "../src/workflow-tools.js";
 
 const actor = { kind: "user", id: "application-fact-test" } as const;
 
@@ -32,6 +33,38 @@ class UnusedProvider extends ModelProviderBase {
 }
 
 describe("WritingApplicationService fact-check projection", () => {
+  for (const invalidLedger of [false, true]) {
+    it(`validates a fact submission before changing title or snapshot (${invalidLedger ? 'invalid evidence' : 'missing empty-claims reason'})`, async () => {
+      const workspacePath = mkdtempSync(join(tmpdir(), 'wa-fact-submit-preflight-'));
+      const storage = openWorkspaceStorage({ workspacePath });
+      try {
+        storage.createProject({ operationId: 'create', projectId: 'p', name: 'Preflight', mode: 'quick', actor });
+        const body = storage.commitArtifactVersion({ operationId: 'body', projectId: 'p', expectedProjectRevision: 0,
+          kind: 'body', logicalKey: 'main', baseVersionId: null, content: '# 感受\n\n我觉得很好。', reason: 'fixture', actor });
+        assert.equal(body.ok, true); if (!body.ok) return;
+        const evidence = storage.commitArtifactVersion({ operationId: 'evidence', projectId: 'p', expectedProjectRevision: body.projectRevision,
+          kind: 'evidence', logicalKey: 'main', baseVersionId: null,
+          content: JSON.stringify({ claims: invalidLedger ? [{ evidence_id: 'E001' }] : [], notes: '无外部事实' }), reason: 'fixture', actor });
+        assert.equal(evidence.ok, true); if (!evidence.ok) return;
+        storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'test' });
+        storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', purpose: 'writing-pack:fact-check', planVersion: 'test' });
+        const before = storage.inspectProject('p')!;
+        const tool = createFactCheckOnlyTools({ storage, projectId: 'p' }).definitions.find(t => t.name === 'submit_fact_check')!;
+        const context: any = { projectId: 'p', runId: 'r', operationId: 'invalid', expectedBodyVersionId: body.result.versionId };
+        await assert.rejects(async () => tool.execute({ claims: [], noFactualClaimsReason: invalidLedger ? '仅感受' : '' } as never, context),
+          { code: invalidLedger ? 'FACT_EVIDENCE_INVALID' : 'FACT_CHECK_EMPTY_REASON_REQUIRED' });
+        const after = storage.inspectProject('p')!;
+        assert.equal(after.currentTitleVersionId, before.currentTitleVersionId, 'failed submissions cannot invalidate extraction through a new title');
+        assert.equal(after.currentFactSnapshotId, before.currentFactSnapshotId);
+        assert.equal(after.revision, before.revision);
+        assert.equal(storage.listArtifactVersions('p', 'title', 'main').length, 0);
+        if (!invalidLedger) {
+          await tool.execute({ claims: [], noFactualClaimsReason: '全文只有作者感受，无可核实事实。' } as never, { ...context, operationId: 'corrected' });
+          assert.equal(storage.inspectProject('p')!.factGateStatus, 'passed');
+        }
+      } finally { storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+    });
+  }
   it("exposes the current computed gate and queryable input provenance", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "wa-app-fact-"));
     const storage = openWorkspaceStorage({ workspacePath });

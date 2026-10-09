@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
+import { dispatchDesktopRpc } from '../../../apps/desktop/src/rpc-host.js';
 import { WritingApplicationService } from "../../application/src/index.js";
 import {
   ModelProviderBase,
@@ -12,15 +13,84 @@ import {
 } from "../../runtime/llm/src/index.js";
 import { openWorkspaceStorage } from "../../storage/src/index.js";
 import type { WritingBrief } from "../../writing-core/src/index.js";
-import { collaborationState } from '../../application/test/collaboration-fixture.js';
+import { collaborationState, factPreparationFixtureEvents, readerSimulationFixtureEvents } from '../../application/test/collaboration-fixture.js';
 import { collaborationTurn } from './helpers/collaboration-turn.js';
 import {
   createApplicationBridge,
   mergeWorkflowStageStatus,
   toolFailureDetail,
 } from "../src/application-bridge.js";
+import { DesktopClientBridge } from '../src/desktop-bridge.js';
 
 const actor = { kind: "user", id: "bridge-test" } as const;
+
+for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing desktop bridge preserves fact expert across search ${action} after reopen`, async () => {
+  const workspacePath = mkdtempSync(join(tmpdir(), 'wa-bridge-search-recovery-'));
+  const storage = openWorkspaceStorage({ workspacePath });
+  const originalFetch = globalThis.fetch;
+  let searches = 0, fail = action !== 'extend', resumed = false;
+  const turns: unknown[] = [];
+  globalThis.fetch = async () => { searches++; if (fail) throw new Error('SEARCH_REQUEST_TIMEOUT'); return Response.json({ results: [] }); };
+  class Provider extends BridgeWritingProvider {
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request) as any;
+      turns.push({ actor: state?.actor, stage: state?.stage, phase: state?.factPhase, tools: request.tools?.map(t => t.name) });
+      if (state?.actor === 'fact_check' && state.factPhase === 'verify') {
+        if (!searches || state.searchBudget.retryQuery || (resumed && action === 'extend' && searches === 1)) {
+          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'search_fact_sources', argumentsDelta: JSON.stringify({ query: searches && action === 'extend' ? '另一个公开年份' : '公开年份' }) };
+          yield { type: 'completed', finishReason: 'tool_calls' }; return;
+        }
+        if (resumed) assert.equal(state.stage, 'fact_check');
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: true, searchLimit: action === 'extend' ? 1 : 6,
+    authorizationMode: 'enabled_services' as const, getTavilyKey: async () => 'test-key' });
+  const service = new WritingApplicationService({ storage, provider: new Provider(), factSearchConfiguration: configuration });
+  seedProject(service, 'project-search', '搜索恢复');
+  let bridge = bridgeFor(service);
+  let renderer: DesktopClientBridge | null = null;
+  try {
+    await bridge.handshake();
+    const started = await bridge.sendMessage('按已确认简报生成草稿', { operationId: 'start-search' });
+    try { await waitUntil(() => bridge.getSnapshot().recoverableRuns.some(r => r.stopReason === 'FACT_SEARCH_DECISION_REQUIRED'), 5000); }
+    catch { throw new Error(JSON.stringify({ run: storage.getRun(started.runId), turns, last: bridge.getSnapshot().lastError })); }
+    assert.equal(searches, 1);
+    const pending = bridge.getSnapshot().recoverableRuns.find(r => r.runId === started.runId)!;
+    assert.equal(pending.inputRequest?.kind, 'search_recovery');
+    assert.equal(pending.inputRequest?.searchRecovery?.kind, action === 'extend' ? 'limit' : 'timeout');
+    assert.equal(bridge.getSnapshot().activeRunId, null);
+    bridge.dispose();
+    const rebuilt = new WritingApplicationService({ storage, provider: new Provider(), factSearchConfiguration: configuration });
+    bridge = bridgeFor(rebuilt);
+    await bridge.handshake();
+    renderer = new DesktopClientBridge({
+      invoke: request => dispatchDesktopRpc(bridge, request),
+      subscribe: listener => bridge.subscribe(() => listener(bridge.getSnapshot())),
+    });
+    await renderer.handshake();
+    const requestId = bridge.getSnapshot().recoverableRuns.find(r => r.runId === started.runId)!.inputRequest!.searchRecovery!.requestId;
+    await assert.rejects(renderer.resumeRun(started.runId, 'resume', { operationId: 'stale-decision', factSearchDecision: { requestId: 'old', action } }), { code: 'FACT_SEARCH_DECISION_REQUIRED' });
+    fail = false; resumed = true;
+    await renderer.resumeRun(started.runId, 'resume', { operationId: 'resume-search', factSearchDecision: { requestId, action } });
+    await waitUntil(() => storage.getRun(started.runId)?.status === 'completed', 5000);
+    await bridge.refresh();
+    assert.equal(searches, action === 'continue' ? 1 : 2);
+    assert.equal(storage.listRuns('project-search').length, 1, 'one writing run, no extra author classification or intake');
+    assert.equal(bridge.getSnapshot().recoverableRuns.length, 0);
+    assert.equal(bridge.getSnapshot().deliveryWorkspace.formalExportEnabled, true);
+    const events = storage.listRunEvents(started.runId);
+    assert.deepEqual(events.filter(e => e.type === 'run.resumed').map(e => e.payload.factSearchDecision), [{ requestId, action }]);
+    if (action === 'extend') {
+      const lastSearch = events.findLast(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'search_fact_sources');
+      assert.equal((lastSearch?.payload.result as any)?.result.searchLimit, 4, 'one extension adds exactly three searches');
+      assert.equal((lastSearch?.payload.result as any)?.result.searchOrdinal, 2, 'saved searches remain charged after reopen');
+    }
+    assert.equal(events.filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'prepare_fact_check').length, 1);
+    assert.equal(events.filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'submit_writing_stage' && (e.payload.result as any)?.result?.stage === 'language_review').length, 1);
+  } finally { renderer?.dispose(); bridge.dispose(); globalThis.fetch = originalFetch; storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+});
 
 describe("persisted run presentation", () => {
   it("does not regress a saved stage when a model repeats it after completion", () => {
@@ -71,6 +141,8 @@ class BridgeWritingProvider extends ModelProviderBase {
   protected async *providerStream(
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
+    const extraction = factPreparationFixtureEvents(request);
+    if (extraction) { yield* extraction; return; }
     const toolMessages = request.messages.filter((message) => message.role === "tool");
     if (collaborationState(request) !== null) {
       const turn = collaborationTurn(request, {
@@ -97,9 +169,7 @@ class BridgeWritingProvider extends ModelProviderBase {
       yield { type: 'completed', finishReason: 'stop' };
       return;
     }
-    const factCheckOnly = request.messages.some(
-      (message) => message.role === "system" && message.content.includes("专项事实核查员"),
-    );
+    const factCheckOnly = request.tools?.some(tool => tool.name === 'submit_fact_check') === true;
     if (factCheckOnly) {
       const userMessage = request.messages.find((message) => message.role === "user");
       assert.equal(userMessage?.role, "user");
@@ -108,8 +178,7 @@ class BridgeWritingProvider extends ModelProviderBase {
         evidenceVersionId?: string;
         artifacts: { id: string; kind: string; content: unknown }[];
       };
-      assert.equal(targets.artifacts.find(a => a.id === targets.bodyVersionId)?.content,
-        '# Bridge 持久草稿\n\n这是用户修订后的本地感受。');
+      assert.equal((targets.artifacts.find(a => a.id === targets.bodyVersionId)?.content as any).projection, 'fact_article_catalog');
       assert.ok(targets.artifacts.find(a => a.id === targets.evidenceVersionId)?.content);
       assert.equal(request.tools?.some(tool => tool.name === 'read_artifact_version'), false);
       if (!toolMessages.some((message) => message.role === "tool" && message.name === "submit_fact_check")) {
@@ -244,9 +313,14 @@ class BridgeWritingProvider extends ModelProviderBase {
 class MissingInputProvider extends BridgeWritingProvider {
   readonly prompts: string[] = [];
   protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+    // Isolated readers cannot see the earlier material-answer conversation;
+    // missing-input behavior belongs only to the writing/director fixture.
+    const reader = readerSimulationFixtureEvents(request);
+    if (reader) { yield* reader; return; }
     const prompt = request.messages.filter(message => message.role === 'user').map(message => message.content).join('\n');
     this.prompts.push(prompt);
-    if (!prompt.includes('写给新入职同事，介绍我们三步报修流程')) {
+    if (!request.tools?.some(tool => tool.name === 'submit_fact_check' || tool.name === 'prepare_fact_check') &&
+        !prompt.includes('写给新入职同事，介绍我们三步报修流程')) {
       yield { type: 'tool_call_delta', index: 0, id: `ask-${request.requestId}`,
         name: 'assess_writing_readiness', argumentsDelta: JSON.stringify({ status: 'needs_input', reason: '目前只有占位材料，无法判断文章内容。', questions: ['具体想写什么主题？', '有哪些可以使用的事实材料？'] }) };
       yield { type: 'completed', finishReason: 'tool_calls' };
@@ -668,7 +742,7 @@ describe("Application Service client bridge", () => {
       kind: "body",
       logicalKey: "main",
       baseVersionId: null,
-      content: "# 核查标题\n\n只有作者感受。",
+      content: "# 核查标题\n\n活动于2025年举行。",
       reason: "fact fixture",
       actor,
     });
@@ -722,8 +796,11 @@ describe("Application Service client bridge", () => {
         bodyVersionId: body.result.versionId,
         titleVersionId: title.result.versionId,
         coverage: { body: true, title: true, distributionCopy: true },
-        claims: [],
-        noFactualClaimsReason: "只有作者感受。",
+        claims: [{ claimId: 'C001', claimText: '活动于2025年举行。', claimType: 'date', location: 'body',
+          status: 'SUPPORTED', risk: 'green', supportScope: 'full', matchedEvidenceId: null,
+          sourceReference: 'https://example.test/activity', evidenceSummary: '合成核查结果：活动年份一致。', recommendedAction: '保留。',
+          checkReason: 'suspected_error', verificationMethod: 'external_source', verificationRecordIds: ['saved-source-record'] }],
+        noFactualClaimsReason: '',
       },
       actor,
     });
@@ -745,6 +822,9 @@ describe("Application Service client bridge", () => {
       assert.equal(fact.status, "passed");
       assert.equal(fact.snapshot?.id, frozen.result.snapshotId);
       assert.equal(fact.assessment?.status, "passed");
+      assert.equal(fact.assessment?.claims[0]?.checkReason, 'suspected_error');
+      assert.equal(fact.assessment?.claims[0]?.verificationMethod, 'external_source');
+      assert.deepEqual(fact.assessment?.claims[0]?.verificationRecordIds, ['saved-source-record']);
       assert.equal(fact.provenance.length, 3);
       assert.match(fact.notice, /不承诺事实绝对正确/u);
 
@@ -1006,7 +1086,14 @@ describe("Application Service client bridge", () => {
       assert.equal(after.runRecords.at(-1)?.publicationReady, true);
       const completion = JSON.stringify(after.timelineBySession[after.selectedSessionId]);
       assert.match(completion, /下一步.*查看当前稿件.*导出文章/u);
-      assert.equal(storage.listRunEvents(checked.runId).filter(event => event.type === 'request.dispatch_attempted').length, 1);
+      const factMessages = (after.timelineBySession[after.selectedSessionId] ?? []).filter(item =>
+        item.kind === 'message' && item.stage === 'fact_check');
+      const earlierFactMessages = (beforeEdit.timelineBySession[beforeEdit.selectedSessionId] ?? []).filter(item => item.kind === 'message' && item.stage === 'fact_check');
+      assert.equal(factMessages.length, earlierFactMessages.length + 1, 'one new saved specialist completion, not a generic assistant duplicate');
+      const latestFact = factMessages.at(-1);
+      assert.ok(latestFact?.kind === 'message' && typeof latestFact.activeDurationMs === 'number');
+      assert.deepEqual(factMessages.slice(0, -1), earlierFactMessages, 'later rechecks must not rewrite earlier reports or elapsed times');
+      assert.equal(storage.listRunEvents(checked.runId).filter(event => event.type === 'request.dispatch_attempted').length, 2);
       assert.deepEqual(
         after.materialProcessWorkspace.reviews.map((review) => review.id),
         processReviewIds,
@@ -1019,16 +1106,59 @@ describe("Application Service client bridge", () => {
       assert.ok(bridge.getSnapshot().recoverableRuns.some(run => run.runId === 'protected-fact-check'));
       await bridge.resumeRun('protected-fact-check', 'resume', { operationId: 'retry-protected-fact' });
       const restarted = storage.listRuns('project-1').at(-1)!;
+      assert.equal(restarted.id, 'protected-fact-check', 'retry must resume the original fact run and its search budget');
       assert.equal(storage.listRunEvents(restarted.id).find(event => event.type === 'run.started')?.payload.purpose, 'writing-pack:fact-check');
       await waitUntil(() => storage.getRun(restarted.id)?.status === 'completed');
       await bridge.refresh();
       assert.equal(bridge.getSnapshot().previewDocument.version, bodyCount);
-      assert.equal(storage.getRun('protected-fact-check')?.status, 'cancelled');
+      assert.equal(storage.getRun('protected-fact-check')?.status, 'completed');
     } finally {
       bridge.dispose();
       storage.close();
       rmSync(workspacePath, { recursive: true, force: true });
     }
+  });
+
+  it('keeps a blocked fact result labeled as the specialist with durable elapsed time, not a generic assistant receipt', async () => {
+    class BlockedFactProvider extends BridgeWritingProvider {
+      protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+        const user = request.messages.find(m => m.role === 'user')?.content ?? '';
+        if (!user.startsWith('{') || !JSON.parse(user).factPhase) { yield* super.providerStream(request); return; }
+        const extracting = JSON.parse(user).factPhase === 'extract';
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: extracting ? 'prepare_fact_check' : 'submit_fact_check',
+          argumentsDelta: JSON.stringify(extracting ? {
+            claims: [{ claimText: '项目在2025年发布', articleQuote: '项目在2025年发布。', location: 'body', risk: 'red', checkReason: 'suspected_error', matchedEvidenceIds: [] }], noFactualClaimsReason: '',
+          } : { claims: [{ claimId: 'C001', claimText: '项目在2025年发布', claimType: 'date', location: 'body', risk: 'red', status: 'UNSUPPORTED', supportScope: 'none', matchedEvidenceId: null,
+            sourceReference: 'model-knowledge:unverified', evidenceSummary: '关键年份存在疑点，未联网核实。', recommendedAction: '核对重要年份。', verificationMethod: 'model_review', verificationRecordIds: [] }], noFactualClaimsReason: '' }) };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      }
+    }
+    const workspacePath = mkdtempSync(join(tmpdir(), 'wa-bridge-blocked-fact-'));
+    const storage = openWorkspaceStorage({ workspacePath });
+    const service = new WritingApplicationService({ storage, provider: new BlockedFactProvider() });
+    seedProject(service, 'project-1', '核查结果');
+    const bridge = bridgeFor(service);
+    try {
+      const first = await bridge.sendMessage('开始写作');
+      await waitUntil(() => storage.getRun(first.runId)?.status === 'completed');
+      await bridge.refresh();
+      const previous = bridge.getSnapshot();
+      const previousFacts = (previous.timelineBySession[previous.selectedSessionId] ?? []).filter(item => item.kind === 'message' && item.stage === 'fact_check');
+      await bridge.saveBody(previous.revisionWorkspace.bodyVersionId!, '# 关键事件\n\n项目在2025年发布。', '测试年份疑点');
+      const checking = await bridge.runFactCheck();
+      await waitUntil(() => storage.getRun(checking.runId)?.status === 'completed');
+      await bridge.refresh();
+      const snapshot = bridge.getSnapshot();
+      assert.equal(snapshot.factCheckWorkspace.status, 'blocked');
+      const messages = (snapshot.timelineBySession[snapshot.selectedSessionId] ?? []).filter(item => item.kind === 'message' && item.stage === 'fact_check');
+      assert.equal(messages.length, previousFacts.length + 1);
+      const last = messages.at(-1)!;
+      assert.ok(last.kind === 'message' && last.activeDurationMs != null);
+      assert.match(last.kind === 'message' ? last.body : '', /关键年份存在疑点|关键.*问题|重要.*年份/u);
+      assert.deepEqual(messages.slice(0, -1), previousFacts, 'new blocked result must not rewrite the earlier passed report');
+      await bridge.refresh();
+      assert.deepEqual(bridge.getSnapshot().timelineBySession[snapshot.selectedSessionId], snapshot.timelineBySession[snapshot.selectedSessionId]);
+    } finally { bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
   });
 
   it("persists cancellation before abort and ignores the provider's late final text", async () => {

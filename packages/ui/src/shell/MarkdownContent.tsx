@@ -1,7 +1,37 @@
 import { Fragment, memo, type ReactNode } from 'react'
 import { marked, type Token, type Tokens } from 'marked'
+import { unified } from 'unified'
+import remarkParse from 'remark-parse'
+import remarkCjkFriendly from 'remark-cjk-friendly'
+import type { PhrasingContent } from 'mdast'
 
 import css from './WritingAgentShell.module.css'
+
+// Keep marked's GFM tables/lists. Only its unparsed CJK emphasis text needs the
+// same CJK-aware grammar used by publication export; never rewrite saved bytes.
+const cjkParser = unified().use(remarkParse).use(remarkCjkFriendly)
+function cjkInline(raw: string, key: string): ReactNode[] | null {
+  if (!/[\u3000-\u9fff]/u.test(raw) || !/[*_]/u.test(raw)) return null
+  const root = cjkParser.parse(raw)
+  const paragraph = root.children.length === 1 ? root.children[0] : undefined
+  if (paragraph?.type !== 'paragraph' || !paragraph.children.some(n => n.type === 'strong' || n.type === 'emphasis')) return null
+  const render = (nodes: readonly PhrasingContent[], prefix: string): ReactNode[] => nodes.map((node, i) => {
+    const id = `${prefix}:${i}`
+    if (node.type === 'strong') return <strong key={id}>{render(node.children, id)}</strong>
+    if (node.type === 'emphasis') return <em key={id}>{render(node.children, id)}</em>
+    if (node.type === 'inlineCode') return <code key={id}>{node.value}</code>
+    if (node.type === 'break') return <br key={id} />
+    if (node.type === 'link') {
+      const href = safeHref(node.url)
+      return href ? <a key={id} href={href} target="_blank" rel="noreferrer">{render(node.children, id)}</a>
+        : <Fragment key={id}>{render(node.children, id)}</Fragment>
+    }
+    if ('value' in node) return <Fragment key={id}>{node.value}</Fragment>
+    if ('children' in node) return <Fragment key={id}>{render(node.children, id)}</Fragment>
+    return <Fragment key={id}>{raw.slice(node.position?.start.offset, node.position?.end.offset)}</Fragment>
+  })
+  return render(paragraph.children, key)
+}
 
 function safeHref(value: string): string | null {
   try {
@@ -37,7 +67,7 @@ function inlineTokens(tokens: readonly Token[] | undefined, keyPrefix: string): 
     if (token.type === 'html' || token.type === 'tag') return <Fragment key={key}>{token.text}</Fragment>
     if (token.type === 'escape' || token.type === 'text') {
       const nested = 'tokens' in token ? inlineTokens(token.tokens, key) : []
-      return <Fragment key={key}>{nested.length > 0 ? nested : token.text}</Fragment>
+      return <Fragment key={key}>{nested.length > 0 ? nested : token.type === 'text' ? cjkInline(token.raw, key) ?? token.text : token.text}</Fragment>
     }
     return <Fragment key={key}>{'text' in token ? String(token.text) : token.raw}</Fragment>
   })

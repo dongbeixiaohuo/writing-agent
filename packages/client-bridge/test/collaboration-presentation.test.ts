@@ -413,13 +413,14 @@ test('unchanged polish retains its own saved stage body and confirmation after t
       kind: 'body', logicalKey: 'main', baseVersionId: null, content: '# 原稿\n\n这段文字无需再改。', reason: 'revision', actor: { kind: 'agent', id: 'writer', runId: 'run' } });
     assert.equal(body.ok, true); if (!body.ok) return;
     for (const stage of ['central_revision', 'language_review']) {
-      f.event('tool.requested', stage, { toolName: 'submit_writing_stage', previewId: `preview:${stage}` });
+      f.event('tool.requested', stage, { toolName: 'submit_writing_stage', arguments: { stage }, previewId: `preview:${stage}` });
       f.event('tool.completed', stage, { result: { ok: true, toolName: 'submit_writing_stage', result: { stage, artifactVersionId: body.result.versionId } } });
     }
     f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'polish-wait', reason: 'CO_CREATION_CHECKPOINT', payload: { stage: 'language_review', nextStage: 'fact_check' } });
     const timeline = (await f.snapshot()).timelineBySession.session!;
     const polish = timeline.find(row => row.id === 'preview:language_review');
     assert.ok(polish?.kind === 'message', 'the saved polish must replace its live preview even when the artifact is unchanged');
+    assert.equal(typeof polish.activeDurationMs, 'number', 'completed stage timing must survive the live preview in the conversation');
     assert.match(polish.body, /这段文字无需再改/);
     assert.match(polish.body, /认可吗/);
     assert.equal(timeline.filter(row => row.kind === 'message' && row.stage === 'language_review').length, 1);
@@ -443,18 +444,47 @@ test('director decisions and outline content are visible in the conversation wit
   } finally { f.close(); }
 });
 
-for (const legacy of [false, true]) test(`output truncation has an accurate persisted explanation (legacy=${legacy})`, async () => {
+for (const legacy of [false, true]) test(`model error classification uses the recorded code, not its wording (legacy=${legacy})`, async () => {
   const f = await fixture();
   try {
     const code = legacy ? 'MODEL_RESPONSE_INVALID' : 'MODEL_OUTPUT_TRUNCATED';
     f.event('request.dispatch_attempted', 'model', {});
-    f.event('request.failed', 'model', { error: { code, message: '模型在工具参数完成前达到输出上限' } });
+    f.event('request.failed', 'model', { error: { code, message: legacy ? '模型在工具参数完成前达到输出上限' : 'Upstream output limit reached' } });
     f.storage.finishRun({ projectId: 'project', runId: 'run', operationId: 'fail', status: 'failed', stopReason: code, payload: { code } });
     const snapshot = await f.snapshot();
     const text = JSON.stringify(snapshot.timelineBySession.session);
-    assert.match(text, /输出.*上限/u);
-    assert.doesNotMatch(text, /格式校验|账户额度不足/u);
-    assert.equal(snapshot.runRecords[0]?.stopReason, 'MODEL_OUTPUT_TRUNCATED');
+    assert.match(text, legacy ? /格式校验/u : /输出.*上限/u);
+    assert.doesNotMatch(text, /账户额度不足/u);
+    assert.equal(snapshot.runRecords[0]?.stopReason, code);
+  } finally { f.close(); }
+});
+
+for (const code of ['FUTURE_MODEL_ERROR', 'UNKNOWN_PROVIDER_ERROR']) test(`unclassified model failure does not assume a connection problem (${code})`, async () => {
+  const f = await fixture();
+  try {
+    f.event('request.dispatch_attempted', 'unknown', {});
+    f.event('request.failed', 'unknown', { error: { code, message: 'private upstream contents' } });
+    f.storage.finishRun({ projectId: 'project', runId: 'run', operationId: 'fail', status: 'failed', stopReason: code });
+    const text = JSON.stringify((await f.snapshot()).timelineBySession.session);
+    assert.match(text, /具体原因.*确认/u);
+    assert.doesNotMatch(text, /验证连接|private upstream contents/u);
+  } finally { f.close(); }
+});
+
+test('checkpoint continuation rejects another active run before switching the selected conversation', async () => {
+  const f = await fixture();
+  try {
+    f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'wait', reason: 'CO_CREATION_CHECKPOINT',
+      payload: { stage: 'outline', reason: '提纲待确认' } });
+    f.storage.createSession({ projectId: 'project', sessionId: 'other-session', purpose: 'writing-pack:draft' });
+    f.storage.startRun({ projectId: 'project', sessionId: 'other-session', runId: 'other-active', purpose: 'writing-pack:draft', planVersion: 'test' });
+    await f.bridge.selectSession('project', 'other-session');
+    const before = f.storage.listRunEvents('run').length;
+    await assert.rejects(f.bridge.resumeRun('run', 'resume', { feedback: '认可', operationId: 'continue' }), /RUN_ALREADY_ACTIVE/);
+    assert.equal(f.bridge.getSnapshot().selectedSessionId, 'other-session');
+    assert.equal(f.storage.getRun('run')?.status, 'waiting_user');
+    assert.equal(f.storage.listRunEvents('run').length, before);
+    assert.equal(f.storage.listRuns('project').length, 2);
   } finally { f.close(); }
 });
 

@@ -140,6 +140,20 @@ const runInput = (userInstruction: string, operationId: string, sessionId?: stri
 });
 
 describe("conversation intake", () => {
+  it('defaults self-media recommendations to at most 5000 characters while allowing an explicit longer author request', async () => {
+    for (const explicit of [false, true]) {
+      const response = proposalResponse('智能与制宪权');
+      const provider = new IntakeProvider([[{ ...response, proposal: { ...response.proposal,
+        brief: { ...response.proposal.brief, targetCharacters: 8000, ...(explicit ? { targetCharactersSourceQuote: '请写8000字的专题长文' } : {}) } } }]]);
+      const f = fixture(provider);
+      try {
+        const result = await f.service.startConversationTurn(runInput(explicit ? '请写8000字的专题长文' : '参考这篇长文章写公众号给普通读者看', `length-${explicit}`)).result;
+        assert.match(provider.requests[0]!.messages[0]!.content, /5000/u);
+        assert.equal(result.ok, explicit);
+        assert.equal(f.service.getConversationIntake('project-1').brief?.lengthTarget.targetCharacters ?? null, explicit ? 8000 : null);
+      } finally { f.close(); }
+    }
+  });
   it("defers unsolicited title ideation while preserving an author-specified existing title", () => {
     const f = fixture(new IntakeProvider([]));
     try {

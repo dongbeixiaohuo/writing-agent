@@ -1,4 +1,6 @@
-# Writing Agent 1.0 改造文档包
+# Writing Agent 1.0 改造文档包（历史入口）
+
+> 历史快照：原始日期 2026-09-16，后续修订截至 2026-09-24；适用 Writing Agent 1.0 早期实施（PRD 修订 1.1）。2026-10-05 归档，状态和计划仅适用于当时版本。当前要求与替代入口见 [归档映射](README.md)和 [文档中心](../../README.md)。
 
 > 2026-09-20 追加 [CR-003：对话优先 Harness](docs/implementation/CR003_CONVERSATION_FIRST_HARNESS.md)。默认入口必须允许一句想法开始；四步必填向导不是 Agent 访谈。结构化简报在后台生成，工程层约束授权、版本与可执行状态，而不是把用户锁进字段填写顺序。
 

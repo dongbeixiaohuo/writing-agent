@@ -9,6 +9,7 @@ import { withoutFirstMarkdownHeading } from '../../writing-core/src/index.js';
 import type { RunRecord } from "../../runtime/session/src/index.js";
 import { loopBudgetUsage } from "../../runtime/session/src/index.js";
 import { recoveryInterruption, runDiagnostics } from './run-diagnostics.js';
+import { stageActiveDurations } from './stage-timing.js';
 import { runTraceDetail } from './run-trace-detail.js';
 import { factCheckCompletionSummary } from './fact-summary.js';
 import { isPublicationSelectionWait, isUsablePublicationTitle } from '../../application/src/publication-choice.js';
@@ -98,7 +99,7 @@ const WORKFLOW_STAGE_LABELS: Readonly<Record<WritingWorkflowStage, string>> = {
   draft: "完整初稿",
   review_editor: "编辑审校",
   review_publish: "发布审校",
-  review_reader: "读者审校",
+  review_reader: "模拟读者",
   central_revision: "集中修订",
   language_review: "语言终审",
   fact_check: "事实核查",
@@ -112,7 +113,7 @@ const AUTHOR_ACTOR_LABELS: Readonly<Record<string, string>> = {
   draft: "内容主笔",
   review_editor: "编辑审校",
   review_publish: "发布审校",
-  review_reader: "读者审校",
+  review_reader: "模拟读者",
   central_revision: "修订主笔",
   language_review: "语言终审",
   fact_check: "事实核查",
@@ -192,6 +193,11 @@ function checkpointStages(
   const event = [...projection.events].reverse().find(
     (candidate) => candidate.runId === runId && candidate.type === "run.waiting_user",
   );
+  if (event?.payload.stopReason === 'FACT_SEARCH_DECISION_REQUIRED' && event.payload.kind === 'search_recovery') {
+    const searchRecovery = event.payload.searchRecovery as unknown as NonNullable<NonNullable<RecoverableRunSummary['inputRequest']>['searchRecovery']>;
+    return { checkpointStage: null, nextStage: 'fact_check', inputRequest: { kind: 'search_recovery',
+      reason: searchRecovery.reason, questions: [], searchRecovery } };
+  }
   if (event && isPublicationSelectionWait(event.payload)) {
     const saved = projection.publicationCandidates;
     // Keep displayed ordinals identical to the persisted choices. A partly
@@ -268,7 +274,6 @@ function nestedErrorCode(payload: Readonly<Record<string, unknown>>): string | n
       : null;
   if (error === null) return null;
   const code = error.code;
-  if (code === 'MODEL_RESPONSE_INVALID' && error.message === '模型在工具参数完成前达到输出上限') return 'MODEL_OUTPUT_TRUNCATED';
   return typeof code === "string" && code.length > 0 ? code : null;
 }
 
@@ -298,6 +303,12 @@ export function toolFailureDetail(code: string | null): string {
       "核查引用的证据编号不在已保存的证据账本中；系统已拒绝这次核查，稿件没有被覆盖。",
     FACT_CHECK_SOURCE_REQUIRED:
       "核查把主张标为已支持，但没有提供账本证据或可复核来源；系统已拒绝保存。",
+    FACT_EXTERNAL_RECORD_REQUIRED:
+      '模型声称已联网查证，但未引用本轮成功获取的对应来源；系统拒绝这次提交，稿件仍保留。',
+    FACT_KEY_EXTERNAL_CHECK_REQUIRED:
+      '这是旧版本逐条外部查证规则留下的拒绝记录；当前版本已取消该要求，可重新核查，无需为普通背景或作者自述补公开证明。',
+    FACT_CLAIM_SELECTION_REQUIRED:
+      '新增待查事实未说明选择原因；补充key_fact或suspected_error后重新提交即可，无需重读全文。',
     FACT_CHECK_CLAIMS_INVALID:
       "核查清单格式不完整；系统已拒绝保存，稿件没有被覆盖。",
     WORKFLOW_STAGE_OUT_OF_ORDER:
@@ -356,6 +367,7 @@ function modelFailureDetail(code: string | null, providerDetail: string | null =
     AUTH_FAILED: "API Key 无效或没有访问权限，请在“设置 → 模型”中更新 Key 并验证连接。",
     INVALID_REQUEST: "模型服务拒绝了请求，请检查服务类型、API 地址和模型 ID。",
     MODEL_RESPONSE_INVALID: "模型回复未通过格式校验，本轮未完成；你的输入仍保留，可以重试。若反复出现，请反馈运行记录，无需重新填写资料。",
+    PARALLEL_TEXT_ALL_FAILED: '三个模拟读者都没有返回可用感受，本阶段未保存。可以稍后重试读者阶段；已保存的文章和前面审校结果仍在。具体模型错误可查看运行记录。',
     MODEL_REQUIRED_TOOL_MISSING: "模型尚未提交本轮需要保存的操作，不能标为完成。你的输入与已保存内容仍保留，可以重试这一步。",
     STAGE_OUTPUT_NOT_SAVED: "这一阶段的内容反复未通过保存校验，已停止自动重写。上一版稿件仍保留；不是模型账户额度或网络故障。请反馈此阶段的运行记录，不必重新填写材料。",
     TOOL_FAILURE_LOOP: "程序提交反复被同一门禁拒绝，已停止自动重试。已保存的内容仍保留；这不是模型账户额度或网络故障。请反馈这条运行记录，或重试当前步骤。",
@@ -365,12 +377,12 @@ function modelFailureDetail(code: string | null, providerDetail: string | null =
     PROVIDER_UNAVAILABLE: "模型服务暂不可用，请稍后验证连接或重试。",
     QUOTA_EXCEEDED: "模型账户额度不足，请在服务商后台检查余额或套餐。",
     RATE_LIMITED: "模型请求过于频繁，请稍后重试。",
-    TIMEOUT: "模型服务响应超时，请检查网络后重试。",
-    UNKNOWN_PROVIDER_ERROR: "模型服务返回未知错误，请验证连接并检查服务商状态。",
+    TIMEOUT: "大模型未在等待时限内返回完整回复，这一步未完成；已保存内容仍在，请稍后重试。",
+    UNKNOWN_PROVIDER_ERROR: "模型请求未完成，具体原因尚未确认；已保存内容仍在。请查看这一步的运行记录，稍后重试。",
   };
   const base = code === null
-    ? "模型请求失败，请在“设置 → 模型”中验证连接后重试。"
-    : messages[code] ?? "模型请求失败，请在“设置 → 模型”中验证连接后重试。";
+    ? "模型请求未完成，具体原因尚未确认；已保存内容仍在。请查看这一步的运行记录，稍后重试。"
+    : messages[code] ?? "模型请求未完成，具体原因尚未确认；已保存内容仍在。请查看这一步的运行记录，稍后重试。";
   return providerDetail === null ? base : `${base}（上游返回：${providerDetail}）`;
 }
 
@@ -452,14 +464,25 @@ function timelineForSession(
   const intakeRunIds = new Set(projection.events.filter(event => event.type === 'run.started' &&
     ['writing-pack:intake', 'writing-pack:author-conversation'].includes(String(event.payload.purpose))).map(event => event.runId));
   const savedIntakeReplyRunIds = new Set<string>();
+  const displayedFactRunIds = new Set<string>();
   const latestToolFailureCodes = new Map<string, string>();
   const latestModelFailureCodes = new Map<string, string>();
   const latestModelFailureDetails = new Map<string, string>();
+  // Bound to the saved result's event boundary, so later rework never changes
+  // the duration shown under an earlier result. Original events are durable.
+  const timingEvents = new Map<string, WritingProjectProjection['events'][number][]>();
+  const savedTiming = (runId: string, stage: WritingWorkflowStage | 'title' | null) => {
+    const duration = stage === null ? undefined : stageActiveDurations(timingEvents.get(runId) ?? [], runId).get(stage);
+    return duration === undefined ? {} : { activeDurationMs: duration };
+  };
   const deliveryReady = (versionId: string | null): boolean => versionId !== null &&
     projection.currentBody?.id === versionId && projection.factCheck.status === 'passed';
 
   for (const event of projection.events) {
     if (event.runId === undefined || !runIds.has(event.runId)) continue;
+    const recorded = timingEvents.get(event.runId) ?? [];
+    recorded.push(event);
+    timingEvents.set(event.runId, recorded);
     const createdAt = timeLabel(event.occurredAt);
     const intake = intakeRunIds.has(event.runId);
     if (event.type === 'tool.requested' && typeof event.payload.previewId === 'string') outputPreviewIds.set(event.operationId, event.payload.previewId);
@@ -482,6 +505,7 @@ function timelineForSession(
         const replyStage = workflowStagePayload(replyResult, 'expertStage');
         const actorLabel = authorActorLabel(replyResult);
         items.push({ id: `${event.id}:reply`, kind: 'message', role: 'assistant', body: reply, createdAt,
+          ...savedTiming(event.runId, replyStage ?? (actorLabel === '标题策划' ? 'title' : null)),
           ...(replyStage ? { stage: replyStage } : {}), ...(actorLabel === null ? {} : { actorLabel }) });
       }
       const collaboration = collaborationResult(event.payload);
@@ -494,6 +518,16 @@ function timelineForSession(
       const result = successfulToolResult(event.payload);
       const stage = result === null ? null : workflowStagePayload(result, 'stage');
       const artifactId = result === null ? null : textPayload(result, 'artifactVersionId');
+      if (stage === 'fact_check' && result !== null && typeof result.snapshotId === 'string') {
+        const assessment = projection.factAssessments?.find(report => report.snapshotId === result.snapshotId) ??
+          (projection.factCheck.assessment?.snapshotId === result.snapshotId ? projection.factCheck.assessment : null);
+        if (assessment !== null) {
+          items.push({ id: `${event.id}:fact-report`, kind: 'message', role: 'assistant', stage: 'fact_check', createdAt,
+            ...savedTiming(event.runId, 'fact_check'), body: factCheckCompletionSummary(assessment) });
+          displayedFactRunIds.add(event.runId);
+          modelRows.delete(event.runId);
+        }
+      }
       const stageArtifactKey = `${event.runId}:${stage}:${artifactId}`;
       if (stage !== null && artifactId !== null && !displayedStageArtifacts.has(stageArtifactKey)) {
         const artifact = [...projection.workflowArtifacts, ...projection.bodyVersions].find(version => version.id === artifactId);
@@ -501,6 +535,7 @@ function timelineForSession(
           stageMessageRows.set(`${event.runId}:${stage}`, items.length);
           items.push({ id: outputPreviewIds.get(event.operationId) ?? `${event.id}:artifact`, kind: 'message', role: 'assistant', createdAt,
             stage,
+            ...savedTiming(event.runId, stage),
             body: `**${WORKFLOW_STAGE_LABELS[stage]} · 已保存**\n\n${workflowArtifactView(artifact)?.content ?? artifact.content}` });
           displayedArtifactIds.add(artifactId);
           displayedStageArtifacts.add(stageArtifactKey);
@@ -596,7 +631,7 @@ function timelineForSession(
     }
     if (event.type === "run.completed") {
       const versionId = textPayload(event.payload, "artifactVersionId");
-      if (versionId !== null) {
+      if (versionId !== null && !displayedFactRunIds.has(event.runId)) {
         const savedBody = projection.bodyVersions.find((version) => version.id === versionId);
         if (savedBody !== undefined && savedBody.content.trim().length > 0 && !displayedArtifactIds.has(versionId)) {
           items.push({
@@ -615,20 +650,33 @@ function timelineForSession(
             ? factCheckCompletionSummary(projection.factCheck.assessment)
             : '工作稿和阶段结果已保存，但尚未达到正式交付条件。请查看当前核查问题，并在这里补充材料或告诉我如何修改。',
           createdAt,
+          ...(deliveryReady(versionId) ? savedTiming(event.runId, 'fact_check') : {}),
         });
       }
     }
     if (event.type === "run.waiting_user") {
+      if (event.payload.stopReason === 'FACT_SEARCH_DECISION_REQUIRED') {
+        const request = event.payload.searchRecovery as any;
+        items.push({ id: event.id, kind: 'message', role: 'assistant', createdAt,
+          body: `事实搜索已暂停。${request.reason}\n\n检索词：${request.query}\n检索额度：${request.used}/${request.limit}；网络尝试：${request.attemptsUsed}/${request.attemptsLimit}。\n\n请使用下方按钮选择继续搜索或不追加。已取得的来源和稿件仍保留；不再搜索时会说明实际未联网核查的范围。` });
+        continue;
+      }
       const inputRequest = writingInputRequest(event.payload);
       if (inputRequest !== null) {
         const pendingQuestions = inputRequest.questions.filter(question => !questionAlreadyCovered(inputRequest.reason, question));
         const questionBlock = pendingQuestions.length === 0 ? '' : `${pendingQuestions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\n\n`;
         items.push({ id: event.id, kind: 'message', role: 'assistant', createdAt,
+          ...(event.payload.kind === 'publication_selection' ? savedTiming(event.runId, 'title') : {}),
           body: `需要补充信息，写作已暂停。\n\n${inputRequest.reason}\n\n${questionBlock}请直接回复下面的问题；收到补充并确认信息充分后才会继续。` });
         continue;
       }
       const reason = textPayload(event.payload, "stopReason");
       const stage = textPayload(event.payload, "stage");
+      if (reason === 'PARALLEL_TEXT_ALL_FAILED') {
+        items.push({ id:event.id, kind:'tool', audience:'conversation', label:'模拟读者未完成',
+          detail:'三个模拟读者都未返回可用反应，未保存读者反馈，也未自动重试。请查看运行记录；稍后可重试当前读者阶段，之前的稿件与审校仍保留。', state:'failure' });
+        continue;
+      }
       if (reason === 'STAGE_OUTPUT_NOT_SAVED') {
         items.push({ id:event.id, kind:'tool', audience:'conversation', label:'自动重写已暂停',
           detail:'本阶段保存校验反复未通过；上一版稿件仍保留，可查看原因或重试这一步。', state:'failure' });
@@ -644,7 +692,7 @@ function timelineForSession(
           : stage === 'draft' ? '初稿这样写可以吗？确认后我继续审校，也可以直接告诉我怎么改。'
           : stage === 'review_editor' ? `编辑审校的建议你认可吗？可以先讨论、调整；确认后才交给${textPayload(event.payload, 'nextStage') === 'review_publish' ? '发布' : '读者'}审校专家。`
           : stage === 'review_publish' ? '发布审校的建议你认可吗？可以先讨论、调整；确认后才交给读者审校专家。'
-          : stage === 'review_reader' ? '读者审校的建议你认可吗？可以先讨论、调整；确认后主笔才按已确认的意见修订。'
+          : stage === 'review_reader' ? '这三个模拟读者的感受，你怎么看？可以先讨论；确认后写作导演会结合你的取舍解读，再交给修订主笔，不会按票数改稿。'
           : stage === 'central_revision' ? '集中修订后的全文这样可以吗？确认后才交给去 AI 味与语言润色专家；也可以直接提出修改。'
           : stage === 'language_review' ? '润色后的这一版你认可吗？确认后再继续标题与事实核查；需要调整可以直接说。'
           : '这一阶段的结果可以吗？确认后我继续下一步，也可以直接告诉我怎么改。';
@@ -773,6 +821,7 @@ function runRecordView(
     if (next !== undefined) state.set(next, "running");
   }
   const showStages = sawWorkflowTool || active;
+  const activeDurations = stageActiveDurations(projection.events, run.id);
   const stages: WorkflowStageView[] = showStages
     ? sequence.map((stage) => {
         const status = state.get(stage) ?? "pending";
@@ -780,13 +829,14 @@ function runRecordView(
           id: stage,
           label: WORKFLOW_STAGE_LABELS[stage],
           status,
+          activeDurationMs: activeDurations.get(stage) ?? null,
           detail:
             status === "completed"
               ? "已保存"
               : status === "running"
                 ? "正在处理"
                 : status === "failed"
-                  ? stage === 'fact_check' ? '核查问题待处理' : "此阶段执行失败"
+                  ? stage === 'fact_check' ? '核查问题待处理；正文问题需返回集中修订后重新核查（返工）' : "此阶段执行失败"
                   : "等待前序阶段",
         };
       })
@@ -806,9 +856,7 @@ function runRecordView(
     displayInstruction,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
-    stopReason: run.stopReason === 'MODEL_RESPONSE_INVALID' && nestedErrorCode(projection.events.findLast(event =>
-      event.runId === run.id && event.type === 'request.failed')?.payload ?? {}) === 'MODEL_OUTPUT_TRUNCATED'
-      ? 'MODEL_OUTPUT_TRUNCATED' : run.stopReason,
+    stopReason: run.stopReason,
     modelRequests: loopBudgetUsage(run, projection.events.filter(event => event.runId === run.id)).modelRequests,
     maxModelRequests: run.budget.maxModelRequests,
     toolCalls: loopBudgetUsage(run, projection.events.filter(event => event.runId === run.id)).toolCalls,
@@ -889,7 +937,7 @@ const PROCESS_ARTIFACT_LABELS = {
   outline: "文章提纲",
   review_editor: "编辑审校",
   review_publish: "发布审校",
-  review_reader: "读者审校",
+  review_reader: "模拟读者",
 } as const;
 
 function workflowArtifactView(
@@ -1227,6 +1275,7 @@ export class ApplicationClientBridge implements ClientBridge {
           operationId: `${operationId}:project`,
           projectId,
           name: input.name,
+          nameSource: "manual",
           mode: input.mode,
           actor,
         }));
@@ -1316,6 +1365,39 @@ export class ApplicationClientBridge implements ClientBridge {
           true,
         );
         return { projectId };
+      },
+    );
+  }
+
+  async renameProject(
+    projectId: string,
+    name: string,
+    options: BridgeCommandOptions = {},
+  ): Promise<void> {
+    this.#ensureLive();
+    const normalizedName = name.trim();
+    if (!normalizedName || Array.from(normalizedName).length > 60) throw new Error("PROJECT_NAME_INVALID");
+    const operationId = options.operationId ?? this.#operationIdFactory();
+    await this.#once(
+      operationId,
+      "project.rename",
+      commandInput("project.rename", [projectId, normalizedName]),
+      async () => {
+        mutationValue(this.#service.renameProject({
+          operationId: `${operationId}:project-name`,
+          projectId,
+          name: normalizedName,
+          source: "manual",
+          actor: { kind: "user", id: "local-ui" },
+        }));
+        this.#replace(this.#buildSnapshot(
+          this.#snapshot.selectedProjectId,
+          this.#snapshot.selectedSessionId,
+          this.#snapshot.generation + 1,
+          this.#snapshot.revision + 1,
+          this.#snapshot.settings,
+          null,
+        ), true);
       },
     );
   }
@@ -1471,7 +1553,7 @@ export class ApplicationClientBridge implements ClientBridge {
     return this.#once(operationId, 'conversation.start', commandInput('conversation.start', [body]), async () => {
       const projectId = `project:${operationId}`;
       mutationValue(this.#service.createProject({ operationId: `${operationId}:project`, projectId,
-        name: body.split(/\r?\n/u)[0]!.slice(0, 40), mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
+        name: '新写作项目', nameSource: 'placeholder', mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
       this.#replace(this.#buildSnapshot(projectId, null, this.#snapshot.generation + 1,
         this.#snapshot.revision + 1, this.#snapshot.settings, null), true);
       return this.#startIntake(projectId, undefined, body, operationId);
@@ -1703,17 +1785,29 @@ export class ApplicationClientBridge implements ClientBridge {
         runId,
         decision,
         feedback,
+        JSON.stringify(options.checkpointApproval ?? null),
+        JSON.stringify(options.factSearchDecision ?? null),
       ]),
       async () => {
         const projectId = this.#snapshot.selectedProjectId;
         const projection = this.#service.getProjectProjection(projectId);
         const run = projection.runs.find((candidate) => candidate.id === runId);
         if (run === undefined) throw new Error("RUN_SCOPE_INVALID");
+        if ((run.stopReason === 'FACT_SEARCH_DECISION_REQUIRED' || options.factSearchDecision) &&
+          (decision !== 'resume' || feedback || options.checkpointApproval)) throw new Error('FACT_SEARCH_DECISION_REQUIRED');
+        if (options.checkpointApproval) {
+          if (decision !== 'resume' || feedback) throw new Error('CHECKPOINT_DECISION_REQUIRED');
+          await this.#service.approveStageCheckpoint({ projectId, runId, operationId,
+            approval: options.checkpointApproval });
+          await this.refresh();
+          return;
+        }
         const waitingEvent = projection.events.filter(event => event.runId === runId && event.type === 'run.waiting_user').at(-1);
         if (run.status === 'waiting_user' && run.stopReason === 'CO_CREATION_CHECKPOINT') {
           const latestCheckpoint = projection.runs.findLast(candidate => candidate.sessionId === run.sessionId &&
             candidate.status === 'waiting_user' && candidate.stopReason === 'CO_CREATION_CHECKPOINT');
           if (latestCheckpoint?.id !== run.id) throw new Error('CHECKPOINT_DECISION_REQUIRED');
+          if (projection.runs.some(candidate => candidate.id !== runId && ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');
           await this.selectSession(projectId, run.sessionId);
           this.#startAuthorReply(projectId, run.sessionId, feedback || '继续下一步', `${operationId}:checkpoint-reply`);
           return;
@@ -1758,9 +1852,15 @@ export class ApplicationClientBridge implements ClientBridge {
           if (!['interrupted', 'waiting_user', 'budget_exhausted'].includes(run.status)) throw new Error('RUN_NOT_RECOVERABLE');
           if (run.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && decision !== 'retry_unknown') throw new Error('UNKNOWN_OUTCOME_REQUIRES_CONFIRMATION');
           if (projection.runs.some(candidate => candidate.id !== runId && ACTIVE_STATUSES.has(candidate.status))) throw new Error('RUN_ALREADY_ACTIVE');
-          this.#service.cancelDraft({ projectId, runId, operationId: `${operationId}:retire`, reason: 'fact_check_retry_authorized' });
+          const handle = this.#service.resumeFactCheck({ projectId, runId, sessionId: run.sessionId, operationId,
+            ...(options.factSearchDecision ? { factSearchDecision: options.factSearchDecision } : {}),
+            decision, expectedProjectRevision: projection.project.revision, model: this.#model.model,
+            parameters: this.#model.parameters,
+            ...(this.#model.budget === undefined ? {} : { budget: { ...this.#model.budget, maxMajorRevisions: 0 } }),
+          });
           await this.selectSession(projectId, run.sessionId);
-          await this.runFactCheck({ operationId: `${operationId}:fact-check-retry` });
+          await this.refresh();
+          void handle.result.finally(() => this.refresh()).catch(() => undefined);
           return;
         }
         if (feedback.length > 0 && run.stopReason !== "CO_CREATION_CHECKPOINT" && run.stopReason !== 'WRITING_INPUT_REQUIRED') {
@@ -1784,13 +1884,14 @@ export class ApplicationClientBridge implements ClientBridge {
           runId,
           operationId,
           decision,
+          ...(options.factSearchDecision ? { factSearchDecision: options.factSearchDecision } : {}),
           expectedProjectRevision: projection.project.revision,
           expectedBriefVersionId: projection.brief.id,
           model: this.#model.model,
           parameters: this.#model.parameters,
           // Retrying transport is not a new author instruction. A synthetic
           // instruction would invalidate the still-pending expert assignment.
-          ...((decision === 'retry_unknown' || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP'].includes(run.stopReason ?? '')) && feedback.length === 0 ? {} : {
+          ...((decision === 'retry_unknown' || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP', 'PARALLEL_TEXT_ALL_FAILED', 'FACT_SEARCH_DECISION_REQUIRED'].includes(run.stopReason ?? '')) && feedback.length === 0 ? {} : {
             userInstruction: feedback.length > 0
               ? feedback
               : run.stopReason === "CO_CREATION_CHECKPOINT"
@@ -2362,6 +2463,9 @@ export class ApplicationClientBridge implements ClientBridge {
                     sourceReference: claim.sourceReference,
                     evidenceSummary: claim.evidenceSummary,
                     recommendedAction: claim.recommendedAction,
+                    ...(claim.checkReason ? { checkReason: claim.checkReason } : {}),
+                    ...(claim.verificationMethod ? { verificationMethod: claim.verificationMethod } : {}),
+                    ...(claim.verificationRecordIds ? { verificationRecordIds: claim.verificationRecordIds } : {}),
                   }),
                 ),
               },
@@ -2433,6 +2537,7 @@ export class ApplicationClientBridge implements ClientBridge {
             ? { checkpointStage: null, nextStage: null }
             : checkpointStages(selectedProjection, run.id);
           const interruption = selectedProjection === undefined ? undefined : recoveryInterruption(selectedProjection, run);
+          const approval = this.#service.getCheckpointApproval(selectedProjectId, run.id);
           return {
             runId: run.id,
             sessionId: run.sessionId,
@@ -2440,6 +2545,7 @@ export class ApplicationClientBridge implements ClientBridge {
             stopReason: run.stopReason,
             ...(interruption === undefined ? {} : { interruption }),
             ...checkpoint,
+            ...(approval ? { checkpointApproval: approval } : {}),
           };
         }),
       lastError: lastError ?? (savedHandoffError ? { code: 'CONVERSATION_HANDOFF_FAILED', message: savedHandoffError.message } : null) ?? (this.#handoffError?.projectId === selectedProjectId ? this.#handoffError.error : null),

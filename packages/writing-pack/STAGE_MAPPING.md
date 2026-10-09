@@ -1,5 +1,5 @@
 # 旧 Stage 到 Writing Pack 任务映射
-> **CR-002 状态纠正（2026-09-19）：** 下表的 IMPLEMENTED_VERIFIED_REAL 仅代表阶段工具曾由真实 provider 执行，不代表原功能完整迁移。准备阶段缺口追问、导演决策、独立评审上下文隔离均未完成业务验收；WA-010 为 IN_PROGRESS。以[强制增补](../../writing-agent-1.0-prd-v1.1-dsh-ui/docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)为准。
+> **CR-002 状态纠正（2026-09-19）：** 下表的 IMPLEMENTED_VERIFIED_REAL 仅代表阶段工具曾由真实 provider 执行，不代表原功能完整迁移。准备阶段缺口追问、导演决策、独立评审上下文隔离均未完成业务验收；WA-010 为 IN_PROGRESS。以[强制增补](../../docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)为准。
 
 本映射用于保留旧工作流中已经验证过的写作约束，不把 Claude Code、Subagent、文件名或二十余个 Stage 搬成新 runtime 的执行前提。新 runtime 的唯一写入口仍是 Application Service；旧 `.claude`/`claude-runtime` 在兼容期继续按原同步规则维护。
 

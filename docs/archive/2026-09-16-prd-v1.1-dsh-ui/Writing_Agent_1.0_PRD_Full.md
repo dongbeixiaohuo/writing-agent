@@ -1,4 +1,6 @@
-# Writing Agent 1.0 完整 PRD 与 Agent 实施说明
+# Writing Agent 1.0 完整 PRD 与 Agent 实施说明（历史合订快照）
+
+> 历史快照：原始日期 2026-09-16，后续修订截至 2026-09-24；适用 Writing Agent 1.0 早期实施（PRD 修订 1.1）。2026-10-05 归档，状态和计划仅适用于当时版本。当前要求与替代入口见 [归档映射](README.md)和 [文档中心](../../README.md)。
 > **2026-09-20 追加 CR-003**：[对话优先 Harness](docs/implementation/CR003_CONVERSATION_FIRST_HARNESS.md)。固定必填向导不能代替 Agent 主导访谈；入口允许直接表达想法，结构化状态在后台形成，执行权限和确认版本由工程约束。与 CR-002 一起作为当前验收依据。
 > **当前修订 CR-002（2026-09-19）**：[交互协作强制增补](docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)优先于下文历史合订内容。WA-010 状态改为 IN_PROGRESS，最新任务状态以 [BACKLOG.json](docs/implementation/BACKLOG.json) 为准。缺口提问、同 run 恢复、导演与隔离评审尚未完整验收，不具备最终用户验收就绪条件。下文 CR-001 历史内容保留以供追溯，不再作为独立最新实施依据。
 

@@ -171,6 +171,7 @@ export interface SaveRequestSnapshotInput {
 }
 
 export type RuntimeEventType =
+  | "search.attempt_started"
   | "search.progress"
   | "request.dispatch_attempted"
   | "request.completed"
@@ -300,6 +301,8 @@ export interface RecoveredRun {
 }
 
 export interface ResumeRunInput {
+  /** Application-validated search decision, committed atomically with run.resumed. */
+  readonly factSearchDecision?: { readonly requestId: string; readonly action: 'retry' | 'extend' | 'continue' };
   readonly checkpointDecision?: { readonly markerId: string; readonly intent: string; readonly receiptId: string };
   readonly projectId: string;
   readonly runId: string;

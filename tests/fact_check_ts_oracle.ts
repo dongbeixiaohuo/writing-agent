@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   createFactCheckInputSnapshot,
   evaluateFactCheck,
+  LEGACY_FACT_CHECK_POLICY_VERSION,
   parseLegacyFactCheckClaimsPayload,
 } from "../packages/writing-core/src/index.js";
 
@@ -27,7 +28,7 @@ try {
     evidenceContent: input.evidenceContent,
   });
   const evaluation = evaluateFactCheck(
-    snapshot,
+    { ...snapshot, policyVersion: LEGACY_FACT_CHECK_POLICY_VERSION },
     {
       bodyContent: input.bodyContent,
       titleContent: input.titleContent,

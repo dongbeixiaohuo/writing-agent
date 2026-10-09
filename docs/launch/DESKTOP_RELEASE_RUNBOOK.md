@@ -30,6 +30,10 @@
 
 GPU 故障路径对照需分别记录 executable 与 userData 的位置。只把用户数据放到 TEMP，不代表程序从 TEMP 启动。同一份 app.asar 和 exe 校验一致后，再对照 OneDrive 路径与本地短路径，避免误判为模型故障。
 
+进程诊断位于当前 userData 的 `logs/process-events.jsonl`（普通运行通常为 `%APPDATA%\Writing Agent\logs`）。`child-process-gone` 和 `render-process-gone` 在启动前注册；日志只保留时间、版本、事件名及白名单 `type/reason/exitCode`，不包含 URL、正文、服务名称或异常原文。GPU 事件记录供定位；主界面异常停止时显示本地错误提示与日志位置，随后按正常退出流程关闭宿主，用户可重新打开程序。`clean-exit`、`killed` 和程序退出中的事件不弹故障提示。日志目录不可写时仍显示主界面错误提示，并将安全事件字段写至 stderr。
+
+**现有 smoke 结果不能验收正常 GPU 路径。** `WRITING_AGENT_DESKTOP_SMOKE` 会禁用硬件加速与 GPU；历史 OneDrive 与本地短路径两次对照都使用 smoke，即使一者记录 `GPU exitCode=-2147483645`、另一者通过，也只能作为待定位证据。后续经授权的正常 GPU 对照应使用各自独立的 `WRITING_AGENT_DESKTOP_TEST` ID（可见窗口、独立 TEMP 数据、保留 GPU），记录环境变量、exe/app.asar 哈希、路径、同一时间窗的进程日志和界面结果；只运行单元测试或打包通过不能宣称已经完成 GPU/安装验收。
+
 ## 4. 锁定最终 commit 后构建
 
 优先使用干净 CI checkout。记录 commit SHA、版本、运行链接和测试结果，不从带未审查改动的日常工作区直接公开产物。

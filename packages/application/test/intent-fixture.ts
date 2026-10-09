@@ -2,6 +2,7 @@ import { ModelProviderBase, type ModelProvider, type ModelRequest, type Provider
 import { createConversationIntent, type AuthorIntent } from '../src/conversation-intent.js';
 import type { ResumeDraftInput, WritingApplicationStorage } from '../src/index.js';
 import { randomUUID } from 'node:crypto';
+import { factPreparationFixtureEvents } from './collaboration-fixture.js';
 
 /** Scripted model decisions, not a language parser. Semantic accuracy is checked by the real-model replay. */
 const replies: Record<string, [AuthorIntent, number | null]> = {
@@ -40,6 +41,8 @@ export function withIntentFixture(provider: ModelProvider, override?: [AuthorInt
     protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       const intent = intentFixtureEvents(request, override);
       if (intent) { yield* intent; return; }
+      const extraction = factPreparationFixtureEvents(request);
+      if (extraction) { yield* extraction; return; }
       for await (const event of provider.stream(request)) if (event.type !== 'tool_call_complete') yield event;
     }
   }();

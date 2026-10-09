@@ -3,7 +3,7 @@
 候选：`1.0.0-rc.6`（协议 v17，本地 unsigned Windows x64 候选）  
 状态：`BLOCKED_CORE_WORKFLOW`（撤回 rc.6 最终用户验收就绪结论）  
 日期：2026-09-19
-> 本清单原旅程保留，但不再说明候选已就绪。还须通过 [CR-002 C02-01 至 C02-10](../../writing-agent-1.0-prd-v1.1-dsh-ui/docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)，尤其材料不足立即提问、回答后继续及真正独立评审。下面原就绪陈述均为历史记录，不能用于当前签收。
+> 本清单原旅程保留，但不再说明候选已就绪。还须通过 [CR-002 C02-01 至 C02-10](../implementation/CR002_INTERACTIVE_COLLABORATION.md)，尤其材料不足立即提问、回答后继续及真正独立评审。下面原就绪陈述均为历史记录，不能用于当前签收。
 
 ## rc.7 当前测试边界
 

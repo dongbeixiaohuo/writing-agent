@@ -4,7 +4,7 @@
 
 # 写稿Agent v0.11.0
 
-> **2026-09-19 当前桌面产品状态：BLOCKED_CORE_WORKFLOW。** rc.6 的最终用户验收就绪判断已撤回。原安装包与下文运行结果只作为历史证据保留；[CR-002](../../writing-agent-1.0-prd-v1.1-dsh-ui/docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)重新要求缺口即时追问、同 run 恢复、导演委派及隔离评审，尚未全部实现/验收。
+> **2026-09-19 当前桌面产品状态：BLOCKED_CORE_WORKFLOW。** rc.6 的最终用户验收就绪判断已撤回。原安装包与下文运行结果只作为历史证据保留；[CR-002](../implementation/CR002_INTERACTIVE_COLLABORATION.md)重新要求缺口即时追问、同 run 恢复、导演委派及隔离评审，尚未全部实现/验收。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../.././LICENSE)
 [![Legacy Desktop](https://img.shields.io/badge/Legacy%20Desktop-0.1.0-777777)](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/app-preview-0.1.0)

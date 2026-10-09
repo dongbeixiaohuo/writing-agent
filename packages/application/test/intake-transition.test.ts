@@ -74,11 +74,11 @@ it('does not manufacture a proposal or approval for a discussion-only semantic d
 
 it('an explicit replacement proposal in an approval turn stays tentative instead of confirming the old proposal', async () => {
   await scenario('confirm_direction', () => ({ ...proposed, proposal: { ...proposed.proposal,
-    brief: { ...proposed.proposal.brief, targetCharacters: 9000 } } }), (app, result) => {
+    brief: { ...proposed.proposal.brief, targetCharacters: 4000 } } }), (app, result) => {
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(app.getConversationIntake('p').phase, 'proposal');
     assert.equal(app.getConversationIntake('p').brief?.confirmationStatus, 'tentative');
-    assert.equal(app.getConversationIntake('p').brief?.lengthTarget.targetCharacters, 9000);
+    assert.equal(app.getConversationIntake('p').brief?.lengthTarget.targetCharacters, 4000);
     assert.match(result.reply, /待你确认/u);
   }, true);
 });

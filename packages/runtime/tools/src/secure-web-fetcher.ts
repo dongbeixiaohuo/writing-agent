@@ -36,6 +36,7 @@ export type SecureWebFetchErrorCode =
   | "WEB_REDIRECT_LIMIT_EXCEEDED"
   | "WEB_REQUEST_ABORTED"
   | "WEB_REQUEST_FAILED"
+  | "WEB_REQUEST_TIMEOUT"
   | "WEB_RESPONSE_TOO_LARGE";
 
 export class SecureWebFetchError extends Error {
@@ -253,13 +254,14 @@ function createPinnedRequest(
         },
       );
       request.on("timeout", () => {
-        request.destroy();
         finish(
           new SecureWebFetchError(
-            "WEB_REQUEST_FAILED",
+            "WEB_REQUEST_TIMEOUT",
             "The network request timed out",
           ),
         );
+        activeResponse?.destroy();
+        request.destroy();
       });
       request.on("error", () => {
         finish(

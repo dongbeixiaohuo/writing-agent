@@ -43,7 +43,7 @@ npm run check:runtime
 npm run check:m0
 npm run check
 npm audit --omit=dev --audit-level=high
-python -B writing-agent-1.0-prd-v1.1-dsh-ui/tools/check_document_pack.py
+python -B tests/check_document_pack.py
 python "$env:USERPROFILE\.agents\skills\webapp-testing\scripts\with_server.py" --server "npm run ui:dev:extension-demo" --port 4174 -- python tests/wa024_ui_playwright.py
 git diff --check
 ```

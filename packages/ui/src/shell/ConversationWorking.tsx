@@ -37,7 +37,7 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
     <div className={css.workingHeading}>
       <strong role="status" aria-label="正在处理你的消息">{copy.title}</strong>
       <div className={css.workingActions}>
-        {snapshot.liveActivity && <span className={css.workingElapsed} aria-live="off">本轮已用时 {copy.elapsedSeconds} 秒</span>}
+        {snapshot.liveActivity && <span className={css.workingElapsed} aria-live="off">本次执行累计 {copy.elapsedSeconds} 秒（含此前阶段）</span>}
         <button type="button" onClick={() => void stop()} disabled={stopping || !snapshot.activeRunId}>{stopping ? '正在停止…' : '停止'}</button>
       </div>
     </div>

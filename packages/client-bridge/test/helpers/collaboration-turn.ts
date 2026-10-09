@@ -1,8 +1,11 @@
 import { collaborationState, directorFixtureTurn, publicStageFixtureEvents } from '../../../application/test/collaboration-fixture.js';
 import type { ModelRequest, ProviderStreamEvent } from '../../../runtime/llm/src/index.js';
+import { factPreparationFixtureEvents } from '../../../application/test/collaboration-fixture.js';
 
 /** Provider-boundary fixture; all orchestration, permissions and persistence remain real. */
 export function collaborationTurn(request: ModelRequest, content: Readonly<Record<string, string>>): ProviderStreamEvent[] | null {
+  const extraction = factPreparationFixtureEvents(request);
+  if (extraction) return extraction;
   const state = collaborationState(request);
   if (state === null || state.finished) return null;
   const call = (name: string, args: unknown): ProviderStreamEvent[] => publicStageFixtureEvents(request, name, args) ?? [

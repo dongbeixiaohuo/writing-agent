@@ -170,6 +170,8 @@ export const FactClaimStatusSchema = z.enum([
 ]);
 export const FactRiskSchema = z.enum(["red", "yellow", "green"]);
 export const FactSupportScopeSchema = z.enum(["full", "partial", "none"]);
+export const FactCheckReasonSchema = z.enum(["key_fact", "suspected_error"]);
+export const FactVerificationMethodSchema = z.enum(["external_source", "material_comparison", "model_review"]);
 export const FactClaimSchema = z.object({
   claimId: z.string().regex(/^C\d{3,}$/u),
   claimText: z.string().trim().min(1),
@@ -182,6 +184,10 @@ export const FactClaimSchema = z.object({
   sourceReference: z.string().trim().min(1).nullable().default(null),
   evidenceSummary: z.string().trim().min(1),
   recommendedAction: z.string().trim().min(1),
+  // Optional for old assessments; a URL alone never upgrades their provenance.
+  checkReason: FactCheckReasonSchema.optional(),
+  verificationMethod: FactVerificationMethodSchema.optional(),
+  verificationRecordIds: z.array(z.string().trim().min(1)).max(12).optional(),
 });
 export const FactCheckCoverageSchema = z.object({
   body: z.literal(true),
@@ -196,6 +202,7 @@ export const FactCheckClaimsPayloadSchema = z.object({
   coverage: FactCheckCoverageSchema,
   claims: z.array(FactClaimSchema),
   noFactualClaimsReason: z.string(),
+  searchLimitations: z.array(z.object({ query: z.string(), reason: z.string(), userDeclined: z.literal(true) })).optional(),
 });
 
 export const BODY_BLOCK_PARSER_VERSION = "markdown-blocks-v1" as const;
@@ -256,8 +263,17 @@ const RevisionEditsSchema = z
 export const CreateProjectCommandSchema = z.object({
   operationId: NonEmptyIdSchema,
   projectId: NonEmptyIdSchema,
-  name: z.string().trim().min(1),
+  name: z.string().trim().min(1).max(60),
+  nameSource: z.enum(["placeholder", "agent", "manual", "legacy"]).default("manual"),
   mode: ProjectModeSchema,
+  actor: ActorSchema,
+});
+
+export const RenameProjectCommandSchema = z.object({
+  operationId: NonEmptyIdSchema,
+  projectId: NonEmptyIdSchema,
+  name: z.string().trim().min(1).max(60),
+  source: z.enum(["agent", "manual"]),
   actor: ActorSchema,
 });
 
@@ -388,7 +404,8 @@ export type DecisionType = z.infer<typeof DecisionTypeSchema>;
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
 export type FactGateStatus = z.infer<typeof FactGateStatusSchema>;
 export type ProvenanceRelation = z.infer<typeof ProvenanceRelationSchema>;
-export type CreateProjectCommand = z.infer<typeof CreateProjectCommandSchema>;
+export type CreateProjectCommand = z.input<typeof CreateProjectCommandSchema>;
+export type RenameProjectCommand = z.infer<typeof RenameProjectCommandSchema>;
 export type CommitArtifactVersionCommand = z.input<
   typeof CommitArtifactVersionCommandSchema
 >;
@@ -689,6 +706,13 @@ export interface StoragePort {
   createProject(
     command: CreateProjectCommand,
   ): MutationResult<{ projectId: string; revision: number }>;
+  renameProject(
+    command: RenameProjectCommand,
+  ): MutationResult<{
+    projectId: string;
+    name: string;
+    applied: boolean;
+  }>;
   importMaterial(
     command: ImportMaterialCommand,
   ): MutationResult<{
@@ -809,11 +833,12 @@ export function contentHash(content: string): string {
 }
 
 export const FACT_CHECK_SCHEMA_VERSION = "fact-check-v2" as const;
-export const FACT_CHECK_POLICY_VERSION = "fact-check-v2-ts-v1" as const;
+export const LEGACY_FACT_CHECK_POLICY_VERSION = "fact-check-v2-ts-v1" as const;
+export const FACT_CHECK_POLICY_VERSION = "fact-check-v2-ts-v2-high-risk" as const;
 
 export interface FactCheckInputSnapshot {
   readonly schemaVersion: typeof FACT_CHECK_SCHEMA_VERSION;
-  readonly policyVersion: typeof FACT_CHECK_POLICY_VERSION;
+  readonly policyVersion: typeof FACT_CHECK_POLICY_VERSION | typeof LEGACY_FACT_CHECK_POLICY_VERSION;
   readonly snapshotId: string;
   readonly bodyVersionId: string;
   readonly bodyHash: string;
@@ -1220,6 +1245,7 @@ export function evaluateFactCheck(
       throw new Error("FACT_CHECK_EVIDENCE_REFERENCE_INVALID");
     }
     if (
+      snapshot.policyVersion === LEGACY_FACT_CHECK_POLICY_VERSION &&
       claim.status === "SUPPORTED" &&
       claim.matchedEvidenceId === null &&
       claim.sourceReference === null
@@ -1230,9 +1256,9 @@ export function evaluateFactCheck(
   const blockers = parsedClaims.data
     .filter(
       (claim) =>
-        claim.status !== "SUPPORTED" ||
-        claim.risk === "red" ||
-        claim.supportScope !== "full",
+        snapshot.policyVersion === LEGACY_FACT_CHECK_POLICY_VERSION
+          ? claim.status !== "SUPPORTED" || claim.risk === "red" || claim.supportScope !== "full"
+          : claim.risk === "red",
     )
     .map((claim) => claim.claimId);
   const status = blockers.length === 0 ? "passed" : "blocked";
@@ -1246,7 +1272,9 @@ export function evaluateFactCheck(
     `- 输入快照：${snapshot.snapshotId}`,
     `- 阻断问题：${blockers.length}`,
     "",
-    "结论由运行时根据事实清单计算；无法验证的事实不得放行。",
+    snapshot.policyVersion === LEGACY_FACT_CHECK_POLICY_VERSION
+      ? "历史严格策略：未完整支持的条目阻断。"
+      : "仅高风险事实问题阻断；中低风险记录不要求补证，不等于事实已经联网证实。",
     "",
   ];
   for (const claim of parsedClaims.data) {
@@ -1256,6 +1284,7 @@ export function evaluateFactCheck(
       `- 位置：${claim.location}`,
       `- 依据：${claim.evidenceSummary}`,
       `- 建议：${claim.recommendedAction}`,
+      ...(claim.verificationMethod ? [`- 核查方式：${claim.verificationMethod}`] : []),
       "",
     );
   }
@@ -1329,7 +1358,7 @@ export function validatePublicationGate(
     throw new Error("FACT_SNAPSHOT_NOT_CURRENT");
   }
   if (
-    snapshot.policyVersion !== FACT_CHECK_POLICY_VERSION ||
+    ![FACT_CHECK_POLICY_VERSION, LEGACY_FACT_CHECK_POLICY_VERSION].includes(snapshot.policyVersion) ||
     snapshot.schemaVersion !== FACT_CHECK_SCHEMA_VERSION
   ) {
     throw new Error("FACT_POLICY_MISMATCH");

@@ -88,6 +88,7 @@ describe("fact-check-v2 domain policy", () => {
       evidenceVersionId: "evidence-v1",
       evidenceContent,
     });
+    snapshot.policyVersion = 'fact-check-v2-ts-v1'; // Explicit historical strict policy.
     const scenarios = [
       { status: "CONTRADICTED", risk: "yellow", supportScope: "none" },
       { status: "UNSUPPORTED", risk: "yellow", supportScope: "none" },
@@ -130,7 +131,7 @@ describe("fact-check-v2 domain policy", () => {
     }
   });
 
-  it("requires every supported claim to name a persisted evidence item or source", () => {
+  it("legacy policy requires every supported claim to name a persisted evidence item or source", () => {
     const api = factApi();
     const evidenceWithClaim = JSON.stringify({
       claims: [{
@@ -155,6 +156,7 @@ describe("fact-check-v2 domain policy", () => {
       evidenceVersionId: "evidence-v1",
       evidenceContent: evidenceWithClaim,
     });
+    snapshot.policyVersion = core.LEGACY_FACT_CHECK_POLICY_VERSION;
     const payload = {
       schemaVersion: "fact-check-v2",
       snapshotId: "snapshot-sources",
@@ -403,7 +405,7 @@ describe("fact-check-v2 domain policy", () => {
         continue;
       }
       const result = api.evaluateFactCheck(
-        snapshot,
+        { ...snapshot, policyVersion: core.LEGACY_FACT_CHECK_POLICY_VERSION },
         {
           bodyContent: fixtureBody,
           titleContent: fixtureTitle,

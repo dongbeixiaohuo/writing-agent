@@ -230,6 +230,24 @@ describe("web and untrusted-content boundary", () => {
     }
   });
 
+  it('distinguishes a pinned request timeout from other network failures', async () => {
+    const httpsModule = createRequire(import.meta.url)('node:https') as typeof import('node:https');
+    const originalRequest = httpsModule.request;
+    let destroys = 0;
+    httpsModule.request = (() => {
+      const request = new EventEmitter() as any;
+      request.destroy = () => { destroys++; return request; };
+      request.end = () => queueMicrotask(() => request.emit('timeout'));
+      return request;
+    }) as unknown as typeof httpsModule.request;
+    syncBuiltinESMExports();
+    try {
+      const fetcher = new SecureWebFetcher({ policy: new NetworkAccessPolicy({ resolveHost: async () => ['93.184.216.34'] }) });
+      await assert.rejects(() => fetcher.fetchText('https://public.example/article'), { code: 'WEB_REQUEST_TIMEOUT' });
+      assert.equal(destroys, 1);
+    } finally { httpsModule.request = originalRequest; syncBuiltinESMExports(); }
+  });
+
   it("accepts only HTTPS targets whose complete DNS answer is public", async () => {
     const policy = new NetworkAccessPolicy({
       resolveHost: async (hostname) => {

@@ -412,6 +412,15 @@ export function createDeterministicMockBridge(options: DeterministicMockOptions 
     async createProject() {
       throw new Error('MOCK_PROJECT_CREATION_DISABLED')
     },
+    async renameProject(projectId, name) {
+      const normalizedName = name.trim()
+      if (!normalizedName || Array.from(normalizedName).length > 60) throw new Error('PROJECT_NAME_INVALID')
+      const project = snapshot.projects.find(candidate => candidate.id === projectId)
+      if (project === undefined) throw new Error('PROJECT_NOT_FOUND')
+      emit({ ...snapshot, projects: snapshot.projects.map(candidate => candidate.id === projectId
+        ? { ...candidate, name: normalizedName, revision: candidate.revision + 1 }
+        : candidate) })
+    },
     async updateBrief() {
       throw new Error('MOCK_BRIEF_UPDATE_DISABLED')
     },

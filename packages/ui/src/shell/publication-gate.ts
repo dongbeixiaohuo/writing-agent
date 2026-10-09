@@ -34,8 +34,12 @@ export function publicationGateNotice(
   if (workspace.status === 'blocked') {
     const blockerIds = new Set(workspace.assessment?.blockers ?? [])
     const blockerClaims = (workspace.assessment?.claims ?? [])
-      .filter(claim => blockerIds.has(claim.claimId))
-    const count = Math.max(blockerIds.size, blockerClaims.length)
+      .filter(claim => blockerIds.has(claim.claimId) && claim.risk === 'red')
+    if (blockerClaims.length === 0 && blockerIds.size > 0) return {
+      tone: 'warning', eyebrow: '旧核查报告', title: '请按轻量规则重新核查',
+      description: '这份旧报告按此前的严格规则阻断了交付。中低风险提示无需逐条处理；点击“查看当前稿件”，选择“重新核查当前稿件”生成新报告。', items: [],
+    }
+    const count = blockerClaims.length
     return {
       tone: 'warning',
       eyebrow: '稿件已保存',
