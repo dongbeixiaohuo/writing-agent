@@ -1,25 +1,27 @@
 # 旧 Stage 到 Writing Pack 任务映射
-> **CR-002 状态纠正（2026-09-19）：** 下表的 IMPLEMENTED_VERIFIED_REAL 仅代表阶段工具曾由真实 provider 执行，不代表原功能完整迁移。准备阶段缺口追问、导演决策、独立评审上下文隔离均未完成业务验收；WA-010 为 IN_PROGRESS。以[强制增补](../../docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)为准。
+> **更新：2026-10-11。** 本表描述当前源码映射，不声明当前安装包或真实模型已全面验收。[RC80 审计后调整](../../docs/implementation/RC80_AUDIT_FOLLOWUP.md)尚未发布。2026-09-19 的 `IMPLEMENTED_VERIFIED_REAL`、WA-010 状态只是当时快照，不作为现状；交互要求以 [CR-002](../../docs/implementation/CR002_INTERACTIVE_COLLABORATION.md)、[CR-003](../../docs/implementation/CR003_CONVERSATION_FIRST_HARNESS.md)及带日期后续修订为准。
 
 本映射用于保留旧工作流中已经验证过的写作约束，不把 Claude Code、Subagent、文件名或二十余个 Stage 搬成新 runtime 的执行前提。新 runtime 的唯一写入口仍是 Application Service；旧 `.claude`/`claude-runtime` 在兼容期继续按原同步规则维护。
 
 | 旧阶段 | 新任务/能力 | 1.0 当前状态 | 保留边界 |
 |---|---|---|---|
-| 1、0、1.5 | `prepare-direction` | `IMPLEMENTED_VERIFIED_REAL` | 简报区分暂定、用户确认与授权代选；已有授权不重复索取 |
-| 2、3、4、5 | `research-check` + `outline` | `IMPLEMENTED_VERIFIED_REAL` | 读取全部授权材料，形成结构化证据、反证、适用边界和文体化结构 |
-| 5.5、5.8 | `prepare-direction` | `IMPLEMENTED_VERIFIED_REAL` | 标题/开头可暂定，不能伪造用户锁定 |
-| 6 | `draft` | `IMPLEMENTED_VERIFIED_REAL` | 主笔读取项目授权材料及已保存研究/提纲后提交不可变正文版本 |
-| 7、8、9 | `independent-review` | `IMPLEMENTED_VERIFIED_REAL` | 三类评审绑定同一正文版本，只交建议，不能覆盖正文 |
-| 9.5 | `central-revision` | `IMPLEMENTED_VERIFIED_REAL` | 仅主笔集中修订；恢复段必须先读取正文、证据与全部评审产物 |
-| 10 | `language-review` | `IMPLEMENTED_VERIFIED_REAL` | 有具体收益才改，不补造亲历或事实；最终正文拒绝混入说明文字 |
-| 11 | 配图扩展 | 本任务不实现 | 仍需显式选择和付费授权；改变正文后旧核查失效 |
-| 10.5 | `fact-check` | `IMPLEMENTED_VERIFIED_REAL` | 最终事实门禁不可由模型自报 passed，也不可被 quick 绕过；partial/none/red 一律阻断 |
-| 12、12.5 | publication export | `IMPLEMENTED_VERIFIED_REAL` | 工作备份与正式交付分离，TXT/HTML 共用当前事实门禁；正文变化后必须重查 |
+| 1、0、1.5 | `prepare-direction` | 已接通；当前补充 URL/授权回归 | 简报区分暂定、用户确认与授权代选；先尝试读取当轮链接，失败/未读不得充当方案依据；否定、假设和转引不授予亲历授权 |
+| 2、3、4、5 | `research` + `outline` | 已接通；当前增加可选有界补查 | 使用授权材料形成证据与边界；必要公开背景最多两次检索，独立于最终核查额度；失败继续，不虚报联网成果 |
+| 5.5、5.8 | `title` / `opening` | 已接通；标题候选在成稿后策划 | 前期明确主题与结构，不反复拟题；真实选择保存为发布工件，不能伪造用户锁定；分发文案可不选 |
+| 6 | `draft` | 已接通 | 主笔使用授权材料及已保存研究/提纲，提交不可变正文版本 |
+| 7、8、9 | `review_editor` / `review_publish` / `review_reader` | 已接通；读者设计于 2026-10-08 修订 | 编辑/发布报告与普通模拟读者区分；读者为三个隔离并行请求，程序拼接一份报告，不投票；不直接覆盖正文 |
+| 9.5 | `central_revision` | 已接通 | 主笔集中修订；按角色投影当前正文与必要评审，不重复灌入所有材料历史 |
+| 10 | `language_review` | 已接通 | 有具体收益才改，不补造亲历或事实；最终正文拒绝混入工作流说明文字 |
+| 11 | 配图策划与确认 | 已接通策划；未接图片生成 | 简短绘图 prompt，不声称图片已生成，不新增付费出图；改变正文后旧核查失效 |
+| 10.5 | `fact_check` | 已接通；采用 2026-10-08 轻量合同 | 提取高风险事实，分批搜索核对，不做学术逐点引用；中低风险不阻断；真实高风险问题与来源诚实门禁仍保留 |
+| 12、12.5 | publication export | 已接通 | 工作备份与正式交付分离，TXT/HTML 共用当前事实门禁；核查绑定正文、发布工件与证据版本，变化后旧结果失效 |
 | 13、14 | 复盘/真实发布指标 | 后续任务 | 区分用户修改、模型建议和真实指标，不自我强化偏好 |
 
 ## quick / deep 的有界语义
 
-- `quick`：执行研究/证据、提纲、完整初稿、编辑审校、集中修订、语言终审和事实核查；省略发布/读者两类独立审校，重大修订最多 1 轮。
+- `quick`：执行研究/证据、提纲、完整初稿、编辑审校、读者模拟、集中修订、语言终审和事实核查；省略发布审校，重大修订最多 1 轮。
 - `deep`：执行研究/证据、提纲、完整初稿、编辑/发布/读者三类独立审校、集中修订、语言终审和事实核查；重大修订最多 2 轮。
-- `autonomous` 连续执行有界序列；`co_creation` 在提纲、初稿和三类审校后保存检查点，由用户显式继续。每次恢复都必须从持久工件读取所需上下文，不能依赖上一轮模型会话。
-- 两种模式都不能绕过最终事实门禁。真实 MiniMax-M3 已完成 Quick 与 Deep 代表性旅程；这证明执行闭环，不代表 12 例质量盲评或所有 provider 兼容性已经签收。
+- `autonomous` 连续执行有界序列；`co_creation` 在提纲、初稿、编辑/发布/读者审校（本模式实际执行的阶段）、集中修订与语言终审保存检查点，由用户显式继续。每次恢复从持久工件提供所需上下文，不能依赖上一轮模型会话。
+- 成稿后策划并选择标题，再做最终事实核查；“可选前置研究”不属于最终核查，也不使核查门禁提前执行。
+- 当前源码支持按需重测成稿与已选标题，只保存一次作者交流报告，不自动重跑修订或核查。见[模拟读者实现](../../docs/implementation/READER_SIMULATION.md)。
+- 两种模式都不能绕过当前[轻量事实门禁](../../docs/architecture/FACT_CHECK_CONTRACT.md)。历史真实 MiniMax 旅程只证明对应版本执行闭环，不能证明 2026-10-11 未发布改动的模型质量、限流和耗时。

@@ -10,6 +10,24 @@ import {
   ConversationMaterialError,
   addConversationMaterialToBrief,
 } from "../src/conversation-materials.js";
+import { isExplicitFirsthandUserStatement } from '../src/conversation-intake.js';
+
+it('firsthand authorization requires an affirmative, unquoted statement, not a hypothetical or denial', () => {
+  for (const text of [
+    '这不是我亲身经历的事，只是虚构例子。',
+    '如果我亲身经历这种事，可以怎样写？',
+    '不要写成我亲身经历的事。',
+    '我没有亲自参与过。',
+    '“这是我的亲身经历”，只是举个例子。',
+    '我亲自处理过吗？没有。',
+    '我亲自处理过？',
+    '假设这是我的真实经历。',
+    '我亲自做过一部分，但下面这些不是我的亲身经历。',
+  ]) assert.equal(isExplicitFirsthandUserStatement(text), false, text);
+  for (const text of ['这是我的亲身经历。', '我亲自处理过：去年冬天的夜跑。', '以下是我的真实记录：第一次夜跑。']) {
+    assert.equal(isExplicitFirsthandUserStatement(text), true, text);
+  }
+});
 
 const initialBrief: WritingBrief = {
   schemaVersion: 1,
@@ -138,6 +156,9 @@ describe("conversation materials", () => {
     for (const [index, userOperationText] of [
       "以下是小王原文：\n这是我的亲身经历：去年冬天第一次夜跑只跑了两公里。",
       "原文摘录：\n> 这是我的亲身经历：去年冬天第一次夜跑只跑了两公里。",
+      '这不是我亲身经历的事，只是虚构例子。',
+      '如果我亲身经历这种事，可以怎样写？',
+      '不要写成我亲身经历的事。',
     ].entries()) {
       const f = fixture();
       try {

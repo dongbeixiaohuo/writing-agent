@@ -284,6 +284,7 @@ export class DesktopApplicationHost {
     if (this.#hasExecutingRun()) throw new Error("ACTIVE_RUNS_PRESENT");
     const config = this.#providerConfig;
     if (config === null) throw new Error("MODEL_PROVIDER_REQUIRED");
+    const testedProfileId = loadDesktopProviderCatalog(this.#providerProfilePath).activeProfileId;
     const provider = this.#providerFactory(config, this.#credentials);
     const result = await probeModelConnection(provider, {
       requestId: `desktop-connection-${randomUUID()}`,
@@ -311,10 +312,9 @@ export class DesktopApplicationHost {
           ...(result.error.providerDetail === undefined ? {} : { providerDetail: result.error.providerDetail }),
         };
     if (config === this.#providerConfig) this.#connectionTest = connectionTest;
-    if (connectionTest.ok) {
-      const activeProfileId = loadDesktopProviderCatalog(this.#providerProfilePath).activeProfileId;
-      if (activeProfileId !== null) {
-        try { markDesktopProviderVerified(this.#providerProfilePath, activeProfileId); } catch { /* keep the test result even if the stamp fails */ }
+    if (connectionTest.ok && config === this.#providerConfig) {
+      if (testedProfileId !== null) {
+        try { markDesktopProviderVerified(this.#providerProfilePath, testedProfileId, config); } catch { /* keep the test result even if the stamp fails */ }
       }
     }
     return connectionTest;

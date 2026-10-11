@@ -399,6 +399,35 @@ test("desktop application host exposes a safe model connection validation result
   }
 });
 
+test('a late successful connection probe cannot verify the replacement model', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-probe-race-'));
+  let release!: () => void, dispatched = false;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  class ProbeProvider extends ModelProviderBase {
+    constructor() { super('probe-race', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      dispatched = true; await gate;
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'writing_agent_capability_probe', argumentsDelta: '{"value":"ok"}' };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  const host = new DesktopApplicationHost({ workspacePath: join(root, 'workspace'), providerProfilePath: join(root, 'provider.json'),
+    credentials: new CredentialBroker({ environment: {} }), providerFactory: () => new ProbeProvider() });
+  try {
+    const configured = await host.configureProvider({ kind: 'openai_compatible', providerId: 'probe-race', baseURL: 'https://example.test/v1',
+      model: 'first', models: ['first', 'second'], tools: 'supported', usage: 'unknown', apiKey: 'test', persistence: 'session' });
+    const pending = host.testProviderConnection();
+    while (!dispatched) await new Promise(resolve => setTimeout(resolve, 1));
+    await host.selectProvider(configured.activeProfileId!, 'second'); release();
+    assert.equal((await pending).ok, true);
+    const status = await host.providerStatus();
+    assert.equal(status.model, 'second');
+    assert.equal(status.connectionTest, null);
+    assert.ok(status.profiles);
+    assert.equal(status.profiles.find(p => p.profileId === configured.activeProfileId)?.verifiedAt, null);
+  } finally { release(); host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test("desktop application host previews diagnostics before export and never exposes private content", async () => {
   const root = mkdtempSync(join(tmpdir(), "wa-desktop-diagnostics-"));
   const host = new DesktopApplicationHost({

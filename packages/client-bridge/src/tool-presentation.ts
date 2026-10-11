@@ -1,6 +1,7 @@
 /** Display metadata only. Execution schemas and permissions remain in ToolDefinition. */
 export const TOOL_PRESENTATION: Readonly<Record<string, { label: string; description: string; category: string }>> = Object.fromEntries([
   ['search_fact_sources', '搜索事实来源', '联网检索', '按搜索设置检索公开事实；返回来源和摘录供核查专家判断，不代表事实已经通过验证。'],
+  ['search_research_sources', '补查研究资料', '联网检索', '提纲前按需补查关键公开背景，最多两次检索，不占末尾事实核查额度；搜索摘录不是已核对原文。'],
   ['read_material', '读取参考材料', '读取', '按授权读取指定材料版本，供当前 Agent 分析；不修改材料。'],
   ['read_artifact_version', '读取历史版本', '读取', '读取已保存的稿件或阶段成果；不改变当前稿件。'],
   ['list_project_materials', '整理参考材料', '读取', '列出项目材料目录，供 Agent 选择需要读取的材料。'],

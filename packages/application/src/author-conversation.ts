@@ -6,13 +6,14 @@ import type { ModelProvider } from '../../runtime/llm/src/index.js';
 import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
 import { addConversationMaterialToBrief } from './conversation-materials.js';
 import { createAuthorWebTool, authorizedAuthorWebUrls, AUTHOR_WEB_INSTRUCTIONS, type AuthorWebFetcher } from './author-web.js';
-import { getPublicationCandidates, savePublicationCandidates, choosePublicationCandidate, isPublicationSelectionWait, type PublicationCandidate } from './publication-choice.js';
+import { getPublicationCandidates, savePublicationCandidates, choosePublicationCandidate, isPublicationSelectionWait, selectedPublicationContext, type PublicationCandidate } from './publication-choice.js';
 import { listLegacyStyles, getLegacyStyle, getLegacyStyleMethodology } from '../../writing-pack/src/style-library.js';
 import { getApprovedAuthorPreferences, setAuthorPreferenceFromUserText } from './author-preferences.js';
 import { pendingReviewCheckpoint } from './review-checkpoint.js';
 import { createConversationIntent, pendingCheckpoint } from './conversation-intent.js';
 import { authorContext } from './agent-context.js';
-import { stageArtifact } from './workflow-tools.js';
+import { bodyArticleBaseline, stageArtifact } from './workflow-tools.js';
+import { createReaderTextTasks } from './reader-simulation.js';
 
 export const AUTHOR_CONVERSATION_PURPOSE = 'writing-pack:author-conversation';
 const ROLES = ['research', 'outline', 'draft', 'review_editor', 'review_publish', 'review_reader', 'central_revision', 'language_review', 'fact_check',
@@ -84,9 +85,18 @@ export function startAuthorConversation(options: {
   let selectionIndex: number | null = null;
   let requiresTitleCandidates = false, requiresIllustrationPlan = false, requiresIllustrationConfirmation = false;
   const selectedPublication = project.currentTitleVersionId ? storage.getArtifactVersion(project.currentTitleVersionId) : null;
+  const publicationContext = selectedPublicationContext(storage, project.id);
   const selectedCandidates = getPublicationCandidates(storage, project.id);
   let candidatesSaved = false; let titleSelected = false; let illustrationSaved = false; let illustrationConfirmed = false;
   const saveReply = (reply: string, context: ToolExecutionContext, requestedAction: 'fact_check' | 'full_writing' | 'resume_checkpoint' | null = null) => {
+    const readerRetestBinding = !pendingReview && assignment?.role === 'review_reader'
+      ? { bodyVersionId: body?.versionId ?? null, titleVersionId: project.currentTitleVersionId } : null;
+    if (readerRetestBinding) {
+      const current = storage.inspectProject(project.id)!;
+      if (current.latestBodyVersionId !== readerRetestBinding.bodyVersionId || current.currentTitleVersionId !== readerRetestBinding.titleVersionId) {
+        throw new ToolExecutionFault('READER_RETEST_STALE', '读者重测期间正文或标题已变化，旧版本反应不作为当前结论保存；请对新版本重测。');
+      }
+    }
     if (pendingReview && requestedAction === null) {
       const next = pendingReview.stage === 'review_editor' ? project.mode === 'deep' ? '发布审校专家' : '读者审校专家'
         : pendingReview.stage === 'review_publish' ? '读者审校专家' : '修订主笔';
@@ -116,7 +126,8 @@ export function startAuthorConversation(options: {
       expectedProjectRevision: storage.inspectProject(project.id)!.revision, kind: 'report', logicalKey: `author-turn:${context.runId}`,
       baseVersionId: null, content: JSON.stringify({ reply, role: assignment?.role ?? 'director', task: assignment?.task ?? input.userInstruction,
         requestedAction, intentReceiptId: intent.result()?.artifactVersionId ?? null, checkpoint,
-        proposalIds: proposals, bodyVersionId: body?.versionId ?? null }), reason: 'author-conversation',
+        proposalIds: proposals, bodyVersionId: body?.versionId ?? null,
+        ...(readerRetestBinding ? { readerRetestBinding } : {}) }), reason: 'author-conversation',
       actor: { kind: 'agent', id: assignment?.role ?? 'director', runId: context.runId } }));
     response = { reply, artifactVersionId: saved.versionId };
     return { ...response, requestedAction, intentReceiptId: intent.result()?.artifactVersionId ?? null,
@@ -278,6 +289,7 @@ export function startAuthorConversation(options: {
       inputSchema: { type: 'object', properties: { role: { type: 'string', enum: ROLES }, task: { type: 'string', minLength: 1, maxLength: 4000 } }, required: ['role', 'task'], additionalProperties: false },
       execute(args, context) {
         if (assignment) throw new ToolExecutionFault('EXPERT_ALREADY_ASSIGNED', 'Only the director may delegate');
+        if (args.role === 'review_reader' && !body) throw new ToolExecutionFault('REVIEW_DRAFT_MISSING', '先保存完整文章，再模拟读者；不对材料目录或未写成的文章重测。');
         assignment = { ...args, id: context.operationId };
         return { role: args.role, task: args.task, status: 'delegated' };
       },
@@ -329,7 +341,7 @@ export function startAuthorConversation(options: {
       },
     }),
   ];
-  const prompt = '你是写作合作伙伴。当前是作者的一轮交流，不是自动从研究跑到交付的流水线。先理解用户要讨论、选题、比较标题/开头、审校、定向修改、补充材料还是交付。讨论只回应问题；专业任务委派一个对应专家。不要因为用户说一句话就重写整篇。只通过提供的工具执行操作。优先回答本次用户要求，不要把历史里的拟题要求再执行一遍。面对“ok了”等认可，简短回应；如有多个待选标题而尚未指定哪一个，直接问想用哪一个，说明确认后继续核查，不要重复整段候选说明，也不要宣称已经选定。用户始终在主对话中交流，不要求另填表单。' + `\n${AUTHOR_WEB_INSTRUCTIONS}`;
+  const prompt = '你是写作合作伙伴。当前是作者的一轮交流，不是自动从研究跑到交付的流水线。先理解用户要讨论、选题、比较标题/开头、审校、定向修改、补充材料还是交付。讨论只回应问题；专业任务委派一个对应专家。作者明确要求用模拟读者重测当前成稿或最终标题时，delegate_author_expert给review_reader；程序会并行分发三个独立读者，不需重跑写作或事实核查。普通读者讨论不自动重测。不要因为用户说一句话就重写整篇。只通过提供的工具执行操作。优先回答本次用户要求，不要把历史里的拟题要求再执行一遍。面对“ok了”等认可，简短回应；如有多个待选标题而尚未指定哪一个，直接问想用哪一个，说明确认后继续核查，不要重复整段候选说明，也不要宣称已经选定。用户始终在主对话中交流，不要求另填表单。' + `\n${AUTHOR_WEB_INSTRUCTIONS}`;
   const state = { brief, currentBody: body, materials: materials.map(m => ({ id: m.id, contentVersionId: m.contentVersionId, name: m.displayName, role: m.role })),
     history: recentHistory, omittedHistory: history.length - recentHistory.length, factCheck: storage.getFactCheckStatus(project.id), pendingPublicationSelection,
     ...(pendingReview ? { currentExpertReview: { stage: pendingReview.stage, content: pendingReview.artifact?.content ?? null } } : {}),
@@ -410,6 +422,19 @@ export function startAuthorConversation(options: {
       const role = assignment?.role ?? 'director';
       const mayPropose = ['draft', 'central_revision', 'language_review', 'title', 'opening'].includes(role);
       const mandatoryTool = requiredCommand();
+      if (!pendingReview && role === 'review_reader' && body) {
+        return {
+          scopeId: `reader-retest:${runId}:${body.versionId}`, actor: 'review_reader',
+          systemPrompt: '作者要求按当前成稿重测，由程序独立分发三个模拟读者。', userMessage: '只阅读绑定的完整正文和当前标题。',
+          allowedTools: ['respond_author'], modelTools: [], expectedBodyVersionId: body.versionId,
+          textOutputTool: { name: 'respond_author', arguments: {}, contentArgument: 'reply' },
+          parallelTextTasks: createReaderTextTasks({ article: bodyArticleBaseline(body.content), bodyVersionId: body.versionId,
+            platform: brief?.platform ?? '', audience: brief?.audience ?? '', standalone: true,
+            ...(publicationContext?.finalTitle ? { title: publicationContext.finalTitle } : {}),
+            ...(publicationContext?.distributionCopy ? { distributionCopy: publicationContext.distributionCopy } : {}) }),
+          authorizeTool: call => call.name === 'respond_author' && response === null,
+        };
+      }
       const requestState = mandatoryTool ? {
         intent: decision.intent, intentReceiptId: decision.artifactVersionId,
         currentBodyVersionId: body?.versionId ?? null, briefVersionId: project.currentBriefVersionId,

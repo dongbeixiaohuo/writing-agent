@@ -153,7 +153,7 @@ function safeFailureMessage(payload: Readonly<Record<string, unknown>>): string 
 function safeToolInput(toolName: string, args: Readonly<Record<string, unknown>> | null, projection: WritingProjectProjection): string | null {
   if (args === null) return null
   const stage = safeId(args.stage)
-  if (toolName === 'search_fact_sources') {
+  if (toolName === 'search_fact_sources' || toolName === 'search_research_sources') {
     const query = safePreview(args.query)
     return query ? `查询：${query}` : '搜索公开事实（具体查询已隐藏）'
   }
@@ -200,7 +200,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   if (status !== 'completed') return null
   const envelope = object(payload.result)
   const result = envelope?.ok === true ? object(envelope.result) : null
-  if (toolName === 'search_fact_sources') {
+  if (toolName === 'search_fact_sources' || toolName === 'search_research_sources') {
     const provider = result?.provider === 'parallel' ? 'Parallel' : result?.provider === 'tavily' ? 'Tavily' : null
     const mode = result?.mode === 'external' ? `${provider ?? '外部'} 搜索已返回` : result?.mode === 'unavailable' ? '搜索不可用' : '仅模型复核，未联网搜索'
     const hosts = safeSourceHosts(result?.evidenceText)
@@ -413,7 +413,7 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
     }
     if (event.type === 'search.progress') {
       const searchTool = toolOperations.get(event.operationId)
-      if (searchTool?.toolName === 'search_fact_sources') searchTool.outputPreview = safePreview(event.payload.message)
+      if (searchTool?.toolName === 'search_fact_sources' || searchTool?.toolName === 'search_research_sources') searchTool.outputPreview = safePreview(event.payload.message)
       continue
     }
     const status = toolStatus(event)

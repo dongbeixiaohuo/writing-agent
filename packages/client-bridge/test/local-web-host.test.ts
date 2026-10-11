@@ -167,6 +167,29 @@ async function apiWithHost(
 }
 
 describe("secure local Web host", () => {
+  it('keeps an authenticated active session alive but expires an idle one', async () => {
+    const fixture = staticFixture();
+    const workspacePath = mkdtempSync(join(tmpdir(), 'wa-web-lease-'));
+    const storage = openWorkspaceStorage({ workspacePath });
+    const service = new WritingApplicationService({ storage });
+    let timestamp = Date.now(), bridges = 0;
+    const host = await startLocalWebHost({ staticRoot: fixture.root, sessionTtlMs: 100, now: () => timestamp,
+      bridgeFactory: () => { bridges++; return createApplicationBridge({ service, workspaceId: 'workspace-lease',
+        model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {} } }); } });
+    try {
+      const bootstrap = await loadBootstrap(host.origin);
+      const handshake = await api(host.origin, '/api/v6/handshake', bootstrap.token, { protocolVersion: UI_BRIDGE_PROTOCOL_VERSION });
+      assert.equal(handshake.status, 200);
+      const token = (await handshake.json()).capability as string;
+      timestamp += 90;
+      assert.equal((await api(host.origin, '/api/v6/snapshot', token, {})).status, 200);
+      timestamp += 90;
+      assert.equal((await api(host.origin, '/api/v6/snapshot', token, {})).status, 200);
+      assert.equal(bridges, 1);
+      timestamp += 101;
+      assert.equal((await api(host.origin, '/api/v6/snapshot', token, {})).status, 401);
+    } finally { await host.close(); storage.close(); fixture.cleanup(); rmSync(workspacePath, { recursive: true, force: true }); }
+  });
   it("binds random loopback and enforces Host, Origin, protocol, one-time bootstrap, and generation", async () => {
     const fixture = staticFixture();
     const workspacePath = mkdtempSync(join(tmpdir(), "wa-web-workspace-"));

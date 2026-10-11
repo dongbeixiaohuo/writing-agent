@@ -146,10 +146,44 @@ for (const parallelEnabled of [false, true]) it(`full workflow scopes external f
       const expected = parallelEnabled && collaborationState(request)?.stage === 'fact_check' && !request.tools?.some(t => t.name === 'prepare_fact_check');
       assert.equal(request.tools?.some(tool => tool.name === 'search_fact_sources') ?? false, expected);
       assert.equal(request.tools?.some(tool => tool.name === 'read_fact_source') ?? false, expected);
+      assert.equal(request.tools?.some(tool => tool.name === 'search_research_sources') ?? false,
+        parallelEnabled && collaborationState(request)?.stage === 'research');
     }
     const verification = checks.find(request => (collaborationState(request) as any)?.factPhase === 'verify')!;
     assert.match(verification.messages[0]!.content, parallelEnabled ? /需要联网.*公开事实/u : /未启用外部搜索.*未联网/u);
   } finally { f.close(); }
+});
+
+it('optional front research uses configured Tavily before the outline and keeps final quota intact', async () => {
+  class ResearchProvider extends CollaborationProvider {
+    searches = 0;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      if (collaborationState(request)?.actor === 'research' && this.searches < 2) {
+        this.searches++; this.requests.push(request);
+        assert.ok(request.tools?.some(t => t.name === 'search_research_sources'));
+        yield { type: 'tool_call_delta', index: 0, id: `front-search-${this.searches}`, name: 'search_research_sources', argumentsDelta: JSON.stringify({ query: `主题关键公开背景 ${this.searches}` }) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      }
+      if (collaborationState(request)?.actor === 'research' && this.searches > 0) {
+        assert.ok(request.messages.some(m => m.role === 'tool' && m.content.includes('公开背景摘录')));
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new ResearchProvider(), f = setup(provider);
+  const original = globalThis.fetch;
+  let queries = 0;
+  globalThis.fetch = async () => { queries++; return Response.json({ results: [{ url: 'https://example.com/fact', content: '公开背景摘录' }] }); };
+  try {
+    const app = new WritingApplicationService({ storage: f.storage, provider, factSearchConfiguration: () => ({
+      parallelEnabled: false, tavilyEnabled: true, authorizationMode: 'enabled_services', getTavilyKey: async () => 'synthetic' }) });
+    const result = await app.runDraft(f.input);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(queries, 2);
+    assert.equal(f.storage.listRunEvents(result.runId).filter(e => e.type === 'tool.requested' && e.payload.toolName === 'search_research_sources').length, 2);
+    const states = provider.requests.map(r => JSON.parse(r.messages.find(m => m.role === 'user')!.content.split('\nCOLLABORATION_STATE=')[1] ?? '{}'));
+    assert.equal(states.find(s => s.factPhase === 'verify').searchBudget.used, 0);
+  } finally { globalThis.fetch = original; f.close(); }
 });
 
 function setup(provider: CollaborationProvider, interactionMode: "autonomous" | "co_creation" = "autonomous", materialCount = 0, mode: 'quick' | 'deep' = 'quick', materialContent?: string, sourceKind: 'pasted_text' | 'web_snapshot' = 'pasted_text') {

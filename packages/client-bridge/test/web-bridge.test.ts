@@ -132,6 +132,113 @@ async function waitUntil(
 }
 
 describe("Web client bridge ordering", () => {
+  it('refreshes an expired initial bootstrap without requiring a page reload', async () => {
+    let handshakes = 0, pages = 0;
+    const fresh = 'f'.repeat(43);
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const route = new URL(String(input)).pathname;
+      if (route === '/') { pages++; return new Response(`<meta name="writing-agent-bootstrap-capability" content="${fresh}">`); }
+      if (route === '/api/v6/handshake') {
+        handshakes++;
+        return (init?.headers as Record<string, string>)['x-writing-agent-capability'] === fresh
+          ? json(handshakeEnvelope()) : json({ error: { code: 'CAPABILITY_REJECTED', message: 'expired bootstrap' } }, 401);
+      }
+      if (route === '/api/v6/snapshot') return json({ snapshot: snapshot() });
+      throw new Error(`UNEXPECTED_ROUTE:${route}`);
+    }) as typeof fetch;
+    const bridge = createWebClientBridge({ baseUrl: 'http://127.0.0.1:4174', bootstrapCapability: BOOTSTRAP, fetchImpl });
+    try { await bridge.handshake(); assert.equal(pages, 1); assert.equal(handshakes, 2); assert.equal(bridge.getSnapshot().connection, 'ready'); }
+    finally { bridge.dispose(); }
+  });
+  it('reconnects an expired session once and restores selection without replaying generation or work', async () => {
+    let handshakes = 0, pages = 0, commands = 0;
+    let expired = false;
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const route = new URL(String(input)).pathname;
+      if (route === '/') {
+        pages++;
+        assert.equal(init?.method, 'GET');
+        return new Response(`<meta name="writing-agent-bootstrap-capability" content="${BOOTSTRAP}">`, { headers: { 'content-type': 'text/html' } });
+      }
+      if (route === '/api/v6/handshake') { handshakes++; expired = false; return json({ ...handshakeEnvelope(), capability: String(handshakes).repeat(43) }); }
+      if (expired) return json({ error: { code: 'CAPABILITY_REJECTED', message: 'expired' } }, 401);
+      if (route === '/api/v6/snapshot' || route === '/api/v6/events/poll') return json({ snapshot: snapshot({ generation: handshakes === 1 ? 5 : 0, revision: 1, selectedSessionId: handshakes === 1 ? 'session-1' : '' }) });
+      if (route === '/api/v6/command/select-session') {
+        commands++;
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.sessionId, 'session-1');
+        assert.equal(body.generation, 0, 'restore must use the new bridge generation');
+        return json({ snapshot: snapshot({ generation: 1, revision: 2 }) });
+      }
+      throw new Error(`UNEXPECTED_ROUTE:${route}`);
+    }) as typeof fetch;
+    const bridge = createWebClientBridge({ baseUrl: 'http://127.0.0.1:4174', bootstrapCapability: BOOTSTRAP, fetchImpl });
+    try {
+      await bridge.handshake();
+      const visibleSelections: string[] = [];
+      const unsubscribe = bridge.subscribe(() => visibleSelections.push(bridge.getSnapshot().selectedSessionId));
+      expired = true;
+      await Promise.all([bridge.refresh(), bridge.refresh()]);
+      unsubscribe();
+      assert.equal(handshakes, 2); assert.equal(pages, 1); assert.equal(commands, 1);
+      assert.equal(bridge.getSnapshot().selectedSessionId, 'session-1');
+      assert.equal(bridge.getSnapshot().generation, 1);
+      assert.ok(visibleSelections.every(id => id === 'session-1'), 'reconnect must not flash another/empty session and clear composer state');
+    } finally { bridge.dispose(); }
+  });
+  it('keeps the original selection when reconnection restoration fails once and is retried', async () => {
+    let handshakes = 0, expired = false, restorations = 0;
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const route = new URL(String(input)).pathname;
+      if (route === '/') return new Response(`<meta name="writing-agent-bootstrap-capability" content="${BOOTSTRAP}">`);
+      if (route === '/api/v6/handshake') { handshakes++; expired = false; return json({ ...handshakeEnvelope(), capability: String(handshakes).repeat(43) }); }
+      if (expired) return json({ error: { code: 'CAPABILITY_REJECTED', message: 'expired' } }, 401);
+      if (route === '/api/v6/snapshot') return json({ snapshot: snapshot({ generation: handshakes === 1 ? 5 : restorations > 1 ? 1 : 0,
+        selectedSessionId: handshakes === 1 || restorations > 1 ? 'session-1' : '' }) });
+      if (route === '/api/v6/command/select-session') {
+        if (++restorations === 1) throw new TypeError('transient restore disconnect');
+        return json({ snapshot: snapshot({ generation: 1, revision: 2 }) });
+      }
+      throw new Error(`UNEXPECTED_ROUTE:${route}`);
+    }) as typeof fetch;
+    const bridge = createWebClientBridge({ baseUrl: 'http://127.0.0.1:4174', bootstrapCapability: BOOTSTRAP, fetchImpl });
+    try {
+      await bridge.handshake(); expired = true;
+      await assert.rejects(bridge.refresh(), (error: unknown) => error instanceof WebBridgeError && error.code === 'LOCAL_SERVICE_OFFLINE');
+      assert.equal(bridge.getSnapshot().selectedSessionId, 'session-1');
+      await bridge.refresh();
+      assert.equal(bridge.getSnapshot().selectedSessionId, 'session-1');
+      assert.equal(restorations, 2);
+    } finally { bridge.dispose(); }
+  });
+  it('does not accept a delayed old-session snapshot after reconnecting to a new ordering epoch', async () => {
+    let handshakes = 0, snapshots = 0;
+    let releaseOld!: (response: Response) => void;
+    const oldResponse = new Promise<Response>(resolve => { releaseOld = resolve; });
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const route = new URL(String(input)).pathname;
+      if (route === '/') return new Response(`<meta name="writing-agent-bootstrap-capability" content="${BOOTSTRAP}">`);
+      if (route === '/api/v6/handshake') { handshakes++; return json({ ...handshakeEnvelope(), capability: String(handshakes).repeat(43) }); }
+      if (route === '/api/v6/command/select-session') return json({ snapshot: snapshot({ generation: 1, revision: 2 }) });
+      if (route === '/api/v6/snapshot') {
+        snapshots++;
+        if (snapshots === 2) return oldResponse;
+        if (snapshots === 3) return json({ error: { code: 'CAPABILITY_REJECTED', message: 'expired' } }, 401);
+        return json({ snapshot: snapshot({ generation: handshakes === 1 ? 5 : 1, revision: 2 }) });
+      }
+      throw new Error(`UNEXPECTED_ROUTE:${route}`);
+    }) as typeof fetch;
+    const bridge = createWebClientBridge({ baseUrl: 'http://127.0.0.1:4174', bootstrapCapability: BOOTSTRAP, fetchImpl });
+    try {
+      await bridge.handshake(); const delayed = bridge.refresh();
+      await waitUntil(() => snapshots === 2);
+      await bridge.refresh();
+      releaseOld(json({ snapshot: snapshot({ generation: 900, revision: 900, selectedSessionId: 'old-session' }) }));
+      await delayed;
+      assert.equal(bridge.getSnapshot().generation, 1);
+      assert.equal(bridge.getSnapshot().selectedSessionId, 'session-1');
+    } finally { releaseOld(json({ snapshot: snapshot() })); bridge.dispose(); }
+  });
   it("selects a project without requiring an existing session", async () => {
     const initial = snapshot();
     const selected = snapshot({

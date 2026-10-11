@@ -28,6 +28,7 @@ import type {
 } from "../../runtime/session/src/index.js";
 import {
   ToolRegistry,
+  ToolExecutionFault,
   type ToolDefinition,
   createBuiltinReadTools,
 } from "../../runtime/tools/src/index.js";
@@ -748,6 +749,22 @@ export class WritingApplicationService {
     const authorizedUrls = authorizedAuthorWebUrls(userInstruction);
     const webTool = createAuthorWebTool({ storage: this.#storage, projectId, authorizedUrls, bindToBrief: false,
       ...(this.#authorWebFetcher ? { fetcher: this.#authorWebFetcher } : {}) });
+    const sourceOutcomes = new Map<string, 'read' | 'unavailable' | 'deferred'>();
+    const recordUnavailable = (url: string, error: unknown) => {
+      if (authorizedUrls.includes(url) && (error as { code?: string }).code !== 'ABORTED') {
+        sourceOutcomes.set(url, (error as { code?: string }).code === 'AUTHOR_WEB_LIMIT_REACHED' ? 'deferred' : 'unavailable');
+      }
+    };
+    const guardedWebTool: typeof webTool = { ...webTool,
+      validateTarget: async (args, context) => {
+        try { await webTool.validateTarget?.(args, context); }
+        catch (error) { recordUnavailable(args.url, error); throw error; }
+      },
+      execute: async (args, context) => {
+        try { const result = await webTool.execute(args, context); sourceOutcomes.set(args.url, 'read'); return result; }
+        catch (error) { recordUnavailable(args.url, error); throw error; }
+      },
+    };
     const materialTools = createBuiltinReadTools({ materials: this.#storage, versions: this.#storage })
       .filter(tool => ['read_material', 'list_project_materials'].includes(tool.name));
     const materialCatalogue = () => this.#storage.listMaterials(projectId)
@@ -767,8 +784,19 @@ export class WritingApplicationService {
       get expectedStateArtifactVersionId() { return state.stateArtifactVersionId; },
       get expectedProposalVersionId() { return state.proposalVersionId; },
       interpretedIntent: () => intent?.result()?.intent ?? null,
+      proposalSourceDisclosure: () => {
+        const pending = authorizedUrls.filter(url => !sourceOutcomes.has(url));
+        const batchFull = sourceOutcomes.size >= 3 || [...sourceOutcomes.values()].includes('deferred');
+        if (pending.length && !batchFull) throw new ToolExecutionFault('INTAKE_SOURCE_READ_REQUIRED',
+          `请先调用read_author_web读取本轮指定来源，再提交方案；不能猜测原文。尚未处理：${JSON.stringify(pending)}。每轮最多3次，链接较多时先说明未处理范围，请作者分批提供；不能谎称读过。`);
+        const unavailable = authorizedUrls.filter(url => sourceOutcomes.get(url) === 'unavailable');
+        const deferred = authorizedUrls.filter(url => sourceOutcomes.get(url) === 'deferred' || (batchFull && !sourceOutcomes.has(url)));
+        return [unavailable.length ? `来源读取限制：以下链接本轮未能读取原文，方案仅依据已提供的信息，不代表已阅读或核实这些网页。\n${unavailable.join('\n')}` : '',
+          deferred.length ? `本轮最多读取3个网页，以下来源尚未读取，不纳入这版方案依据；请分批提供这些链接，或确认只使用已读材料。\n${deferred.join('\n')}` : '',
+        ].filter(Boolean).join('\n\n');
+      },
     });
-    const tools = ToolRegistry.create([intake.definition, intake.proposalDefinition, webTool, ...materialTools, ...(intent ? [{ ...intent.definition, execute: async (args: import('./conversation-intent.js').ReplyIntent, context: import('../../runtime/tools/src/index.js').ToolExecutionContext) => {
+    const tools = ToolRegistry.create([intake.definition, intake.proposalDefinition, guardedWebTool, ...materialTools, ...(intent ? [{ ...intent.definition, execute: async (args: import('./conversation-intent.js').ReplyIntent, context: import('../../runtime/tools/src/index.js').ToolExecutionContext) => {
       const result = await intent.definition.execute(args, context);
       if (args.intent === 'revise_direction') {
         state = invalidatePendingConversationProposal({ storage: this.#storage, projectId, operationId: `${operationId}:intent`, sessionId });

@@ -662,8 +662,16 @@ function hasThirdPartyFraming(message: string): boolean {
 export function isExplicitFirsthandUserStatement(message: string): boolean {
   const text = message.trim();
   if (text.length === 0 || hasThirdPartyFraming(text)) return false;
-  return /(?:^|[。！？；\n])\s*(?:这(?:件事|段记录|些内容)?|以下|上面)?\s*(?:是)?\s*我(?:的)?(?:亲身|真实|实际)(?:经历|体验|经验|记录)/iu.test(text) ||
-    /我(?:亲自|亲身|自己)(?:经历|体验|做过|遇到|处理过|参与过|跑过|试过)/iu.test(text);
+  // Authorization is an affirmative statement, not a keyword occurring in a
+  // denial, hypothetical, question or quotation. Ambiguous mixed scope needs
+  // a separate explicit authorization, never a model-inferred permission.
+  if (/(?:不是|并非|不算|未曾|没有|不要|别写|假设|假如|如果|倘若|要是)[^。！？；\n]{0,40}(?:我|亲身|亲自|真实经历)/u.test(text)) return false;
+  const affirmative = /(?:^|[。！？；\n])\s*(?:(?:这(?:件事|段记录|些内容)?|以下|上面)(?:是)?)?\s*我(?:的)?(?:亲身|真实|实际)(?:经历|体验|经验|记录)|(?:^|[。！？；\n])\s*我(?:亲自|亲身|自己)(?:经历|体验|做过|遇到|处理过|参与过|跑过|试过)/gu;
+  for (const match of text.matchAll(affirmative)) {
+    const rest = text.slice(match.index! + match[0].length).split(/[。！；\n]/u)[0]!;
+    if (!/[?？]|(?:吗|么|是否)/u.test(rest)) return true;
+  }
+  return false;
 }
 
 function isExplicitStyleDelegation(message: string): boolean {
@@ -936,6 +944,7 @@ export function createConversationIntakeTool(input: {
   readonly expectedStateArtifactVersionId: string | null;
   readonly expectedProposalVersionId: string | null;
   readonly interpretedIntent?: () => string | null;
+  readonly proposalSourceDisclosure?: () => string;
 }): ConversationIntakeTool {
   const responses = new Map<string, IntakeToolResponse>();
   const definition: ToolDefinition<RespondWritingIntakeArgs, JsonValue> = {
@@ -1057,6 +1066,8 @@ export function createConversationIntakeTool(input: {
       let effectiveSummary = summary;
 
       if (args.proposal != null) {
+        const sourceDisclosure = input.proposalSourceDisclosure?.() ?? '';
+        if (sourceDisclosure) reply = `${reply}\n\n${sourceDisclosure}`;
         const preferences = args.proposal.brief;
         if (typeof preferences !== "object" || preferences === null || Array.isArray(preferences)) {
           throw new ToolExecutionFault("INTAKE_BRIEF_INVALID", "Proposed writing preferences are invalid");

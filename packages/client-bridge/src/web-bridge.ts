@@ -155,7 +155,7 @@ function responseDeliveryExport(value: unknown): DeliveryExportView {
 
 export class WebClientBridge implements ClientBridge {
   readonly #baseUrl: string;
-  readonly #bootstrapCapability: string;
+  #bootstrapCapability: string;
   readonly #fetch: typeof fetch;
   readonly #operationIdFactory: () => string;
   readonly #pollDelayMs: number;
@@ -167,6 +167,9 @@ export class WebClientBridge implements ClientBridge {
   #polling = false;
   #pollTimer: ReturnType<typeof setTimeout> | null = null;
   #disposed = false;
+  #reconnectPromise: Promise<void> | null = null;
+  #pollFailures = 0;
+  #restoringSelection = false;
 
   constructor(options: WebClientBridgeOptions) {
     const url = new URL(options.baseUrl);
@@ -187,48 +190,71 @@ export class WebClientBridge implements ClientBridge {
   async handshake(): Promise<BridgeHandshake> {
     this.#ensureLive();
     if (this.#handshake !== null) return this.#handshake;
+    if (this.#snapshot.workspaceId) {
+      // A failed restoration kept the old visible selection. Subsequent
+      // attempts must restore it too, not publish a fresh default session.
+      await this.#reconnect();
+      this.#ensureLive();
+      return this.#handshake!;
+    }
     if (this.#handshakePromise !== null) return this.#handshakePromise;
-    this.#handshakePromise = (async () => {
-      const response = await this.#request(
-        "/api/v6/handshake",
-        { protocolVersion: UI_BRIDGE_PROTOCOL_VERSION },
-        this.#bootstrapCapability,
-      );
-      const handshake = responseRecord(response.handshake) as unknown as BridgeHandshake;
-      if (
-        handshake.protocolVersion !== UI_BRIDGE_PROTOCOL_VERSION ||
-        handshake.mock ||
-        !handshake.persistsUserProjects ||
-        typeof handshake.workspaceId !== "string"
-      ) {
-        throw new WebBridgeError(
-          "PROTOCOL_VERSION_MISMATCH",
-          "Local runtime handshake is incompatible with this client",
-          409,
-        );
-      }
-      if (typeof response.capability !== "string" || response.capability.length < 32) {
-        throw new WebBridgeError(
-          "INVALID_HOST_RESPONSE",
-          "Local runtime did not issue a session capability",
-          502,
-        );
-      }
-      this.#capability = response.capability;
-      this.#handshake = handshake;
-      const snapshotResponse = await this.#request(
-        "/api/v6/snapshot",
-        {},
-        this.#capability,
-      );
-      this.#accept(responseSnapshot(snapshotResponse.snapshot));
-      return handshake;
-    })();
+    this.#handshakePromise = this.#establishSession();
     try {
       return await this.#handshakePromise;
     } finally {
       this.#handshakePromise = null;
     }
+  }
+
+  async #establishSession(): Promise<BridgeHandshake> {
+    let response: Record<string, unknown>;
+    try {
+      response = await this.#request(
+        "/api/v6/handshake",
+        { protocolVersion: UI_BRIDGE_PROTOCOL_VERSION },
+        this.#bootstrapCapability,
+      );
+    } catch (error) {
+      if (!(error instanceof WebBridgeError) || error.status !== 401 || error.code !== 'CAPABILITY_REJECTED') throw error;
+      await this.#refreshBootstrap();
+      response = await this.#request('/api/v6/handshake', { protocolVersion: UI_BRIDGE_PROTOCOL_VERSION }, this.#bootstrapCapability);
+    }
+    const handshake = responseRecord(response.handshake) as unknown as BridgeHandshake;
+    if (
+      handshake.protocolVersion !== UI_BRIDGE_PROTOCOL_VERSION ||
+      handshake.mock ||
+      !handshake.persistsUserProjects ||
+      typeof handshake.workspaceId !== "string"
+    ) {
+      throw new WebBridgeError(
+        "PROTOCOL_VERSION_MISMATCH",
+        "Local runtime handshake is incompatible with this client",
+        409,
+      );
+    }
+    if (typeof response.capability !== "string" || response.capability.length < 32) {
+      throw new WebBridgeError(
+        "INVALID_HOST_RESPONSE",
+        "Local runtime did not issue a session capability",
+        502,
+      );
+    }
+    this.#ensureLive();
+    if (this.#snapshot.workspaceId && handshake.workspaceId !== this.#snapshot.workspaceId) {
+      throw new WebBridgeError('WORKSPACE_SCOPE_MISMATCH', 'Reconnect returned another workspace', 409);
+    }
+    const snapshotResponse = await this.#request(
+      "/api/v6/snapshot",
+      {},
+      response.capability,
+    );
+    const next = responseSnapshot(snapshotResponse.snapshot);
+    if (next.workspaceId !== handshake.workspaceId) throw new WebBridgeError('WORKSPACE_SCOPE_MISMATCH', 'Local runtime returned another workspace', 409);
+    this.#ensureLive();
+    this.#capability = response.capability;
+    this.#handshake = handshake;
+    this.#accept(next, true);
+    return handshake;
   }
 
   getSnapshot = (): BridgeSnapshot => this.#snapshot;
@@ -631,7 +657,7 @@ export class WebClientBridge implements ClientBridge {
     if (this.#disposed) throw new Error("BRIDGE_DISPOSED");
   }
 
-  #accept(next: BridgeSnapshot): void {
+  #accept(next: BridgeSnapshot, newEpoch = false): void {
     if (
       this.#handshake !== null &&
       next.workspaceId !== this.#handshake.workspaceId
@@ -642,9 +668,9 @@ export class WebClientBridge implements ClientBridge {
         409,
       );
     }
-    if (next.generation < this.#snapshot.generation) return;
+    if (!newEpoch && next.generation < this.#snapshot.generation) return;
     if (
-      next.generation === this.#snapshot.generation &&
+      !newEpoch && next.generation === this.#snapshot.generation &&
       next.revision < this.#snapshot.revision
     ) {
       return;
@@ -654,6 +680,7 @@ export class WebClientBridge implements ClientBridge {
   }
 
   #emit(): void {
+    if (this.#restoringSelection || this.#disposed) return;
     for (const listener of this.#listeners) listener();
   }
 
@@ -682,7 +709,9 @@ export class WebClientBridge implements ClientBridge {
         afterRevision: this.#snapshot.revision,
       });
       this.#accept(responseSnapshot(response.snapshot));
+      this.#pollFailures = 0;
     } catch (error) {
+      this.#pollFailures++;
       if (error instanceof WebBridgeError && error.code === "STALE_CLIENT_GENERATION") {
         try {
           await this.refresh();
@@ -694,7 +723,7 @@ export class WebClientBridge implements ClientBridge {
       }
     } finally {
       this.#polling = false;
-      this.#schedulePoll(this.#pollDelayMs);
+      this.#schedulePoll(this.#pollFailures ? Math.min(5_000, Math.max(250, this.#pollDelayMs) * 2 ** Math.min(this.#pollFailures - 1, 5)) : this.#pollDelayMs);
     }
   }
 
@@ -742,6 +771,7 @@ export class WebClientBridge implements ClientBridge {
     route: string,
     body: Readonly<Record<string, unknown>>,
   ): Promise<Record<string, unknown>> {
+    if (this.#reconnectPromise) await this.#reconnectPromise;
     if (this.#capability === null) {
       throw new WebBridgeError(
         "CAPABILITY_MISSING",
@@ -749,7 +779,58 @@ export class WebClientBridge implements ClientBridge {
         401,
       );
     }
-    return this.#request(route, body, this.#capability);
+    const capability = this.#capability;
+    try {
+      const response = await this.#request(route, body, capability);
+      if (capability !== this.#capability) {
+        if (this.#reconnectPromise) await this.#reconnectPromise;
+        if (route === '/api/v6/snapshot' || route === '/api/v6/events/poll') return this.#request('/api/v6/snapshot', {}, this.#capability!);
+        throw new WebBridgeError('STALE_SESSION_RESPONSE', '会话已重新连接，旧响应未覆盖当前状态；请检查已保存结果，不自动重复写入。', 409);
+      }
+      return response;
+    }
+    catch (error) {
+      // Only a definitive pre-execution authentication rejection is replayed.
+      // Transport errors have unknown outcomes and must not replay mutations.
+      if (!(error instanceof WebBridgeError) || error.status !== 401 || error.code !== 'CAPABILITY_REJECTED') throw error;
+      if (capability === this.#capability) await this.#reconnect();
+      else if (this.#reconnectPromise) await this.#reconnectPromise;
+      this.#ensureLive();
+      return this.#request(route, { ...body, ...('generation' in body ? { generation: this.#snapshot.generation } : {}) }, this.#capability!);
+    }
+  }
+
+  async #reconnect(): Promise<void> {
+    if (this.#reconnectPromise) return this.#reconnectPromise;
+    this.#reconnectPromise = (async () => {
+      const selected = { projectId: this.#snapshot.selectedProjectId, sessionId: this.#snapshot.selectedSessionId };
+      await this.#refreshBootstrap();
+      const previous = this.#snapshot;
+      this.#restoringSelection = true;
+      try {
+        await this.#establishSession();
+        if (selected.projectId && this.#snapshot.projects.some(p => p.id === selected.projectId)) {
+          const hasSession = selected.sessionId && this.#snapshot.sessions.some(s => s.id === selected.sessionId && s.projectId === selected.projectId);
+          const restored = await this.#request(hasSession ? '/api/v6/command/select-session' : '/api/v6/command/select-project',
+            { generation: this.#snapshot.generation, projectId: selected.projectId, ...(hasSession ? { sessionId: selected.sessionId } : {}) }, this.#capability!);
+          this.#accept(responseSnapshot(restored.snapshot));
+        }
+      } catch (error) {
+        this.#snapshot = previous; this.#handshake = null; this.#capability = null;
+        throw error;
+      } finally { this.#restoringSelection = false; this.#emit(); }
+    })();
+    try { await this.#reconnectPromise; } finally { this.#reconnectPromise = null; }
+  }
+
+  async #refreshBootstrap(): Promise<void> {
+    // Read the existing same-origin page as inert text; never execute its HTML.
+    const response = await this.#fetch(`${this.#baseUrl}/`, { method: 'GET', cache: 'no-store', credentials: 'same-origin', redirect: 'error', referrerPolicy: 'no-referrer' });
+    if (!response.ok) throw new WebBridgeError('LOCAL_SERVICE_OFFLINE', '无法重新连接本地服务，请稍后再试。', response.status);
+    const html = await response.text();
+    const token = html.length <= 2_000_000 ? html.match(/<meta name="writing-agent-bootstrap-capability" content="([A-Za-z0-9_-]{32,})">/u)?.[1] : undefined;
+    if (!token) throw new WebBridgeError('CAPABILITY_REJECTED', '本地会话已过期，重新连接未成功；已保存的稿件仍保留。', 401);
+    this.#ensureLive(); this.#bootstrapCapability = token;
   }
 
   async #request(

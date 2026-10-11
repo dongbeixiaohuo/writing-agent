@@ -12,6 +12,80 @@ import { SecureWebFetchError } from '../../runtime/tools/src/index.js';
 const url = 'https://93.184.216.34/article';
 const article = '公众号测试正文。这里只是第三方观察，不是作者亲历。';
 
+it('a turn with more than three URLs completes with an explicit unread-range disclosure, not an impossible proposal gate', async () => {
+  const urls = [1, 2, 3, 4].map(n => `${url}/${n}`);
+  let step = 0, fetches = 0;
+  const provider = new class extends ModelProviderBase {
+    constructor() { super('batch-web', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const current = step++;
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: current < 3 ? 'read_author_web' : 'respond_writing_intake',
+        argumentsDelta: JSON.stringify(current < 3 ? { url: urls[current] } : {
+          reply: '先整理已读材料。', summary: '方向', questions: [], proposal: {
+            brief: { topic: '三个来源的观察', genre: 'narrative_observation', audience: '普通读者', targetCharacters: 1000, constraints: [], publicationGoal: 'not_applicable' }, assumptions: [],
+          },
+        }) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }();
+  const directory = mkdtempSync(join(tmpdir(), 'intake-url-batch-')), storage = openWorkspaceStorage({ workspacePath: directory });
+  try {
+    storage.createProject({ projectId: 'p', operationId: 'create', name: '测试', mode: 'quick', actor: { kind: 'user', id: 'test' } });
+    const service = new WritingApplicationService({ storage, provider, authorWebFetcher: { async fetchText(requestedUrl) {
+      fetches++; return { finalUrl: requestedUrl, redirectCount: 0, contentType: 'text/html', bodyHash: 'test', content: {
+        text: article, totalChars: article.length, truncated: false, activeContentRemoved: true, trustLabel: 'external_untrusted', instructionAuthority: 'none' } };
+    } } });
+    const result = await service.startConversationTurn({ projectId: 'p', sessionId: 's', model: 'mock', parameters: {}, userInstruction: `读这些材料整理方向 ${urls.join(' ')}` }).result;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(fetches, 3);
+    assert.ok(result.ok && result.reply.includes(urls[3]!));
+    assert.match(result.ok ? result.reply : '', /尚未读取.*分批|分批.*尚未读取/su);
+  } finally { storage.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+for (const unavailable of [false, true]) it(`proposal-first cannot skip a newly supplied URL (unavailable: ${unavailable})`, async () => {
+  let fetches = 0;
+  const directory = mkdtempSync(join(tmpdir(), 'proposal-source-gate-'));
+  const storage = openWorkspaceStorage({ workspacePath: directory });
+  let step = 0;
+  const proposal = { brief: { topic: '参考文章的新观点', genre: 'narrative_observation', audience: '普通读者',
+    targetCharacters: 1000, constraints: [], publicationGoal: 'not_applicable' }, assumptions: [] };
+  const provider = new class extends ModelProviderBase {
+    constructor() { super('source-gate', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const intent = intentFixtureEvents(request, ['propose_direction', null]);
+      if (intent) { yield* intent; return; }
+      const current = step++;
+      if (current === 2) {
+        assert.equal(storage.inspectProject('project')!.currentBriefVersionId, null, 'unread source must not produce a proposal');
+        assert.ok(request.messages.some(m => m.role === 'tool' && m.content.includes('INTAKE_SOURCE_READ_REQUIRED')));
+      }
+      const name = current === 0 ? 'respond_writing_intake' : current === 2 ? 'read_author_web' : 'submit_writing_proposal';
+      // First turn is ordinary discussion; second tries proposal before reading.
+      yield { type: 'tool_call_delta', index: 0, id: `source-${current}`, name,
+        argumentsDelta: JSON.stringify(current === 0 ? { reply: '先聊方向。', summary: '讨论', questions: [] }
+          : current === 2 ? { url } : proposal) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }();
+  try {
+    storage.createProject({ projectId: 'project', operationId: 'create', name: '测试', mode: 'quick', actor: { kind: 'user', id: 'test' } });
+    const service = new WritingApplicationService({ storage, provider, authorWebFetcher: { async fetchText() {
+      fetches++;
+      if (unavailable) throw new SecureWebFetchError('WEB_ARTICLE_ACCESS_RESTRICTED', 'verification required');
+      return { finalUrl: url, redirectCount: 0, contentType: 'text/html', bodyHash: 'test', content: {
+        text: article, totalChars: article.length, truncated: false, activeContentRemoved: true, trustLabel: 'external_untrusted', instructionAuthority: 'none' } };
+    } } });
+    const input = { projectId: 'project', sessionId: 'session', model: 'mock', parameters: {} };
+    assert.equal((await service.startConversationTurn({ ...input, userInstruction: '讨论一个方向' }).result).ok, true);
+    const result = await service.startConversationTurn({ ...input, userInstruction: `先读这个链接再整理方案 ${url}` }).result;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(fetches, 1);
+    assert.equal(service.getConversationIntake('project').phase, 'proposal');
+    if (unavailable) assert.match(result.ok ? result.reply : '', /未读|未能|限制/);
+  } finally { storage.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
 for (const forbidden of [false, true]) it(`intake handles a restricted article without inventing material (network forbidden: ${forbidden})`, async () => {
   let fetches = 0;
   const provider = new class extends ModelProviderBase {

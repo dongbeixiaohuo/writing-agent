@@ -186,7 +186,7 @@ function writeCatalog(filePathInput: string, catalog: DesktopProviderCatalog): v
 
 // Stamp a profile as connection-verified without touching its stored config;
 // preset extraBody fill-in stays a read-time concern (see withPresetExtraBody).
-export function markDesktopProviderVerified(filePathInput: string, profileId: string): void {
+export function markDesktopProviderVerified(filePathInput: string, profileId: string, testedConfig?: NormalizedProviderConfig): void {
   const filePath = resolve(filePathInput);
   let value: unknown;
   try {
@@ -197,6 +197,7 @@ export function markDesktopProviderVerified(filePathInput: string, profileId: st
   if (typeof value !== 'object' || value === null || !('schemaVersion' in value) || value.schemaVersion !== 3) return;
   const catalog = value as DesktopProviderCatalog;
   if (!catalog.profiles.some(profile => profile.id === profileId)) return;
+  if (testedConfig && JSON.stringify(loadDesktopProviderCatalog(filePath).profiles.find(p => p.id === profileId)?.config) !== JSON.stringify(testedConfig)) return;
   writeCatalog(filePath, {
     ...catalog,
     profiles: catalog.profiles.map(profile => profile.id === profileId
@@ -288,7 +289,9 @@ export function selectDesktopProvider(filePath: string, profileId: string, model
   const profile = catalog.profiles.find(entry => entry.id === profileId);
   if (!profile || !profile.models.includes(model)) throw providerProfileError('PROVIDER_PROFILE_NOT_FOUND', 'Saved provider or model is unavailable');
   const config = parseProviderConfig({ ...profile.config, model });
+  const { verifiedAt, ...unverified } = profile;
   writeCatalog(filePath, { ...catalog, activeProfileId: profile.id,
-    profiles: catalog.profiles.map(entry => entry.id === profile.id ? { ...entry, config } : entry) });
+    profiles: catalog.profiles.map(entry => entry.id === profile.id
+      ? { ...(model === profile.config.model ? profile : unverified), config } : entry) });
   return config;
 }

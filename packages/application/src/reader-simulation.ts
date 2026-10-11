@@ -21,7 +21,7 @@ export function parseReaderReaction(text: string): Reaction | null {
 }
 
 export function createReaderTextTasks(input: {
-  article:string; bodyVersionId:string; platform:string; audience:string; title?:string; distributionCopy?:string; confirmationRequired?:boolean;
+  article:string; bodyVersionId:string; platform:string; audience:string; title?:string; distributionCopy?:string; confirmationRequired?:boolean; standalone?:boolean;
 }): NonNullable<AgentRequestPolicy['parallelTextTasks']> {
   return {
     timeoutMs:90000, maxOutputTokens:2048,
@@ -52,7 +52,9 @@ export function createReaderTextTasks(input: {
         const line = (value:string) => value.replace(/[\\`*_{}\[\]<>#]/gu, '\\$&');
         return `## ${r.label}\n\n为什么点开：${line(reaction.whyOpen)}\n\n哪里想划走：${line(reaction.leaveAt)}\n\n读完感受：${line(reaction.verdict)}\n\n转发或收藏：${line(reaction.shareOrSave)}\n\n最记得的一句：${line(reaction.memorableLine)}`;
       }),
-      input.confirmationRequired === false
+      input.standalone
+        ? '这些感受不作投票，正文未自动改动。下一步：告诉我想采纳哪些感受、具体想改哪里；也可以保留现稿。这次重测不要求重新确认标题，不重跑写作或事实核查。'
+        : input.confirmationRequired === false
         ? '这些感受不作投票。下一步：写作导演结合文章目标解读，再交给修订主笔；模拟反应不代替作者取舍。'
         : '这些感受不作投票。下一步：你可以提出自己的看法；认可后，由写作导演结合文章目标和你的取舍解读，再交给修订主笔。',
     ].join('\n\n'),
