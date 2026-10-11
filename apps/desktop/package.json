@@ -1,6 +1,6 @@
 {
   "name": "writing-agent-desktop",
-  "version": "1.0.0-rc.81",
+  "version": "1.0.0-rc.82",
   "private": true,
   "productName": "Writing Agent",
   "main": "dist/main.cjs",

@@ -9,9 +9,20 @@ const exportErrors: Record<string, string> = {
   FACT_GATE_NOT_PASSED: '当前版本尚未通过事实核查，请先处理核查问题再导出。',
   EXPORT_SELECTION_CHANGED: '稿件或项目已变化，请查看当前版本后重新导出。',
   EXPORT_ALREADY_SAVING: '已有保存窗口打开，请先完成或取消上一次保存。',
-  EXPORT_WRITING_ACTIVE: '文章仍在处理中，请等待处理结束后再导出。',
+  EXPORT_WRITING_ACTIVE: '当前项目仍在处理中，请等待处理结束后再导出。',
   EXPORT_DESTINATION_INVALID: '请使用对应的 HTML 或 TXT 扩展名，并选择工作区之外的保存位置。',
   EXPORT_RECEIPT_NOT_FOUND: '未找到刚才保存的文件，可能已被移动或删除，请重新导出。',
+  EXPORT_SAVE_FAILED: '文件保存未完成，请换一个保存位置重试。稿件仍保存在本机。',
+}
+
+export function publicationErrorMessage(reason: unknown): string {
+  const candidate = typeof reason === 'object' && reason !== null
+    ? 'code' in reason && typeof reason.code === 'string' ? reason.code
+      : 'message' in reason && typeof reason.message === 'string' ? reason.message : null
+    : null
+  return candidate !== null && Object.hasOwn(exportErrors, candidate)
+    ? exportErrors[candidate]!
+    : '导出未完成，原因尚未确认。请重试；若仍失败，请反馈操作时间。稿件仍保存在本机。'
 }
 
 export function ConversationExportCard({ bridge, snapshot, hostConfiguration, onInspect, onContentChange }: {
@@ -65,8 +76,7 @@ export function ConversationExportCard({ bridge, snapshot, hostConfiguration, on
         if (mounted.current) setNotice(`已保存到本地工作区：${result.relativePath}`)
       }
     } catch (reason) {
-      const code = reason && typeof reason === 'object' && 'code' in reason ? String(reason.code) : ''
-      if (mounted.current) setError(exportErrors[code] ?? '操作未完成，请检查保存目录的权限和可用空间后重试。稿件仍保存在本机。')
+      if (mounted.current) setError(publicationErrorMessage(reason))
     } finally {
       inFlight.current = false
       if (mounted.current) { setBusy(false); onContentChange() }

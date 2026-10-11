@@ -415,7 +415,9 @@ export class DesktopApplicationHost {
       if (snapshot.selectedProjectId !== input.projectId || snapshot.deliveryWorkspace.bodyVersionId !== input.bodyVersionId) {
         throw new Error('EXPORT_SELECTION_CHANGED');
       }
-      if (this.#hasActiveRun()) throw new Error('EXPORT_WRITING_ACTIVE');
+      // Export reads a version-bound snapshot of this project. Other projects,
+      // and runs that are merely waiting for feedback, cannot change this file.
+      if (this.#hasExecutingRun(input.projectId)) throw new Error('EXPORT_WRITING_ACTIVE');
       if (!snapshot.deliveryWorkspace.formalExportEnabled || snapshot.deliveryWorkspace.gateStatus !== 'passed') {
         throw new Error('FACT_GATE_NOT_PASSED');
       }
@@ -656,8 +658,9 @@ export class DesktopApplicationHost {
     );
   }
 
-  #hasExecutingRun(): boolean {
-    return this.#service.listProjects().some(project => this.#service.getProjectProjection(project.id).runs
+  #hasExecutingRun(projectId?: string): boolean {
+    const projectIds = projectId === undefined ? this.#service.listProjects().map(project => project.id) : [projectId];
+    return projectIds.some(id => this.#service.getProjectProjection(id).runs
       .some(run => run.status === 'queued' || run.status === 'running' || run.status === 'paused'));
   }
 }
