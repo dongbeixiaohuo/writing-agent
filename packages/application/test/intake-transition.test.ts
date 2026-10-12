@@ -55,6 +55,18 @@ it('repairs a missing proposal in the same turn instead of accepting another emp
   });
 });
 
+it('keeps creative interpretation boundaries in the proposal-only request path', async () => {
+  await scenario('propose_direction', () => proposed, (app, result, requests) => {
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const request = requests.find(r => r.tools?.some(t => t.name === 'submit_writing_proposal'))!;
+    assert.match(request.messages[0]!.content, /用户原话.*创作建议.*推测.*分开/u);
+    assert.match(request.messages[0]!.content, /不能.*一句自述.*额外禁令/u);
+    assert.match(request.messages[0]!.content, /不虚构亲历.*不等于.*禁止具体表达/u);
+    assert.match(request.messages[0]!.content, /少量观点.*更短/u);
+    assert.equal(app.getConversationIntake('p').phase, 'proposal');
+  });
+});
+
 it('applies the semantic approval to the stored proposal even if the reply tool omits confirmation', async () => {
   await scenario('confirm_direction', () => chatOnly, (app, result) => {
     assert.equal(result.ok, true, JSON.stringify(result));

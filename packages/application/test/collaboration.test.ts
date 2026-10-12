@@ -544,6 +544,39 @@ it('scales outline and research guidance to the article without imposing a trunc
   } finally {f.close();}
 });
 
+it('delivers anti-filler guidance through real stage requests while retaining explicit author constraints', async () => {
+  const provider = new CollaborationProvider(), f = setup(provider, 'autonomous', 1, 'deep',
+    '别为你干的蠢事赋予意义。人喜欢找理由求自洽，反复想却迈不出一步。我看见了，我还在里面。');
+  try {
+    const briefId = f.storage.inspectProject('p')!.currentBriefVersionId!;
+    const brief = f.storage.getWritingBriefVersion(briefId)!.brief;
+    const constraints = ['作者明确要求：不写操作步骤，不虚构亲历，也不强行给积极结尾。'];
+    assert.equal(f.app.saveWritingBrief({ operationId: 'short-essay-direction', projectId: 'p',
+      expectedProjectRevision: f.storage.inspectProject('p')!.revision, baseVersionId: briefId,
+      actor: { kind: 'user', id: 'u' }, brief: { ...brief, lengthTarget: { targetCharacters: 2500 }, constraints } }).ok, true);
+    const project = f.storage.inspectProject('p')!;
+    const result = await f.app.runDraft({ ...f.input, expectedProjectRevision: project.revision,
+      expectedBriefVersionId: project.currentBriefVersionId! });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    for (const actor of ['director', 'draft', 'central_revision']) {
+      const request = provider.requests.find(r => collaborationState(r)?.actor === actor)!;
+      assert.match(request.messages[0]!.content, /不得为了.*字数.*扩写/u, actor);
+      assert.match(request.messages.find(m => m.role === 'user')!.content, /不写操作步骤.*不虚构亲历/u, actor);
+    }
+    for (const actor of ['review_editor', 'review_publish']) {
+      assert.match(provider.requests.find(r => collaborationState(r)?.actor === actor)!.messages[0]!.content,
+        /可以质疑.*提纲.*文风/u, actor);
+    }
+    const outline = provider.requests.find(r => collaborationState(r)?.actor === 'outline')!;
+    assert.match(outline.messages[0]!.content, /每一部分新增的信息/u);
+    // This is a delivery/contract check, not a claim that a scripted provider writes better prose.
+    const bodies = f.storage.listArtifactVersions('p', 'body', 'main');
+    assert.equal(bodies.length, 3);
+    assert.ok(bodies.every(body => typeof body.content === 'string' && body.content.length < 2500));
+    assert.deepEqual(f.storage.getWritingBriefVersion(project.currentBriefVersionId!)!.brief.constraints, constraints);
+  } finally { f.close(); }
+});
+
 it('requires a separate author decision after each independent review, including after restart', async () => {
   const provider = new CollaborationProvider();
   const f = setup(provider, 'co_creation', 0, 'deep');

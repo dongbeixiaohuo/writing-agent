@@ -167,6 +167,21 @@ describe("conversation intake", () => {
     } finally { f.close(); }
   });
 
+  it('does not infer a list of creative prohibitions from one personal statement', () => {
+    const f = fixture(new IntakeProvider([]));
+    try {
+      const prompt = buildConversationIntakePrompt(
+        f.service.getConversationIntake('project-1'), '我看见了，我还在里面。按你的理解走就可以了。',
+      );
+      assert.match(prompt.systemPrompt, /用户原话.*创作建议.*推测.*分开/u);
+      assert.match(prompt.systemPrompt, /不能.*一句自述.*额外禁令/u);
+      assert.match(prompt.systemPrompt, /不虚构亲历.*不等于.*禁止具体表达/u);
+      assert.match(prompt.systemPrompt, /少量观点.*更短/u);
+      assert.match(prompt.systemPrompt, /明确要求.*仍须尊重/u);
+      assert.match(prompt.userMessage, /我看见了，我还在里面/u);
+    } finally { f.close(); }
+  });
+
   it("binds semantic intent provenance to the complete current message even when model sourceQuote is absent or rewritten", () => {
     const f = fixture(new IntakeProvider([]));
     try {

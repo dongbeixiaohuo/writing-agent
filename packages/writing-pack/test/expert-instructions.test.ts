@@ -7,6 +7,38 @@ import {
 } from "../src/expert-instructions.js";
 
 describe("expert instruction migration", () => {
+  it('plans information progression instead of turning limited personal material into abstract filler', () => {
+    const outline = buildExpertInstructions('outline');
+    const draft = buildExpertInstructions('draft');
+    assert.match(outline, /每一部分新增的信息/u);
+    assert.match(outline, /不能把.*不虚构.*扩大为.*禁止具体表达/u);
+    assert.match(draft, /第一人称判断.*亲历事件.*区分/u);
+    assert.match(draft, /没有授权亲历.*不等于.*禁止具体表达/u);
+    assert.match(draft, /不得为了.*字数.*扩写/u);
+    assert.match(draft, /用户明确要求的.*篇幅.*仍须尊重/u);
+  });
+
+  it('lets professional reviewers challenge an unhelpful outline without replacing reader reactions', () => {
+    for (const role of ['review_editor', 'review_publish'] as const) {
+      const instruction = buildExpertInstructions(role);
+      assert.match(instruction, /可以质疑.*提纲.*文风/u, role);
+      assert.match(instruction, /指代不明.*重复.*没有新增信息/u, role);
+    }
+    assert.doesNotMatch(buildExpertInstructions('review_reader'), /可以质疑.*提纲.*文风/u);
+    assert.match(buildExpertInstructions('review_reader'), /禁止编辑术语.*修改建议/u);
+  });
+
+  it('prioritizes removing repetition over a director-generated word-count target', () => {
+    for (const role of ['director', 'central_revision'] as const) {
+      const instruction = buildExpertInstructions(role);
+      assert.match(instruction, /不得为了.*字数.*扩写/u, role);
+      assert.match(instruction, /没有新增.*信息.*缩短/u, role);
+      assert.match(instruction, /用户明确要求.*不能擅自/u, role);
+    }
+    assert.match(buildExpertInstructions('director'), /提纲.*需要改变.*重新确认/u);
+    assert.match(buildExpertInstructions('language_review'), /指代不明.*残句/u);
+  });
+
   it('separates publishable prose from internal material audit notes without erasing factual uncertainty', () => {
     for (const role of ['director', 'draft', 'central_revision', 'language_review', 'review_editor', 'fact_check'] as const) {
       const instruction = buildExpertInstructions(role);
