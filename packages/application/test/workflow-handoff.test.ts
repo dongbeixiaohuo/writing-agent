@@ -76,6 +76,24 @@ function saveAuthorHandoff(
   return storage.getArtifactVersion(saved.ok ? saved.result.versionId : '')!;
 }
 
+it('a prepared replacement bridge leaves handoffs untouched until installed and refreshed', async () => {
+  const f = setup();
+  let bridge: ReturnType<typeof createApplicationBridge> | undefined;
+  try {
+    const source = saveAuthorHandoff(f.storage, 'approved', 'approved-op');
+    const service = new WritingApplicationService({ storage: f.storage, provider: new NoRequestProvider() });
+    const eventCount = f.storage.listEvents('p').length;
+    bridge = createApplicationBridge({ service, workspaceId: 'candidate', initialProjectId: 'p', deferHandoffsUntilRefresh: true,
+      model: { model: 'candidate', parameters: {}, providerLabel: 'candidate', credentialReference: null } });
+    assert.equal(f.storage.listEvents('p').length, eventCount, 'preparation is read-only');
+    assert.deepEqual(pendingWorkflowHandoffs(f.storage, 'p').map(h => h.id), [source.id]);
+    await bridge.refresh();
+    assert.ok(f.storage.listEvents('p').some(e => e.type === 'run.started' && e.operationId === `workflow-handoff:${source.id}`));
+    assert.deepEqual(pendingWorkflowHandoffs(f.storage, 'p'), []);
+    for (let n = 0; n < 200 && f.storage.listRuns('p').some(r => r.status === 'running'); n++) await new Promise(r => setTimeout(r, 5));
+  } finally { bridge?.dispose(); f.close(); }
+});
+
 it('consumes only the source named by the new handoff operation id', () => {
   const f = setup();
   try {

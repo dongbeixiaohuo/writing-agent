@@ -260,6 +260,7 @@ export async function saveDesktopProviderProfile(
   filePathInput: string,
   credentials: CredentialBroker,
   input: DesktopProviderProfileInput,
+  beforeCommit?: (config: NormalizedProviderConfig) => void,
 ): Promise<SavedDesktopProviderProfile> {
   const catalog = loadDesktopProviderCatalog(filePathInput);
   const previous = previousProvider(catalog, input);
@@ -275,6 +276,9 @@ export async function saveDesktopProviderProfile(
     displayName: input.displayName ?? previous?.displayName ?? input.providerId,
     models: [...new Set([...(input.models ?? previous?.models ?? []), input.model])], config: savedConfig };
   try {
+    // Validate the replacement runtime before publishing the catalog. A fresh
+    // key remains private to the candidate and is removed if preparation fails.
+    beforeCommit?.(savedConfig);
     writeCatalog(filePathInput, { schemaVersion: 3, activeProfileId: profile.id,
       profiles: [...catalog.profiles.filter(candidate => candidate.id !== profile.id), profile] });
   } catch (error) {
@@ -284,12 +288,14 @@ export async function saveDesktopProviderProfile(
   return { config: savedConfig, credential };
 }
 
-export function selectDesktopProvider(filePath: string, profileId: string, model: string): NormalizedProviderConfig {
+export function selectDesktopProvider(filePath: string, profileId: string, model: string,
+  beforeCommit?: (config: NormalizedProviderConfig) => void): NormalizedProviderConfig {
   const catalog = loadDesktopProviderCatalog(filePath);
   const profile = catalog.profiles.find(entry => entry.id === profileId);
   if (!profile || !profile.models.includes(model)) throw providerProfileError('PROVIDER_PROFILE_NOT_FOUND', 'Saved provider or model is unavailable');
   const config = parseProviderConfig({ ...profile.config, model });
   const { verifiedAt, ...unverified } = profile;
+  beforeCommit?.(config);
   writeCatalog(filePath, { ...catalog, activeProfileId: profile.id,
     profiles: catalog.profiles.map(entry => entry.id === profile.id
       ? { ...(model === profile.config.model ? profile : unverified), config } : entry) });
