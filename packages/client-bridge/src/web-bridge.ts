@@ -88,7 +88,7 @@ function emptySnapshot(): BridgeSnapshot {
         "工作备份不代表可发布；正式 TXT/HTML 仅在当前正文、标题、证据与核查快照一致时生成。",
     },
     settings: {
-      theme: "system",
+      theme: "paper",
       language: "zh-CN",
       contentFontSize: 14,
       providerLabel: "本地服务连接中",
@@ -312,7 +312,7 @@ export class WebClientBridge implements ClientBridge {
     if (![13, 14, 16].includes(contentFontSize)) {
       throw new Error("CONTENT_FONT_SIZE_INVALID");
     }
-    if (!(["light", "dark", "system"] as const).includes(theme)) {
+    if (!(["light", "dark", "system", "paper"] as const).includes(theme)) {
       throw new Error("THEME_INVALID");
     }
     await this.#ensureHandshake();

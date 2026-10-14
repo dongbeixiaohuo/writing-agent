@@ -1063,9 +1063,9 @@ export class ApplicationClientBridge implements ClientBridge {
       options.operationIdFactory ?? (() => globalThis.crypto.randomUUID());
     this.#uiSettingsPersistence = options.uiSettingsPersistence ?? null;
     const persistedSettings = this.#uiSettingsPersistence?.load() ?? null;
-    const initialTheme = persistedSettings?.theme ?? "system";
+    const initialTheme = persistedSettings?.theme ?? "paper";
     const initialContentFontSize = persistedSettings?.contentFontSize ?? 14;
-    if (!(["light", "dark", "system"] as const).includes(initialTheme)) {
+    if (!(["light", "dark", "system", "paper"] as const).includes(initialTheme)) {
       throw new Error("THEME_INVALID");
     }
     if (![13, 14, 16].includes(initialContentFontSize)) {
@@ -1247,7 +1247,7 @@ export class ApplicationClientBridge implements ClientBridge {
       throw new Error("CONTENT_FONT_SIZE_INVALID");
     }
     const theme = patch.theme ?? this.#snapshot.settings.theme;
-    if (!(["light", "dark", "system"] as const).includes(theme)) {
+    if (!(["light", "dark", "system", "paper"] as const).includes(theme)) {
       throw new Error("THEME_INVALID");
     }
     this.#uiSettingsPersistence?.save({ theme, contentFontSize });

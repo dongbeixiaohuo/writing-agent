@@ -140,6 +140,16 @@ const DIALOG_FOCUSABLE = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
 
+const GANZHI_STEMS = '甲乙丙丁戊己庚辛壬癸'
+const GANZHI_BRANCHES = '子丑寅卯辰巳午未申酉戌亥'
+const WEEKDAY_LABELS = '日一二三四五六'
+
+function heroDateLine(today = new Date()): string {
+  const year = today.getFullYear()
+  const ganzhi = `${GANZHI_STEMS[(year - 4) % 10]}${GANZHI_BRANCHES[(year - 4) % 12]}`
+  return `${ganzhi}年 · ${today.getMonth() + 1}月${today.getDate()}日 · 周${WEEKDAY_LABELS[today.getDay()]}`
+}
+
 function formatBytes(value: number): string {
   if (value < 1024) return `${value.toLocaleString('zh-CN')} B`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
@@ -600,12 +610,13 @@ function ConversationMinimap({ scrollRef, itemCount }: {
   </div>
 }
 
-function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, onSubmitted, onHandoffConsumed, onConfigureModel, hostConfiguration }: {
+function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, hostConfiguration }: {
   bridge: ClientBridge
   hero?: boolean
   newProject?: boolean
   initialDraft?: string
   focusRequest?: number
+  contextChips?: readonly string[]
   onSubmitted?: (submission: ComposerSubmission) => void
   onHandoffConsumed?: () => void
   onConfigureModel?: () => void
@@ -695,7 +706,14 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
 
   return (
     <div className={clsx(inputCss.root, hero && inputCss.hero, hero && css.heroComposer)}>
-      <div className={inputCss.card}>
+      <div className={clsx(inputCss.card, css.composerCard)}>
+        {contextChips !== undefined && contextChips.length > 0 && (
+          <div className={css.composerChips}>
+            {contextChips.map((chip, index) => (
+              <span className={css.composerChip} key={chip}>{index === 0 && <span className={css.composerChipDot} aria-hidden="true" />}{chip}</span>
+            ))}
+          </div>
+        )}
         <div className={inputCss.scroll}>
           <div className={inputCss.grow}>
             <div
@@ -1265,9 +1283,11 @@ function SettingsDialog({
     ...option,
     icon: option.value === 'system'
       ? <MonitorIcon size={22} />
-      : option.value === 'light'
-        ? <SunIcon size={22} />
-        : <MoonIcon size={22} />,
+      : option.value === 'paper'
+        ? <EditIcon size={22} />
+        : option.value === 'light'
+          ? <SunIcon size={22} />
+          : <MoonIcon size={22} />,
   }))
 
   const updateAppearance = async (
@@ -1958,7 +1978,7 @@ export function WritingAgentShell({
           <button type="button" onClick={() => void openSession(otherRunningSession.projectId, otherRunningSession.id)}>查看运行中的对话</button>
         </div>}
         {hero ? <div className={css.heroStage}>
-          <div className={css.heroCopy}><h1>{!newProjectIntent && selectedProject !== undefined ? `在“${selectedProject.name}”中开始新对话` : '今天想写什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
+          <div className={css.heroCopy}><p className={css.heroKicker}>{heroDateLine()}</p><h1>{!newProjectIntent && selectedProject !== undefined ? `在“${selectedProject.name}”中开始新对话` : '今天，写点什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
           {!modelConfigured && snapshot.mode === 'application' && <div className={css.modelSetupNotice}><span>先连接你的模型，然后就可以直接开始交流。</span><button type="button" onClick={() => openSettings('models')}>配置模型</button></div>}
           <Composer bridge={bridge} hero newProject={newProjectIntent} onSubmitted={submission => {
             setComposerHandoff(current => ({ id: (current?.id ?? 0) + 1, draft: submission.pendingDraft, restoreFocus: submission.restoreFocus }))
@@ -2020,6 +2040,10 @@ export function WritingAgentShell({
             bridge={bridge}
             initialDraft={composerHandoff?.draft ?? ''}
             focusRequest={composerHandoff?.restoreFocus ? composerHandoff.id : 0}
+            contextChips={[
+              ...(selectedProject !== undefined ? [selectedProject.name] : []),
+              ...(snapshot.brief !== null ? [snapshot.brief.confirmationStatus === 'confirmed' ? '简报已确认' : '简报待确认'] : []),
+            ]}
             onHandoffConsumed={() => setComposerHandoff(null)}
             onSubmitted={forceFollowLatest}
             onConfigureModel={() => openSettings('models')}

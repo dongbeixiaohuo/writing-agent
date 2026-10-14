@@ -17,8 +17,9 @@ export interface WritingAgentLayoutConfig {
 
 export const THEME_MODE_OPTIONS: readonly { value: ThemeMode; label: string }[] = Object.freeze([
   { value: 'system', label: '跟随系统' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
+  { value: 'paper', label: '纸墨 · 昼' },
+  { value: 'dark', label: '纸墨 · 夜读' },
+  { value: 'light', label: '经典冷白' },
 ])
 
 export const WRITING_AGENT_THEME: WritingAgentThemeConfig = Object.freeze({
@@ -53,6 +54,7 @@ export function applyThemeMode(theme: ThemeMode): () => void {
   const sync = (): void => {
     const dark = theme === 'dark' || (theme === 'system' && media.matches)
     document.body.toggleAttribute('data-ds-dark-theme', dark)
+    document.body.toggleAttribute('data-dsw-classic-theme', theme === 'light')
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
   }
   sync()

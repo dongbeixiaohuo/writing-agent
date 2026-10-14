@@ -33,5 +33,5 @@ test('theme aliases and layout defaults come from one configuration entry', () =
   assert.equal(style['--dsh-composer-card-max-width'], '760px')
   assert.equal(WRITING_AGENT_LAYOUT.sidebarWidth, 280)
   assert.equal(WRITING_AGENT_LAYOUT.rightPanelWidth, 420)
-  assert.deepEqual(THEME_MODE_OPTIONS.map(option => option.value), ['system', 'light', 'dark'])
+  assert.deepEqual(THEME_MODE_OPTIONS.map(option => option.value), ['system', 'paper', 'dark', 'light'])
 })
