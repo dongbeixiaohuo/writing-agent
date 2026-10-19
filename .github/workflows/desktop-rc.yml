@@ -26,6 +26,8 @@ jobs:
           node-version: "24.18.0"
           cache: npm
       - run: npm ci
+      # Electron 44 has no postinstall; check:desktop launches the real runtime.
+      - run: node node_modules/electron/install.js
       - run: npm run check:runtime
       - run: npm run check:ui
       - run: npm run check:desktop
