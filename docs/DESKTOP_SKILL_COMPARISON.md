@@ -1,6 +1,6 @@
 # 桌面与 Claude Code Skill：能力和边界
 
-更新：2026-10-11。这是实现边界说明，不是“完全迁移已验收”的声明。已发布基线是 [RC80](launch/RC80_RELEASE_EXECUTION.md)；[RC80 审计后调整](implementation/RC80_AUDIT_FOLLOWUP.md)目前属于未发布源码，不是 RC80 安装包已有行为。仍受[发布门禁](testing/RELEASE_GATE.md)约束。
+更新：2026-10-20。这是实现边界说明，不是“完全迁移已验收”的声明。当前公开候选为 [RC87](launch/RC87_RELEASE_EXECUTION.md)；[RC80 审计后调整](implementation/RC80_AUDIT_FOLLOWUP.md)已纳入该版，不代表原 RC80 安装包已有这些行为。仍受[发布门禁](testing/RELEASE_GATE.md)约束，自动回归不等于所有迁移场景完成真实模型与人工验收。
 
 | 方面 | 独立桌面版 | Claude Code Skill / 插件 |
 |---|---|---|
