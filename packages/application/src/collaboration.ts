@@ -32,9 +32,12 @@ function expectedArtifact(stage: CollaborationStage): ArtifactExpectation {
   return { kind: "body", mayCommitBody: true };
 }
 
-function stageInstruction(stage: WritingWorkflowStage, basePrompt: string): string {
+function stageInstruction(stage: WritingWorkflowStage, basePrompt: string, researchSearchEnabled = false): string {
   if (stage === 'review_reader') return '三个隔离模拟读者只给口语感受，不是编辑审校，不给修改建议；程序合并为一个成果和一次作者确认。';
-  if (stage === "research") return '当前为材料整理模式，没有外部搜索工具：从本次授权材料提取正文所需证据；多来源矛盾只对照实际提供的内容，不臆造检索或核验结果。只提交研究账本，content直接用对象{sources,claims,notes}，不要转成带转义的JSON字符串。sources按来源列一次source_id、source_title、source_publisher、accessed_at及可选source_url；每条claim用source_id引用，填写claim_type、claim_text、source_quote、reliability、use_boundary、verification_status。evidence_id可省略，由程序编号；确需保留旧编号时明确填写。仅illustrative允许空引句，其余必须引用连续原文；用户材料不能自动标为已外部核实。无事实时sources和claims用空数组，notes说明原因。关键前提存在必要证据缺口时暂停提问，不用猜测补足；成稿后仍须独立事实核查。不要设计开头、结尾、标题或提纲；明确排除的材料只在notes简记理由和必要风险，不另造完整证据条目。';
+  if (stage === "research") return (researchSearchEnabled
+    ? '已配置可选前置搜索search_research_sources：先整理授权材料，只有关键公开事实缺口影响文章前提时才搜索，最多2条简短查询（不占末尾事实核查额度），不要每篇强行搜索或发整篇材料。优先搜索摘录，保留实际URL与引句，不把摘录写成读过原文。失败/额度用尽后不自动重试，说明限制；必要信息仍缺再向作者问。'
+    : '当前为材料整理模式，没有外部搜索工具：从本次授权材料提取正文所需证据；多来源矛盾只对照实际提供的内容，不臆造检索或核验结果。')
+    + '只提交研究账本，content直接用对象{sources,claims,notes}，不要转成带转义的JSON字符串。sources按来源列一次source_id、source_title、source_publisher、accessed_at及可选source_url；每条claim用source_id引用，填写claim_type、claim_text、source_quote、reliability、use_boundary、verification_status。evidence_id可省略，由程序编号；确需保留旧编号时明确填写。仅illustrative允许空引句，其余必须引用连续原文；用户材料不能自动标为已外部核实。无事实时sources和claims用空数组，notes说明原因。关键前提存在必要证据缺口时暂停提问，不用猜测补足；成稿后仍须独立事实核查。不要设计开头、结尾、标题或提纲；明确排除的材料只在notes简记理由和必要风险，不另造完整证据条目。';
   if (stage === "outline") return "只提交可供确认的文体化提纲，体现用户要求和材料边界，不要提前写正文。提纲是写给作者看的确认稿：禁止出现 E001/E002 这类证据编号和 use_boundary、illustrative 等内部字段名；证据与观点的对应关系由研究账本承担，不在提纲里标注；需要说明来源性质时用自然语言（如「这是作者的亲历观察」「这一点按既有事实写」）。";
   if (stage.startsWith("review_")) return "你是只读独立评审。只审阅绑定的同一初稿，不得读取其他初审意见，不得提交正文或重写文章。面向普通作者交流，不交一份冗长内部报告：先用1—2句给结论，再按‘优先讨论的问题’‘可选优化’‘建议保留’分段；优先列最多3个最重要的讨论点，每点用短句说明位置、影响和建议。确有更多重要风险不能省略，但不要为凑条目逐段复述全文、重复夸赞或展开后台检查清单。不得显示正文UUID、review_publish等内部字段。不要声称已交接下一位；共创模式会由程序在你保存后等待作者讨论和确认。";
   if (stage === "language_review") return "你是主笔的最终语言润色环节，不是撰写评审报告的审稿人。只对绑定的集中修订稿作有收益的最小语言润色，不做第二次结构重写，不增删事实或改变文意。submit_writing_stage.content必须是可直接交付的完整文章正文；无修改也须逐字提交原文。禁止交付‘本稿语言良好、修改建议、建议优先处理、整体可保留’等评审意见或过程说明。保留真实标题（Markdown或纯文本均可）及全部正文。";
@@ -62,6 +65,7 @@ export function createWritingCollaboration(options: {
 }) {
   const { storage, projectId, workflow } = options;
   const factSearch = createFactSearchTools({ storage, configuration: options.factSearchConfiguration ?? (() => ({ parallelEnabled: false, tavilyEnabled: false })) });
+  const researchSearch = createFactSearchTools({ storage, purpose: 'research', configuration: options.factSearchConfiguration ?? (() => ({ parallelEnabled: false, tavilyEnabled: false })) });
   const state = (runId: string) => {
     const confirmedBodyVersionId = workflow.recoverConfirmedBody(runId);
     const events = storage.listRunEvents(runId);
@@ -298,6 +302,7 @@ export function createWritingCollaboration(options: {
     const summary = { actor, stage: assignment?.stage ?? null, nextStage: current.nextStage, inputVersionIds: inputs, ready: current.ready, finished: current.finished,
       writingRequirements: briefId ? (() => { const brief = storage.getWritingBriefVersion(briefId)?.brief; return { audience: brief?.audience, platform: brief?.platform }; })() : undefined,
       outputGuidance,
+      ...(assignment?.stage === 'research' ? { researchSearchBudget: researchSearch.budget(runId), externalSearchEnabled: researchSearch.enabled() } : {}),
       unreadArtifactVersionIds: workflow.unreadReadinessArtifactIds(runId),
       ...(assignment?.stage === "fact_check" ? { currentBodyVersionId: storage.inspectProject(projectId)?.latestBodyVersionId ?? null,
         validEvidenceIds: evidenceIdsFromLedger(artifacts.find(item => item.kind === 'evidence')?.content ?? ''), searchBudget: factSearch.budget(runId) } : {}),
@@ -325,15 +330,16 @@ export function createWritingCollaboration(options: {
     const materialReadTools = !current.ready || isFactCheck || needsSourceAccess ? ['read_material'] : [];
     const artifactReadTools = isFactCheck ? ['read_fact_evidence', 'read_fact_record'] : inputs.length && (workflow.unreadReadinessArtifactIds(runId).length > 0 || artifactContext.needsArtifactAccess) ? ['read_artifact_version'] : [];
     const discussionReadTools = includeDiscussion && Array.isArray(options.authorReviewDiscussion) && options.authorReviewDiscussion.length ? ['read_review_discussion'] : [];
+    const researchTools = assignment?.stage === 'research' && researchSearch.enabled() && researchSearch.budget(runId).remaining > 0 ? ['search_research_sources'] : [];
     const allowedTools = isFactCheck && !prepared ? ['prepare_fact_check'] : actor === "director" ? [...materialReadTools, ...artifactReadTools, ...discussionReadTools, "assess_writing_readiness", "director_decide"] : actor === 'title'
       ? [...artifactReadTools, 'submit_publication_candidates']
-      : [...materialReadTools, ...artifactReadTools, ...discussionReadTools, ...(isFactCheck ? [] : ["assess_writing_readiness"]), ...(assignment?.stage === "fact_check" ? ['read_fact_article', "submit_fact_check", ...(factSearch.enabled() ? [...(factSearch.budget(runId).remaining > 0 ? ['search_fact_sources'] : []), 'read_fact_source'] : [])] : ["submit_writing_stage"])];
+      : [...materialReadTools, ...artifactReadTools, ...discussionReadTools, ...researchTools, ...(isFactCheck ? [] : ["assess_writing_readiness"]), ...(assignment?.stage === "fact_check" ? ['read_fact_article', "submit_fact_check", ...(factSearch.enabled() ? [...(factSearch.budget(runId).remaining > 0 ? ['search_fact_sources'] : []), 'read_fact_source'] : [])] : ["submit_writing_stage"])];
     const commonPrompt = options.systemPrompt.split("\n").filter((line) => /^(?:材料安全：|文体规则：|作者声音：|方向决定状态：|没有已授权的一手|只有这些材料)/u.test(line)).join("\n");
     let rolePrompt = actor === "director"
       ? "你是写作导演，只能调度独立专家、提问、返工或结束，不得直接写正文。director_decide.reason是传给专家的任务说明：明确本次解决什么、范围和预期输出。汇总评审分歧后给修订主笔取舍依据。nextStage仅约束普通dispatch，不覆盖用户当前修改要求；已完成正文需删改时先 rework central_revision，再dispatch central_revision→language_review→fact_check。不要直接dispatch已完成的language_review；它只能最小润色，不承担内容删改。事实blocked后若用户已授权删改，必须先实际修改当前被核查正文，再独立核查新版本，不能反复核查旧稿或再次索要同一授权；若只补充来源而无正文改动，可重新核查。提纲改向先rework outline再重新确认。全部阶段保存且当前事实门禁passed才finish，之后用一句话结束。"
       : actor === 'title'
         ? '你是独立标题专家。只基于绑定的当前最终正文生成少量真实且有差异的标题候选；调用 submit_publication_candidates 保存。不得改写正文，不得自行选择或声称用户已确认。'
-        : stageInstruction(assignment!.stage as WritingWorkflowStage, options.systemPrompt);
+        : stageInstruction(assignment!.stage as WritingWorkflowStage, options.systemPrompt, researchSearch.enabled());
     if (actor === "director") rolePrompt += "\n区分新任务编辑现稿与同run返工：项目已有正文或旧run事实blocked，不代表本run完成过阶段。rework只能选择本run completedStages中且前置均完成的阶段。新run即使要求修改已有稿件，也应读取现稿、评估ready，从nextStage=research按原流程推进；只有本run已完成central_revision后再次收到删改授权，才使用rework central_revision。项目历史factCheck不是新run的阶段完成凭据。例外：若本run的completedStages非空，说明程序已把同会话上一中断run的连续完成阶段连同其有效产物承接进本run，它们就是本run自己的完成记录——直接从当前nextStage继续，不要再从research重来，也不要重新生成已承接的产物。";
     if (assignment?.stage === "fact_check") rolePrompt += `\n唯一事实核查对象是 CURRENT_BODY_VERSION=${storage.inspectProject(projectId)?.latestBodyVersionId ?? "missing"}。extract阶段artifacts提供正文全文；verify阶段preparedClaims提供其中待核实条目及原句，正文仅留目录，必要时按需读取。不得核查历史正文、评审报告、用户解释中的旧稿或版本技术说明。证据只从绑定的evidence和授权材料取。`;
     const drafted = storage.listArtifactVersions(projectId, "report", `workflow:${runId}:draft`).length > 0;
@@ -401,6 +407,9 @@ export function createWritingCollaboration(options: {
         if (call.name === "submit_writing_stage") return args.stage === assignment?.stage;
         if (call.name === 'submit_publication_candidates') return actor === 'title';
         if (call.name === "read_fact_source" || call.name === 'search_fact_sources') return assignment?.stage === "fact_check" && factSearch.enabled();
+        // tool.requested is already recorded at authorization time. The tool
+        // excludes that operation when enforcing quota; do not charge it twice.
+        if (call.name === 'search_research_sources') return assignment?.stage === 'research' && researchSearch.enabled();
         if (['read_fact_evidence', 'read_fact_record', 'read_fact_article', 'prepare_fact_check'].includes(call.name)) return isFactCheck;
         if (call.name === "submit_fact_check") {
           const project = storage.inspectProject(projectId);
@@ -423,6 +432,6 @@ export function createWritingCollaboration(options: {
   };
   return { definitions: [definition as unknown as ToolDefinition<never, JsonValue>, publicationCandidatesDefinition as unknown as ToolDefinition<never, JsonValue>, discussionReader as unknown as ToolDefinition<never, JsonValue>,
       ...createFactContextTools(storage, projectId, factBinding),
-      createFactSourceTool({ storage, projectId, searchEnabled: factSearch.enabled, isDiscoveredSource: factSearch.isDiscoveredSource }) as unknown as ToolDefinition<never, JsonValue>, ...factSearch.definitions],
+      createFactSourceTool({ storage, projectId, searchEnabled: factSearch.enabled, isDiscoveredSource: factSearch.isDiscoveredSource }) as unknown as ToolDefinition<never, JsonValue>, ...factSearch.definitions, ...researchSearch.definitions],
     requestPolicy, searchPause: factSearch.pause, finished: (runId: string) => state(runId).finished };
 }

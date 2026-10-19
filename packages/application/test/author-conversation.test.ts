@@ -62,6 +62,105 @@ function setup(provider: AuthorProvider) {
 }
 const input = (userInstruction: string) => ({ projectId: 'p', sessionId: 'conversation', model: 'mock', parameters: {}, userInstruction });
 
+it('keeps inspiration for a stuck ending scoped to the saved article, without restarting topic selection or writing', async () => {
+  const provider = new AuthorProvider([{ name: 'respond_author', args: { reply: '结尾可以回到开头那份安静，也可以停在一个观察上。你更想留哪种余味？' } }]);
+  const f = setup(provider);
+  try {
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId;
+    const briefId = f.storage.inspectProject('p')!.currentBriefVersionId;
+    const result = await f.service.startAuthorTurn(input('只是结尾没思路，不改其他部分，先聊聊')).result;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(provider.requests.length, 1);
+    assert.match(provider.requests[0]!.messages[0]!.content, /段落.*结尾.*当前.*不.*重开选题/u);
+    assert.match(provider.requests[0]!.messages[0]!.content, /普通启发.*不.*委派/u);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
+    assert.equal(f.storage.inspectProject('p')!.currentBriefVersionId, briefId);
+    assert.equal(f.storage.listArtifactVersions('p', 'report', 'conversation-intake').length, 0);
+  } finally { f.close(); }
+});
+
+it('retests current body and selected title with three isolated concurrent readers, without rerunning writing or fact checks', async () => {
+  class RetestProvider extends AuthorProvider {
+    active = 0; peak = 0;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      if (request.messages[0]?.content.startsWith('READER_SIMULATION_V1=')) {
+        this.requests.push(structuredClone(request));
+        this.peak = Math.max(this.peak, ++this.active);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        this.active--;
+        yield { type: 'text_delta', delta: JSON.stringify({ whyOpen: '标题让我好奇', leaveAt: '没有', verdict: '还行，有收获', shareOrSave: '留着再读', memorableLine: '第一段保留' }) };
+        yield { type: 'completed', finishReason: 'stop' }; return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new RetestProvider([
+    { name: 'delegate_author_expert', args: { role: 'review_reader', task: '作者要求用当前正文和选定标题重新模拟读者' } },
+    { name: 'respond_author', args: { reply: '单读者的旧实现。' } },
+  ]);
+  const f = setup(provider);
+  try {
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    const candidates = savePublicationCandidates(f.storage, 'p', 'retest-titles', bodyId, [{ title: '给自己留一点安静', opening: null, distributionCopy: '周末慢下来', rationale: '贴近读者' }]);
+    choosePublicationCandidate(f.storage, 'p', 'retest-select', '1', candidates.id, 1);
+    const titleId = f.storage.inspectProject('p')!.currentTitleVersionId;
+    const before = f.storage.getFactCheckStatus('p');
+    const result = await f.service.startAuthorTurn(input('按当前成稿和最终标题，重新模拟读者反应，不改正文')).result;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const requests = provider.requests.filter(r => r.messages[0]?.content.startsWith('READER_SIMULATION_V1='));
+    assert.equal(requests.length, 3);
+    assert.equal(provider.peak, 3);
+    for (const request of requests) {
+      assert.equal(request.messages.length, 2);
+      assert.match(request.messages[1]!.content, /第二段有点长/);
+      assert.match(request.messages[1]!.content, /给自己留一点安静/);
+      assert.doesNotMatch(request.messages[1]!.content, /还行，有收获|证据台账/);
+      assert.equal(request.tools?.length ?? 0, 0);
+    }
+    const report = JSON.parse(f.storage.listArtifactVersions('p', 'report', `author-turn:${result.runId}`).at(-1)!.content);
+    assert.equal(report.role, 'review_reader');
+    assert.deepEqual(report.readerRetestBinding, { bodyVersionId: bodyId, titleVersionId: titleId });
+    assert.match(report.reply, /模拟读者 A|模拟读者 B|模拟读者 C/);
+    assert.match(report.reply, /正文未自动改动/);
+    assert.doesNotMatch(report.reply, /交给修订主笔|2\/3|必须修改/);
+    assert.deepEqual(f.storage.getFactCheckStatus('p'), before);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
+    assert.ok(!f.storage.listRunEvents(result.runId).some(e => e.type === 'run.waiting_user'));
+  } finally { f.close(); }
+});
+
+it('does not save reader retest reactions for a title changed while readers were responding', async () => {
+  let replaceTitle: () => void = () => {};
+  class ChangingTitleProvider extends AuthorProvider {
+    changed = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      if (request.messages[0]?.content.startsWith('READER_SIMULATION_V1=')) {
+        if (!this.changed) { this.changed = true; replaceTitle(); }
+        yield { type: 'text_delta', delta: JSON.stringify({ whyOpen: '想读', leaveAt: '没有', verdict: '还行', shareOrSave: '不转', memorableLine: '安静' }) };
+        yield { type: 'completed', finishReason: 'stop' }; return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new ChangingTitleProvider([{ name: 'delegate_author_expert', args: { role: 'review_reader', task: '重新模拟当前读者' } }]);
+  const f = setup(provider);
+  try {
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    const candidates = savePublicationCandidates(f.storage, 'p', 'retest-old', bodyId, [
+      { title: '先留一会儿安静', opening: null, distributionCopy: null, rationale: '第一版' },
+      { title: '慢下来看看', opening: null, distributionCopy: null, rationale: '第二版' },
+    ]);
+    choosePublicationCandidate(f.storage, 'p', 'select-old', '1', candidates.id, 1);
+    replaceTitle = () => { choosePublicationCandidate(f.storage, 'p', 'select-new', '2', candidates.id, 2); };
+    const result = await f.service.startAuthorTurn(input('重新模拟当前成稿的读者反应')).result;
+    assert.equal(result.ok, false, 'the old title response must not become the current retest report');
+    assert.equal(f.storage.listArtifactVersions('p', 'report', `author-turn:${result.runId}`).length, 0);
+    const events = JSON.stringify(f.storage.listRunEvents(result.runId));
+    assert.match(events, /READER_RETEST_STALE/);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
+  } finally { f.close(); }
+});
+
 it('projects short author decisions without full body and does not duplicate body text for discussion', async () => {
   const provider = new AuthorProvider([{ name: 'respond_author', args: { reply: '可以先讨论，不改正文。' } }]);
   const f = setup(provider);

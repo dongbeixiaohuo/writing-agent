@@ -39,7 +39,7 @@ export interface RunningLocalWebHost {
 
 interface SessionCapability {
   readonly bridge: ClientBridge;
-  readonly expiresAt: number;
+  expiresAt: number;
 }
 
 interface JsonError {
@@ -465,6 +465,9 @@ export async function startLocalWebHost(
         "Session capability is missing or expired",
       );
     }
+    // An open browser polling authenticated state remains live. Idle sessions
+    // still expire; an unauthenticated request can never extend a lease.
+    session.expiresAt = now() + sessionTtlMs;
     return session;
   };
 

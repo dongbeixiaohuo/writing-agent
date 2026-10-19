@@ -7,6 +7,55 @@ import { join } from 'node:path';
 import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { createToolPermissionGrant } from '../../runtime/tools/src/index.js';
 
+test('pre-outline research is optional, bounded to two queries and isolated from final fact-check quota', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-research-search-'));
+  const storage = openWorkspaceStorage({ workspacePath: root });
+  let requests = 0;
+  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: true, searchLimit: 6,
+    authorizationMode: 'enabled_services' as const, getTavilyKey: async () => 'synthetic' });
+  const factory = (purpose: 'research' | 'fact_check') => search.createFactSearchTools({ storage, purpose, configuration,
+    fetch: async () => { requests++; return Response.json({ results: [{ url: 'https://example.com/fact', content: '公开背景' }] }); } });
+  try {
+    storage.createProject({ projectId: 'p', operationId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'writing' });
+    storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', planVersion: 'test' });
+    for (let i = 0; i < 3; i++) {
+      const operationId = `research-${i}`, scope = factory('research'), name = scope.definitions[0]!.name;
+      assert.equal(name, 'search_research_sources');
+      storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId, type: 'tool.requested', payload: { toolName: name, arguments: { query: `query ${i}` } } });
+      const result = await scope.search(`query ${i}`, undefined, 'r', { projectId: 'p', runId: 'r', operationId,
+        abortSignal: new AbortController().signal, expectedBodyVersionId: null,
+        permissionGrant: createToolPermissionGrant({ projectId: 'p', runId: 'r', permissions: ['network:https:read'] }) });
+      storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId, type: 'tool.completed', payload: { result: { toolName: name, ok: true, result } } });
+      assert.equal(result.recoveryRequired, undefined, 'optional research must not add a quota confirmation checkpoint');
+      if (i === 2) {
+        assert.equal(result.failureCode, 'SEARCH_LIMIT_REACHED');
+        assert.doesNotMatch(result.notice, /请选择|追加|重试/);
+        assert.match(result.notice, /继续.*提纲/);
+      }
+    }
+    assert.equal(requests, 2);
+    assert.equal(factory('research').budget('r').remaining, 0, 'resume does not reset research budget');
+    assert.doesNotMatch(factory('research').budget('r').notice ?? '', /等待用户|追加/);
+    assert.equal(factory('fact_check').budget('r').remaining, 6);
+    assert.equal(factory('fact_check').budget('r').attemptsUsed, 0);
+  } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failed optional research is cached without asking for a retry or blocking the outline', async () => {
+  let requests = 0;
+  const scope = search.createFactSearchTools({ purpose: 'research', configuration: () => ({ parallelEnabled: false,
+    tavilyEnabled: true, authorizationMode: 'enabled_services', getTavilyKey: async () => 'synthetic' }),
+    fetch: async () => { requests++; throw new Error('offline'); } });
+  const result = await scope.search('public background');
+  assert.equal(result.mode, 'unavailable');
+  assert.equal(result.recoveryRequired, undefined);
+  assert.doesNotMatch(result.notice, /请选择|追加|重试/);
+  assert.match(result.notice, /继续.*提纲/);
+  assert.equal((await scope.search('public background')).cacheHit, true);
+  assert.equal(requests, 1);
+});
+
 test('search defaults tolerate cross-border latency and the host can configure the query budget', async () => {
   assert.equal(search.DEFAULT_SEARCH_REQUEST_TIMEOUT_MS, 20_000);
   assert.equal(search.DEFAULT_SEARCH_PROVIDER_TIMEOUT_MS, 30_000);

@@ -22,6 +22,16 @@ export interface RunFailureContext {
  */
 export function explainRunFailure(context: RunFailureContext): RunFailureExplanation {
   const { errorCode: code, technicalName, transportPhase } = context
+  if (code === 'INTAKE_SOURCE_READ_REQUIRED') return {
+    title: '本轮链接尚未尝试读取，方案未保存',
+    detail: '模型已请求提交方案，但尚有当轮指定链接未经读取尝试；这是本机来源前置检查，不是模型无响应或搜索服务超时。',
+    remediation: '先读取记录中列出的链接，再提交方案；读取失败或超过每轮三条时明确说明未读范围，不猜测网页内容。',
+  }
+  if (code === 'READER_RETEST_STALE') return {
+    title: '读者重测期间稿件版本发生变化',
+    detail: '正文或已选标题已变化，旧版本的模拟感受未保存为当前结论；稿件未被覆盖，也不是模型无响应。',
+    remediation: '确认当前版本后，按当前版本重新重测读者；不需要重新提交材料或重跑写作流程。',
+  }
   if (code === 'FACT_EXTERNAL_RECORD_REQUIRED') return {
     title: '核查提交的查证依据不完整',
     detail: '提交的外部来源未通过记录关联校验，具体条目与原因见记录信息和输出详情；这不是模型无响应或搜索超时。',
@@ -126,6 +136,14 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
       detail: '失败发生在直接网页读取或材料保存阶段；未确认正文可用，不能推断为模型故障或搜索服务故障。',
       remediation: '查看技术代码和输出详情，核对链接是否为可公开访问的 HTTP(S) 文章；也可以直接粘贴正文。',
     }
+  }
+
+  if (technicalName === 'search_research_sources') return {
+    title: code === 'SEARCH_TIMEOUT' || code === 'SEARCH_REQUEST_TIMEOUT' ? '前置研究搜索等待超时'
+      : code === 'SEARCH_LIMIT_REACHED' ? '前置研究搜索已到上限' : '前置研究搜索未取得结果',
+    detail: code === 'SEARCH_LIMIT_REACHED' ? '这是最多两次查询尝试的研究额度门禁，本次未发起新请求；最终事实核查额度不受影响。'
+      : '背景搜索工具未取得可用结果；这不是大模型未响应。具体服务、耗时和技术代码保留在运行记录中。',
+    remediation: '继续用已有材料整理提纲，并说明尚未取得的背景信息；前置补查不增加作者确认步骤。',
   }
 
   if (technicalName === 'search_fact_sources') {

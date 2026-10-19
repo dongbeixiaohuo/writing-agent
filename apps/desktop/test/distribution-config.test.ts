@@ -9,6 +9,18 @@ import { UI_BRIDGE_PROTOCOL_VERSION } from '../../../packages/client-bridge/src/
 
 const root = resolve("apps/desktop");
 
+test("clean Windows CI installs Electron before running real desktop tests", () => {
+  for (const [file, validation] of [
+    ["packaging.yml", "- name: Validate desktop host"],
+    ["desktop-rc.yml", "- run: npm run check:desktop"],
+  ] as const) {
+    const workflow = readFileSync(resolve(".github/workflows", file), "utf8");
+    const install = workflow.indexOf("- run: node node_modules/electron/install.js");
+    assert.ok(install >= 0, `${file} must explicitly install Electron 44 (no postinstall)`);
+    assert.ok(install < workflow.indexOf(validation), `${file} must install before testing`);
+  }
+});
+
 test("candidate validation includes search safety and conversation rendering regressions", () => {
   const { scripts } = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { scripts: Record<string, string> };
   assert.match(scripts["check:runtime"]!, /npm run test:fact-search(?:\s|$)/u);
@@ -25,7 +37,7 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
   assert.deepEqual(packageJson, {
     ...packageJson,
     name: "writing-agent-desktop",
-    version: "1.0.0-rc.80",
+    version: "1.0.0-rc.87",
     productName: "Writing Agent",
     main: "dist/main.cjs",
   });

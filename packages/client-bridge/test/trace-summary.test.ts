@@ -80,6 +80,44 @@ test('search trace exposes the current provider before completion and fallback a
   assert.match(done.outputPreview!, /Tavily/);
 });
 
+test('front research searches show their purpose, query and provider rather than an unknown tool', () => {
+  const events = [
+    { type: 'tool.requested', operationId: 'research-search', payload: { toolName: 'search_research_sources', arguments: { query: '公开背景缺口' } } },
+    { type: 'search.progress', operationId: 'research-search', payload: { message: 'Tavily 已发出查询' } },
+  ];
+  const pending = runDiagnostics(projection(events), run).trace!.find(s => s.kind === 'tool')!;
+  assert.equal(pending.label, '补查研究资料');
+  assert.match(pending.inputPreview!, /公开背景缺口/);
+  assert.match(pending.outputPreview!, /Tavily/);
+  const done = runDiagnostics(projection([...events, { type: 'tool.completed', operationId: 'research-search', payload: { result: {
+    ok: true, result: { mode: 'external', provider: 'tavily', evidenceText: '公开摘录 https://example.com/background' },
+  } } }]), run).trace!.find(s => s.kind === 'tool')!;
+  assert.match(done.outputPreview!, /Tavily.*搜索已返回/);
+});
+
+test('new source and reader version guards name the repair instead of suggesting a model outage', () => {
+  const source = explainRunFailure({ kind: 'tool', status: 'failed', technicalName: 'submit_writing_proposal', errorCode: 'INTAKE_SOURCE_READ_REQUIRED' });
+  assert.match(source.title, /链接.*未.*读取/);
+  assert.match(source.remediation, /先.*读取/);
+  const reader = explainRunFailure({ kind: 'tool', status: 'failed', technicalName: 'respond_author', errorCode: 'READER_RETEST_STALE' });
+  assert.match(reader.title, /重测.*版本.*变化/);
+  assert.match(reader.remediation, /当前版本.*重测/);
+  assert.doesNotMatch(reader.remediation + source.remediation, /账户|模型配置/);
+});
+
+test('optional research failures explain the external cause and never offer a nonexistent recovery prompt', () => {
+  for (const code of ['SEARCH_REQUEST_TIMEOUT', 'SEARCH_LIMIT_REACHED', 'SEARCH_UNAVAILABLE']) {
+    const step = runDiagnostics(projection([
+      { type: 'tool.requested', operationId: 'research', payload: { toolName: 'search_research_sources', arguments: { query: '公开背景' } } },
+      { type: 'tool.failed', operationId: 'research', payload: { error: { code } } },
+    ]), run).trace!.find(s => s.kind === 'tool')!;
+    const explanation = explainRunFailure(step);
+    assert.match(explanation.title, /研究.*搜索/);
+    assert.match(explanation.remediation, /继续.*提纲/);
+    assert.doesNotMatch(explanation.remediation, /重试|追加|当前.*提示/);
+  }
+});
+
 test('model trace shows a bounded assistant reply without private reasoning', () => {
   const visible = `已根据材料归纳三个核心观点：${'论点、证据与结论形成完整闭环。'.repeat(20)}`
   const result = runDiagnostics(projection([

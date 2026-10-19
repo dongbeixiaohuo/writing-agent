@@ -1,5 +1,5 @@
-export declare const UI_BRIDGE_PROTOCOL_VERSION = 23;
-export type ThemeMode = 'light' | 'dark' | 'system';
+export declare const UI_BRIDGE_PROTOCOL_VERSION = 24;
+export type ThemeMode = 'light' | 'dark' | 'system' | 'paper';
 export type ConnectionState = 'ready' | 'running' | 'offline';
 export type ToolState = 'pending' | 'success' | 'failure' | 'cancelled';
 export type BridgeMode = 'application' | 'mock';

@@ -31,16 +31,30 @@ test('body edits keep displayed title choices available with unchanged ordinals 
 
 function declaredWritingTools(source: string): string[] {
   const names: string[] = [];
+  const root = ts.createSourceFile('tools.ts', source, ts.ScriptTarget.Latest, true);
+  const constants = new Map<string, ts.Expression>();
+  const collect = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) constants.set(node.name.text, node.initializer);
+    ts.forEachChild(node, collect);
+  };
+  collect(root);
+  const resolveNames = (value: ts.Expression, depth = 0): string[] => {
+    if (depth > 4) return [];
+    if (ts.isStringLiteral(value)) return [value.text];
+    if (ts.isConditionalExpression(value)) return [...resolveNames(value.whenTrue, depth + 1), ...resolveNames(value.whenFalse, depth + 1)];
+    const binding = ts.isIdentifier(value) ? constants.get(value.text) : undefined;
+    return binding ? resolveNames(binding, depth + 1) : [];
+  };
   const visit = (node: ts.Node) => {
     if (ts.isObjectLiteralExpression(node)) {
       const fields = new Map(node.properties.filter(ts.isPropertyAssignment)
         .map(property => [property.name.getText().replace(/^['"]|['"]$/g, ''), property.initializer]));
       const name = fields.get('name');
-      if (name && ts.isStringLiteral(name) && fields.has('inputSchema') && fields.has('permissions') && fields.has('effect')) names.push(name.text);
+      if (name && fields.has('inputSchema') && fields.has('permissions') && fields.has('effect')) names.push(...resolveNames(name));
     }
     ts.forEachChild(node, visit);
   };
-  visit(ts.createSourceFile('tools.ts', source, ts.ScriptTarget.Latest, true));
+  visit(root);
   return names;
 }
 
@@ -50,6 +64,10 @@ test('tool inventory distinguishes registered definitions from upstream MCP call
     const request = { method: 'tools/call', params: { name: 'web_search', arguments: {} } };
     const preview = { name: 'submit_writing_stage', arguments: {}, contentArgument: 'content' };
   `), ['search_fact_sources']);
+  assert.deepEqual(declaredWritingTools(`
+    const toolName = research ? 'search_research_sources' : 'search_fact_sources';
+    const definition = { name: toolName, inputSchema: {}, permissions: [], effect: 'read_only' };
+  `), ['search_research_sources', 'search_fact_sources']);
 });
 
 test('every declared writing tool has display documentation, while caller names are a fixed allowlist', () => {
@@ -64,7 +82,7 @@ test('every declared writing tool has display documentation, while caller names 
       }
     }
   }
-  for (const name of ['search_fact_sources', 'read_fact_source', 'read_material', 'submit_writing_stage', 'interpret_author_reply']) assert.ok(declared.has(name), name);
+  for (const name of ['search_fact_sources', 'search_research_sources', 'read_fact_source', 'read_material', 'submit_writing_stage', 'interpret_author_reply']) assert.ok(declared.has(name), name);
   for (const role of ['intake', 'director', 'research', 'outline', 'draft', 'review_editor', 'review_publish', 'review_reader', 'central_revision', 'language_review', 'fact_check', 'title']) assert.ok(recordedActorLabel(role), role);
   assert.equal(recordedActorLabel('constructor'), null);
 });

@@ -396,7 +396,7 @@ function emptySnapshot(): BridgeSnapshot {
       notice: "正在连接桌面运行时",
     },
     settings: {
-      theme: "system",
+      theme: "paper",
       language: "zh-CN",
       contentFontSize: 14,
       providerLabel: "正在连接",

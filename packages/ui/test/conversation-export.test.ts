@@ -6,6 +6,26 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+test('export errors explain safe desktop codes even when Electron strips custom Error properties', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'wa-export-errors-'));
+  try {
+    const output = join(directory, 'errors.cjs');
+    buildSync({ entryPoints: ['packages/ui/src/shell/ConversationExportCard.tsx'], bundle: true,
+      platform: 'node', format: 'cjs', outfile: output, jsx: 'automatic', loader: { '.css': 'empty' }, logLevel: 'silent' });
+    const { publicationErrorMessage } = createRequire(import.meta.url)(output);
+    assert.equal(typeof publicationErrorMessage, 'function');
+    assert.match(publicationErrorMessage(new Error('EXPORT_WRITING_ACTIVE')), /当前项目.*处理中/u);
+    assert.match(publicationErrorMessage(new Error('FACT_GATE_NOT_PASSED')), /尚未通过事实核查/u);
+    assert.match(publicationErrorMessage({ code: 'EXPORT_SELECTION_CHANGED' }), /稿件或项目已变化/u);
+    assert.match(publicationErrorMessage(new Error('EXPORT_SAVE_FAILED')), /保存未完成/u);
+    for (const error of [new Error('DESKTOP_COMMAND_FAILED'), new Error('private-path D:/private/article.html'), null]) {
+      const message = publicationErrorMessage(error);
+      assert.match(message, /原因尚未确认/u);
+      assert.doesNotMatch(message, /权限|空间|private|article\.html/u);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('main conversation links to the current manuscript while export settings live in the workbench', () => {
   const directory = mkdtempSync(join(tmpdir(), 'wa-conversation-export-'));
   try {

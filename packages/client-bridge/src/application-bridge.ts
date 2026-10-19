@@ -66,6 +66,9 @@ export interface ApplicationBridgeOptions {
   readonly initialSessionId?: string;
   readonly initialGeneration?: number;
   readonly uiSettingsPersistence?: UiSettingsPersistence;
+  /** A replacement runtime is prepared before its provider settings commit.
+   * Do not consume durable work until the host installs it and calls refresh. */
+  readonly deferHandoffsUntilRefresh?: boolean;
 }
 
 interface CachedCommand<T> {
@@ -1060,9 +1063,9 @@ export class ApplicationClientBridge implements ClientBridge {
       options.operationIdFactory ?? (() => globalThis.crypto.randomUUID());
     this.#uiSettingsPersistence = options.uiSettingsPersistence ?? null;
     const persistedSettings = this.#uiSettingsPersistence?.load() ?? null;
-    const initialTheme = persistedSettings?.theme ?? "system";
+    const initialTheme = persistedSettings?.theme ?? "paper";
     const initialContentFontSize = persistedSettings?.contentFontSize ?? 14;
-    if (!(["light", "dark", "system"] as const).includes(initialTheme)) {
+    if (!(["light", "dark", "system", "paper"] as const).includes(initialTheme)) {
       throw new Error("THEME_INVALID");
     }
     if (![13, 14, 16].includes(initialContentFontSize)) {
@@ -1084,7 +1087,7 @@ export class ApplicationClientBridge implements ClientBridge {
     );
     // Recover committed decisions even when the previous page/process disappeared.
     // Keep this command outside the pure snapshot projection.
-    this.#service.continuePendingHandoffs(this.#model);
+    if (!options.deferHandoffsUntilRefresh) this.#service.continuePendingHandoffs(this.#model);
   }
 
   async handshake(): Promise<BridgeHandshake> {
@@ -1244,7 +1247,7 @@ export class ApplicationClientBridge implements ClientBridge {
       throw new Error("CONTENT_FONT_SIZE_INVALID");
     }
     const theme = patch.theme ?? this.#snapshot.settings.theme;
-    if (!(["light", "dark", "system"] as const).includes(theme)) {
+    if (!(["light", "dark", "system", "paper"] as const).includes(theme)) {
       throw new Error("THEME_INVALID");
     }
     this.#uiSettingsPersistence?.save({ theme, contentFontSize });

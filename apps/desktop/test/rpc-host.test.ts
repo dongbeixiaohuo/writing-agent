@@ -1,12 +1,62 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { buildSync } from 'esbuild';
+import { runInNewContext } from 'node:vm';
+import { spawnSync } from 'node:child_process';
+import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import {
   UI_BRIDGE_PROTOCOL_VERSION,
   type ClientBridge,
 } from "../../../packages/client-bridge/src/protocol.js";
-import { dispatchDesktopRpc } from "../src/rpc-host.js";
+import { dispatchDesktopRpc, safeDesktopFailure } from "../src/rpc-host.js";
+import type { DesktopHostApi } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { commandErrorMessage } from '../../../packages/ui/src/shell/onboarding.js';
+
+test('publication preload preserves safe error codes in standard Error.message across contextBridge', async () => {
+  const output = buildSync({ entryPoints: ['apps/desktop/src/preload.ts'], bundle: true, platform: 'node',
+    format: 'cjs', external: ['electron'], write: false, logLevel: 'silent' }).outputFiles[0]!.text;
+  let api: DesktopHostApi | undefined;
+  let code = 'EXPORT_WRITING_ACTIVE';
+  const electron = {
+    contextBridge: { exposeInMainWorld: (_name: string, value: DesktopHostApi) => { api = value; } },
+    ipcRenderer: { invoke: async () => safeDesktopFailure(new Error(code)), on: () => {}, removeListener: () => {} },
+  };
+  runInNewContext(output, { require: (name: string) => {
+    assert.equal(name, 'electron'); return electron;
+  } });
+  assert.ok(api);
+  for (code of ['EXPORT_WRITING_ACTIVE', 'FACT_GATE_NOT_PASSED', 'EXPORT_SELECTION_CHANGED', 'EXPORT_SAVE_FAILED']) {
+    // Electron copies standard Error fields but not custom properties such as code.
+    await assert.rejects(api.savePublicationAs({ projectId: 'p', bodyVersionId: 'b', format: 'html', layoutPreset: 'editorial' }),
+      (error: Error) => error.message === code);
+  }
+  code = 'EXPORT_RECEIPT_NOT_FOUND';
+  await assert.rejects(api.revealPublication('missing'), (error: Error) => error.message === code);
+});
+
+test('real Electron contextBridge preserves publication errors without relying on custom code properties',
+  { skip: process.platform !== 'win32' }, () => {
+    const root = mkdtempSync(join(tmpdir(), 'wa-publication-preload-'));
+    try {
+      const preload = join(root, 'preload.cjs');
+      buildSync({ entryPoints: ['apps/desktop/src/preload.ts'], bundle: true, platform: 'node',
+        format: 'cjs', external: ['electron'], outfile: preload, logLevel: 'silent' });
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      // Use a local executable directory like an installed app, not a synced
+      // OneDrive checkout, while keeping all test data isolated in TEMP.
+      const electronRoot = join(root, 'electron');
+      cpSync(resolve('node_modules/electron/dist'), electronRoot, { recursive: true });
+      const result = spawnSync(join(electronRoot, 'electron.exe'),
+        [resolve('apps/desktop/test/fixtures/publication-preload.cjs'), preload, root],
+        { env, windowsHide: true, encoding: 'utf8', timeout: 20000 });
+      assert.equal(result.status, 0, result.stderr || String(result.error));
+      assert.match(result.stdout, /PUBLICATION_CONTEXT_BRIDGE_PASS/u);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 
 test('confirmation and recovery failures keep their actionable code through desktop RPC and UI', async () => {
   for (const code of ['CHECKPOINT_DECISION_REQUIRED', 'INTENT_CONTEXT_STALE', 'INTENT_CONTEXT_INVALID',

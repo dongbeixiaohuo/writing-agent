@@ -29,7 +29,10 @@ function parseSettings(value: unknown): PersistedUiSettings {
     !('schemaVersion' in value) ||
     value.schemaVersion !== 1 ||
     !('theme' in value) ||
-    (value.theme !== 'light' && value.theme !== 'dark' && value.theme !== 'system') ||
+    (value.theme !== 'light' &&
+      value.theme !== 'dark' &&
+      value.theme !== 'system' &&
+      value.theme !== 'paper') ||
     !('contentFontSize' in value) ||
     typeof value.contentFontSize !== 'number' ||
     ![13, 14, 16].includes(value.contentFontSize)

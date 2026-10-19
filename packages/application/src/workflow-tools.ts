@@ -209,9 +209,9 @@ export function assertCleanBodyStageContent(stage: BodyStage, content: string, b
   );
   if (!startsWithProcessHeading && !startsWithReviewStatus && !includesWrappedArticleMarker && !(startsWithReviewAssessment && containsReviewRecommendations) && !standaloneReviewConclusion && !containsProcessPostscript) {
     if (!changedArticleShape) return;
-    throw new ToolExecutionFault('BODY_STAGE_STRUCTURE_MISMATCH', 'Return the complete article with its existing headings; the response removed a heading or too much article text', false, {
-      stage, requiredHeadings: headings(baseline!), minimumCharacters: Math.ceil(baseline!.length * 0.65),
-      correction: 'Preserve these exact Markdown headings and return the complete article, not just paragraphs. Remove any legacy postscript change notes; those notes are not part of article length. Do not rewrite an unchanged response.',
+    throw new ToolExecutionFault('BODY_STAGE_STRUCTURE_MISMATCH', 'Return the complete article; the response appears truncated — it dropped a heading or most of the article body', false, {
+      stage, requiredHeadings: headings(baseline!),
+      correction: 'Return the full article preserving every Markdown heading and section; do not abridge or truncate it. This is not a request to add length or padding — if the article genuinely needed cuts those are fine, only return the whole revised article rather than a fragment. Remove any legacy postscript change notes; those are not part of the article. Do not rewrite an unchanged response.',
     });
   }
   throw new ToolExecutionFault(

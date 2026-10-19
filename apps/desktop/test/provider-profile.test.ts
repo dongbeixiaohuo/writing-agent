@@ -15,7 +15,27 @@ import {
   parseDesktopProviderProfileInput,
   providerConfigForInput,
   saveDesktopProviderProfile,
+  markDesktopProviderVerified,
 } from "../src/provider-profile.js";
+
+test('verification applies only to the tested model and is cleared when selecting a different model', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-verification-'));
+  const path = join(root, 'provider.json');
+  const broker = new CredentialBroker({ systemBackend: new MemoryCredentials(), environment: {} });
+  try {
+    await saveDesktopProviderProfile(path, broker, { kind: 'openai_compatible', providerId: 'test', baseURL: 'https://a.example.test/v1',
+      model: 'one', models: ['one', 'two'], tools: 'supported', usage: 'reported', apiKey: 'synthetic', persistence: 'system' });
+    const id = loadDesktopProviderCatalog(path).activeProfileId!;
+    markDesktopProviderVerified(path, id);
+    selectDesktopProvider(path, id, 'one');
+    assert.ok(loadDesktopProviderCatalog(path).profiles[0]!.verifiedAt);
+    selectDesktopProvider(path, id, 'two');
+    assert.equal(loadDesktopProviderCatalog(path).profiles[0]!.verifiedAt, undefined);
+    const staleConfig = { ...loadDesktopProviderProfile(path)!, model: 'one' };
+    markDesktopProviderVerified(path, id, staleConfig);
+    assert.equal(loadDesktopProviderCatalog(path).profiles[0]!.verifiedAt, undefined, 'late test result must not verify a different model');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 import { PROVIDER_PRESETS } from '../../../packages/client-bridge/src/provider-presets.js';
 
 test('new Anthropic plan presets use source Bearer authentication only for their exact transport', () => {

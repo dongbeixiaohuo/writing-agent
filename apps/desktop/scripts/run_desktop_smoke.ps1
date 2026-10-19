@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ExecutablePath,
     [int]$TimeoutSeconds = 30,
-    [int]$ExpectedProtocolVersion = 23,
+    [int]$ExpectedProtocolVersion = 24,
     [string]$EvidencePath,
     # Use a consistent SQLite online-backup snapshot, never copy an open live DB.
     [string]$DatabaseFixturePath,

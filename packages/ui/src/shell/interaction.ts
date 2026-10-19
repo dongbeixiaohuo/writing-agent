@@ -16,8 +16,8 @@ export function conversationWorkingCopy(activity: BridgeSnapshot['liveActivity']
   if (activity?.activeTool) {
     const seconds = Math.max(0, Math.floor((now - activity.activeTool.startedAt) / 1000))
     const name = activity.activeTool.name
-    return { title: name === 'search_fact_sources' ? '正在搜索事实来源' : name === 'read_fact_source' ? '正在读取来源原文' : '正在处理工具操作',
-      detail: `本次工具操作已用时 ${seconds} 秒。上方是本次执行累计时间，包含此前阶段。${name === 'search_fact_sources' || name === 'read_fact_source' ? '等待外部服务返回；超时会说明未能查证，不会把搜索失败当作核查通过。' : '运行记录可查看具体操作与结果。'}你可以随时停止，已保存稿件不会丢失。`, elapsedSeconds }
+    return { title: name === 'search_research_sources' ? '正在补查研究资料' : name === 'search_fact_sources' ? '正在搜索事实来源' : name === 'read_fact_source' ? '正在读取来源原文' : '正在处理工具操作',
+      detail: `本次工具操作已用时 ${seconds} 秒。上方是本次执行累计时间，包含此前阶段。${name === 'search_research_sources' ? '等待背景搜索返回；失败或达到上限会保留信息缺口，继续使用已有材料，不视为已查证。' : name === 'search_fact_sources' || name === 'read_fact_source' ? '等待外部服务返回；超时会说明未能查证，不会把搜索失败当作核查通过。' : '运行记录可查看具体操作与结果。'}你可以随时停止，已保存稿件不会丢失。`, elapsedSeconds }
   }
   const requestSeconds = activity ? Math.max(0, Math.floor((now - activity.startedAt) / 1000)) : 0
   if (activity?.actor === 'review_reader') return { title:labels.review_reader!,

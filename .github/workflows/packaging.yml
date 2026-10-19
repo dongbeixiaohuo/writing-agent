@@ -68,6 +68,8 @@ jobs:
           node-version: "24.18.0"
           cache: npm
       - run: npm ci
+      # Electron 44 has no postinstall; real contextBridge tests need its binary.
+      - run: node node_modules/electron/install.js
       - name: Validate UI and bridge
         run: npm run check:ui
       - name: Validate desktop host

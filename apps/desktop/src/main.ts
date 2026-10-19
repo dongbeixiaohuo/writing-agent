@@ -472,7 +472,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     show: false,
     title: "Writing Agent",
-    backgroundColor: "#f7f7f5",
+    backgroundColor: "#F7F4ED",
     autoHideMenuBar: true,
     webPreferences: createSecureWebPreferences(join(__dirname, "preload.cjs")),
   });

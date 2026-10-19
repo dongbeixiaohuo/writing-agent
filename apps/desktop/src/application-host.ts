@@ -212,34 +212,44 @@ export class DesktopApplicationHost {
   async configureProvider(
     input: DesktopProviderProfileInput,
   ): Promise<DesktopProviderStatus> {
-    return this.#changeProvider(async () => (await saveDesktopProviderProfile(this.#providerProfilePath, this.#credentials, input)).config);
+    return this.#changeProvider(async prepare =>
+      (await saveDesktopProviderProfile(this.#providerProfilePath, this.#credentials, input, prepare)).config);
   }
 
   async selectProvider(profileId: string, model: string): Promise<DesktopProviderStatus> {
-    return this.#changeProvider(async () => {
+    return this.#changeProvider(async prepare => {
       const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(entry => entry.id === profileId);
       if (!profile || !(await this.#credentials.inspect(profile.config.credentialRef)).configured) throw new Error('PROVIDER_API_KEY_REQUIRED');
-      return selectDesktopProvider(this.#providerProfilePath, profileId, model);
+      return selectDesktopProvider(this.#providerProfilePath, profileId, model, prepare);
     });
   }
 
-  async #changeProvider(change: () => Promise<NormalizedProviderConfig>): Promise<DesktopProviderStatus> {
+  async #changeProvider(change: (prepare: (config: NormalizedProviderConfig) => void) => Promise<NormalizedProviderConfig>): Promise<DesktopProviderStatus> {
     if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
     if (this.#providerChanging) throw new Error('PROVIDER_SETTINGS_BUSY');
     if (this.#hasExecutingRun()) throw new Error('ACTIVE_RUNS_PRESENT');
     this.#providerChanging = true;
+    let runtime: { service: WritingApplicationService; bridge: ClientBridge } | undefined;
     try {
       const before = this.#bridge.getSnapshot();
-      const config = await change();
-      const runtime = this.#createRuntime(config, before.selectedProjectId, before);
+      const config = await change(candidate => {
+        runtime = this.#createRuntime(candidate, before.selectedProjectId, before, true);
+      });
+      if (!runtime) throw new Error('PROVIDER_RUNTIME_NOT_PREPARED');
       this.#bridgeUnsubscribe?.();
       this.#bridge.dispose();
       this.#providerConfig = config;
       this.#connectionTest = null;
       this.#service = runtime.service;
       this.#bridge = runtime.bridge;
+      runtime = undefined;
       this.#attachBridgeEvents();
+    } catch (error) {
+      runtime?.bridge.dispose();
+      throw error;
     } finally { this.#providerChanging = false; }
+    // Only the installed, committed runtime may recover pending decisions.
+    await this.#bridge.refresh();
     this.#emit();
     return this.providerStatus('active');
   }
@@ -284,6 +294,7 @@ export class DesktopApplicationHost {
     if (this.#hasExecutingRun()) throw new Error("ACTIVE_RUNS_PRESENT");
     const config = this.#providerConfig;
     if (config === null) throw new Error("MODEL_PROVIDER_REQUIRED");
+    const testedProfileId = loadDesktopProviderCatalog(this.#providerProfilePath).activeProfileId;
     const provider = this.#providerFactory(config, this.#credentials);
     const result = await probeModelConnection(provider, {
       requestId: `desktop-connection-${randomUUID()}`,
@@ -311,10 +322,9 @@ export class DesktopApplicationHost {
           ...(result.error.providerDetail === undefined ? {} : { providerDetail: result.error.providerDetail }),
         };
     if (config === this.#providerConfig) this.#connectionTest = connectionTest;
-    if (connectionTest.ok) {
-      const activeProfileId = loadDesktopProviderCatalog(this.#providerProfilePath).activeProfileId;
-      if (activeProfileId !== null) {
-        try { markDesktopProviderVerified(this.#providerProfilePath, activeProfileId); } catch { /* keep the test result even if the stamp fails */ }
+    if (connectionTest.ok && config === this.#providerConfig) {
+      if (testedProfileId !== null) {
+        try { markDesktopProviderVerified(this.#providerProfilePath, testedProfileId, config); } catch { /* keep the test result even if the stamp fails */ }
       }
     }
     return connectionTest;
@@ -415,7 +425,9 @@ export class DesktopApplicationHost {
       if (snapshot.selectedProjectId !== input.projectId || snapshot.deliveryWorkspace.bodyVersionId !== input.bodyVersionId) {
         throw new Error('EXPORT_SELECTION_CHANGED');
       }
-      if (this.#hasActiveRun()) throw new Error('EXPORT_WRITING_ACTIVE');
+      // Export reads a version-bound snapshot of this project. Other projects,
+      // and runs that are merely waiting for feedback, cannot change this file.
+      if (this.#hasExecutingRun(input.projectId)) throw new Error('EXPORT_WRITING_ACTIVE');
       if (!snapshot.deliveryWorkspace.formalExportEnabled || snapshot.deliveryWorkspace.gateStatus !== 'passed') {
         throw new Error('FACT_GATE_NOT_PASSED');
       }
@@ -600,6 +612,7 @@ export class DesktopApplicationHost {
     config: NormalizedProviderConfig | null,
     initialProjectId: string,
     previous?: BridgeSnapshot,
+    deferHandoffsUntilRefresh = false,
   ): { service: WritingApplicationService; bridge: ClientBridge } {
     const provider = config === null
       ? undefined
@@ -631,6 +644,7 @@ export class DesktopApplicationHost {
       clientBuild: `writing-agent-desktop@${this.#applicationVersion}`,
       runtimeBuild: "writing-agent-runtime-v1",
       initialProjectId,
+      deferHandoffsUntilRefresh,
       ...(previous === undefined ? {} : { initialSessionId: previous.selectedSessionId, initialGeneration: previous.generation + 1 }),
       uiSettingsPersistence: createFileUiSettingsPersistence({
         filePath: join(this.#workspacePath, ".writing-agent", "ui-settings.json"),
@@ -656,8 +670,9 @@ export class DesktopApplicationHost {
     );
   }
 
-  #hasExecutingRun(): boolean {
-    return this.#service.listProjects().some(project => this.#service.getProjectProjection(project.id).runs
+  #hasExecutingRun(projectId?: string): boolean {
+    const projectIds = projectId === undefined ? this.#service.listProjects().map(project => project.id) : [projectId];
+    return projectIds.some(id => this.#service.getProjectProjection(id).runs
       .some(run => run.status === 'queued' || run.status === 'running' || run.status === 'paused'));
   }
 }

@@ -203,6 +203,83 @@ it('rejects explicit approval when the displayed body changed, without creating 
   } finally { f.close(); }
 });
 
+for (const concurrent of [false, true]) it(`deduplicates one checkpoint across different operation IDs (${concurrent ? 'concurrent' : 'restart'})`, async () => {
+  const f = setup();
+  try {
+    const first = await f.app.runDraft(f.input);
+    const approval = f.app.getCheckpointApproval('p', first.runId)!;
+    const firstClick = f.app.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'click-a', approval });
+    if (!concurrent) await firstClick;
+    const restarted = new WritingApplicationService({ storage: f.storage, provider: f.provider });
+    await Promise.all([firstClick, restarted.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'click-b', approval })]);
+    const confirmations = f.storage.listRuns('p').filter(run => run.id.startsWith('checkpoint-approval:'));
+    assert.equal(confirmations.length, 1, 'one displayed result must have only one receipt/outbox run');
+    assert.equal(f.storage.listArtifactVersions('p', 'report', `author-turn:${confirmations[0]!.id}`).length, 1);
+    assert.equal(restarted.continuePendingHandoffs(f.input).length, 1);
+    for (let n = 0; n < 200 && f.storage.getRun(first.runId)?.status === 'running'; n++) await new Promise(r => setTimeout(r, 5));
+    assert.equal(f.storage.listRunEvents(first.runId).findLast(e => e.type === 'run.waiting_user')?.payload.stage, 'draft');
+    assert.equal(restarted.continuePendingHandoffs(f.input).length, 0);
+    assert.equal(f.storage.listRuns('p').some(run =>
+      f.storage.listArtifactVersions('p', 'report', `author-turn:${run.id}`).some(source =>
+        f.storage.listArtifactVersions('p', 'report', `handoff-failure:${source.id}`).length > 0)), false);
+    await assert.rejects(restarted.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'old-click', approval }), /已变化/);
+  } finally { f.close(); }
+});
+
+for (const crashPoint of ['outbox', 'finish'] as const) it(`recovers an interrupted approval at ${crashPoint} without duplicating its durable decision`, async t => {
+  const f = setup();
+  try {
+    const first = await f.app.runDraft(f.input);
+    const approval = f.app.getCheckpointApproval('p', first.runId)!;
+    const commit = f.storage.commitArtifactVersion.bind(f.storage);
+    const finish = f.storage.finishRun.bind(f.storage);
+    if (crashPoint === 'outbox') t.mock.method(f.storage, 'commitArtifactVersion', (input: Parameters<typeof commit>[0]) => {
+      if (input.logicalKey === 'author-turn:checkpoint-approval:before-crash') throw new Error('PROCESS_CRASH');
+      return commit(input);
+    });
+    else t.mock.method(f.storage, 'finishRun', (input: Parameters<typeof finish>[0]) => {
+      if (input.runId === 'checkpoint-approval:before-crash') throw new Error('PROCESS_CRASH');
+      return finish(input);
+    });
+    await assert.rejects(f.app.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'before-crash', approval }), /PROCESS_CRASH/);
+    t.mock.restoreAll();
+    f.storage.recoverProjectRuns('p');
+    const restarted = new WritingApplicationService({ storage: f.storage, provider: f.provider });
+    await restarted.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'after-crash', approval });
+    assert.equal(f.storage.listRuns('p').filter(run => run.id.startsWith('checkpoint-approval:')).length, 1);
+    assert.equal(f.storage.getRun('checkpoint-approval:before-crash')!.status, 'completed');
+    assert.equal(f.storage.listArtifactVersions('p', 'report', 'author-intent:checkpoint-approval:before-crash').length, 1);
+    assert.equal(f.storage.listArtifactVersions('p', 'report', 'author-turn:checkpoint-approval:before-crash').length, 1);
+    assert.equal(restarted.continuePendingHandoffs(f.input).length, 1);
+    for (let n = 0; n < 200 && f.storage.getRun(first.runId)?.status === 'running'; n++) await new Promise(r => setTimeout(r, 5));
+    assert.equal(restarted.continuePendingHandoffs(f.input).length, 0);
+  } finally { f.close(); }
+});
+
+it('does not reuse an interrupted operation for a changed brief', async t => {
+  const f = setup();
+  try {
+    const first = await f.app.runDraft(f.input);
+    const approval = f.app.getCheckpointApproval('p', first.runId)!;
+    const commit = f.storage.commitArtifactVersion.bind(f.storage);
+    t.mock.method(f.storage, 'commitArtifactVersion', (input: Parameters<typeof commit>[0]) => {
+      if (input.logicalKey.startsWith('author-turn:checkpoint-approval:')) throw new Error('PROCESS_CRASH');
+      return commit(input);
+    });
+    await assert.rejects(f.app.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'reused', approval }), /PROCESS_CRASH/);
+    t.mock.restoreAll();
+    f.storage.recoverProjectRuns('p');
+    const project = f.storage.inspectProject('p')!;
+    const brief = f.storage.getWritingBriefVersion(project.currentBriefVersionId!)!.brief;
+    assert.equal(f.app.saveWritingBrief({ projectId: 'p', operationId: 'new-brief', expectedProjectRevision: project.revision,
+      baseVersionId: project.currentBriefVersionId, actor: { kind: 'user', id: 'u' }, brief: { ...brief, constraints: ['新的要求'] } }).ok, true);
+    const updated = f.app.getCheckpointApproval('p', first.runId)!;
+    assert.notEqual(updated.briefVersionId, approval.briefVersionId);
+    await assert.rejects(f.app.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'reused', approval: updated }),
+      error => (error as { code?: string }).code === 'IDEMPOTENCY_CONFLICT');
+  } finally { f.close(); }
+});
+
 it('recovers legacy misclassified approval at central revision through a bound UI action, without disabling the rework gate', async () => {
   const f = setup();
   let bridge: ReturnType<typeof createApplicationBridge> | undefined;

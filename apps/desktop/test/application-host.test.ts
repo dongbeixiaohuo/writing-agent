@@ -17,6 +17,120 @@ import { DesktopApplicationHost } from "../src/application-host.js";
 import { openWorkspaceStorage } from "../../../packages/storage/src/index.js";
 import { DesktopClientBridge } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { dispatchDesktopRpc } from '../src/rpc-host.js';
+import { loadDesktopProviderProfile, markDesktopProviderVerified } from '../src/provider-profile.js';
+import { WritingApplicationService } from '../../../packages/application/src/index.js';
+
+for (const action of ['select', 'configure'] as const) test(`failed provider ${action} leaves the saved configuration and live bridge unchanged`, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-atomic-'));
+  const path = join(root, 'provider.json');
+  const backend = new MemoryCredentials();
+  const credentials = new CredentialBroker({ systemBackend: backend, environment: {} });
+  const factory = (config: { model: string }) => {
+    if (config.model === 'broken') throw new Error('RUNTIME_CONSTRUCTION_FAILED');
+    return new UnsupportedProbeProvider();
+  };
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path, credentials, providerFactory: factory });
+  const input = { kind: 'openai_compatible' as const, providerId: 'test', baseURL: 'https://example.test/v1',
+    model: 'working', models: ['working', 'broken'], tools: 'supported' as const, usage: 'unknown' as const,
+    apiKey: 'test-only-key', persistence: 'system' as const };
+  try {
+    const status = await host.configureProvider(input);
+    markDesktopProviderVerified(path, status.activeProfileId!);
+    const saved = readFileSync(path, 'utf8');
+    const bridge = host.bridge;
+    const keys = [...backend.values.entries()];
+    await assert.rejects(action === 'select'
+      ? host.selectProvider(status.activeProfileId!, 'broken')
+      : host.configureProvider({ ...input, model: 'broken', apiKey: 'replacement-key' }), /RUNTIME_CONSTRUCTION_FAILED/);
+    assert.equal(host.bridge, bridge, 'the old bridge must remain usable');
+    assert.equal((await host.providerStatus()).model, 'working');
+    assert.equal(readFileSync(path, 'utf8'), saved, 'failed changes must preserve the exact catalog including verification');
+    assert.deepEqual([...backend.values.entries()], keys, 'failed configuration must not leak its newly saved credential');
+    assert.equal(loadDesktopProviderProfile(path)!.model, 'working', 'restart must load the same model as memory');
+    await host.selectProvider(status.activeProfileId!, 'working');
+    assert.notEqual(host.bridge, bridge, 'failure releases the settings lock for a later valid change');
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failed first provider configuration creates no catalog or managed credential', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-first-failure-'));
+  const path = join(root, 'provider.json');
+  const backend = new MemoryCredentials();
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path,
+    credentials: new CredentialBroker({ systemBackend: backend, environment: {} }),
+    providerFactory: () => { throw new Error('RUNTIME_CONSTRUCTION_FAILED'); } });
+  try {
+    const bridge = host.bridge;
+    await assert.rejects(host.configureProvider({ kind: 'openai_compatible', providerId: 'test', baseURL: 'https://example.test/v1',
+      model: 'broken', tools: 'supported', usage: 'unknown', apiKey: 'test-only-key', persistence: 'system' }), /RUNTIME_CONSTRUCTION_FAILED/);
+    assert.equal(host.bridge, bridge);
+    assert.equal(existsSync(path), false);
+    assert.equal(backend.values.size, 0);
+    assert.equal((await host.providerStatus()).configured, false);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('bridge construction failure also leaves the provider catalog and credential unchanged', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-bridge-failure-'));
+  const path = join(root, 'provider.json');
+  const backend = new MemoryCredentials();
+  let candidate = false;
+  const originalList = WritingApplicationService.prototype.listProjects;
+  t.mock.method(WritingApplicationService.prototype, 'listProjects', function (this: WritingApplicationService) {
+    if (candidate) { candidate = false; throw new Error('BRIDGE_CONSTRUCTION_FAILED'); }
+    return originalList.call(this);
+  });
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path,
+    credentials: new CredentialBroker({ systemBackend: backend, environment: {} }), providerFactory: config => {
+      candidate = config.model === 'broken';
+      return new UnsupportedProbeProvider();
+    } });
+  try {
+    const input = { kind: 'openai_compatible' as const, providerId: 'test', baseURL: 'https://example.test/v1',
+      model: 'working', models: ['working', 'broken'], tools: 'supported' as const, usage: 'unknown' as const,
+      apiKey: 'test-only-key', persistence: 'system' as const };
+    await host.configureProvider(input);
+    const before = readFileSync(path, 'utf8');
+    const bridge = host.bridge;
+    const keys = [...backend.values.entries()];
+    await assert.rejects(host.configureProvider({ ...input, model: 'broken' }), /BRIDGE_CONSTRUCTION_FAILED/);
+    assert.equal(readFileSync(path, 'utf8'), before);
+    assert.deepEqual([...backend.values.entries()], keys);
+    assert.equal(host.bridge, bridge);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('catalog commit failure never installs the candidate or consumes pending work', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-commit-failure-'));
+  const path = join(root, 'provider.json');
+  const backend = new MemoryCredentials();
+  const host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path,
+    credentials: new CredentialBroker({ systemBackend: backend, environment: {} }), providerFactory: () => new UnsupportedProbeProvider() });
+  const storage = openWorkspaceStorage({ workspacePath: root });
+  try {
+    const input = { kind: 'openai_compatible' as const, providerId: 'test', baseURL: 'https://example.test/v1',
+      model: 'working', tools: 'supported' as const, usage: 'unknown' as const, apiKey: 'test-only-key', persistence: 'system' as const };
+    await host.configureProvider(input);
+    storage.createProject({ projectId: 'p', operationId: 'p', name: '待交接', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'writing-pack:author-conversation' });
+    storage.startRun({ projectId: 'p', sessionId: 's', runId: 'approved', planVersion: 'test', purpose: 'writing-pack:author-conversation' });
+    assert.equal(storage.commitArtifactVersion({ projectId: 'p', operationId: 'decision', expectedProjectRevision: storage.inspectProject('p')!.revision,
+      kind: 'report', logicalKey: 'author-turn:approved', baseVersionId: null, reason: 'author-conversation',
+      content: JSON.stringify({ requestedAction: 'full_writing', task: '继续', bodyVersionId: null, intentReceiptId: null }),
+      actor: { kind: 'agent', id: 'director', runId: 'approved' } }).ok, true);
+    storage.finishRun({ projectId: 'p', runId: 'approved', operationId: 'finished', status: 'completed', stopReason: null });
+    const before = readFileSync(path, 'utf8');
+    const bridge = host.bridge;
+    const keys = [...backend.values.entries()];
+    const events = storage.listEvents('p').length;
+    // The persisted catalog rejects >100 models after runtime preparation.
+    await assert.rejects(host.configureProvider({ ...input, models: Array.from({ length: 101 }, (_, n) => `model-${n}`) }));
+    assert.equal(host.bridge, bridge);
+    assert.equal(readFileSync(path, 'utf8'), before);
+    assert.deepEqual([...backend.values.entries()], keys);
+    assert.equal(storage.listEvents('p').length, events, 'an uncommitted candidate must not consume or fail the pending handoff');
+  } finally { storage.close(); host.close(); rmSync(root, { recursive: true, force: true }); }
+});
 
 test('desktop URL reader survives provider replacement and imports a first-turn article without a brief', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-desktop-web-'));
@@ -397,6 +511,35 @@ test("desktop application host exposes a safe model connection validation result
     host.close();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('a late successful connection probe cannot verify the replacement model', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-probe-race-'));
+  let release!: () => void, dispatched = false;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  class ProbeProvider extends ModelProviderBase {
+    constructor() { super('probe-race', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      dispatched = true; await gate;
+      yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'writing_agent_capability_probe', argumentsDelta: '{"value":"ok"}' };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  const host = new DesktopApplicationHost({ workspacePath: join(root, 'workspace'), providerProfilePath: join(root, 'provider.json'),
+    credentials: new CredentialBroker({ environment: {} }), providerFactory: () => new ProbeProvider() });
+  try {
+    const configured = await host.configureProvider({ kind: 'openai_compatible', providerId: 'probe-race', baseURL: 'https://example.test/v1',
+      model: 'first', models: ['first', 'second'], tools: 'supported', usage: 'unknown', apiKey: 'test', persistence: 'session' });
+    const pending = host.testProviderConnection();
+    while (!dispatched) await new Promise(resolve => setTimeout(resolve, 1));
+    await host.selectProvider(configured.activeProfileId!, 'second'); release();
+    assert.equal((await pending).ok, true);
+    const status = await host.providerStatus();
+    assert.equal(status.model, 'second');
+    assert.equal(status.connectionTest, null);
+    assert.ok(status.profiles);
+    assert.equal(status.profiles.find(p => p.profileId === configured.activeProfileId)?.verifiedAt, null);
+  } finally { release(); host.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test("desktop application host previews diagnostics before export and never exposes private content", async () => {

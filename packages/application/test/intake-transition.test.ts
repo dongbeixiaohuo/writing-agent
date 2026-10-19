@@ -55,6 +55,18 @@ it('repairs a missing proposal in the same turn instead of accepting another emp
   });
 });
 
+it('keeps creative interpretation boundaries in the proposal-only request path', async () => {
+  await scenario('propose_direction', () => proposed, (app, result, requests) => {
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const request = requests.find(r => r.tools?.some(t => t.name === 'submit_writing_proposal'))!;
+    assert.match(request.messages[0]!.content, /用户原话.*创作建议.*推测.*分开/u);
+    assert.match(request.messages[0]!.content, /不能.*一句自述.*额外禁令/u);
+    assert.match(request.messages[0]!.content, /不虚构亲历.*不等于.*禁止具体表达/u);
+    assert.match(request.messages[0]!.content, /少量观点.*更短/u);
+    assert.equal(app.getConversationIntake('p').phase, 'proposal');
+  });
+});
+
 it('applies the semantic approval to the stored proposal even if the reply tool omits confirmation', async () => {
   await scenario('confirm_direction', () => chatOnly, (app, result) => {
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -65,10 +77,14 @@ it('applies the semantic approval to the stored proposal even if the reply tool 
 });
 
 it('does not manufacture a proposal or approval for a discussion-only semantic decision', async () => {
-  await scenario('discuss', () => ({ reply: '可以先比较两个角度，不开始写。', summary: '继续讨论', questions: [] }), (app, result) => {
+  await scenario('discuss', () => ({ reply: '可以先比较两个角度，不开始写。', summary: '继续讨论', questions: [] }), (app, result, requests) => {
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(app.getConversationIntake('p').phase, 'collecting');
     assert.equal(app.getConversationIntake('p').brief, null);
+    const intent = requests.find(request => request.tools?.[0]?.name === 'interpret_author_reply')!;
+    const policy = JSON.parse(intent.messages.find(message => message.role === 'user')!.content).intakeTransitionPolicy;
+    assert.match(policy, /启发.*开放讨论/u);
+    assert.match(policy, /推荐.*不.*(?:propose_direction|confirm_direction)/u);
   });
 });
 

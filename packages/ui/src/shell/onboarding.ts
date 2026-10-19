@@ -1,6 +1,5 @@
 import { WORKFLOW_COMMAND_MESSAGES } from '../../../client-bridge/src/workflow-errors.js';
 import type {
-  CreateProjectInput,
   UpdateBriefInput,
 } from "../../../client-bridge/src/protocol.js";
 import type {
@@ -8,31 +7,20 @@ import type {
   DesktopProviderSetupInput,
 } from "../../../client-bridge/src/desktop-bridge.js";
 
-export interface ProjectSetupForm {
-  readonly name: string;
-  readonly mode: "quick" | "deep";
+export interface BriefUpdateForm {
   readonly topic: string;
-  readonly genre: CreateProjectInput["genre"];
+  readonly genre: UpdateBriefInput["genre"];
   readonly audience: string;
   readonly targetCharacters: string;
   readonly constraints: string;
-  readonly interactionMode: CreateProjectInput["interactionMode"];
+  readonly interactionMode: UpdateBriefInput["interactionMode"];
   readonly authorVoice: string;
   readonly styleReference: string;
-  readonly styleDecision: CreateProjectInput["styleDecision"];
-  readonly directionDecision: CreateProjectInput["directionDecision"];
+  readonly styleDecision: UpdateBriefInput["styleDecision"];
+  readonly directionDecision: UpdateBriefInput["directionDecision"];
   readonly platform: string;
-  readonly publicationGoal: CreateProjectInput["publicationGoal"];
-  readonly materials: readonly {
-    readonly name: string;
-    readonly content: string;
-    readonly role: CreateProjectInput["materials"][number]["role"];
-    readonly sourceKind: CreateProjectInput["materials"][number]["sourceKind"];
-    readonly sourceReference: string;
-  }[];
+  readonly publicationGoal: UpdateBriefInput["publicationGoal"];
 }
-
-export type BriefUpdateForm = Omit<ProjectSetupForm, "name" | "mode" | "materials">;
 
 function required(value: string, code: string): string {
   const normalized = value.trim();
@@ -61,37 +49,6 @@ const SETUP_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   PROVIDER_MODEL_REQUIRED: "请填写模型名称。",
   PROVIDER_API_KEY_REQUIRED: "请填写 API Key。",
 };
-
-export async function materialPatchFromFile(file: {
-  readonly name: string;
-  readonly size: number;
-  text(): Promise<string>;
-}): Promise<{
-  readonly name: string;
-  readonly content: string;
-  readonly sourceKind: "utf8_file";
-  readonly sourceReference: string;
-}> {
-  const name = file.name.trim();
-  if (!/\.(?:txt|md|markdown)$/iu.test(name)) {
-    throw new Error("PROJECT_MATERIAL_FILE_TYPE_INVALID");
-  }
-  if (file.size > 2_000_000) throw new Error("PROJECT_MATERIAL_FILE_TOO_LARGE");
-  let content: string;
-  try {
-    content = await file.text();
-  } catch {
-    throw new Error("PROJECT_MATERIAL_FILE_READ_FAILED");
-  }
-  if (content.trim().length === 0) throw new Error("PROJECT_MATERIAL_REQUIRED");
-  if (content.length > 2_000_000) throw new Error("PROJECT_MATERIAL_FILE_TOO_LARGE");
-  return {
-    name,
-    content,
-    sourceKind: "utf8_file",
-    sourceReference: name,
-  };
-}
 
 export async function styleReferenceFromFile(file: {
   readonly name: string;
@@ -244,42 +201,6 @@ export function providerConnectionMessage(
   return {
     tone: "failure",
     text: result.providerDetail === undefined ? base : `${base}（上游返回：${result.providerDetail}）`,
-  };
-}
-
-export function normalizeProjectSetup(form: ProjectSetupForm): CreateProjectInput {
-  const brief = normalizeBriefUpdate(form);
-  const materials = form.materials
-    .filter((material) =>
-      material.name.trim().length > 0 ||
-      material.content.trim().length > 0 ||
-      material.sourceReference.trim().length > 0)
-    .map((material) => {
-      const sourceReference = material.sourceReference.trim();
-      if (material.sourceKind === "web_snapshot") {
-        let parsed: URL;
-        try {
-          parsed = new URL(sourceReference);
-        } catch {
-          throw new Error("PROJECT_MATERIAL_URL_INVALID");
-        }
-        if (parsed.protocol !== "https:") {
-          throw new Error("PROJECT_MATERIAL_URL_INVALID");
-        }
-      }
-      return {
-        name: required(material.name, "PROJECT_MATERIAL_NAME_REQUIRED"),
-        content: required(material.content, "PROJECT_MATERIAL_REQUIRED"),
-        role: material.role,
-        sourceKind: material.sourceKind,
-        sourceReference: sourceReference.length === 0 ? null : sourceReference,
-      };
-    });
-  return {
-    name: required(form.name, "PROJECT_NAME_REQUIRED"),
-    mode: form.mode,
-    ...brief,
-    materials,
   };
 }
 

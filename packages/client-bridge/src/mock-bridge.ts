@@ -260,7 +260,7 @@ function initialSnapshot(): BridgeSnapshot {
       notice: '工作备份不代表可发布；正式 TXT/HTML 仅在当前正文、标题、证据与核查快照一致时生成。',
     },
     settings: {
-      theme: 'system',
+      theme: 'paper',
       language: 'zh-CN',
       contentFontSize: 14,
       providerLabel: 'OpenAI-compatible（未连接）',

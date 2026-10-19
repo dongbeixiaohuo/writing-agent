@@ -18,6 +18,7 @@ const ACTOR: Readonly<Record<string, string>> = {
 }
 
 const TOOL_LABEL: Readonly<Record<string, string>> = {
+  search_research_sources: '补查研究资料',
   search_fact_sources: '搜索事实来源', read_fact_source: '阅读事实来源原文', read_material: '读取参考材料',
   read_artifact_version: '读取历史版本', assess_writing_readiness: '检查写作信息', director_decide: '导演调度',
   submit_writing_stage: '保存写作阶段', submit_fact_check: '提交事实核查', submit_publication_candidates: '保存发布标题候选',
@@ -279,7 +280,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
     if (!selectedEntry) return
     const next = displayStatus(selectedEntry.record, selectedEntry.step)
     const previous = selectedStatus.current
-    const searchProgressChanged = selectedEntry.step.technicalName === 'search_fact_sources' && previous?.outputPreview !== selectedEntry.step.outputPreview
+    const searchProgressChanged = ['search_fact_sources', 'search_research_sources'].includes(selectedEntry.step.technicalName ?? '') && previous?.outputPreview !== selectedEntry.step.outputPreview
     if (previous?.key === selectedEntry.key && previous.status === 'pending' && (next === 'settled' || searchProgressChanged)) requestDetail(selectedEntry.record.id, selectedEntry.step.id, selectedEntry.key)
     selectedStatus.current = { key: selectedEntry.key, status: next, outputPreview: selectedEntry.step.outputPreview }
   }, [requestDetail, selectedEntry])

@@ -50,12 +50,13 @@ const api: DesktopHostApi = {
   },
   async savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult> {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'savePublicationAs', args: [input] });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+    // contextBridge retains standard Error fields, but drops custom code fields.
+    if (!response.ok) throw new Error(response.error.code);
     return response.result as DesktopPublicationSaveResult;
   },
   async revealPublication(receiptId: string): Promise<void> {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'revealPublication', args: [receiptId] });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+    if (!response.ok) throw new Error(response.error.code);
   },
   async revealProviderConfig(): Promise<void> {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'revealProviderConfig', args: [] });
