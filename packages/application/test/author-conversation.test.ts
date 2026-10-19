@@ -62,6 +62,23 @@ function setup(provider: AuthorProvider) {
 }
 const input = (userInstruction: string) => ({ projectId: 'p', sessionId: 'conversation', model: 'mock', parameters: {}, userInstruction });
 
+it('keeps inspiration for a stuck ending scoped to the saved article, without restarting topic selection or writing', async () => {
+  const provider = new AuthorProvider([{ name: 'respond_author', args: { reply: '结尾可以回到开头那份安静，也可以停在一个观察上。你更想留哪种余味？' } }]);
+  const f = setup(provider);
+  try {
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId;
+    const briefId = f.storage.inspectProject('p')!.currentBriefVersionId;
+    const result = await f.service.startAuthorTurn(input('只是结尾没思路，不改其他部分，先聊聊')).result;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(provider.requests.length, 1);
+    assert.match(provider.requests[0]!.messages[0]!.content, /段落.*结尾.*当前.*不.*重开选题/u);
+    assert.match(provider.requests[0]!.messages[0]!.content, /普通启发.*不.*委派/u);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
+    assert.equal(f.storage.inspectProject('p')!.currentBriefVersionId, briefId);
+    assert.equal(f.storage.listArtifactVersions('p', 'report', 'conversation-intake').length, 0);
+  } finally { f.close(); }
+});
+
 it('retests current body and selected title with three isolated concurrent readers, without rerunning writing or fact checks', async () => {
   class RetestProvider extends AuthorProvider {
     active = 0; peak = 0;

@@ -17,6 +17,7 @@ import {
 } from "../src/index.js";
 import { buildConversationIntakePrompt, confirmConversationBriefState } from "../src/conversation-intake.js";
 import { createConversationIntent } from "../src/conversation-intent.js";
+import { mergeConversationIdeation, readConversationIdeation } from '../src/conversation-ideation.js';
 import { intentFixtureEvents } from './intent-fixture.js';
 
 type ToolArgs = Readonly<Record<string, unknown>>;
@@ -140,6 +141,130 @@ const runInput = (userInstruction: string, operationId: string, sessionId?: stri
 });
 
 describe("conversation intake", () => {
+  it('gives the model a lightweight inspiration contract instead of a greeting or questionnaire', () => {
+    const f = fixture(new IntakeProvider([]));
+    try {
+      const prompt = buildConversationIntakePrompt(f.service.getConversationIntake('project-1'), '没啥思路');
+      assert.match(prompt.systemPrompt, /启发式对话/u);
+      assert.match(prompt.systemPrompt, /2[—–到-]3个.*切入口/u);
+      assert.match(prompt.systemPrompt, /一个.*容易回答.*问题/u);
+      assert.match(prompt.systemPrompt, /再次.*不知道.*换.*具体/u);
+      assert.match(prompt.systemPrompt, /否定.*不要.*重复/u);
+      assert.match(prompt.systemPrompt, /不愿.*亲历.*观察/u);
+      assert.match(prompt.systemPrompt, /推荐.*不等于.*确认/u);
+      assert.match(prompt.systemPrompt, /默认不.*搜索.*不.*委派/u);
+      assert.match(prompt.systemPrompt, /ideation.*不.*授权/u);
+      assert.doesNotMatch(buildConversationIntakePrompt(f.service.getConversationIntake('project-1'), '没啥思路', true).systemPrompt,
+        /先以普通文本/u, 'save-only continuation must not start another dialogue');
+    } finally { f.close(); }
+  });
+
+  it('persists bounded ideas and source-bound reactions across discussion and application restart, without extra calls or approval', async () => {
+    // Script only the external model. Exercise the real runtime, tool schema,
+    // storage, request policy and next-turn prompt; this is not an NLP test.
+    const provider = new IntakeProvider([
+      [{ reply: '可以从工作里一件别扭的小事，或最近改变看法的事聊起。哪个近一点？', summary: '还在找线索', questions: ['哪个近一点？'],
+        ideation: { directions: ['工作中别扭的小事', '最近改变看法的事'], reactions: [] } }],
+      [{ reply: '换具体一点：有没有一次会开了很久，却没人拍板？', summary: '换更具体的线索', questions: ['有过这种会吗？'],
+        ideation: { directions: ['开很久却没人拍板的会'], reactions: [] } }],
+      [{ reply: '那换到日常消费：有什么你现在不愿意再花钱买？', summary: '已排除开会话题', questions: ['有什么不愿再买的东西？'],
+        ideation: { directions: ['不愿再花钱买的东西'], reactions: [{ direction: '开很久却没人拍板的会', stance: 'rejected', reason: '不想写工作' }] } }],
+      [{ reply: '我推荐从一次消费判断的变化聊起，容易讲具体，但先不急着写。', summary: '推荐消费观察，尚未选定写法', questions: ['你更想聊什么消费变化？'], }],
+    ]);
+    const f = fixture(provider);
+    let sessionId: string | undefined;
+    try {
+      for (const [i, message] of ['没啥思路', '还是不知道', '开会这个不喜欢，不想写工作', '你推荐一个吧'].entries()) {
+        const result = await f.service.startConversationTurn(runInput(message, `ideation-${i}`, sessionId)).result;
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.equal(result.modelRequestCount, i === 0 ? 1 : 2, 'reuse the existing intent/reply path, no extra planner');
+        assert.equal(result.toolCallCount, i === 0 ? 1 : 2);
+        sessionId = result.sessionId;
+      }
+      const state = f.service.getConversationIntake('project-1');
+      assert.equal(state.phase, 'collecting');
+      assert.equal(state.brief, null);
+      assert.equal(f.storage.inspectProject('project-1')!.latestBodyVersionId, null);
+      assert.deepEqual(state.ideation?.directions, ['不愿再花钱买的东西']);
+      assert.deepEqual(state.ideation?.reactions, [{ direction: '开很久却没人拍板的会', stance: 'rejected', reason: '不想写工作',
+        sourceMaterialId: state.sourceTurns[2]!.materialId }]);
+      assert.ok(provider.requests.every(request => request.tools?.every(tool => tool.name === 'respond_writing_intake')),
+        'no search, specialist or writing tools for a directionless chat');
+      const latestPrompt = provider.requests.at(-1)!.messages.find(message => message.role === 'user')!.content;
+      assert.match(latestPrompt, /启发记录.*仅供参考/u);
+      assert.match(latestPrompt, /开很久却没人拍板的会/u);
+      assert.match(latestPrompt, /rejected/u);
+      // Fresh storage connection + service read, not an in-memory carry-over.
+      const reopened = openWorkspaceStorage({ workspacePath: f.directory });
+      try {
+        const restored = new WritingApplicationService({ storage: reopened }).getConversationIntake('project-1');
+        assert.deepEqual(restored.ideation, state.ideation);
+        assert.deepEqual(restored.questions, state.questions);
+        assert.deepEqual(restored.questions, ['你更想聊什么消费变化？']);
+        assert.equal(restored.phase, 'collecting');
+      } finally { reopened.close(); }
+    } finally { f.close(); }
+  });
+
+  it('keeps older intake records without ideation readable and does not turn advisory state into user authority', async () => {
+    const f = fixture(new IntakeProvider([[ideaResponse]]));
+    try {
+      assert.equal((await f.service.startConversationTurn(runInput('先聊聊', 'legacy-ideation')).result).ok, true);
+      const latest = f.storage.listArtifactVersions('project-1', 'report', 'conversation-intake').at(-1)!;
+      const { ideation: omitted, ...legacyRecord } = JSON.parse(latest.content);
+      const saved = f.storage.commitArtifactVersion({ operationId: 'legacy-record', projectId: 'project-1',
+        expectedProjectRevision: f.storage.inspectProject('project-1')!.revision, kind: 'report', logicalKey: 'conversation-intake',
+        baseVersionId: latest.id, content: JSON.stringify(legacyRecord), reason: 'pre-ideation-fixture', actor: { kind: 'user', id: 'test' } });
+      assert.equal(saved.ok, true);
+      const state = f.service.getConversationIntake('project-1');
+      assert.equal(state.ideation, null);
+      assert.equal(state.pendingAuthorization, null);
+      assert.equal(state.proposalVersionId, null);
+    } finally { f.close(); }
+  });
+
+  it('bounds and deduplicates advisory reactions and rejects forged source references when reading them back', () => {
+    let notes = null as ReturnType<typeof mergeConversationIdeation>;
+    const sources = new Set<string>();
+    for (let i = 0; i < 9; i++) {
+      sources.add(`source-${i}`);
+      notes = mergeConversationIdeation(notes, { directions: [' 日常观察 ', '日常观察'], reactions: [
+        { direction: `方向${i}`, stance: 'rejected', reason: '不想聊这个' },
+      ] }, `source-${i}`);
+    }
+    assert.deepEqual(notes!.directions, ['日常观察']);
+    assert.equal(notes!.reactions.length, 6);
+    notes = mergeConversationIdeation(notes, { directions: [], reactions: [
+      { direction: '方向8', stance: 'interested', reason: '这次想聊聊' },
+    ] }, 'source-8');
+    assert.equal(notes!.reactions.length, 6);
+    assert.equal(notes!.reactions.filter(item => item.direction === '方向8').length, 1);
+    assert.equal(notes!.reactions.at(-1)!.stance, 'interested');
+    assert.deepEqual(readConversationIdeation(notes, sources), notes);
+    assert.equal(readConversationIdeation(notes, new Set()), null, 'unknown author source is not valid memory');
+    assert.equal(readConversationIdeation({ directions: ['x'.repeat(161)], reactions: [] }, sources), null);
+    assert.equal(readConversationIdeation({ directions: [], reactions: [{ stance: 'confirmed' }] }, sources), null);
+  });
+
+  it('preserves inspiration notes through a tentative proposal and explicit author confirmation without granting firsthand authority', async () => {
+    const offered = { ...ideaResponse, ideation: { directions: ['夜跑后的观察'], reactions: [] } };
+    const f = fixture(new IntakeProvider([[offered], [proposalResponse('夜跑后的观察')]]));
+    try {
+      const first = await f.service.startConversationTurn(runInput('没思路', 'notes-first')).result;
+      assert.equal(first.ok, true);
+      const second = await f.service.startConversationTurn(runInput('夜跑后的观察，给普通读者看，1200字', 'notes-proposal', first.sessionId)).result;
+      assert.equal(second.ok, true, JSON.stringify(second));
+      const pending = f.service.getConversationIntake('project-1');
+      assert.equal(pending.phase, 'proposal');
+      assert.deepEqual(pending.ideation?.directions, ['夜跑后的观察']);
+      const confirmed = f.service.confirmConversationBrief('project-1', pending.proposalVersionId!, 'notes-confirm');
+      assert.equal(confirmed.phase, 'confirmed');
+      assert.deepEqual(confirmed.ideation, pending.ideation);
+      assert.deepEqual(confirmed.brief.authorAuthorization.firsthandMaterialIds, []);
+      assert.equal(f.storage.inspectProject('project-1')!.latestBodyVersionId, null);
+    } finally { f.close(); }
+  });
+
   it('defaults self-media recommendations to at most 5000 characters while allowing an explicit longer author request', async () => {
     for (const explicit of [false, true]) {
       const response = proposalResponse('智能与制宪权');

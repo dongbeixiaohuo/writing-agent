@@ -4,9 +4,7 @@ import test from "node:test";
 import {
   commandErrorMessage,
   dataActionErrorMessage,
-  materialPatchFromFile,
   normalizeBriefUpdate,
-  normalizeProjectSetup,
   normalizeProviderSetup,
   providerConnectionMessage,
   setupErrorMessage,
@@ -43,26 +41,6 @@ test("brief editing validates and normalizes user changes without touching mater
   });
 });
 
-test("local TXT and Markdown materials are read as private UTF-8 snapshots", async () => {
-  assert.deepEqual(
-    await materialPatchFromFile({
-      name: " interview.md ",
-      size: 18,
-      text: async () => "访谈正文",
-    }),
-    {
-      name: "interview.md",
-      content: "访谈正文",
-      sourceKind: "utf8_file",
-      sourceReference: "interview.md",
-    },
-  );
-  await assert.rejects(
-    materialPatchFromFile({ name: "secret.pdf", size: 10, text: async () => "x" }),
-    /PROJECT_MATERIAL_FILE_TYPE_INVALID/u,
-  );
-});
-
 test("a local style file keeps its source name and bounded UTF-8 content", async () => {
   assert.equal(
     await styleReferenceFromFile({
@@ -75,125 +53,6 @@ test("a local style file keeps its source name and bounded UTF-8 content", async
   await assert.rejects(
     styleReferenceFromFile({ name: "style.pdf", size: 10, text: async () => "x" }),
     /PROJECT_STYLE_FILE_TYPE_INVALID/u,
-  );
-});
-
-test("project onboarding normalizes a complete user-confirmed setup", () => {
-  assert.deepEqual(normalizeProjectSetup({
-    name: "  产品说明  ",
-    mode: "quick",
-    topic: "  新品发布  ",
-    genre: "argument_commentary",
-    audience: " 企业客户 ",
-    targetCharacters: "1200",
-    constraints: " 不虚构数据\n避免营销腔 ",
-    interactionMode: "co_creation",
-    authorVoice: " 直接、克制 ",
-    styleReference: " 既有公众号文章 ",
-    styleDecision: "user_confirmed",
-    directionDecision: "user_delegated",
-    platform: " 微信公众号 ",
-    publicationGoal: "primary",
-    materials: [
-      {
-        name: " 访谈纪要 ",
-        content: " 真实材料内容 ",
-        role: "user_firsthand",
-        sourceKind: "pasted_text",
-        sourceReference: "",
-      },
-      {
-        name: " 官方页面 ",
-        content: " 页面快照内容 ",
-        role: "source_verified",
-        sourceKind: "web_snapshot",
-        sourceReference: " https://example.test/source ",
-      },
-    ],
-  }), {
-    name: "产品说明",
-    mode: "quick",
-    topic: "新品发布",
-    genre: "argument_commentary",
-    audience: "企业客户",
-    targetCharacters: 1200,
-    constraints: ["不虚构数据", "避免营销腔"],
-    interactionMode: "co_creation",
-    authorVoice: "直接、克制",
-    styleReference: "既有公众号文章",
-    styleDecision: "user_confirmed",
-    directionDecision: "user_delegated",
-    platform: "微信公众号",
-    publicationGoal: "primary",
-    materials: [
-      {
-        name: "访谈纪要",
-        content: "真实材料内容",
-        role: "user_firsthand",
-        sourceKind: "pasted_text",
-        sourceReference: null,
-      },
-      {
-        name: "官方页面",
-        content: "页面快照内容",
-        role: "source_verified",
-        sourceKind: "web_snapshot",
-        sourceReference: "https://example.test/source",
-      },
-    ],
-  });
-  assert.throws(
-    () => normalizeProjectSetup({
-      name: "空材料",
-      mode: "quick",
-      topic: "主题",
-      genre: "explanatory_analysis",
-      audience: "读者",
-      targetCharacters: "800",
-      constraints: "",
-      interactionMode: "autonomous",
-      authorVoice: "",
-      styleReference: "",
-      styleDecision: "unspecified",
-      directionDecision: "tentative",
-      platform: "",
-      publicationGoal: "not_applicable",
-      materials: [{
-        name: "材料",
-        content: "   ",
-        role: "source_verified",
-        sourceKind: "pasted_text",
-        sourceReference: "",
-      }],
-    }),
-    /PROJECT_MATERIAL_REQUIRED/u,
-  );
-
-  assert.throws(
-    () => normalizeProjectSetup({
-      name: "网页材料",
-      mode: "deep",
-      topic: "主题",
-      genre: "explanatory_analysis",
-      audience: "读者",
-      targetCharacters: "1600",
-      constraints: "",
-      interactionMode: "autonomous",
-      authorVoice: "",
-      styleReference: "",
-      styleDecision: "unspecified",
-      directionDecision: "tentative",
-      platform: "",
-      publicationGoal: "not_applicable",
-      materials: [{
-        name: "网页",
-        content: "快照",
-        role: "source_verified",
-        sourceKind: "web_snapshot",
-        sourceReference: "not-a-url",
-      }],
-    }),
-    /PROJECT_MATERIAL_URL_INVALID/u,
   );
 });
 

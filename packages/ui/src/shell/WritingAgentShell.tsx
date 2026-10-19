@@ -94,13 +94,10 @@ import { SearchSettings } from './SearchSettings.tsx'
 import {
   commandErrorMessage,
   dataActionErrorMessage,
-  materialPatchFromFile,
   normalizeBriefUpdate,
-  normalizeProjectSetup,
   setupErrorMessage,
   styleReferenceFromFile,
   type BriefUpdateForm,
-  type ProjectSetupForm,
 } from './onboarding.ts'
 
 export interface WritingAgentShellProps {
@@ -785,252 +782,6 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   )
 }
 
-const DEFAULT_PROJECT_SETUP: ProjectSetupForm = {
-  name: '',
-  mode: 'deep',
-  topic: '',
-  genre: 'explanatory_analysis',
-  audience: '',
-  targetCharacters: '1200',
-  constraints: '不得虚构材料未包含的事实',
-  interactionMode: 'co_creation',
-  authorVoice: '',
-  styleReference: '',
-  styleDecision: 'unspecified',
-  directionDecision: 'tentative',
-  platform: '',
-  publicationGoal: 'not_applicable',
-  materials: [{
-    name: '写作材料',
-    content: '',
-    role: 'source_verified',
-    sourceKind: 'pasted_text',
-    sourceReference: '',
-  }],
-}
-
-const PROJECT_SETUP_STEPS = [
-  { role: '选题策划', title: '先说说，你这次真正想写什么？', hint: '先锁定问题和目标，不急着一次填完所有设置。' },
-  { role: '读者研究', title: '谁会读它，读完希望发生什么？', hint: '读者、文体和发布场景会直接影响结构与表达。' },
-  { role: '创作导演', title: '希望我怎样与你配合？', hint: '可以逐步确认，也可以授权系统连续推进。' },
-  { role: '资料研究', title: '哪些材料可以作为这篇文章的依据？', hint: '材料决定事实边界；没有来源的细节不会被包装成已核实。' },
-] as const
-
-function ProjectSetupDialog({
-  bridge,
-  onClose,
-  onCreated,
-  previewOnly = false,
-}: {
-  bridge: ClientBridge
-  onClose: () => void
-  onCreated: () => void
-  previewOnly?: boolean
-}) {
-  const [form, setForm] = useState<ProjectSetupForm>(DEFAULT_PROJECT_SETUP)
-  const [step, setStep] = useState(0)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const dialogRef = useModalDialog(onClose)
-
-  const updateMaterial = (
-    index: number,
-    patch: Partial<ProjectSetupForm['materials'][number]>,
-  ): void => {
-    setForm(current => ({
-      ...current,
-      materials: current.materials.map((material, materialIndex) =>
-        materialIndex === index ? { ...material, ...patch } : material),
-    }))
-  }
-
-  const focusInvalidField = (reason: unknown): void => {
-    if (!(reason instanceof Error)) return
-    const field = dialogRef.current?.querySelector<HTMLElement>(`[data-error-code="${reason.message}"]`)
-    window.requestAnimationFrame(() => field?.focus())
-  }
-
-  const importMaterialFile = async (index: number, file: File): Promise<void> => {
-    try {
-      setError(null)
-      updateMaterial(index, await materialPatchFromFile(file))
-    } catch (reason) {
-      setError(setupErrorMessage(reason, '材料文件读取失败'))
-    }
-  }
-
-  const importStyleFile = async (file: File): Promise<void> => {
-    try {
-      setError(null)
-      const styleReference = await styleReferenceFromFile(file)
-      setForm(current => ({ ...current, styleReference, styleDecision: 'user_confirmed' }))
-    } catch (reason) {
-      setError(setupErrorMessage(reason, '风格文件读取失败'))
-    }
-  }
-
-  const save = async (): Promise<void> => {
-    try {
-      setSaving(true)
-      setError(null)
-      await bridge.createProject(normalizeProjectSetup({
-        ...form,
-        name: form.name.trim().length > 0 ? form.name : form.topic,
-      }))
-      onCreated()
-      onClose()
-    } catch (reason) {
-      setError(setupErrorMessage(reason, '项目创建失败'))
-      focusInvalidField(reason)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const focusStepField = (selector: string): void => {
-    window.requestAnimationFrame(() => dialogRef.current?.querySelector<HTMLElement>(selector)?.focus())
-  }
-
-  const nextStep = (): void => {
-    setError(null)
-    if (step === 0 && form.topic.trim().length === 0) {
-      setError('先告诉我这篇内容要解决什么问题。')
-      focusStepField('[data-error-code="PROJECT_TOPIC_REQUIRED"]')
-      return
-    }
-    if (step === 1 && form.audience.trim().length === 0) {
-      setError('请描述最主要的目标读者。')
-      focusStepField('[data-error-code="PROJECT_AUDIENCE_REQUIRED"]')
-      return
-    }
-    if (step === 1 && (!/^\d+$/u.test(form.targetCharacters) || Number(form.targetCharacters) < 100)) {
-      setError('目标篇幅至少为 100 字符，请填写有效数字。')
-      focusStepField('[data-error-code="PROJECT_LENGTH_INVALID"]')
-      return
-    }
-    setStep(current => Math.min(PROJECT_SETUP_STEPS.length - 1, current + 1))
-    focusStepField('[data-step-initial]')
-  }
-
-  const previousStep = (): void => {
-    setError(null)
-    setStep(current => Math.max(0, current - 1))
-    focusStepField('[data-step-initial]')
-  }
-
-  const currentStep = PROJECT_SETUP_STEPS[step]!
-
-  return <div className={css.overlay} role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
-    <section ref={dialogRef} className={clsx(css.setupDialog, css.guidedSetupDialog)} role="dialog" aria-modal="true" aria-labelledby="project-setup-title" aria-describedby="project-setup-description">
-      <div className={css.setupHeader}>
-        <div><h2 id="project-setup-title">手动建立写作简报</h2><p id="project-setup-description">这是可选的字段编辑工具。若希望一起讨论方向，关闭后直接在主对话中说出你的想法即可。</p></div>
-        <button className={css.miniButton} type="button" aria-label="关闭新建项目" onClick={onClose}><CloseIcon /></button>
-      </div>
-
-      <ol className={css.setupProgress} aria-label="简报创建进度">
-        {PROJECT_SETUP_STEPS.map((item, index) => <li key={item.role} data-step-status={index === step ? 'current' : index < step ? 'completed' : 'pending'}>
-          <span>{index < step ? <CheckIcon /> : index + 1}</span><strong>{item.role}</strong>
-        </li>)}
-      </ol>
-
-      <div className={css.guidedPrompt}>
-        <div className={css.guidedAvatar} aria-hidden="true">{currentStep.role.slice(0, 1)}</div>
-        <div><span>{currentStep.role} · 第 {step + 1}/{PROJECT_SETUP_STEPS.length} 步</span><h3>{currentStep.title}</h3><p>{currentStep.hint}</p></div>
-      </div>
-
-      {error !== null && <div className={css.editorError} role="alert">{error}</div>}
-
-      {step === 0 && <div className={css.guidedAnswer}>
-        <label className={css.formField}><span>写作主题</span><textarea data-initial-focus data-step-initial data-error-code="PROJECT_TOPIC_REQUIRED" rows={4} placeholder="例如：为什么上一代互联网巨头未必能继续主导 AI 时代？希望重点解释哪些机制？" value={form.topic} onChange={event => setForm(current => ({ ...current, topic: event.target.value }))} /></label>
-        <label className={css.formField}><span>项目名称（可选）</span><input data-error-code="PROJECT_NAME_REQUIRED" placeholder="留空时自动使用写作主题" value={form.name} onChange={event => setForm(current => ({ ...current, name: event.target.value }))} /></label>
-        <div className={css.choiceGroup} role="group" aria-label="写作方向">
-          <span>目前对方向的把握</span>
-          <div className={css.choiceGrid}>
-            <button type="button" aria-pressed={form.directionDecision === 'user_confirmed'} className={form.directionDecision === 'user_confirmed' ? css.choiceSelected : undefined} onClick={() => setForm(current => ({ ...current, directionDecision: 'user_confirmed' }))}><strong>方向已经明确</strong><small>按我描述的角度推进</small></button>
-            <button type="button" aria-pressed={form.directionDecision === 'tentative'} className={form.directionDecision === 'tentative' ? css.choiceSelected : undefined} onClick={() => setForm(current => ({ ...current, directionDecision: 'tentative' }))}><strong>还需要一起梳理</strong><small>先形成提纲，再由我确认</small></button>
-            <button type="button" aria-pressed={form.directionDecision === 'user_delegated'} className={form.directionDecision === 'user_delegated' ? css.choiceSelected : undefined} onClick={() => setForm(current => ({ ...current, directionDecision: 'user_delegated' }))}><strong>授权系统选择</strong><small>在材料边界内决定角度</small></button>
-          </div>
-        </div>
-      </div>}
-
-      {step === 1 && <div className={css.guidedAnswer}>
-        <label className={css.formField}><span>目标读者</span><input data-step-initial data-error-code="PROJECT_AUDIENCE_REQUIRED" placeholder="例如：关注 AI 行业变化的互联网从业者" value={form.audience} onChange={event => setForm(current => ({ ...current, audience: event.target.value }))} /></label>
-        <div className={css.choiceGroup} role="group" aria-label="文章文体"><span>希望用哪种方式写</span><div className={clsx(css.choiceGrid, css.choiceGridFour)}>
-          {([
-            ['explanatory_analysis', '解释分析', '把机制讲清楚'],
-            ['argument_commentary', '观点评论', '提出并论证判断'],
-            ['narrative_observation', '叙事观察', '用经历与场景展开'],
-            ['practical_experience', '实用经验', '给出可执行方法'],
-          ] as const).map(([value, label, hint]) => <button type="button" key={value} aria-pressed={form.genre === value} className={form.genre === value ? css.choiceSelected : undefined} onClick={() => setForm(current => ({ ...current, genre: value }))}><strong>{label}</strong><small>{hint}</small></button>)}
-        </div></div>
-        <div className={css.formGrid}>
-          <label className={css.formField}><span>目标字符数</span><input data-error-code="PROJECT_LENGTH_INVALID" inputMode="numeric" placeholder="例如：3000" value={form.targetCharacters} onChange={event => setForm(current => ({ ...current, targetCharacters: event.target.value }))} /></label>
-          <label className={css.formField}><span>发布平台（可选）</span><input placeholder="例如：微信公众号" value={form.platform} onChange={event => setForm(current => ({ ...current, platform: event.target.value, publicationGoal: event.target.value.trim().length > 0 ? 'primary' : 'not_applicable' }))} /></label>
-          <label className={css.formField}><span>发布目标</span><select value={form.publicationGoal} onChange={event => setForm(current => ({ ...current, publicationGoal: event.target.value as ProjectSetupForm['publicationGoal'] }))}><option value="not_applicable">工作稿 / 暂不发布</option><option value="primary">主要发布渠道</option><option value="secondary">二次分发</option></select></label>
-        </div>
-      </div>}
-
-      {step === 2 && <div className={css.guidedAnswer}>
-        <div className={css.choiceGroup} role="group" aria-label="写作模式"><span>工作深度</span><div className={css.choiceGrid}>
-          <button data-step-initial type="button" aria-pressed={form.mode === 'deep'} className={form.mode === 'deep' ? css.choiceSelected : undefined} onClick={() => setForm(current => ({ ...current, mode: 'deep' }))}><strong>深度写作</strong><small>研究、提纲、初稿、三类审校、修订与事实核查</small></button>
-          <button type="button" aria-pressed={form.mode === 'quick'} className={form.mode === 'quick' ? css.choiceSelected : undefined} onClick={() => setForm(current => ({ ...current, mode: 'quick' }))}><strong>快速成稿</strong><small>较少阶段与模型调用，适合短内容</small></button>
-        </div></div>
-        <div className={css.choiceGroup} role="group" aria-label="协作方式"><span>互动方式</span><div className={css.choiceGrid}>
-          <button type="button" aria-pressed={form.interactionMode === 'co_creation'} className={form.interactionMode === 'co_creation' ? css.choiceSelected : undefined} onClick={() => setForm(current => ({ ...current, interactionMode: 'co_creation' }))}><strong>逐步共创（推荐）</strong><small>提纲、初稿和审校后停下来听取你的意见</small></button>
-          <button type="button" aria-pressed={form.interactionMode === 'autonomous'} className={form.interactionMode === 'autonomous' ? css.choiceSelected : undefined} onClick={() => setForm(current => ({ ...current, interactionMode: 'autonomous' }))}><strong>连续推进</strong><small>除阻断问题外，自动完成全部阶段</small></button>
-        </div></div>
-        <div className={css.formGrid}>
-          <label className={css.formField}><span>作者声音（可选）</span><input placeholder="例如：直接、克制、带真实经验" value={form.authorVoice} onChange={event => setForm(current => ({ ...current, authorVoice: event.target.value }))} /></label>
-          <label className={css.formField}><span>风格决定</span><select value={form.styleDecision} onChange={event => setForm(current => ({ ...current, styleDecision: event.target.value as ProjectSetupForm['styleDecision'] }))}><option value="unspecified">暂不指定</option><option value="user_confirmed">使用我指定的风格</option><option value="user_delegated">授权系统选择</option></select></label>
-          <label className={clsx(css.formField, css.formWide)}><span>风格参考（可选）</span><textarea rows={3} placeholder="描述喜欢的节奏、语气和禁忌，或导入现有风格文件" value={form.styleReference} onChange={event => setForm(current => ({ ...current, styleReference: event.target.value, styleDecision: event.target.value.trim().length > 0 ? 'user_confirmed' : current.styleDecision }))} /></label>
-          <div className={css.formField}><span>导入现有风格</span><label className={css.filePicker}><input type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" onChange={event => {
-            const file = event.currentTarget.files?.[0]
-            if (file !== undefined) void importStyleFile(file)
-            event.currentTarget.value = ''
-          }} /><span>选择 TXT / MD 风格文件</span></label></div>
-        </div>
-      </div>}
-
-      {step === 3 && <div className={css.guidedAnswer}>
-        <label className={css.formField}><span>本篇约束（每行一条）</span><textarea data-step-initial rows={3} placeholder="例如：不得虚构作者亲历；避免空泛趋势判断" value={form.constraints} onChange={event => setForm(current => ({ ...current, constraints: event.target.value }))} /></label>
-        <section className={css.materialSetup}>
-          <div className={css.materialSetupHeader}><div><strong>参考材料</strong><span>可添加多份材料；网页材料同时保存 HTTPS 来源和当前文本快照。</span></div><button type="button" className={css.secondaryAction} onClick={() => setForm(current => ({ ...current, materials: [...current.materials, { name: '', content: '', role: 'source_verified', sourceKind: 'pasted_text', sourceReference: '' }] }))}>添加材料</button></div>
-          {form.materials.map((material, index) => <div className={css.materialCard} key={index}>
-            <div className={css.materialCardHeader}><strong>材料 {index + 1}</strong>{form.materials.length > 1 && <button type="button" className={css.textAction} onClick={() => setForm(current => ({ ...current, materials: current.materials.filter((_, materialIndex) => materialIndex !== index) }))}>移除</button>}</div>
-            <div className={css.formGrid}>
-              <label className={css.formField}><span>材料名称</span><input data-error-code="PROJECT_MATERIAL_NAME_REQUIRED" placeholder="例如：访谈纪要" value={material.name} onChange={event => updateMaterial(index, { name: event.target.value })} /></label>
-              <label className={css.formField}><span>材料类型</span><select value={material.role} onChange={event => updateMaterial(index, { role: event.target.value as ProjectSetupForm['materials'][number]['role'] })}><option value="source_verified">可核实资料（报告 / 文档）</option><option value="user_firsthand">亲历信息（访谈 / 经验）</option><option value="illustrative">示例素材（仅作参考）</option></select></label>
-              <label className={css.formField}><span>来源形式</span><select value={material.sourceKind} onChange={event => updateMaterial(index, { sourceKind: event.target.value as ProjectSetupForm['materials'][number]['sourceKind'], sourceReference: '' })}><option value="pasted_text">粘贴文本</option><option value="utf8_file">本地 TXT / Markdown 文件</option><option value="web_snapshot">网页文本快照</option></select></label>
-              {material.sourceKind === 'utf8_file' && <div className={css.formField}><span>本地文件</span><label className={css.filePicker}><input type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" onChange={event => {
-                const file = event.currentTarget.files?.[0]
-                if (file !== undefined) void importMaterialFile(index, file)
-                event.currentTarget.value = ''
-              }} /><span>{material.sourceReference.length > 0 ? `重新选择（当前：${material.sourceReference}）` : '选择 TXT / MD 文件'}</span></label></div>}
-              {material.sourceKind === 'web_snapshot' && <label className={css.formField}><span>来源链接（HTTPS）</span><input data-error-code="PROJECT_MATERIAL_URL_INVALID" placeholder="输入完整 HTTPS 来源链接" value={material.sourceReference} onChange={event => updateMaterial(index, { sourceReference: event.target.value })} /></label>}
-              <label className={clsx(css.formField, css.formWide)}><span>材料正文</span><textarea data-error-code="PROJECT_MATERIAL_REQUIRED" rows={6} placeholder="粘贴已获授权使用的原始材料…" value={material.content} onChange={event => updateMaterial(index, { content: event.target.value })} /></label>
-            </div>
-          </div>)}
-        </section>
-        <div className={css.setupReviewStrip}>
-          <strong>下一步仍会让你复核</strong><span>{form.mode === 'deep' ? '深度写作' : '快速成稿'} · {form.interactionMode === 'co_creation' ? '逐步共创' : '连续推进'} · {form.materials.length} 份材料</span>
-        </div>
-      </div>}
-
-      <div className={css.setupActions}>
-        <span className={css.settingHint}>{previewOnly
-          ? '当前是交互演示；可以查看完整流程，但不会创建或保存项目。'
-          : '当前答案会保存在这台电脑上；创建后不会立即调用模型。'}</span>
-        <div className={css.connectionActions}>
-          <button type="button" className={css.secondaryAction} onClick={step === 0 ? onClose : previousStep}>{step === 0 ? '取消' : '上一步'}</button>
-          {step < PROJECT_SETUP_STEPS.length - 1
-            ? <button type="button" className={css.primaryAction} onClick={nextStep}>继续</button>
-            : <button type="button" className={css.primaryAction} disabled={saving || previewOnly} onClick={() => void save()}>{previewOnly ? '演示环境不保存' : saving ? '正在创建…' : '建立简报并复核'}</button>}
-        </div>
-      </div>
-    </section>
-  </div>
-}
-
 const GENRE_LABELS: Readonly<Record<BriefSummary['genre'], string>> = {
   argument_commentary: '观点评论',
   explanatory_analysis: '解释分析',
@@ -1644,7 +1395,6 @@ export function WritingAgentShell({
   const [activePanelView, setActivePanelView] = useState<string | undefined>(undefined)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
-  const [projectSetupOpen, setProjectSetupOpen] = useState(false)
   const [briefEditOpen, setBriefEditOpen] = useState(false)
   const [hero, setHero] = useState(() => snapshot.selectedSessionId.length === 0)
   const [newProjectIntent, setNewProjectIntent] = useState(() => snapshot.selectedProjectId.length === 0)
@@ -1987,12 +1737,11 @@ export function WritingAgentShell({
             setHero(false)
             forceFollowLatest()
           }} onConfigureModel={() => openSettings('models')} hostConfiguration={hostConfiguration} />
-          <details className={css.optionalSetup}><summary>高级设置（可选）</summary>
-            <p>习惯自己指定字段时，可以使用这些工具；也可以直接在对话中说明要求。</p>
-            <button className={css.secondaryAction} type="button" onClick={() => setProjectSetupOpen(true)}>手动建立项目</button>
-            {!newProjectIntent && snapshot.brief !== null && <button className={css.secondaryAction} type="button" onClick={() => setBriefEditOpen(true)}>查看写作设置</button>}
-            {!newProjectIntent && snapshot.brief?.confirmationStatus === 'tentative' && snapshot.conversationIntake?.phase !== 'proposal' && <BriefConfirmationCard brief={snapshot.brief} confirming={briefConfirming} error={briefConfirmationError} onConfirm={() => void confirmBrief()} onEdit={() => setBriefEditOpen(true)} />}
-          </details>
+          {!newProjectIntent && snapshot.brief !== null && <details className={css.optionalSetup}><summary>高级设置（可选）</summary>
+            <p>可查看和调整当前项目的写作要求，也可以直接在对话中说明。</p>
+            <button className={css.secondaryAction} type="button" onClick={() => setBriefEditOpen(true)}>查看写作设置</button>
+            {snapshot.brief.confirmationStatus === 'tentative' && snapshot.conversationIntake?.phase !== 'proposal' && <BriefConfirmationCard brief={snapshot.brief} confirming={briefConfirming} error={briefConfirmationError} onConfirm={() => void confirmBrief()} onEdit={() => setBriefEditOpen(true)} />}
+          </details>}
         </div> : activeTab === 'conversation' ? <>
           <div className={css.conversationWrap}>
           <div ref={conversationScrollRef} className={css.scrollBody} data-conversation-feed="true" onScroll={handleConversationScroll}>
@@ -2071,7 +1820,6 @@ export function WritingAgentShell({
         )}
       </aside>
       {settingsOpen && <div className={appFrameCss.overlayLayer}><SettingsDialog bridge={bridge} brand={brand} initialSection={settingsSection} {...(hostConfiguration === undefined ? {} : { hostConfiguration })} onClose={() => setSettingsOpen(false)} /></div>}
-      {projectSetupOpen && <div className={appFrameCss.overlayLayer}><ProjectSetupDialog bridge={bridge} previewOnly={snapshot.mode === 'mock'} onCreated={() => { setNewProjectIntent(false); setHero(true) }} onClose={() => setProjectSetupOpen(false)} /></div>}
       {briefEditOpen && snapshot.brief !== null && <div className={appFrameCss.overlayLayer}><BriefEditDialog bridge={bridge} brief={snapshot.brief} onClose={() => setBriefEditOpen(false)} /></div>}
       {deleteProjectTarget !== null && hostConfiguration !== undefined && <div className={appFrameCss.overlayLayer}><DeleteProjectDialog
         project={deleteProjectTarget}

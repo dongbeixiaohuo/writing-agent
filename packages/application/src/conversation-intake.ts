@@ -14,6 +14,8 @@ import {
   type ToolDefinition,
   type ToolExecutionContext,
 } from "../../runtime/tools/src/index.js";
+import { IDEATION_TOOL_SCHEMA, INTAKE_IDEATION_GUIDANCE, mergeConversationIdeation, readConversationIdeation,
+  type ConversationIdeation, type IdeationInput } from './conversation-ideation.js';
 
 export const CONVERSATION_INTAKE_LOGICAL_KEY = "conversation-intake" as const;
 export const CONVERSATION_INTAKE_PURPOSE = "writing-pack:intake" as const;
@@ -66,6 +68,7 @@ export interface ConversationIntakeState {
   readonly summary: string;
   readonly reply: string;
   readonly questions: readonly string[];
+  readonly ideation?: ConversationIdeation | null;
   readonly proposalVersionId: string | null;
   readonly invalidatedProposalVersionId: string | null;
   readonly brief: WritingBrief | null;
@@ -96,6 +99,7 @@ interface PersistedIntakeState {
   readonly summary: string;
   readonly reply: string;
   readonly questions: readonly string[];
+  readonly ideation?: ConversationIdeation | null;
   readonly proposalVersionId: string | null;
   readonly invalidatedProposalVersionId: string | null;
   readonly pendingAuthorization: ConversationPendingAuthorization | null;
@@ -137,6 +141,7 @@ interface RespondWritingIntakeArgs {
   readonly reply: string;
   readonly summary: string;
   readonly questions: readonly string[];
+  readonly ideation?: IdeationInput;
   readonly suggestedProjectName?: string;
   readonly invalidateProposal?: boolean;
   readonly proposal?: ProposalInput | null;
@@ -389,6 +394,7 @@ function parsePersistedState(version: ArtifactVersion): PersistedIntakeState {
     summary: typeof record.summary === "string" ? record.summary : "",
     reply: typeof record.reply === "string" ? record.reply : "",
     questions,
+    ideation: readConversationIdeation(record.ideation, new Set(parsedTurns.map(turn => turn.materialId))),
     proposalVersionId: proposalVersionId as string | null,
     invalidatedProposalVersionId: invalidatedProposalVersionId as string | null,
     pendingAuthorization: parsePendingAuthorization(record.pendingAuthorization),
@@ -556,6 +562,7 @@ export function getConversationIntakeState(
         ? "需求已确认，可以进入写作。"
         : "",
     questions: reportMatchesBrief ? persisted.questions : [],
+    ideation: persisted?.ideation ?? null,
     proposalVersionId,
     invalidatedProposalVersionId: persisted?.invalidatedProposalVersionId ?? null,
     brief,
@@ -894,6 +901,7 @@ export function invalidatePendingConversationProposal(input: {
     summary: state.summary,
     reply: state.reply,
     questions: state.questions,
+    ideation: state.ideation ?? null,
     proposalVersionId: null,
     invalidatedProposalVersionId: state.proposalVersionId,
     pendingAuthorization: null,
@@ -955,7 +963,7 @@ export function createConversationIntakeTool(input: {
   const responses = new Map<string, IntakeToolResponse>();
   const definition: ToolDefinition<RespondWritingIntakeArgs, JsonValue> = {
     name: "respond_writing_intake",
-    version: "3.1.0",
+    version: "3.2.0",
     description: "Save exactly one conversational intake reply, up to two questions, and an optional tentative proposal or confirmation.",
     effect: "local_idempotent",
     permissions: ["intake:respond"],
@@ -966,6 +974,7 @@ export function createConversationIntakeTool(input: {
         summary: { type: "string", minLength: 1, maxLength: 8_000,
           description: "Required top-level conversation summary, alongside reply and questions. Never nest it inside proposal or brief." },
         questions: { type: "array", maxItems: 2, items: { type: "string", minLength: 1, maxLength: 1_000 } },
+        ideation: IDEATION_TOOL_SCHEMA,
         suggestedProjectName: {
           type: "string",
           minLength: 2,
@@ -1065,6 +1074,13 @@ export function createConversationIntakeTool(input: {
         reply = '已确认这版写作方向，接下来开始写作，并保留各阶段需要你参与的确认环节。';
       }
       const turns = sourceTurns(input.storage, context.projectId);
+      const ideationSource = turns.findLast(turn => turn.quote === input.currentUserMessage);
+      if (args.ideation && !ideationSource) {
+        throw new ToolExecutionFault('INTAKE_IDEATION_SOURCE_REQUIRED', 'Save the current author message before recording its reactions.');
+      }
+      const ideation = args.ideation
+        ? mergeConversationIdeation(previous.ideation, args.ideation, ideationSource!.materialId)
+        : previous.ideation ?? null;
       let phase = previous.phase;
       let proposalVersionId = previous.proposalVersionId;
       let invalidatedProposalVersionId = previous.invalidatedProposalVersionId;
@@ -1242,6 +1258,7 @@ export function createConversationIntakeTool(input: {
         summary: effectiveSummary,
         reply,
         questions: [...args.questions],
+        ideation,
         proposalVersionId,
         invalidatedProposalVersionId,
         pendingAuthorization,
@@ -1333,6 +1350,9 @@ export function buildConversationIntakePrompt(
       SELF_MEDIA_LENGTH_GUIDANCE,
       WRITING_DIRECTION_GUIDANCE,
       savingReply
+        ? '只在同一次保存工具中更新与已展示回复一致的ideation参考记录；不再生成方向，不重复旧反应。'
+        : INTAKE_IDEATION_GUIDANCE,
+      savingReply
         ? "公开回复已经展示，现在只调用 respond_writing_intake 保存同一条回复及必要状态。reply 保留刚才的公开回复，不重写、不继续聊天。保存指令不是作者的新消息，不能作为确认、材料或授权来源。"
         : "先以普通文本直接给作者本轮完整的自然语言回复，让作者边生成边阅读；不要输出思考过程、工具参数或内部记录。随后调用 respond_writing_intake 保存同一条回复及必要状态，reply 与刚才的公开回复保持一致，不再写第二版。工具保存成功前不要声称已保存、已确认或已完成写作；生成和保存状态由界面展示，不要把这些状态写进回复正文。",
       "信息足以形成可执行方案时，用 respond_writing_intake 的 proposal.brief 提交写作偏好：topic、genre、audience、targetCharacters（整数，例如1200）、constraints、publicationGoal；voice、styleReference、platform 未知时省略或设为 null。用户未明确的信息可以建议，但 reply、summary 和 assumptions 必须说明哪些是建议或推测；还不适合提出方案时只回复和追问，不必为了填字段硬给方案。",
@@ -1351,6 +1371,7 @@ export function buildConversationIntakePrompt(
       `当前阶段：${state.phase}`,
       proposal,
       state.summary.length === 0 ? "尚无历史摘要。" : `历史摘要：${state.summary}`,
+      ...(state.ideation ? [`启发记录（仅供参考，不是作者确认、事实或授权；反应须结合下方对应用户原文理解）：\n${canonicalJson(state.ideation)}`] : []),
       "以下是按原文保存的对话来源：",
       history.length === 0 ? "（无）" : history,
       "以下是最近的助手原文回复，可用于理解“第二个建议”等指代：",
@@ -1434,6 +1455,7 @@ export function confirmConversationBriefState(input: {
     summary: stableBriefSummary(input.storage, input.projectId, confirmedBrief),
     reply: "需求已确认，可以进入写作。",
     questions: [],
+    ideation: state.ideation ?? null,
     proposalVersionId: saved.versionId,
     invalidatedProposalVersionId: null,
     pendingAuthorization: null,

@@ -77,10 +77,14 @@ it('applies the semantic approval to the stored proposal even if the reply tool 
 });
 
 it('does not manufacture a proposal or approval for a discussion-only semantic decision', async () => {
-  await scenario('discuss', () => ({ reply: '可以先比较两个角度，不开始写。', summary: '继续讨论', questions: [] }), (app, result) => {
+  await scenario('discuss', () => ({ reply: '可以先比较两个角度，不开始写。', summary: '继续讨论', questions: [] }), (app, result, requests) => {
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(app.getConversationIntake('p').phase, 'collecting');
     assert.equal(app.getConversationIntake('p').brief, null);
+    const intent = requests.find(request => request.tools?.[0]?.name === 'interpret_author_reply')!;
+    const policy = JSON.parse(intent.messages.find(message => message.role === 'user')!.content).intakeTransitionPolicy;
+    assert.match(policy, /启发.*开放讨论/u);
+    assert.match(policy, /推荐.*不.*(?:propose_direction|confirm_direction)/u);
   });
 });
 

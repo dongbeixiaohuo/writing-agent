@@ -79,7 +79,7 @@ export function createConversationIntent(options: {
       userMessage: JSON.stringify({ currentUserMessage: userMessage, checkpoint, context: options.context,
         factCheckControlPolicy: 'defer_fact_check 仅表示作者明确要求跳过、暂缓或不再继续本次事实核查，程序保留未核查工作稿，不把它算作核查通过。不要求固定句式。只关闭外部搜索但继续模型复核不等于暂缓核查；询问能否跳过、否定跳过、要求跳过且另改稿等复合指令用discuss先处理完整要求。',
         intakeTransitionPolicy: options.allowedIntents.includes('propose_direction')
-          ? '当前尚无已保存的待确认方案，但不能因此反复收集信息。结合全部作者消息和最近助手回复判断：信息已足以提出方案，或作者正在认可/微调前面已经谈妥的具体方案时，选择propose_direction，程序要求实际保存方案；尚有真正缺口或作者仍在开放讨论则discuss。不要仅因数据库阶段是collecting就选discuss。不能把首次建议、模糊的想法或对局部建议的认可当作完整写作授权。'
+          ? '当前尚无已保存的待确认方案，但不能因此反复收集信息。启发找线索、试角度仍是开放讨论，用discuss；还不知道、否定之前建议、只要求你推荐一个，不单凭这些就选propose_direction，更不是confirm_direction。结合全部作者消息和最近助手回复判断：已有明确线索且信息足以提出可执行方案，或作者正在认可/微调前面已经谈妥的具体方案时，选择propose_direction，程序要求实际保存方案；尚有真正缺口或作者仍在开放讨论则discuss。不要仅因数据库阶段是collecting就选discuss，也不要靠固定词路由。不能把首次建议、模糊的想法或对局部建议的认可当作完整写作授权。'
           : undefined,
         preferencePolicy: 'remember_preference 只用于作者明确要求今后跨文章记住写作偏好；普通改稿意见不是长期授权。forget_preferences 只用于明确忘记本项目保存的长期偏好；不含糊推断、不删除稿件。不需要指定格式或前缀。' }),
     }),

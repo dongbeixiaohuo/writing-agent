@@ -609,9 +609,7 @@
 }
 
 .briefReviewHeader,
-.briefActions,
-.materialSetupHeader,
-.materialCardHeader {
+.briefActions {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2568,188 +2566,6 @@
   line-height: 1.6;
 }
 
-.guidedSetupDialog {
-  width: min(860px, calc(100vw - 40px));
-}
-
-.setupProgress {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0 0 22px;
-  padding: 0;
-  list-style: none;
-}
-
-.setupProgress li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 8px 10px;
-  border-radius: 10px;
-  color: var(--dsw-alias-label-tertiary);
-  background: var(--dsw-alias-bg-base);
-  font-size: 12px;
-}
-
-.setupProgress li > span {
-  display: grid;
-  flex: 0 0 24px;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--dsw-alias-border-l3);
-  border-radius: 50%;
-}
-
-.setupProgress li > span svg {
-  width: 13px;
-  height: 13px;
-}
-
-.setupProgress li > strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.setupProgress li[data-step-status='current'] {
-  color: var(--dsw-alias-brand-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent);
-}
-
-.setupProgress li[data-step-status='current'] > span,
-.setupProgress li[data-step-status='completed'] > span {
-  border-color: var(--dsw-alias-brand-primary);
-  color: var(--dsw-static-white, #fff);
-  background: var(--dsw-alias-brand-primary);
-}
-
-.setupProgress li[data-step-status='completed'] {
-  color: var(--dsw-alias-label-secondary);
-}
-
-.guidedPrompt {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 17px 18px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 24%, var(--dsw-alias-border-l3));
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 6%, var(--dsw-specific-popover));
-}
-
-.guidedPrompt h3,
-.guidedPrompt p {
-  margin: 0;
-}
-
-.guidedPrompt h3 {
-  margin-top: 3px;
-  font-size: 17px;
-  line-height: 1.45;
-}
-
-.guidedPrompt p,
-.guidedPrompt span {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.guidedAvatar {
-  display: grid;
-  flex: 0 0 38px;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  color: var(--dsw-static-white, #fff);
-  background: var(--dsw-alias-brand-primary);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.guidedAnswer {
-  display: grid;
-  gap: 18px;
-  min-height: 310px;
-  padding: 20px 2px 2px;
-}
-
-.choiceGroup {
-  display: grid;
-  gap: 9px;
-}
-
-.choiceGroup > span {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.choiceGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.choiceGridFour {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.choiceGrid button {
-  display: grid;
-  gap: 4px;
-  min-height: 74px;
-  padding: 12px;
-  border: 1px solid var(--dsw-alias-border-l3);
-  border-radius: 12px;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-specific-popover);
-  text-align: left;
-  cursor: pointer;
-}
-
-.choiceGrid button:hover {
-  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l3));
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.choiceGrid button:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
-  outline-offset: 1px;
-}
-
-.choiceGrid button small {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.choiceGrid .choiceSelected {
-  border-color: var(--dsw-alias-brand-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, var(--dsw-specific-popover));
-  box-shadow: inset 0 0 0 1px var(--dsw-alias-brand-primary);
-}
-
-.setupReviewStrip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 14px;
-  border-radius: 11px;
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-base);
-  font-size: 12px;
-}
-
-.setupReviewStrip strong {
-  color: var(--dsw-alias-label-primary);
-}
-
 .setupHeader {
   display: flex;
   align-items: flex-start;
@@ -2883,35 +2699,6 @@
 
 .formWide {
   grid-column: 1 / -1;
-}
-
-.materialSetup {
-  display: grid;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid var(--dsw-alias-border-l3);
-}
-
-.materialSetupHeader > div {
-  display: grid;
-  gap: 4px;
-}
-
-.materialSetupHeader span {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.materialCard {
-  padding: 14px;
-  border: 1px solid var(--dsw-alias-border-l3);
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-base);
-}
-
-.materialCardHeader {
-  margin-bottom: 12px;
 }
 
 .textAction {
@@ -3255,18 +3042,9 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
     align-items: stretch;
     flex-direction: column-reverse;
   }
-  .setupProgress {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .choiceGrid,
-  .choiceGridFour,
   .formGrid {
     grid-template-columns: 1fr;
   }
-  .guidedAnswer {
-    min-height: 0;
-  }
-  .setupReviewStrip,
   .setupActions {
     align-items: stretch;
     flex-direction: column;
