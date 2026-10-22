@@ -1219,18 +1219,21 @@ it('desktop bridge retry preserves the timed-out outline task and saved research
 for (const cancel of [false, true]) it(`desktop recovers a protected expert without redispatching saved work (cancel=${cancel})`, async () => {
   class LimitedProvider extends CollaborationProvider {
     looping = true;
+    readOffset = 0;
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       if (collaborationState(request)?.actor === 'outline' && this.looping) {
-        // Exercise the general call allowance, not the text-save repetition guard.
+        // Exercise the general call allowance using distinct valid slices,
+        // not the successful-read no-progress guard.
         const material = (collaborationState(request) as any).materialCatalog.find((m: any) => m.materialId === 'm-0');
-        yield { type: 'tool_call_delta', index: 0, id: `read-loop-${this.requests.length}`, name: 'read_material', argumentsDelta: JSON.stringify({materialId: 'm-0', contentVersionId: material.contentVersionId, offset: 0, maxChars: 100}) };
+        yield { type: 'tool_call_delta', index: 0, id: `read-page-${this.readOffset}`, name: 'read_material', argumentsDelta: JSON.stringify({materialId: 'm-0', contentVersionId: material.contentVersionId, offset: this.readOffset, maxChars: 100}) };
+        this.readOffset += 100;
         yield { type: 'completed', finishReason: 'tool_calls' }; return;
       }
       yield* super.providerStream(request);
     }
   }
   const provider = new LimitedProvider();
-  const f = setup(provider, 'co_creation', 1, 'quick', '外部资料原文', 'web_snapshot');
+  const f = setup(provider, 'co_creation', 1, 'quick', '外部资料原文'.repeat(500), 'web_snapshot');
   const input = { ...f.input, budget: { ...f.input.budget, maxModelRequests: 12 } };
   const bridge = createApplicationBridge({ service: f.app, workspaceId: 'protected-retry', model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {}, budget: input.budget } });
   try {

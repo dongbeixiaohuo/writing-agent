@@ -15,6 +15,22 @@ import { dispatchDesktopRpc, safeDesktopFailure } from "../src/rpc-host.js";
 import type { DesktopHostApi } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { commandErrorMessage } from '../../../packages/ui/src/shell/onboarding.js';
 
+test('search-settings save and partial rollback failures retain actionable safe messages across RPC', () => {
+  for (const [code, match] of [
+    ['SEARCH_SETTINGS_SAVE_FAILED', /未能保存.*旧配置/],
+    ['SEARCH_SETTINGS_ROLLBACK_FAILED', /凭据.*未能恢复.*重新配置/],
+    ['SEARCH_API_KEY_REQUIRED', /搜索服务.*API Key/],
+  ] as const) {
+    const result = safeDesktopFailure(Object.assign(new Error('private-key-backend-path'), {code}));
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.code, code);
+      assert.match(result.error.message, match);
+      assert.doesNotMatch(result.error.message, /private-key-backend-path/);
+    }
+  }
+});
+
 test('publication preload preserves safe error codes in standard Error.message across contextBridge', async () => {
   const output = buildSync({ entryPoints: ['apps/desktop/src/preload.ts'], bundle: true, platform: 'node',
     format: 'cjs', external: ['electron'], write: false, logLevel: 'silent' }).outputFiles[0]!.text;

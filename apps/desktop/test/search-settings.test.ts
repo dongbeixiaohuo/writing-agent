@@ -8,6 +8,92 @@ import { SearchSettingsStore } from '../src/search-settings.js';
 import { CredentialBroker } from '../../../packages/runtime/credentials/src/index.js';
 import { createFactSearchTools } from '../../../packages/application/src/fact-search.js';
 
+test('DeepSeek settings migrate disabled, keep a separate secret and verify only its fixed public probe', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-deepseek-settings-'));
+  const keys = new Map<string, string>();
+  const credentials = new CredentialBroker({ systemBackend: { isAvailable: async () => true,
+    read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
+  const path = join(root, 'search-settings.json');
+  const calls: string[] = [];
+  try {
+    writeFileSync(path, JSON.stringify({ parallelEnabled: true, tavilyEnabled: false }));
+    const store = new SearchSettingsStore(path, credentials, { fetch: async url => { calls.push(String(url));
+      return Response.json({ results: [{ url: 'https://example.com/date', summary: '1949年10月1日' }] }); } });
+    assert.equal((await store.status()).deepseekEnabled, false);
+    await assert.rejects(store.save({ parallelEnabled: false, tavilyEnabled: false, deepseekEnabled: true }), /SEARCH_API_KEY_REQUIRED/);
+    const saved = await store.save({ parallelEnabled: false, tavilyEnabled: true, deepseekEnabled: true,
+      deepseekApiKey: 'deepseek-private', tavilyApiKey: 'tavily-private' });
+    assert.equal(saved.deepseekKeyConfigured, true); assert.equal(saved.verification?.deepseek, undefined);
+    assert.doesNotMatch(readFileSync(path, 'utf8') + JSON.stringify(saved), /deepseek-private|tavily-private/);
+    assert.equal(keys.size, 2);
+    assert.equal((await store.verify('deepseek')).verification?.deepseek?.status, 'available');
+    assert.deepEqual(calls, ['https://api.deepseek.com/v1/tools/search']);
+    const changed = await store.save({ parallelEnabled: false, tavilyEnabled: true, deepseekEnabled: true, deepseekApiKey: 'new-deepseek' });
+    assert.equal(changed.verification?.deepseek, undefined);
+    await store.save({ parallelEnabled: true, tavilyEnabled: true });
+    assert.equal(store.configuration().deepseekEnabled, true, 'an old client does not reset the new opt-in');
+    assert.equal(await store.configuration().getDeepSeekKey?.(), 'new-deepseek');
+    assert.equal(await store.configuration().getTavilyKey?.(), 'tavily-private');
+    assert.equal((await new SearchSettingsStore(path, credentials).status()).verification?.deepseek, undefined);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failed search-settings commit restores both independently updated keys and flags', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-search-two-key-rollback-'));
+  const keys = new Map<string, string>();
+  const credentials = new CredentialBroker({ systemBackend: { isAvailable: async () => true,
+    read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
+  const path = join(root, 'search-settings.json');
+  const store = new SearchSettingsStore(path, credentials);
+  try {
+    await store.save({ parallelEnabled: false, tavilyEnabled: true, deepseekEnabled: true,
+      tavilyApiKey: 'old-tavily', deepseekApiKey: 'old-deepseek' });
+    rmSync(path); mkdirSync(path);
+    await assert.rejects(store.save({ parallelEnabled: true, tavilyEnabled: true, deepseekEnabled: true,
+      tavilyApiKey: 'new-tavily', deepseekApiKey: 'new-deepseek' }));
+    assert.equal(store.configuration().parallelEnabled, false);
+    assert.deepEqual([...keys.values()].sort(), ['old-deepseek', 'old-tavily']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const failure of ['delete', 'restore'] as const) {
+test(`one credential rollback ${failure} failure does not prevent remaining restoration or leak secrets`, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-search-rollback-error-'));
+  const keys = new Map<string, string>();
+  class FailingRollbackBroker extends CredentialBroker {
+    override async deleteManaged(id: string) {
+      if (failure === 'delete' && id.startsWith('search-deepseek-')) throw new Error('backend exposed new-deepseek-secret');
+      return await super.deleteManaged(id);
+    }
+    override async saveManaged(id: string, secret: string, persistence: 'system' | 'session') {
+      if (failure === 'restore' && secret === 'old-deepseek-secret' && keys.get(id) === 'new-deepseek-secret')
+        throw new Error('backend exposed old-deepseek-secret');
+      return await super.saveManaged(id, secret, persistence);
+    }
+  }
+  const credentials = new FailingRollbackBroker({ systemBackend: { isAvailable: async () => true,
+    read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
+  const path = join(root, 'search-settings.json');
+  const store = new SearchSettingsStore(path, credentials);
+  try {
+    await store.save({ parallelEnabled: false, tavilyEnabled: true, tavilyApiKey: 'old-tavily-secret',
+      ...(failure === 'restore' ? { deepseekEnabled: true, deepseekApiKey: 'old-deepseek-secret' } : {}) });
+    rmSync(path); mkdirSync(path);
+    let rejected: unknown;
+    try {
+      await store.save({ parallelEnabled: true, tavilyEnabled: true, deepseekEnabled: true,
+        tavilyApiKey: 'new-tavily-secret', deepseekApiKey: 'new-deepseek-secret' });
+    } catch (error) { rejected = error; }
+    assert.equal(await store.configuration().getTavilyKey?.(), 'old-tavily-secret', 'other credentials must still be restored');
+    assert.ok(rejected instanceof Error, 'incomplete rollback must not report success');
+    assert.equal(rejected.message, 'SEARCH_SETTINGS_ROLLBACK_FAILED');
+    assert.doesNotMatch(`${rejected.stack}${JSON.stringify(rejected)}`, /(?:new|old)-(?:deepseek|tavily)-secret|backend exposed/);
+    assert.equal(store.configuration().parallelEnabled, false);
+    assert.equal(store.configuration().deepseekEnabled, failure === 'restore');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+}
+
 test('search limit persists, old settings default to six, and invalid changes leave credentials and flags intact', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-search-limit-'));
   const keys = new Map<string, string>();
@@ -160,6 +246,8 @@ test('failed settings replacement restores the previous Tavily key and flags', a
     assert.deepEqual(await store.status(), {
       parallelEnabled: true,
       tavilyEnabled: true,
+      deepseekEnabled: false,
+      deepseekKeyConfigured: false,
       tavilyKeyConfigured: true,
       credentialPersistence: 'system',
       searchLimit: 6,
@@ -185,6 +273,8 @@ test('failed first settings replacement removes the newly created Tavily key', a
     assert.deepEqual(await store.status(), {
       parallelEnabled: false,
       tavilyEnabled: false,
+      deepseekEnabled: false,
+      deepseekKeyConfigured: false,
       tavilyKeyConfigured: false,
       credentialPersistence: 'missing',
       searchLimit: 6,

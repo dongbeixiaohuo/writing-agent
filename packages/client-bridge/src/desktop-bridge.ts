@@ -299,18 +299,22 @@ export type DesktopPublicationSaveResult =
   | { readonly cancelled: false; readonly receiptId: string; readonly savedPath: string; readonly fileName: string };
 
 export interface SearchSettingsInput {
+  readonly deepseekEnabled?: boolean;
+  readonly deepseekApiKey?: string;
   readonly searchLimit?: number;
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;
   readonly tavilyApiKey?: string;
 }
 export interface SearchSettingsView {
+  readonly deepseekEnabled?: boolean;
+  readonly deepseekKeyConfigured?: boolean;
   readonly searchLimit?: number;
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;
   readonly tavilyKeyConfigured: boolean;
   readonly credentialPersistence: 'system' | 'session' | 'environment' | 'missing';
-  readonly verification?: Partial<Record<'parallel' | 'tavily', SearchConnectionView>>;
+  readonly verification?: Partial<Record<'deepseek' | 'parallel' | 'tavily', SearchConnectionView>>;
 }
 export interface SearchConnectionView {
   readonly status: 'available' | 'failed';
@@ -321,7 +325,7 @@ export interface SearchConnectionView {
 export interface DesktopHostConfiguration {
   searchStatus?(): Promise<SearchSettingsView>;
   configureSearch?(input: SearchSettingsInput): Promise<SearchSettingsView>;
-  testSearchConnection?(provider: 'parallel' | 'tavily'): Promise<SearchSettingsView>;
+  testSearchConnection?(provider: 'deepseek' | 'parallel' | 'tavily'): Promise<SearchSettingsView>;
   savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult>;
   revealPublication(receiptId: string): Promise<void>;
   revealProviderConfig(): Promise<void>;

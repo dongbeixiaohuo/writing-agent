@@ -381,6 +381,11 @@ export function createWritingCollaboration(options: {
       ...(outputPreview ? { textOutputTool: { name: 'submit_writing_stage', arguments: { stage: outputPreview.stage }, contentArgument: 'content' },
         modelTools: [...materialReadTools, ...artifactReadTools, ...discussionReadTools, 'assess_writing_readiness'], toolChoice: 'auto' as const } : {}),
       actor,
+      // Receipt IDs and remaining budget are observation metadata, not task
+      // progress. Keep the exact business inputs/versions and deduplicated
+      // material slices so new tasks or real reads still reset the guard.
+      progressKey: JSON.stringify({ task: actor === 'director' ? directorMessage : actor === 'title' ? assignment!.reason : options.expertMessage,
+        ...summary, savedSourceRecords: undefined, searchBudget: undefined, researchSearchBudget: undefined }),
       systemPrompt: isFactCheck ? factReviewPrompt(prepared ? 'verify' : 'extract', factSearch.enabled())
         : `${commonPrompt}\nACTOR=${actor}\n${buildExpertInstructions(actor)}\n${rolePrompt}\n${sharedStateRules}`,
       userMessage: isFactCheck ? `核对当前文章的重要事实，不重新审稿。\nCOLLABORATION_STATE=${JSON.stringify({

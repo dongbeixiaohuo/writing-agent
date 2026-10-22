@@ -22,6 +22,18 @@ export interface RunFailureContext {
  */
 export function explainRunFailure(context: RunFailureContext): RunFailureExplanation {
   const { errorCode: code, technicalName, transportPhase } = context
+  if (code === 'TOOL_NO_PROGRESS') return {
+    title:'重复读取没有推进当前任务', detail:'模型连续读取相同业务输入和结果，没有提交新的成果；程序已暂停自动循环，避免继续消耗请求。',
+    remediation:'已保存内容仍保留。查看最近工具记录后可重试当前步骤，无需重新提供材料。',
+  }
+  if (code === 'PROVIDER_RETRY_DEFERRED') return {
+    title:'模型服务要求稍后重试', detail:'服务商建议的重试时间超过本轮自动等待范围或不合法；程序已保存进度并暂停，而不是继续长时间挂起。',
+    remediation:'按主对话的建议时间重试，或选择其他已验证模型；不会提前自动重试同一模型。',
+  }
+  if (code === 'SEARCH_QUERY_TOO_LONG') return {
+    title:'搜索词超过 DeepSeek 的长度限制', detail:'DeepSeek Search 最多接受 128 个 Unicode 字符；本次没有向它发送请求，也没有静默截断问题。',
+    remediation:'精简为一个公开事实的问题再搜索，或使用其他已启用的搜索服务。',
+  }
   if (code === 'INTAKE_SOURCE_READ_REQUIRED') return {
     title: '本轮链接尚未尝试读取，方案未保存',
     detail: '模型已请求提交方案，但尚有当轮指定链接未经读取尝试；这是本机来源前置检查，不是模型无响应或搜索服务超时。',

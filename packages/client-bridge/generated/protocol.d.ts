@@ -393,6 +393,7 @@ export interface RecoverableRunSummary {
         tool: string;
         explanation: string;
     };
+    retryNotBefore?: number;
     interruption?: {
         source: 'model' | 'tool';
         cause: 'timeout' | 'unknown';

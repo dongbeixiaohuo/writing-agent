@@ -87,6 +87,19 @@ export function checkpointCopy(
   if (recovery.inputRequest?.kind === 'search_recovery') return { role: '事实核查', eyebrow: '搜索等待你的决定',
     title: recovery.inputRequest.searchRecovery?.kind === 'limit' ? '搜索已到本轮上限' : '搜索服务未取得结果',
     description: recovery.inputRequest.reason, feedbackPlaceholder: '', primaryAction: '选择搜索处理方式' };
+  if (recovery.stopReason === 'TOOL_NO_PROGRESS') return {
+    role: '写作助手', eyebrow: '无进展保护 · 自动循环已停止', title: '重复读取没有推进，已暂停这一步',
+    description: '模型重复读取相同信息，但没有提交新的成果。这不是模型无响应，已保存内容仍在；无需重新提供材料。可以查看运行记录并重试当前步骤，重试会再次请求模型并产生用量。',
+    feedbackPlaceholder: '', primaryAction: '重试这一步',
+  }
+  if (recovery.stopReason === 'PROVIDER_RETRY_DEFERRED') {
+    const timestamp = recovery.retryNotBefore;
+    const retryTime = timestamp !== undefined && Number.isSafeInteger(timestamp) && timestamp >= 0 && timestamp <= 8_640_000_000_000_000
+      ? new Date(timestamp).toLocaleString('zh-CN', { hour12: false }) : null;
+    return { role: '写作助手', eyebrow: '服务商要求等待 · 进度已保存', title: '模型服务要求稍后再试',
+      description: `模型服务的重试时间超出本轮自动等待范围，或返回了无效的重试时间，已保存进度并暂停。${retryTime ? `建议本机时间 ${retryTime} 后重试；提前点击不会再次请求同一模型。` : '请检查服务状态后再重试。'}也可以在设置中选择其他可用模型，不必重新提供材料。`,
+      feedbackPlaceholder: '', primaryAction: '稍后重试这一步' };
+  }
   if (recovery.stopReason === 'PARALLEL_TEXT_ALL_FAILED') return {
     role:'模拟读者', eyebrow:'读者反馈未完成 · 未自动重试', title:'三个模拟读者都未返回可用感受',
     description:'未保存空反馈，也未继续改稿。可查看运行记录中的具体模型错误，稍后只重试读者阶段；稿件和前面的审校仍保留。重试会再次请求模型并产生用量。',

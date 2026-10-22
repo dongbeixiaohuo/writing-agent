@@ -28,6 +28,66 @@ test('source transport failure is classified without leaking URL credentials or 
 const actor = { kind: "user", id: "fact-web-test" } as const;
 const LEDGER_URL = "https://93.184.216.34/report-2026";
 
+test('successful source reads reuse one bounded snapshot only within the same run and input versions', async () => {
+  const f = setup(LEDGER_URL);
+  const captured: string[] = [];
+  try {
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p', fetcher: fetcherWith('原文快照', captured) });
+    const first = await tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never) as any;
+    first.text = 'caller mutation';
+    const second = await tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never) as any;
+    assert.equal(second.text, '原文快照');
+    assert.equal(second.cacheHit, true);
+    assert.equal(captured.length, 1, 'successful rereads must not fetch the website again');
+    await tool.execute({ url: LEDGER_URL }, { runId: 'new-run' } as never);
+    assert.equal(captured.length, 2, 'a new run must acquire its own snapshot');
+    const project = f.storage.inspectProject('p')!;
+    f.storage.commitArtifactVersion({ operationId: 'ev-new', projectId: 'p', expectedProjectRevision: project.revision,
+      kind: 'evidence', logicalKey: 'main', baseVersionId: project.currentEvidenceVersionId!, content: `${LEDGER_URL}\nnew evidence`,
+      reason: 'new evidence', actor });
+    await tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never);
+    assert.equal(captured.length, 3, 'changed evidence must not inherit an earlier source snapshot');
+    f.storage.commitArtifactVersion({ operationId: 'body-new', projectId: 'p', expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+      kind: 'body', logicalKey: 'main', baseVersionId: null, content: '新正文', reason: 'new body', actor });
+    await tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never);
+    assert.equal(captured.length, 4, 'changed body must not inherit an earlier source snapshot');
+  } finally { f.close(); }
+});
+
+test('successful source cache still checks service, source authorization and cancellation first', async () => {
+  const f = setup('{"claims":[]}');
+  const captured: string[] = [];
+  let enabled = true, discovered = true;
+  try {
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p', searchEnabled: () => enabled,
+      isDiscoveredSource: () => discovered, fetcher: fetcherWith('原文', captured) });
+    await tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never);
+    enabled = false;
+    await assert.rejects(async () => tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never), { code: 'FACT_SEARCH_DISABLED' });
+    enabled = true; discovered = false;
+    await assert.rejects(async () => tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never), { code: 'FACT_SOURCE_NOT_IN_LEDGER' });
+    discovered = true;
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(async () => tool.execute({ url: LEDGER_URL }, { runId: 'r', abortSignal: controller.signal } as never), { code: 'ABORTED' });
+    const again = await tool.execute({ url: LEDGER_URL }, { runId: 'r' } as never) as any;
+    assert.equal(again.cacheHit, true);
+    assert.equal(captured.length, 1);
+  } finally { f.close(); }
+});
+
+test('successful source snapshots evict oldest entries instead of growing without bound', async () => {
+  const f = setup('{"claims":[]}');
+  const captured: string[] = [];
+  try {
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p', isDiscoveredSource: () => true, fetcher: fetcherWith('原文', captured) });
+    for (let i = 0; i < 33; i++) await tool.execute({ url: `${LEDGER_URL}/${i}` }, { runId: 'r' } as never);
+    await tool.execute({ url: `${LEDGER_URL}/32` }, { runId: 'r' } as never);
+    assert.equal(captured.length, 33, 'the latest successful snapshot remains cached');
+    await tool.execute({ url: `${LEDGER_URL}/0` }, { runId: 'r' } as never);
+    assert.equal(captured.length, 34, 'oldest snapshot is evicted at the 32 entry bound');
+  } finally { f.close(); }
+});
+
 test('source HTTP status survives the tool boundary and repeated rejected reads do not hit the website again', async () => {
   const f = setup(LEDGER_URL);
   try {

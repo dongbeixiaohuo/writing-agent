@@ -192,7 +192,7 @@ function toolFailureExplanation(payload: Readonly<Record<string, unknown>>) {
 function checkpointStages(
   projection: WritingProjectProjection,
   runId: string,
-): Pick<RecoverableRunSummary, 'checkpointStage' | 'nextStage' | 'inputRequest' | 'validationFailure'> {
+): Pick<RecoverableRunSummary, 'checkpointStage' | 'nextStage' | 'inputRequest' | 'validationFailure' | 'retryNotBefore'> {
   const event = [...projection.events].reverse().find(
     (candidate) => candidate.runId === runId && candidate.type === "run.waiting_user",
   );
@@ -218,12 +218,16 @@ function checkpointStages(
     } };
   }
   const validationFailure = event?.payload.stopReason === 'TOOL_FAILURE_LOOP' ? toolFailureExplanation(event.payload) : undefined;
+  const retryNotBefore = event?.payload.stopReason === 'PROVIDER_RETRY_DEFERRED' &&
+    typeof event.payload.retryNotBefore === 'number' && Number.isSafeInteger(event.payload.retryNotBefore) &&
+    event.payload.retryNotBefore >= 0 && event.payload.retryNotBefore <= 8_640_000_000_000_000 ? event.payload.retryNotBefore : undefined;
   return event === undefined
     ? { checkpointStage: null, nextStage: null }
     : {
         checkpointStage: workflowStagePayload(event.payload, "stage"),
         nextStage: workflowStagePayload(event.payload, "nextStage"),
         ...(validationFailure ? { validationFailure } : {}),
+        ...(retryNotBefore === undefined ? {} : { retryNotBefore }),
         ...(writingInputRequest(event.payload) === null ? {} : { inputRequest: writingInputRequest(event.payload)! }),
       };
 }
@@ -374,6 +378,8 @@ function modelFailureDetail(code: string | null, providerDetail: string | null =
     MODEL_REQUIRED_TOOL_MISSING: "模型尚未提交本轮需要保存的操作，不能标为完成。你的输入与已保存内容仍保留，可以重试这一步。",
     STAGE_OUTPUT_NOT_SAVED: "这一阶段的内容反复未通过保存校验，已停止自动重写。上一版稿件仍保留；不是模型账户额度或网络故障。请反馈此阶段的运行记录，不必重新填写材料。",
     TOOL_FAILURE_LOOP: "程序提交反复被同一门禁拒绝，已停止自动重试。已保存的内容仍保留；这不是模型账户额度或网络故障。请反馈这条运行记录，或重试当前步骤。",
+    TOOL_NO_PROGRESS: "模型反复读取相同信息但没有推进任务，程序已暂停，避免继续消耗请求；已保存内容仍保留，可以重试这一步。",
+    PROVIDER_RETRY_DEFERRED: "模型服务要求稍后重试，程序已保存进度并暂停等待；请在建议时间后重试，或检查模型服务配置。",
     MODEL_OUTPUT_TRUNCATED: "模型回复达到单次输出长度上限而被截断，本阶段未完成；残缺内容没有写入稿件，已保存的阶段仍保留。请反馈这条运行记录，无需重新填写资料。",
     MODEL_UNSUPPORTED: "模型名称不可用，请检查服务商提供的模型 ID，并在“设置 → 模型”中验证连接。",
     NETWORK_ERROR: "无法连接模型服务，请检查 API 地址和网络后验证连接。",
@@ -675,6 +681,15 @@ function timelineForSession(
       }
       const reason = textPayload(event.payload, "stopReason");
       const stage = textPayload(event.payload, "stage");
+      if (reason === 'TOOL_NO_PROGRESS' || reason === 'PROVIDER_RETRY_DEFERRED') {
+        items.push({ id:event.id, kind:'tool', audience:'conversation',
+          label:reason === 'TOOL_NO_PROGRESS' ? '重复读取无进展，已暂停' : '模型服务要求稍后重试',
+          detail:reason === 'TOOL_NO_PROGRESS'
+            ? '反复读取相同信息但没有推进当前任务，程序已停止自动循环。已保存内容仍在；可以查看运行记录并重试这一步，无需重新提供材料。'
+            : '模型服务要求稍后重试或返回了无效的重试时间，程序已保存进度并暂停等待。请按下方提示稍后重试；没有继续挂着计时，也未提前请求服务。',
+          state:'failure' });
+        continue;
+      }
       if (reason === 'PARALLEL_TEXT_ALL_FAILED') {
         items.push({ id:event.id, kind:'tool', audience:'conversation', label:'模拟读者未完成',
           detail:'三个模拟读者都未返回可用反应，未保存读者反馈，也未自动重试。请查看运行记录；稍后可重试当前读者阶段，之前的稿件与审校仍保留。', state:'failure' });
@@ -1894,7 +1909,7 @@ export class ApplicationClientBridge implements ClientBridge {
           parameters: this.#model.parameters,
           // Retrying transport is not a new author instruction. A synthetic
           // instruction would invalidate the still-pending expert assignment.
-          ...((decision === 'retry_unknown' || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP', 'PARALLEL_TEXT_ALL_FAILED', 'FACT_SEARCH_DECISION_REQUIRED'].includes(run.stopReason ?? '')) && feedback.length === 0 ? {} : {
+          ...((decision === 'retry_unknown' || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP', 'TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED', 'PARALLEL_TEXT_ALL_FAILED', 'FACT_SEARCH_DECISION_REQUIRED'].includes(run.stopReason ?? '')) && feedback.length === 0 ? {} : {
             userInstruction: feedback.length > 0
               ? feedback
               : run.stopReason === "CO_CREATION_CHECKPOINT"

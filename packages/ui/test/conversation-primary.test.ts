@@ -3,6 +3,21 @@ import test from 'node:test'
 import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, conversationWorkingCopy } from '../src/shell/interaction.ts'
 import type { RecoverableRunSummary } from '../../client-bridge/src/protocol.ts'
 
+test('no-progress and deferred-provider waits are actionable pauses, never author approval or an unknown outcome', () => {
+  for (const stopReason of ['TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED']) {
+    const recovery: RecoverableRunSummary = { runId:'r', sessionId:'s', status:'waiting_user', stopReason,
+      checkpointStage:null, nextStage:null, retryNotBefore: Date.UTC(2026, 9, 22, 14) };
+    const copy = checkpointCopy(recovery, undefined);
+    assert.match(copy.primaryAction, /重试/);
+    assert.doesNotMatch(copy.primaryAction, /认可|确认/);
+    assert.match(copy.description, /已保存/);
+    assert.doesNotMatch(copy.title, /结果未知|丢失/);
+    if (stopReason === 'TOOL_NO_PROGRESS') assert.match(copy.description, /重复.*读取|无进展/);
+    else assert.match(copy.description, /服务商.*等待|模型服务.*稍后|重试时间/);
+    assert.deepEqual(recoveryContinueAction(recovery), {kind:'resume', decision:'resume'});
+  }
+});
+
 test('all-reader failure has an explicit retry action, not author-approval or input homework', () => {
   const recovery:RecoverableRunSummary = {runId:'r', sessionId:'s', status:'waiting_user', stopReason:'PARALLEL_TEXT_ALL_FAILED', checkpointStage:null, nextStage:null};
   const copy = checkpointCopy(recovery, undefined);
