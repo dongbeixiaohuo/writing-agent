@@ -1,10 +1,23 @@
 # Writing Agent 桌面发布门禁
 
-更新：2026-10-10。当前公开桌面版 **1.0.0-rc.80**，为 **Pre-release，不是稳定版**。维护者已授权同步源码与更新下载包，并接受未签名安装包；不修改仓库 latest，不删除旧 Skill 或历史 Release。
+更新：2026-10-23。当前公开桌面版 **1.0.0-rc.88**，为 **Pre-release，不是稳定版**。维护者已授权同步源码与更新下载包，沿用未签名候选发布；不修改仓库 latest，不删除旧 Skill 或历史 Release。
 
-当前下载：**[rc.80](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.80)**。源码锁定 `79062b6c80027df0685c4a91f69f6c0a2a41949e`，执行与资产校验记录见 [rc.80 发布记录](../launch/RC80_RELEASE_EXECUTION.md)。
+当前下载：**[rc.88](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.88)**。源码锁定 `a2324fd690c1fb8e3cfdfa70eee18ca4a31621d5`，执行与资产校验记录见 [rc.88 发布记录](../launch/RC88_RELEASE_EXECUTION.md)。
 
-## RC80 本次发布检查
+## RC88 本次发布检查（2026-10-23）
+
+- [x] PR #28 五项必需检查后正常合并，没有绕过 main 分支保护。
+- [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/39816908062)第二次执行全部通过，覆盖 Runtime / UI / Bridge / Desktop / 搜索专项、Python、脚本、文档/镜像、生产依赖高危门禁和打包。
+- [x] 首轮剪贴板诊断测试触及 25 秒进程超时，81/82 桌面测试通过。未修改代码或放宽超时，同一提交重跑通过；本地相关专项 12/12 通过。首次失败保留，具体 Runner 环境原因未确定。
+- [x] 全新安装、启动、卸载及 RC87 标签重建版 → RC88 升级、安装器级合成数据保留均 PASS；两次启动协议 24、exitCode=0。
+- [x] 六个公开附件的 GitHub digest、大小与本地 CI 产物一致；公开 EXE 经无登录断点续传完整下载后大小/SHA-256 一致。固定标签、Pre-release、未签名风险、备份要求和 Skill latest 保留。
+- [x] 公开构建包位于 `output/desktop` 根目录；此前本地 RC88 测试包和旧根目录元数据另存，不混用哈希，不提交安装包到源码历史。
+
+匿名下载复核结果见 RC88 发布记录。DeepSeek 本次仅执行合成接口回归，未执行真实付费搜索或真实模型完整文章质量/耗时验收；关闭硬件加速的 smoke 不能证明正常 GPU 或完整人工旅程通过。以下旧版结果仅是各自日期与版本的历史基线。
+
+## RC80 历史发布基线（2026-10-10）
+
+当时源码 `79062b6c80027df0685c4a91f69f6c0a2a41949e`，见 [rc.80 发布记录](../launch/RC80_RELEASE_EXECUTION.md)。RC80 → RC87 的后续发布与升级结果见 [rc.87 记录](../launch/RC87_RELEASE_EXECUTION.md)，不能用于替代 RC88 验证。
 
 - [x] PR #24 五项必需检查后合并，没有绕过分支保护；文档镜像和高危审计门禁失败经实质修复后重验。
 - [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/37963782888)全部通过，覆盖 Runtime / UI / Bridge / Desktop / 搜索专项、Python、脚本、文档/镜像、依赖高危审计、打包。
