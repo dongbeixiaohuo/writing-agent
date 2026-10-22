@@ -6,6 +6,111 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { createToolPermissionGrant } from '../../runtime/tools/src/index.js';
+import { normalizeFactVerification, projectFactToolResult } from '../src/fact-context.js';
+
+test('DeepSeek cancellation never dispatches fallback, even while its credential resolver is pending', async () => {
+  for (const at of ['key', 'transport']) {
+    const controller = new AbortController();
+    const urls: string[] = [];
+    const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: true,
+      deepseekEnabled: true, authorizationMode: 'enabled_services', getDeepSeekKey: async () => {
+        if (at === 'key') { controller.abort(); return await new Promise<string>(() => {}); }
+        return 'synthetic';
+      }, getTavilyKey: async () => 'unused' }), fetch: async url => {
+        urls.push(String(url)); controller.abort(); throw controller.signal.reason;
+      } });
+    await assert.rejects(scope.search('公开事实', controller.signal), { name:'AbortError' });
+    assert.deepEqual(urls, at === 'key' ? [] : ['https://api.deepseek.com/v1/tools/search']);
+  }
+});
+
+test('DeepSeek normalized sources keep the same source URL and call ID in the fact-check contract', async () => {
+  const url = 'http://example.com/announcement';
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled:false, tavilyEnabled:false,
+    deepseekEnabled:true, authorizationMode:'enabled_services', getDeepSeekKey:async () => 'synthetic' }),
+    fetch:async () => Response.json({results:[{title:'公告',url,summary:'事件发生于2024年。', content:'不要传输整页。'.repeat(2000)}]}) });
+  const result = await scope.search('事件发生年份', undefined, 'r');
+  const envelope = { ok:true, toolName:'search_fact_sources', callId:'deepseek-search', result };
+  const event: any = {type:'tool.completed', payload:{result:envelope}};
+  const claim: any = { claimId:'C001', claimText:'事件发生于2024年', status:'SUPPORTED', verificationMethod:'external_source',
+    verificationRecordIds:['deepseek-search'], sourceReference:url };
+  assert.doesNotThrow(() => normalizeFactVerification([event], null, [claim]));
+  assert.throws(() => normalizeFactVerification([event], null, [{...claim, verificationRecordIds:['other-call']}]),
+    {code:'FACT_EXTERNAL_RECORD_REQUIRED'});
+  assert.throws(() => normalizeFactVerification([event], null, [{...claim, sourceReference:'http://example.com/other'}]),
+    {code:'FACT_EXTERNAL_RECORD_REQUIRED'});
+  const message: any = {role:'tool',name:'search_fact_sources',toolCallId:'deepseek-search',content:JSON.stringify(envelope)};
+  const projected = JSON.parse(projectFactToolResult(message));
+  assert.equal(projected.result.sources[0].url, url);
+  assert.doesNotMatch(JSON.stringify(projected), /不要传输整页/);
+});
+
+test('DeepSeek is opt-in, independent of the writing model and disabled without credential reads', async () => {
+  let requests = 0, reads = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: false,
+    deepseekEnabled: false, authorizationMode: 'enabled_services', getDeepSeekKey: async () => { reads++; return 'ds-secret'; } }),
+    fetch: async () => { requests++; throw new Error('must not dispatch'); } });
+  assert.equal((await scope.search('公开事实')).mode, 'model_only');
+  assert.equal(reads, 0); assert.equal(requests, 0);
+});
+
+test('DeepSeek Search uses the fixed authenticated endpoint and bounded summaries, not page content', async () => {
+  const requests: Array<{ url: string; body: unknown; authorization: string | undefined; redirect: RequestRedirect | undefined }> = [];
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: false,
+    deepseekEnabled: true, authorizationMode: 'enabled_services', getDeepSeekKey: async () => 'ds-secret' }),
+    fetch: async (url, init) => { requests.push({ url: String(url), body: JSON.parse(String(init?.body)),
+      authorization: (init?.headers as Record<string, string>).Authorization, redirect: init?.redirect });
+      return Response.json({ results: [{ title: '公开来源', url: 'https://example.com/fact', summary: '公开摘要 ds-secret',
+        snippet: '短摘要', content: '不应塞进模型的整页正文'.repeat(2000), date: '2026-10-22T00:00:00Z' }] }); } });
+  const result = await scope.search('公开日期', undefined, 'r');
+  assert.equal(scope.enabled(), true);
+  assert.equal(result.mode, 'external'); assert.equal(result.provider, 'deepseek');
+  assert.deepEqual(requests, [{ url: 'https://api.deepseek.com/v1/tools/search',
+    body: { query: '公开日期', count: 5, need_content: false }, authorization: 'Bearer ds-secret', redirect: 'error' }]);
+  assert.match(result.evidenceText, /公开摘要/);
+  assert.doesNotMatch(result.evidenceText, /ds-secret|整页正文/);
+  assert.equal(JSON.parse(result.evidenceText)[0].excerpt, '公开摘要 [REDACTED]');
+  assert.equal(scope.isDiscoveredSource('https://example.com/fact', 'r'), true);
+  assert.equal((await scope.search('公开日期', undefined, 'r')).cacheHit, true);
+  assert.equal(requests.length, 1);
+});
+
+test('DeepSeek fails over only to enabled providers and never sends its key to Tavily', async () => {
+  const calls: Array<[string, string | undefined]> = [];
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
+    deepseekEnabled: true, authorizationMode: 'enabled_services', getDeepSeekKey: async () => 'ds-secret', getTavilyKey: async () => 'tv-secret' }),
+    fetch: async (url, init) => { calls.push([String(url), (init?.headers as Record<string, string>).Authorization]);
+      return String(url).includes('deepseek') ? new Response(null, { status: 402 })
+        : Response.json({ results: [{ url: 'https://example.com/fact', content: '可信摘录' }] }); } });
+  const result = await scope.search('公开事实');
+  assert.equal(result.provider, 'tavily');
+  assert.deepEqual(result.route, ['deepseek', 'tavily']);
+  assert.deepEqual(calls, [['https://api.deepseek.com/v1/tools/search', 'Bearer ds-secret'], ['https://api.tavily.com/search', 'Bearer tv-secret']]);
+  assert.equal(result.attempts?.[0]?.errorCode, 'SEARCH_HTTP_402');
+  assert.match(result.notice, /DeepSeek.*Tavily/);
+});
+
+test('DeepSeek validates 128 Unicode characters without silently truncating queries', async () => {
+  let requests = 0;
+  const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: false,
+    deepseekEnabled: true, authorizationMode: 'enabled_services', getDeepSeekKey: async () => 'synthetic' }),
+    fetch: async () => { requests++; return Response.json({ results: [{ url: 'https://example.com/fact', summary: '摘录' }] }); } });
+  const invalid = await scope.search('字'.repeat(129));
+  assert.equal(invalid.mode, 'unavailable'); assert.equal(invalid.failureCode, 'SEARCH_QUERY_TOO_LONG');
+  assert.equal(invalid.quotaCharged, false); assert.match(invalid.notice, /128/); assert.equal(requests, 0);
+  assert.equal((await scope.search('🔎'.repeat(128))).provider, 'deepseek'); assert.equal(requests, 1);
+});
+
+test('DeepSeek empty or malformed results do not claim external evidence or a verified connection', async () => {
+  for (const results of [[], [{ title: '没有网址', summary: '只有文字' }], [{ url: 'https://example.com/fact' }]]) {
+    const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: false,
+      deepseekEnabled: true, authorizationMode: 'enabled_services', getDeepSeekKey: async () => 'synthetic' }),
+      fetch: async () => Response.json({ results }) });
+    const result = await scope.search('公开事实');
+    assert.equal(result.mode, 'unavailable');
+    assert.equal(result.attempts?.[0]?.errorCode, 'SEARCH_NO_RESULTS');
+  }
+});
 
 test('pre-outline research is optional, bounded to two queries and isolated from final fact-check quota', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-research-search-'));

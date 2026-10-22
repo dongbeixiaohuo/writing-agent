@@ -559,7 +559,9 @@ export class WritingApplicationService {
   continuePendingHandoffs(model: Pick<RunDraftInput, 'model' | 'parameters'> & { budget?: RunBudget | undefined }): { sourceId: string; runId: string }[] {
     const started: { sourceId: string; runId: string }[] = [];
     if (!this.#provider) return started; // Configuration can be supplied later; do not consume the decision.
-    const modelKey = JSON.stringify([model.model, model.parameters, model.budget]);
+    // A local connection test can verify tools without changing the model ID
+    // or adding a project event. Re-scan on that change, not on every refresh.
+    const modelKey = JSON.stringify([model.model, model.parameters, model.budget, this.#provider.capabilitiesFor(model.model).tools]);
     for (const project of this.#storage.listProjects()) {
       const scan = this.#handoffScan.get(project.id);
       const newEvents = this.#storage.listEvents(project.id, scan?.seq ?? 0);
@@ -1388,7 +1390,7 @@ export class WritingApplicationService {
       factInstruction: [latestInstruction, originalInstructionBoundary, inputHistoryBoundary].filter(Boolean).join('\n\n'),
       materialIds: briefVersion.brief.materialIds,
       recoverPendingAssignment: recoveringRunId !== null && !input.userInstruction?.trim() &&
-        (('decision' in input && input.decision === 'retry_unknown') || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP', 'PARALLEL_TEXT_ALL_FAILED', FACT_SEARCH_DECISION_REQUIRED].includes(this.#storage.getRun(recoveringRunId)?.stopReason ?? '')),
+        (('decision' in input && input.decision === 'retry_unknown') || ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP', 'TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED', 'PARALLEL_TEXT_ALL_FAILED', FACT_SEARCH_DECISION_REQUIRED].includes(this.#storage.getRun(recoveringRunId)?.stopReason ?? '')),
     });
     const tools = ToolRegistry.create([
       ...createBuiltinReadTools({
@@ -1699,6 +1701,10 @@ export class WritingApplicationService {
         const binding = factBinding(), prepared = factPreparation(this.#storage, runId, binding);
         return { actor: 'fact_check', scopeId: `fact-check-only:${body.id}:${evidence.id}:${binding?.titleVersionId}:${prepared?.preparationId ?? 'extract'}`,
           systemPrompt: factReviewPrompt(prepared ? 'verify' : 'extract', factSearch.enabled()),
+          progressKey: JSON.stringify({ ...factInput, factPhase: prepared ? 'verify' : 'extract',
+            artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),
+            selectedPublication: selectedPublicationContext(this.#storage, projectId),
+            ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason } : {}) }),
           userMessage: JSON.stringify({ ...factInput, artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),
             selectedPublication: selectedPublicationContext(this.#storage, projectId), factPhase: prepared ? 'verify' : 'extract',
             ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
@@ -1854,7 +1860,7 @@ export class WritingApplicationService {
     );
     const searchConfiguration = this.#factSearchConfiguration();
     const searchDecision = validateFactSearchDecision(this.#storage, input.runId, input.factSearchDecision,
-      searchConfiguration.parallelEnabled || searchConfiguration.tavilyEnabled);
+      searchConfiguration.deepseekEnabled || searchConfiguration.parallelEnabled || searchConfiguration.tavilyEnabled);
     try {
       this.#storage.resumeRun({
         ...(receipt && stageMarker(this.#storage, projectId, run.id, receipt.checkpoint.stage) ? { checkpointDecision: {
@@ -1863,7 +1869,7 @@ export class WritingApplicationService {
         } } : {}),
         refreshLoopAllowance: true,
         ...(searchDecision ? { factSearchDecision: searchDecision } : {}),
-        preservePendingAssignment: ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP', 'PARALLEL_TEXT_ALL_FAILED', FACT_SEARCH_DECISION_REQUIRED].includes(run.stopReason ?? '') && !input.userInstruction?.trim(),
+        preservePendingAssignment: ['BUDGET_EXHAUSTED', 'STAGE_OUTPUT_NOT_SAVED', 'TOOL_FAILURE_LOOP', 'TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED', 'PARALLEL_TEXT_ALL_FAILED', FACT_SEARCH_DECISION_REQUIRED].includes(run.stopReason ?? '') && !input.userInstruction?.trim(),
         projectId,
         runId: input.runId,
         operationId: input.operationId,

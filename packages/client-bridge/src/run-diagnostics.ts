@@ -201,7 +201,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   const envelope = object(payload.result)
   const result = envelope?.ok === true ? object(envelope.result) : null
   if (toolName === 'search_fact_sources' || toolName === 'search_research_sources') {
-    const provider = result?.provider === 'parallel' ? 'Parallel' : result?.provider === 'tavily' ? 'Tavily' : null
+    const provider = result?.provider === 'deepseek' ? 'DeepSeek' : result?.provider === 'parallel' ? 'Parallel' : result?.provider === 'tavily' ? 'Tavily' : null
     const mode = result?.mode === 'external' ? `${provider ?? '外部'} 搜索已返回` : result?.mode === 'unavailable' ? '搜索不可用' : '仅模型复核，未联网搜索'
     const hosts = safeSourceHosts(result?.evidenceText)
     const failure = safeCode(result?.failureCode)
@@ -209,7 +209,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     const notice = safePreview(result?.notice)
     const attempts = Array.isArray(result?.attempts) ? result.attempts.map(item => {
       const attempt = object(item)
-      const service = attempt?.provider === 'tavily' ? 'Tavily' : attempt?.provider === 'parallel' ? 'Parallel' : null
+      const service = attempt?.provider === 'deepseek' ? 'DeepSeek' : attempt?.provider === 'tavily' ? 'Tavily' : attempt?.provider === 'parallel' ? 'Parallel' : null
       return service ? `${service}：${count(attempt?.httpRequests) ?? 0} 个 HTTP 请求 · ${attempt?.status === 'completed' ? '成功' : safeCode(attempt?.errorCode) ?? '失败'}` : null
     }).filter(Boolean).join(' → ') : ''
     const quota = result?.quotaCharged === false ? ' · 不占检索额度' : result?.quotaCharged === true ? ' · 计入1次检索' : ''
@@ -228,7 +228,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     const host = safeHttpsHost(result?.finalUrl)
     const contentType = typeof result?.contentType === 'string' && /^(?:text\/(?:html|plain)|application\/xhtml\+xml)(?:;|$)/iu.test(result.contentType) ? result.contentType.split(';')[0] : null
     const redirects = count(result?.redirectCount)
-    return `已读取授权来源原文${host ? ` · ${host}` : ''}${contentType ? ` · ${contentType}` : ''}${redirects ? ` · 重定向 ${redirects} 次` : ''}`
+    return `已读取授权来源原文${host ? ` · ${host}` : ''}${contentType ? ` · ${contentType}` : ''}${redirects ? ` · 重定向 ${redirects} 次` : ''}${result?.cacheHit === true ? ' · 复用本轮缓存，无新网络请求' : ''}`
   }
   if (toolName === 'director_decide') {
     const collaboration = object(result?.collaboration)

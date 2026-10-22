@@ -183,7 +183,7 @@ async function handleRpc(
   try {
     if (parsed.method === 'searchStatus' || parsed.method === 'configureSearch' || parsed.method === 'testSearchConnection') {
       const result = parsed.method === 'searchStatus' ? await currentHost.searchStatus()
-        : parsed.method === 'testSearchConnection' ? await currentHost.testSearchConnection(parsed.args[0] as 'parallel' | 'tavily')
+        : parsed.method === 'testSearchConnection' ? await currentHost.testSearchConnection(parsed.args[0] as 'deepseek' | 'parallel' | 'tavily')
         : await currentHost.configureSearch(parsed.args[0] as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsInput);
       return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
     }

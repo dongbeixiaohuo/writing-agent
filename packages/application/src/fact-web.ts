@@ -108,6 +108,9 @@ export function createFactSourceTool(
   // Do not spend more network calls on the same rejected page in this run.
   // A new run can try again. Authorization is always checked before this cache.
   const rejectedReads = new Map<string, ToolExecutionFault>();
+  // Tool-instance snapshots only: a new run or changed bound inputs must fetch
+  // again. Keep the already-truncated result, not the unbounded transport body.
+  const successfulReads = new Map<string, Record<string, JsonValue>>();
 
   return {
     name: "read_fact_source",
@@ -133,6 +136,8 @@ export function createFactSourceTool(
       }
       if (context.abortSignal?.aborted) throw new ToolExecutionFault('ABORTED', '来源原文读取已取消。');
       const cacheKey = JSON.stringify([context.runId, args.url]);
+      const project = options.storage.inspectProject(options.projectId);
+      const snapshotKey = JSON.stringify([context.runId, args.url, project?.currentEvidenceVersionId, project?.latestBodyVersionId]);
       const rejected = rejectedReads.get(cacheKey);
       if (rejected) throw new ToolExecutionFault(rejected.code, `本轮此来源已读取失败，未重复请求网站。${rejected.message}`, false, { ...rejected.details, cacheHit: true });
       const rememberFailure = (fault: ToolExecutionFault): ToolExecutionFault => {
@@ -153,7 +158,10 @@ export function createFactSourceTool(
       try {
         const target = await waitFor(Promise.resolve().then(() => policy.assertAllowed(args.url)), boundedSignal);
         boundedSignal.throwIfAborted();
+        const cached = successfulReads.get(snapshotKey);
+        if (cached) return { ...cached, cacheHit: true };
         fetched = await waitFor(Promise.resolve().then(() => fetcher.fetchText(target.url, boundedSignal)), boundedSignal);
+        boundedSignal.throwIfAborted();
       } catch (error) {
         if (parentSignal?.aborted) {
           throw new ToolExecutionFault('ABORTED', '来源原文读取已取消。');
@@ -180,7 +188,7 @@ export function createFactSourceTool(
         throw rememberFailure(new ToolExecutionFault(code, '来源原文未能读取。可以使用已取得的搜索摘录继续核查并明确说明限制；不得声称已核对原文，不要反复重试同一来源。'));
       } finally { clearTimeout(timer); }
       const text = fetched.content.text;
-      return {
+      const result = {
         requestedUrl: args.url,
         finalUrl: fetched.finalUrl,
         redirectCount: fetched.redirectCount,
@@ -192,7 +200,10 @@ export function createFactSourceTool(
         truncated: fetched.content.truncated || text.length > MAX_RESULT_CHARS,
         totalChars: fetched.content.totalChars,
         text: text.length > MAX_RESULT_CHARS ? text.slice(0, MAX_RESULT_CHARS) : text,
-      } as unknown as JsonValue;
+      };
+      if (successfulReads.size >= 32) successfulReads.delete(successfulReads.keys().next().value!);
+      successfulReads.set(snapshotKey, result);
+      return { ...result } as JsonValue;
     },
   };
 }

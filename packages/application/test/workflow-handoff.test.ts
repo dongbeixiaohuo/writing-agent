@@ -34,6 +34,32 @@ class NoRequestProvider extends ModelProviderBase {
   }
 }
 
+it('rechecks a pending handoff when tools become verified without a new model or project event', async () => {
+  const f = setup();
+  class VerifiedLater extends NoRequestProvider {
+    verified = false;
+    override capabilitiesFor(model: string) {
+      return { ...super.capabilitiesFor(model), tools: this.verified ? 'supported' as const : 'unknown' as const };
+    }
+  }
+  try {
+    const source = saveAuthorHandoff(f.storage, 'approved-later', 'approved-later-op');
+    const provider = new VerifiedLater();
+    const service = new WritingApplicationService({ storage: f.storage, provider });
+    const input = { model: 'same-model', parameters: {} };
+    const before = f.storage.listEvents('p').length;
+    assert.deepEqual(service.continuePendingHandoffs(input), []);
+    assert.deepEqual(service.continuePendingHandoffs(input), []);
+    assert.equal(f.storage.listEvents('p').length, before, 'unchanged capability failure must not launch a retry loop');
+    provider.verified = true;
+    const started = service.continuePendingHandoffs(input);
+    assert.equal(started.length, 1);
+    assert.equal(started[0]!.sourceId, source.id);
+    assert.deepEqual(service.continuePendingHandoffs(input), [], 'an executing handoff is never duplicated');
+    for (let n = 0; n < 200 && f.storage.listRuns('p').some(r => r.status === 'running'); n++) await new Promise(r => setTimeout(r, 5));
+  } finally { f.close(); }
+});
+
 it('persists a visible handoff error after a body edit and preserves it across reopening', () => {
   const f = setup();
   try {

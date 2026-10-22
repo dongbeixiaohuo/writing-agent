@@ -148,7 +148,7 @@ export class DesktopApplicationHost {
 
   async searchStatus() { return this.#searchSettings.status(); }
   async configureSearch(input: SearchSettingsInput) { return this.#searchSettings.save(input); }
-  async testSearchConnection(provider: 'parallel' | 'tavily') { return this.#searchSettings.verify(provider); }
+  async testSearchConnection(provider: 'deepseek' | 'parallel' | 'tavily') { return this.#searchSettings.verify(provider); }
 
   async providerDetails(profileId: string): Promise<DesktopSavedProviderView> {
     const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(p => p.id === profileId);

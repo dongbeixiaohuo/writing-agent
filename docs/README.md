@@ -23,6 +23,7 @@
 | 测试与验收 | [发布门禁](testing/RELEASE_GATE.md)、[最终用户验收清单](testing/FINAL_USER_UAT_CHECKLIST.md) | 区分自动检查、真实模型、桌面安装和人工体验 |
 | 模型输入与核查效率 | [上下文投影与事实核查分段](testing/AGENT_CONTEXT_PROJECTION.md) | 按角色提供输入；区分模拟结果、历史测量与真实模型耗时 |
 | 模拟读者修订 | [三个并行模拟读者](implementation/READER_SIMULATION.md) | 普通读者反应、隔离与恢复；导演解读不冒充读者意见 |
+| 搜索与流程可靠性 | [DeepSeek 搜索与防空转](implementation/2026-10-22-deepseek-flow-reliability.md) | RC87 后源码改动：独立搜索凭据、无进展暂停、长退避恢复与验证边界；尚未发布新客户端 |
 | RC80 迁移审计后调整 | [源码调整与验证边界](implementation/RC80_AUDIT_FOLLOWUP.md) | URL/授权、连接恢复、配置验证、前置补查、成稿读者重测；已纳入 RC87，保留原始实施日期与验收边界 |
 | RC72 审查修复 | [2026-10-05 修复与回归](testing/2026-10-05-rc72-review-fixes.md) | 当时的桌面回执、核查恢复、搜索额度和启动诊断记录；后续成果已纳入 RC80 |
 | 发布 | [桌面发布手册](launch/DESKTOP_RELEASE_RUNBOOK.md) | 当前维护者操作入口；单次 RC 记录只是对应版本证据 |

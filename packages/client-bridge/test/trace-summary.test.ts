@@ -21,6 +21,19 @@ function projection(events: Array<{ type: string; operationId: string; payload: 
   } as unknown as WritingProjectProjection
 }
 
+test('DeepSeek and same-run source-cache diagnostics identify service and avoided network work', () => {
+  const steps = runDiagnostics(projection([
+    {type:'tool.requested',operationId:'s',payload:{toolName:'search_fact_sources',arguments:{query:'公开事实'}}},
+    {type:'tool.completed',operationId:'s',payload:{result:{ok:true,result:{mode:'external',provider:'deepseek',
+      evidenceText:JSON.stringify([{url:'https://example.com/fact',excerpt:'公开事实'}]),
+      attempts:[{provider:'deepseek',status:'completed',httpRequests:1,elapsedMs:50}]}}}},
+    {type:'tool.requested',operationId:'read',payload:{toolName:'read_fact_source',arguments:{url:'https://example.com/fact'}}},
+    {type:'tool.completed',operationId:'read',payload:{result:{ok:true,result:{finalUrl:'https://example.com/fact',cacheHit:true}}}},
+  ]),run).trace!.filter(s=>s.kind==='tool');
+  assert.match(steps[0]!.outputPreview!, /DeepSeek.*1 个 HTTP 请求/);
+  assert.match(steps[1]!.outputPreview!, /复用本轮缓存.*无新网络请求/);
+});
+
 test('parallel reader requests have distinct ordinary persona labels and preserve their individual failures', () => {
   assert.equal(recordedActorLabel('review_reader_a'), '模拟读者 A · 匆忙路人');
   assert.equal(recordedActorLabel('review_reader_b'), '模拟读者 B · 目标读者');

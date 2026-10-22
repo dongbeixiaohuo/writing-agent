@@ -11,6 +11,25 @@ import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { createApplicationBridge } from '../src/application-bridge.js';
 import { savePublicationCandidates } from '../../application/src/publication-choice.js';
 
+test('loop and provider-backoff pauses project a clear cause and a safe retry timestamp', async () => {
+  for (const stopReason of ['TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED']) {
+    const f = await fixture();
+    try {
+      const retryNotBefore = Date.UTC(2026, 9, 22, 14);
+      f.storage.pauseRun({ projectId:'project', runId:'run', operationId:'wait', reason:stopReason,
+        payload:{ retryNotBefore, actor:'fact_check', tool:'read_fact_source' } });
+      const snapshot = await f.snapshot();
+      const recovery = snapshot.recoverableRuns.find(r => r.runId === 'run')!;
+      assert.equal(recovery.stopReason, stopReason);
+      if (stopReason === 'PROVIDER_RETRY_DEFERRED') assert.equal(recovery.retryNotBefore, retryNotBefore);
+      else assert.equal(recovery.retryNotBefore, undefined);
+      const text = JSON.stringify(snapshot.timelineBySession);
+      assert.match(text, stopReason === 'TOOL_NO_PROGRESS' ? /无进展|重复读取/ : /模型服务.*稍后|服务商.*等待/);
+      assert.doesNotMatch(text, /需要你确认当前共创阶段/);
+    } finally { f.close(); }
+  }
+});
+
 test('body edits keep displayed title choices available with unchanged ordinals and a fresh-check explanation', async () => {
   const f = await fixture();
   try {

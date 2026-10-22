@@ -417,6 +417,7 @@ export interface RecoverableRunSummary {
   checkpointStage: WritingWorkflowStageId | null
   nextStage: WritingWorkflowStageId | null
   validationFailure?: { code: string; tool: string; explanation: string }
+  retryNotBefore?: number
   interruption?: { source: 'model' | 'tool'; cause: 'timeout' | 'unknown'; replyAccepted: boolean; timeoutPhase?: 'first_response' | 'stream_idle'; timeoutMs?: number }
   inputRequest?: { reason: string; questions: readonly string[]; kind?: 'publication_selection' | 'search_recovery';
     searchRecovery?: { requestId: string; kind: 'timeout' | 'failure' | 'limit'; query: string; used: number; limit: number; attemptsUsed: number; attemptsLimit: number; reason: string };

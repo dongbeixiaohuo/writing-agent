@@ -6,7 +6,18 @@ import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { buildSync } from 'esbuild'
 
-import { searchSettingsInput, searchSettingsValidation } from '../src/shell/search-settings.ts'
+import { searchSettingsInput, searchSettingsValidation, searchSettingsRoute } from '../src/shell/search-settings.ts'
+
+test('DeepSeek uses a separate key and is explicitly first only when opted in', () => {
+  const value = { deepseekEnabled: true, deepseekKeyConfigured: false, parallelEnabled: true, tavilyEnabled: false, tavilyKeyConfigured: false };
+  assert.match(searchSettingsValidation(value, '', ''), /DeepSeek.*API Key/);
+  assert.equal(searchSettingsValidation(value, '', 'ds-new'), null);
+  assert.equal(searchSettingsValidation({ ...value, deepseekKeyConfigured: true }, '', ''), null);
+  assert.deepEqual(searchSettingsInput(value, '', ' ds-new '), { parallelEnabled: true, tavilyEnabled: false, deepseekEnabled: true, deepseekApiKey: 'ds-new' });
+  assert.deepEqual(searchSettingsRoute(value), ['DeepSeek', 'Parallel']);
+  assert.deepEqual(searchSettingsRoute({ parallelEnabled: true, tavilyEnabled: true }), ['Parallel', 'Tavily']);
+  assert.deepEqual(searchSettingsRoute({ deepseekEnabled: false, parallelEnabled: false, tavilyEnabled: false }), []);
+});
 
 test('query limit is saved with search settings and rejects non-integer or out-of-range values', () => {
   for (const searchLimit of [0, 31, 1.5, NaN]) assert.notEqual(searchSettingsValidation({ tavilyEnabled: false, tavilyKeyConfigured: false, searchLimit }, ''), null)

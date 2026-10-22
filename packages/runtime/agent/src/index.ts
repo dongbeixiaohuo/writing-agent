@@ -33,6 +33,7 @@ export type { RunBudget, RunUsage } from "../../session/src/index.js";
 
 const REQUEST_ASSEMBLY_VERSION = "agent-request-v1";
 const RUN_PLAN_VERSION = "bounded-writing-loop-v2";
+const MAX_INTERACTIVE_RETRY_WAIT_MS = 30_000;
 
 export interface FinalOutputCommitInput {
   readonly projectId: string;
@@ -104,6 +105,10 @@ export interface AgentRequestPolicy {
   readonly textOutputTool?: { readonly name: string; readonly arguments: Readonly<Record<string, JsonValue>>; readonly contentArgument: string };
   readonly expectedBodyVersionId?: string | null;
   readonly scopeId: string;
+  /** Optional application-owned semantic task state for progress detection.
+   * Include author instructions and bound input versions, excluding changing
+   * receipt IDs/counters. Without it the complete user message is compared. */
+  readonly progressKey?: string;
   readonly systemPrompt: string;
   readonly userMessage: string;
   readonly allowedTools: readonly string[];
@@ -536,6 +541,15 @@ export class AgentRuntime {
     };
   }
 
+  #deferProviderRetry(active: ActiveRun, payload: Readonly<Record<string, JsonValue>>): AgentRunResult {
+    const reason = payload.invalidRetryAfter === true
+      ? '模型服务返回的重试时间无效，已保存进度并暂停自动重试；请检查服务状态后继续。'
+      : '模型服务要求稍后重试，已保存进度并暂停等待；请在建议时间后继续。';
+    this.#sessions.pauseRun({ projectId: active.projectId, runId: active.runId, operationId: this.#idFactory(),
+      reason: 'PROVIDER_RETRY_DEFERRED', payload: { ...payload, reason } });
+    return { ok: false, ...this.#facts(active), error: { code: 'PROVIDER_RETRY_DEFERRED', message: reason, retryable: true } };
+  }
+
   #failRun(
     active: ActiveRun,
     code: string,
@@ -768,6 +782,14 @@ export class AgentRuntime {
     active: ActiveRun,
   ): Promise<AgentRunResult> {
     const { projectId, sessionId, runId } = active;
+    const previousDelay = this.#sessions.listRunEvents(runId).findLast(event =>
+      event.type === 'run.waiting_user' && event.payload.stopReason === 'PROVIDER_RETRY_DEFERRED');
+    if (previousDelay?.payload.provider === this.#provider.id && previousDelay.payload.model === input.model &&
+        typeof previousDelay.payload.retryNotBefore === 'number' && previousDelay.payload.retryNotBefore > Date.now()) {
+      return this.#deferProviderRetry(active, { provider: this.#provider.id, model: input.model,
+        retryNotBefore: previousDelay.payload.retryNotBefore,
+        ...(typeof previousDelay.payload.retryAfterMs === 'number' ? { retryAfterMs: previousDelay.payload.retryAfterMs } : {}) });
+    }
     const permissionGrant = this.#createPermissionGrant({
       projectId,
       runId,
@@ -786,6 +808,8 @@ export class AgentRuntime {
     let textSaveFailures = 0;
     const rejectedTextHashes = new Set<string>();
     const toolFailureCounts = new Map<string, number>();
+    const successfulReadCounts = new Map<string, { count: number; requestId: string }>();
+    let remindProgress = false;
 
     executionLoop: for (;;) {
       if (this.#sessions.getRun(runId)?.status === "cancelled") {
@@ -808,12 +832,20 @@ export class AgentRuntime {
         textSaveFailures = 0;
         rejectedTextHashes.clear();
         toolFailureCounts.clear();
+        successfulReadCounts.clear();
+        remindProgress = false;
         messages = [{ role: "system", content: policy.systemPrompt }, { role: "user", content: policy.userMessage }];
       } else if (policy !== undefined) {
         // Refresh authoritative state after each tool without sharing another
         // actor's history or discarding this actor's own tool feedback.
         messages[0] = { role: "system", content: policy.systemPrompt };
         messages[1] = { role: "user", content: policy.userMessage };
+      }
+      if (remindProgress) {
+        // Keep tool-result pairing and the active read as the last history
+        // item; projections use that position to retain the complete source.
+        messages[1] = { role: 'user', content: `${messages[1]!.content}\n程序检测到重复获取了完全相同的信息，当前任务没有进展。不要再次读取同一内容或重复确认 ready；使用已获得的信息执行下一步，确有必要信息缺口时提交具体问题。再次重复将暂停本轮。` };
+        remindProgress = false;
       }
       const offeredTools = policy?.modelTools ?? policy?.allowedTools;
       const toolSchemas = this.#tools.schemaSnapshots().filter((tool) => offeredTools === undefined || offeredTools.includes(tool.name));
@@ -993,8 +1025,17 @@ export class AgentRuntime {
               }
             }
             if (isSafeModelRetry(attempt.error)) {
+              const retryDelay = attempt.error.retryAfterMs ?? 0;
+              if (!Number.isFinite(retryDelay) || retryDelay < 0 || retryDelay > MAX_INTERACTIVE_RETRY_WAIT_MS) {
+                const retryNotBefore = Date.now() + Math.ceil(retryDelay);
+                const validDate = Number.isSafeInteger(retryNotBefore) && retryNotBefore <= 8_640_000_000_000_000 && retryDelay >= 0;
+                return this.#deferProviderRetry(active, { provider: this.#provider.id, model: input.model,
+                  providerCode: attempt.error.code,
+                  ...(Number.isSafeInteger(Math.ceil(retryDelay)) && retryDelay >= 0 ? { retryAfterMs: retryDelay } : {}),
+                  ...(validDate ? { retryNotBefore } : { invalidRetryAfter: true }) });
+              }
               await this.#waitBeforeRetry(
-                attempt.error.retryAfterMs ?? 0,
+                retryDelay,
                 active.controller.signal,
               );
               if (this.#sessions.getRun(runId)?.status === "cancelled") {
@@ -1199,6 +1240,41 @@ export class AgentRuntime {
                 message: `${call.name} failed ${failures} times with ${result.error.code}; automatic retry stopped`, retryable: true } };
             }
           }
+          let repeatedRead = false;
+          if (result.ok && harnessTextOutput) {
+            successfulReadCounts.clear();
+            remindProgress = false;
+          } else if (result.ok) {
+            const readiness = call.name === 'assess_writing_readiness' &&
+              typeof result.result === 'object' && result.result !== null && !Array.isArray(result.result) &&
+              (result.result as Readonly<Record<string, JsonValue>>).status === 'ready';
+            if (effect === 'read_only' || readiness) {
+              // Operation/call IDs are receipts, not progress. Compare only the
+              // bound task, requested slice and business result. Different
+              // slices, versions or results therefore never share a counter.
+              const key = contentHash(canonicalJson({ scopeId: policy?.scopeId ?? null,
+                systemPrompt: policy?.systemPrompt ?? input.systemPrompt,
+                taskInput: policy?.progressKey ?? policy?.userMessage ?? input.userMessage,
+                expectedBodyVersionId: policy?.expectedBodyVersionId === undefined ? input.expectedBodyVersionId : policy.expectedBodyVersionId,
+                tool: call.name, arguments: call.arguments, result: result.result }));
+              const previous = successfulReadCounts.get(key);
+              // Several duplicates in one submitted batch have not had a
+              // chance to see feedback; count model turns, not batch size.
+              const newTurn = previous?.requestId !== requestId;
+              const count = (previous?.count ?? 0) + (newTurn ? 1 : 0);
+              successfulReadCounts.set(key, { count, requestId });
+              repeatedRead = newTurn && count === 2;
+              if (count >= 3) {
+                const reason = '连续重复读取或确认相同信息，尚未推进当前任务，已暂停以避免继续消耗请求。请查看当前成果后继续。';
+                this.#sessions.pauseRun({ projectId, runId, operationId: this.#idFactory(), reason: 'TOOL_NO_PROGRESS',
+                  payload: { ...(policy?.actor ? { actor: policy.actor } : {}), tool: call.name, attempts: count, reason } });
+                return { ok: false, ...this.#facts(active), error: { code: 'TOOL_NO_PROGRESS', message: reason, retryable: true } };
+              }
+            } else {
+              successfulReadCounts.clear(); // A successful write/dispatch is actual task progress.
+              remindProgress = false;
+            }
+          }
           const pause = result.ok ? this.#pauseAfterTool(result) : null;
           if (pause !== null) {
             this.#sessions.pauseRun({
@@ -1223,6 +1299,7 @@ export class AgentRuntime {
             name: call.name,
             content: canonicalJson(result),
           });
+          if (repeatedRead) remindProgress = true;
         }
         continue;
       }
