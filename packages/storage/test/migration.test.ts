@@ -16,6 +16,7 @@ const actor = { kind: "runtime", id: "migration-test" } as const;
 
 function removeSchemaV7(database: DatabaseSync): void {
   database.exec(`
+    DROP TABLE style_profiles;
     DROP INDEX exports_project_idx;
     DROP TABLE exports;
   `);

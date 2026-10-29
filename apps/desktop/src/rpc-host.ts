@@ -10,6 +10,34 @@ function rpcError(code: string, message: string): DesktopRpcResponse {
 }
 
 const publicMessages: Readonly<Record<string, string>> = {
+  STYLE_INPUT_INVALID: '风格资料格式不正确，请检查名称、样文数量和长度后重试。',
+  STYLE_SAMPLE_DUPLICATE: '同一篇样文已添加，请移除重复内容；重复样文不会提高置信度。',
+  STYLE_SAMPLE_ID_DUPLICATE: '样文编号重复，请移除重复样文后重新添加。',
+  STYLE_SAMPLE_TOTAL_TOO_LARGE: '样文总量超过 300,000 字符，请分组提取。',
+  STYLE_DOCUMENT_TOO_LARGE: '文档超过 4 MB，或正文超过 100,000 字符，请选取代表性内容。',
+  STYLE_DOCUMENT_INVALID: '未能提取文档文字，请检查 Word 文件，或粘贴正文。扫描图片暂不支持。',
+  STYLE_DOCUMENT_ENCODING: '文本编码无法识别，请另存为 UTF-8 或直接粘贴文字。',
+  STYLE_DOCUMENT_TYPE: '请选择 DOCX、TXT 或 Markdown 文档；旧版 DOC、PDF 和扫描件暂不支持。',
+  STYLE_DOCUMENT_PICKER_REQUIRED: '请通过桌面客户端的“导入文档”选择文件。',
+  STYLE_SOURCE_TOO_LARGE: '网页正文过长，未将截断内容当作完整样文；请粘贴有代表性的正文。',
+  STYLE_SOURCE_FAILED: '网页读取未完成，可能是网络或网站访问限制。请稍后重试，或复制正文粘贴到样文中。',
+  STYLE_PROFILE_NOT_FOUND: '风格已被删除或变化，请刷新风格库。',
+  STYLE_VERSION_CONFLICT: '风格已被其他操作修改，请重新打开最新版本后编辑；当前文章的风格快照不受影响。',
+  STYLE_LIBRARY_FULL: '风格库已达 50 项，请先移除不再需要的风格。',
+  STYLE_LIBRARY_BUSY: '风格任务正在处理，请等待完成或先取消。',
+  STYLE_ANALYSIS_TIMEOUT: '模型未在 120 秒内完成风格任务，本次已停止。样文仍保留，可以稍后重试。',
+  STYLE_ANALYSIS_CANCELLED: '风格任务已取消，未保存新的结果。',
+  STYLE_MODEL_RESPONSE_INVALID: '模型返回的风格格式不完整，本次未保存；可稍后重试。',
+  STYLE_PREVIEW_RESPONSE_INVALID: '模型试写格式不完整，可稍后重试；已保存的风格不变。',
+  STYLE_MODEL_INCOMPLETE: '模型连接结束但未完成输出，请稍后重试；样文仍保留。',
+  STYLE_MODEL_OUTPUT_TRUNCATED: '模型输出被截断，本次未保存；请稍后重试或减少样文。',
+  STYLE_MODEL_OUTPUT_TOO_LARGE: '模型输出超出本次范围，已停止且未保存；可稍后重试。',
+  STYLE_MODEL_FAILED: '模型请求未成功完成，请检查模型连接后重试；样文仍保留。',
+  STYLE_INSUFFICIENT_EVIDENCE: '样文不足以支持可用的风格规则，请添加一篇较完整的文章后再分析。',
+  STYLE_EVIDENCE_NOT_IN_SAMPLE: '模型引用的依据不在本次样文节选中，本次未保存，请重试。',
+  STYLE_EVIDENCE_NOT_IN_EXCERPT: '模型引用的依据不在本次样文节选中，本次未保存，请重试。',
+  STYLE_EVIDENCE_INVALID: '规则依据与样文不匹配，请重新分析后再保存。',
+  STYLE_RECURRING_EVIDENCE_REQUIRES_TWO_SAMPLES: '模型将单篇观察误标为稳定风格，本次未保存，请重试或增加样文。',
   TRACE_SCOPE_MISMATCH: '记录不属于当前对话，请返回当前对话重新选择。',
   TRACE_SELECTION_INVALID: '记录选择无效，请重新选择执行步骤。',
   TRACE_STEP_NOT_FOUND: '未找到这一步的持久记录，可能尚未保存。',
@@ -103,6 +131,7 @@ export function safeDesktopFailure(error: unknown): DesktopRpcResponse {
       : null;
   const code = typeof candidate === "string" && Object.hasOwn(publicMessages, candidate)
     ? candidate
+    : typeof candidate === 'string' && candidate.startsWith('STYLE_MODEL_') ? 'STYLE_MODEL_FAILED'
     : "DESKTOP_COMMAND_FAILED";
   return rpcError(code, publicMessages[code] ?? "Desktop command failed");
 }

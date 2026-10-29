@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { SearchSettingsStore } from './search-settings.js';
+import { createStyleAnalysis, previewStyle } from '../../../packages/application/src/style-analysis.js';
+import { StyleLibraryCommandSchema, type StyleLibraryResult } from '../../../packages/writing-core/src/style-profile.js';
+import { readStyleDocument, readStyleUrl } from './style-source.js';
+import { styleProviderConfig } from './style-provider.js';
 import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -114,6 +118,7 @@ export class DesktopApplicationHost {
   readonly #savedPublications = new Map<string, string>();
   #savingPublication = false;
   #providerChanging = false;
+  #styleOperation: AbortController | null = null;
   readonly #searchSettings: SearchSettingsStore;
 
   constructor(options: DesktopApplicationHostOptions) {
@@ -147,6 +152,47 @@ export class DesktopApplicationHost {
   }
 
   async searchStatus() { return this.#searchSettings.status(); }
+
+  async styleLibrary(input: unknown, chooseDocument?: () => Promise<string | null>): Promise<StyleLibraryResult> {
+    if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
+    const parsed = StyleLibraryCommandSchema.safeParse(input);
+    if (!parsed.success) throw new Error('STYLE_INPUT_INVALID');
+    const command = parsed.data;
+    const store = this.#storage.styleProfiles();
+    if (command.action === 'cancel') {
+      this.#styleOperation?.abort(new Error('STYLE_ANALYSIS_CANCELLED'));
+      return { profiles: store.list(), cancelled: true };
+    }
+    if (command.action === 'list') return { profiles: store.list() };
+    if (command.action === 'get') return { profiles: store.list(), profile: store.get(command.id) };
+    if (this.#styleOperation) throw new Error('STYLE_LIBRARY_BUSY');
+    if (command.action === 'save') return { profile: store.save(command.id, command.expectedVersion, command.draft), profiles: store.list() };
+    if (command.action === 'delete') { store.remove(command.id, command.expectedVersion); return { profiles: store.list() }; }
+    if (this.#providerChanging) throw new Error('PROVIDER_SETTINGS_BUSY');
+    const controller = new AbortController();
+    this.#styleOperation = controller;
+    try {
+      let result: Omit<StyleLibraryResult, 'profiles'>;
+      if (command.action === 'source') {
+        result = { sample: await readStyleUrl(command.url, controller.signal, this.#authorWebFetcher) };
+      } else if (command.action === 'import') {
+        if (!chooseDocument) throw new Error('STYLE_DOCUMENT_PICKER_REQUIRED');
+        const path = await chooseDocument();
+        if (controller.signal.aborted) throw new Error('STYLE_ANALYSIS_CANCELLED');
+        result = path ? { sample: await readStyleDocument(path) } : { cancelled: true };
+      } else {
+        const config = this.#providerConfig;
+        if (!config) throw new Error('MODEL_CONFIGURATION_REQUIRED');
+        const provider = this.#providerFactory(styleProviderConfig(config), this.#credentials);
+        const options = { provider, model: config.model, signal: controller.signal };
+        result = command.action === 'analyze'
+          ? { draft: await createStyleAnalysis({ ...options, name: command.name, samples: command.samples }) }
+          : { preview: await previewStyle({ ...options, card: command.card, topic: command.topic }) };
+      }
+      if (this.#closed || controller.signal.aborted) throw new Error('STYLE_ANALYSIS_CANCELLED');
+      return { ...result, profiles: store.list() };
+    } finally { if (this.#styleOperation === controller) this.#styleOperation = null; }
+  }
   async configureSearch(input: SearchSettingsInput) { return this.#searchSettings.save(input); }
   async testSearchConnection(provider: 'deepseek' | 'parallel' | 'tavily') { return this.#searchSettings.verify(provider); }
 
@@ -597,6 +643,7 @@ export class DesktopApplicationHost {
 
   close(): void {
     if (this.#closed) return;
+    this.#styleOperation?.abort(new Error('STYLE_ANALYSIS_CANCELLED'));
     this.#closed = true;
     this.#bridgeUnsubscribe?.();
     this.#bridgeUnsubscribe = null;
@@ -663,7 +710,7 @@ export class DesktopApplicationHost {
   }
 
   #hasActiveRun(): boolean {
-    return this.#service.listProjects().some((project) =>
+    return this.#styleOperation !== null || this.#service.listProjects().some((project) =>
       this.#service
         .getProjectProjection(project.id)
         .runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)),
@@ -671,6 +718,7 @@ export class DesktopApplicationHost {
   }
 
   #hasExecutingRun(projectId?: string): boolean {
+    if (projectId === undefined && this.#styleOperation !== null) return true;
     const projectIds = projectId === undefined ? this.#service.listProjects().map(project => project.id) : [projectId];
     return projectIds.some(id => this.#service.getProjectProjection(id).runs
       .some(run => run.status === 'queued' || run.status === 'running' || run.status === 'paused'));

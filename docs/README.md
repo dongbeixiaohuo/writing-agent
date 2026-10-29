@@ -8,6 +8,7 @@
 - [RC88 公开发布与验证记录](launch/RC88_RELEASE_EXECUTION.md)：当前公开候选的固定源码、构建、下载校验和安装/升级边界；[RC87 历史记录](launch/RC87_RELEASE_EXECUTION.md)与 [RC80 历史记录](launch/RC80_RELEASE_EXECUTION.md)保留追溯。
 - [Windows 复制粘贴异常采集](testing/CLIPBOARD_DIAGNOSTICS.md)：手动采集占用进程与系统环境，不读取剪贴板内容。
 - [桌面版与原版 Skill 能力对照](DESKTOP_SKILL_COMPARISON.md)：选择适合自己的入口。
+- [桌面风格库](implementation/2026-10-30-style-library.md)：从样文提取、保存并选用风格；当前源码功能，发布与验证边界见文内。
 - 原版使用说明见 [Claude Code 指南](CLAUDE_CODE_GUIDE.md)。个人资料不纳入版本化产品入口。
 
 ## 产品与开发维护源

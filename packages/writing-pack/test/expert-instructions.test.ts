@@ -147,8 +147,9 @@ describe("expert instruction migration", () => {
     assert.match(buildExpertInstructions("draft"), /作者声音.*禁止第一人称亲历/u);
     assert.match(buildExpertInstructions("language_review"), /只有在收益明确.*局部最小修改/u);
     assert.match(buildExpertInstructions("fact_check"), /完整正文.*最终标题.*分发文案/u);
-    assert.match(buildExpertInstructions("style_modeler"), /至少三组独立.*盲测/u);
-    assert.match(buildExpertInstructions("style_modeler"), /超过 30% 不得验证通过/u);
+    assert.match(buildExpertInstructions("style_modeler"), /5—8 条可执行规则.*必要短引文/u);
+    assert.match(buildExpertInstructions("style_modeler"), /风格库.*完整风格卡.*当前用户.*明确授权/u);
+    assert.match(buildExpertInstructions("style_modeler"), /不要求固定 15 个维度、盲测循环或 verified 状态/u);
     assert.match(buildExpertInstructions("memory"), /只有.*user_edit.*用户偏好/u);
     assert.match(buildExpertInstructions("retrospective"), /相关性不能写成因果/u);
     assert.match(buildExpertInstructions("illustrator"), /生成失败.*不写假路径.*不声称图片成功/u);

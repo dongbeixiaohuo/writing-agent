@@ -15,6 +15,7 @@ import {
 } from "./protocol.js";
 
 export type DesktopRpcMethod =
+  | 'styleLibrary'
   | 'searchStatus'
   | 'configureSearch'
   | 'testSearchConnection'
@@ -62,6 +63,7 @@ export type DesktopRpcMethod =
   | "deleteProject";
 
 export const DESKTOP_RPC_METHODS = Object.freeze([
+  'styleLibrary',
   'searchStatus',
   'configureSearch',
   'testSearchConnection',
@@ -323,6 +325,7 @@ export interface SearchConnectionView {
   readonly message: string;
 }
 export interface DesktopHostConfiguration {
+  styleLibrary?(command: import('../../writing-core/src/style-profile.js').StyleLibraryCommand): Promise<import('../../writing-core/src/style-profile.js').StyleLibraryResult>;
   searchStatus?(): Promise<SearchSettingsView>;
   configureSearch?(input: SearchSettingsInput): Promise<SearchSettingsView>;
   testSearchConnection?(provider: 'deepseek' | 'parallel' | 'tavily'): Promise<SearchSettingsView>;

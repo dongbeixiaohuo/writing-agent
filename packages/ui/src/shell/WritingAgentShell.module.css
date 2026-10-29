@@ -438,37 +438,65 @@
   flex-direction: column;
 }
 
-.minimap {
+.conversationNavigator {
   position: absolute;
-  top: 10px;
-  bottom: 10px;
-  right: 4px;
+  top: 50%;
+  right: 18px;
+  transform: translateY(-50%);
   z-index: 10;
-  width: 10px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--dsw-alias-border-l3) 30%, transparent);
+  display: flex;
+  flex-direction: column;
+  width: 32px;
+  outline: none;
+}
+
+.conversationWrap .timeline {
+  padding-inline-end: 64px;
+}
+
+.conversationNavigationMarker {
+  display: flex;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-caption);
   cursor: pointer;
 }
 
-.minimapViewport {
-  position: absolute;
-  left: 0;
-  width: 100%;
-  min-height: 12px;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
+.conversationNavigationMarker span {
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.45;
+  transition: width 120ms ease, opacity 120ms ease, color 120ms ease;
   pointer-events: none;
 }
 
-.minimapMarker {
-  position: absolute;
-  left: 2px;
-  width: 6px;
-  border-radius: 3px;
-  background: var(--dsw-alias-label-caption);
-  opacity: 0.65;
-  pointer-events: none;
+.conversationNavigationMarker:hover,
+.conversationNavigationMarker[aria-current='location'] {
+  color: var(--dsw-alias-label-primary);
+}
+
+.conversationNavigationMarker:hover span,
+.conversationNavigationMarker[aria-current='location'] span {
+  width: 14px;
+  opacity: 1;
+}
+
+.conversationNavigator:focus-visible .conversationNavigationMarker[aria-current='location'] {
+  outline: 1px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversationNavigationMarker span { transition: none; }
 }
 
 .heroStage {

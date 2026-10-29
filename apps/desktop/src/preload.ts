@@ -33,6 +33,11 @@ const invoke = (request: DesktopRpcRequest): Promise<DesktopRpcResponse> =>
 
 const api: DesktopHostApi = {
   invoke,
+  async styleLibrary(command) {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'styleLibrary', args: [command] });
+    if (!response.ok) throw new Error(response.error.message);
+    return response.result as import('../../../packages/writing-core/src/style-profile.js').StyleLibraryResult;
+  },
   async searchStatus() {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'searchStatus', args: [] });
     if (!response.ok) throw new Error(response.error.message);
