@@ -183,9 +183,9 @@ async function handleRpc(
   try {
     if (parsed.method === 'styleLibrary') {
       const result = await currentHost.styleLibrary(parsed.args[0], async () => {
-        const selected = await showOpenDialog({ title: '选择风格样文', properties: ['openFile'],
+        const selected = await showOpenDialog({ title: '选择风格样文（可多选，合计最多 10 份）', properties: ['openFile', 'multiSelections'],
           filters: [{ name: '文字样文（Word / Markdown / 文本）', extensions: ['docx', 'md', 'markdown', 'txt'] }] });
-        return selected.canceled ? null : selected.filePaths[0] ?? null;
+        return selected.canceled ? null : selected.filePaths;
       });
       return { ok: true, result };
     }

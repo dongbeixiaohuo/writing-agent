@@ -1,5 +1,6 @@
 import { UI_BRIDGE_PROTOCOL_VERSION, type ClientBridge } from "../../../packages/client-bridge/src/protocol.js";
 import { WORKFLOW_COMMAND_MESSAGES } from '../../../packages/client-bridge/src/workflow-errors.js';
+import { STYLE_SAMPLE_LIMIT_MESSAGE } from '../../../packages/writing-core/src/style-profile.js';
 import type {
   DesktopRpcRequest,
   DesktopRpcResponse,
@@ -11,6 +12,8 @@ function rpcError(code: string, message: string): DesktopRpcResponse {
 
 const publicMessages: Readonly<Record<string, string>> = {
   STYLE_INPUT_INVALID: '风格资料格式不正确，请检查名称、样文数量和长度后重试。',
+  STYLE_SAMPLE_LIMIT_EXCEEDED: STYLE_SAMPLE_LIMIT_MESSAGE,
+  STYLE_SOURCE_URL_INVALID: '请输入 HTTP 或 HTTPS 链接，每行一个；请移除非链接文字后重试。',
   STYLE_SAMPLE_DUPLICATE: '同一篇样文已添加，请移除重复内容；重复样文不会提高置信度。',
   STYLE_SAMPLE_ID_DUPLICATE: '样文编号重复，请移除重复样文后重新添加。',
   STYLE_SAMPLE_TOTAL_TOO_LARGE: '样文总量超过 300,000 字符，请分组提取。',

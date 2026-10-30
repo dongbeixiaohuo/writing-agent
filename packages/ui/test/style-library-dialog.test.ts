@@ -65,4 +65,34 @@ test('style library dialog renders the bounded, evidence-oriented intake before 
   assert.match(html, /同一作者和相近场景/u)
   assert.match(html, /读取网页/u)
   assert.match(html, /导入文档/u)
+  assert.match(html, /样本（0\/10/u)
+  assert.match(html, /<textarea[^>]*aria-label="网页样文链接"/u)
+  assert.match(html, /每行一个/u)
+  assert.match(html, /最多.*10.*份/u)
 })
+
+test('batch link intake accepts multiple lines, deduplicates and rejects over-capacity without truncating', () => {
+  const api = helpers();
+  assert.equal(typeof api.prepareStyleLinks, 'function');
+  const a = 'https://mp.weixin.qq.com/s/a', b = 'http://example.test/b';
+  assert.deepEqual(api.prepareStyleLinks(`${a}\n${b}\n${a}`, []), { urls: [a, b], duplicateCount: 1 });
+  const existing = [{ id: 'a', title: '已有', kind: 'web' as const, sourceReference: a, text: '已有样文' }];
+  assert.deepEqual(api.prepareStyleLinks(`${a}\n${b}`, existing), { urls: [b], duplicateCount: 1 });
+  assert.throws(() => api.prepareStyleLinks(Array.from({ length: 11 }, (_, i) => `https://example.test/${i}`).join('\n'), []), /STYLE_SAMPLE_LIMIT_EXCEEDED/);
+  assert.throws(() => api.prepareStyleLinks(`${a}\nnot-a-link`, []), /STYLE_SOURCE_URL_INVALID/);
+});
+
+test('batch merge reports duplicate and failed documents without losing successful or existing samples', () => {
+  const api = helpers();
+  assert.equal(typeof api.mergeStyleImports, 'function');
+  const original = { id: 'a', title: '已有', kind: 'text' as const, sourceReference: null, text: '已有样文。' };
+  const other = { ...original, id: 'b', title: '新增', text: '另一个样文。' };
+  const result = api.mergeStyleImports([original], [
+    { label: '重复', status: 'loaded', sample: { ...original, id: 'duplicate' } },
+    { label: '坏文件', status: 'failed', code: 'STYLE_DOCUMENT_INVALID' },
+    { label: '新增', status: 'loaded', sample: other },
+  ]);
+  assert.deepEqual(result.samples, [original, other]);
+  assert.deepEqual(result.items.map(item => item.status), ['failed', 'failed', 'loaded']);
+  assert.equal(result.items[0].code, 'STYLE_SAMPLE_DUPLICATE');
+});

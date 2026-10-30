@@ -19,6 +19,20 @@ class Provider extends ModelProviderBase {
 const samples = [{ id: "a", title: "甲", kind: "text" as const, sourceReference: null, text: "清晨的窗很亮。人群慢慢散开。" }, { id: "b", title: "乙", kind: "text" as const, sourceReference: null, text: "傍晚的窗很亮。街道慢慢安静。" }];
 const response = JSON.stringify({ summary: "短句推进，意象克制。", rules: ["语气", "节奏", "结构", "用词", "句式"].map((dimension, index) => ({ dimension, instruction: "用具体意象和短句推进。", evidence: [{ sampleId: index === 0 ? "a" : "a", quote: index === 0 ? "清晨的窗很亮。" : "人群慢慢散开。" }], confidence: "sample" })) });
 
+test('ten samples share one bounded analysis request; eleven are rejected before requesting a model', async () => {
+  const ten = Array.from({ length: 10 }, (_, index) => ({ ...samples[0]!, id: index === 0 ? 'a' : `sample-${index}`, text: `${samples[0]!.text.repeat(1000)}第${index}篇。` }));
+  const provider = new Provider(response);
+  const draft = await createStyleAnalysis({ provider, model: 'm', name: '十篇联合', samples: ten });
+  assert.equal(draft.sampleCount, 10);
+  assert.equal(provider.requests.length, 1);
+  const context = JSON.parse(provider.requests[0]!.messages[1]!.content as string);
+  assert.equal(context.samples.length, 10);
+  assert.ok(context.statistics.excerptEnvelopeCharacters <= 24_000);
+  const untouched = new Provider(response);
+  await assert.rejects(createStyleAnalysis({ provider: untouched, model: 'm', name: '超量', samples: [...ten, { ...samples[0]!, id: 'eleven' }] }), /STYLE_SAMPLE_LIMIT_EXCEEDED/);
+  assert.equal(untouched.requests.length, 0);
+});
+
 test("deduplicates and sends only system plus bounded sample statistics", async () => {
   await assert.rejects(createStyleAnalysis({ provider: new Provider(response), model: "m", name: "x", samples: [samples[0]!, { ...samples[0]!, id: "copy" }] }), /STYLE_SAMPLE_DUPLICATE/u);
   const provider = new Provider(response); const draft = await createStyleAnalysis({ provider, model: "m", name: "x", samples });

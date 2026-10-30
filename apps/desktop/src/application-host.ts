@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { SearchSettingsStore } from './search-settings.js';
 import { createStyleAnalysis, previewStyle } from '../../../packages/application/src/style-analysis.js';
-import { StyleLibraryCommandSchema, type StyleLibraryResult } from '../../../packages/writing-core/src/style-profile.js';
-import { readStyleDocument, readStyleUrl } from './style-source.js';
+import { STYLE_SAMPLE_LIMIT, ensureStyleSampleCapacity, normalizeStyleUrl, StyleLibraryCommandSchema, type StyleLibraryResult } from '../../../packages/writing-core/src/style-profile.js';
+import { readStyleBatch, readStyleDocument, readStyleUrl } from './style-source.js';
 import { styleProviderConfig } from './style-provider.js';
 import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -153,10 +153,10 @@ export class DesktopApplicationHost {
 
   async searchStatus() { return this.#searchSettings.status(); }
 
-  async styleLibrary(input: unknown, chooseDocument?: () => Promise<string | null>): Promise<StyleLibraryResult> {
+  async styleLibrary(input: unknown, chooseDocument?: () => Promise<string | readonly string[] | null>): Promise<StyleLibraryResult> {
     if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
     const parsed = StyleLibraryCommandSchema.safeParse(input);
-    if (!parsed.success) throw new Error('STYLE_INPUT_INVALID');
+    if (!parsed.success) throw new Error(parsed.error.issues.some(issue => issue.message === 'STYLE_SAMPLE_LIMIT_EXCEEDED') ? 'STYLE_SAMPLE_LIMIT_EXCEEDED' : 'STYLE_INPUT_INVALID');
     const command = parsed.data;
     const store = this.#storage.styleProfiles();
     if (command.action === 'cancel') {
@@ -175,11 +175,19 @@ export class DesktopApplicationHost {
       let result: Omit<StyleLibraryResult, 'profiles'>;
       if (command.action === 'source') {
         result = { sample: await readStyleUrl(command.url, controller.signal, this.#authorWebFetcher) };
+      } else if (command.action === 'sources') {
+        const urls = [...new Set(command.urls.map(normalizeStyleUrl))];
+        ensureStyleSampleCapacity(STYLE_SAMPLE_LIMIT - (command.remainingSlots ?? STYLE_SAMPLE_LIMIT), urls.length);
+        result = { items: await readStyleBatch(urls.map(url => ({ label: url, read: () => readStyleUrl(url, controller.signal, this.#authorWebFetcher) })), controller.signal, 'STYLE_SOURCE_FAILED') };
       } else if (command.action === 'import') {
         if (!chooseDocument) throw new Error('STYLE_DOCUMENT_PICKER_REQUIRED');
-        const path = await chooseDocument();
+        const selected = await chooseDocument();
         if (controller.signal.aborted) throw new Error('STYLE_ANALYSIS_CANCELLED');
-        result = path ? { sample: await readStyleDocument(path) } : { cancelled: true };
+        const paths = [...new Set(typeof selected === 'string' ? [selected] : selected ?? [])];
+        ensureStyleSampleCapacity(STYLE_SAMPLE_LIMIT - (command.remainingSlots ?? STYLE_SAMPLE_LIMIT), paths.length);
+        if (!paths.length) result = { cancelled: true };
+        else if (typeof selected === 'string') result = { sample: await readStyleDocument(selected) };
+        else result = { items: await readStyleBatch(paths.map(path => ({ label: basename(path), read: () => readStyleDocument(path) })), controller.signal, 'STYLE_DOCUMENT_READ_FAILED') };
       } else {
         const config = this.#providerConfig;
         if (!config) throw new Error('MODEL_CONFIGURATION_REQUIRED');

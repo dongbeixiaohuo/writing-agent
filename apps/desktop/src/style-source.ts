@@ -3,11 +3,31 @@ import { open } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { unzipSync } from 'fflate';
 import { load } from 'cheerio';
-import { StyleSampleSchema, type StyleSample } from '../../../packages/writing-core/src/style-profile.js';
+import { STYLE_IMPORT_ERRORS, StyleSampleSchema, type StyleSample, type StyleImportItem, type StyleImportError } from '../../../packages/writing-core/src/style-profile.js';
 import { NetworkAccessPolicy, SecureWebFetcher } from '../../../packages/runtime/tools/src/index.js';
 import type { AuthorWebFetcher } from '../../../packages/application/src/author-web.js';
 
 const MAX_BYTES = 4 * 1024 * 1024;
+
+/** Bounded fan-out; one failure must not discard the other selected sources. */
+export async function readStyleBatch(entries: readonly { label: string; read: () => Promise<StyleSample> }[], signal: AbortSignal, fallback: StyleImportError): Promise<StyleImportItem[]> {
+  const results: StyleImportItem[] = new Array(entries.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < entries.length) {
+      if (signal.aborted) throw new Error('STYLE_ANALYSIS_CANCELLED');
+      const index = next++; const entry = entries[index]!;
+      try { results[index] = { label: entry.label, status: 'loaded', sample: await entry.read() }; }
+      catch (error) {
+        const code = error instanceof Error && Object.hasOwn(STYLE_IMPORT_ERRORS, error.message) ? error.message as StyleImportError : fallback;
+        results[index] = { label: entry.label, status: 'failed', code };
+      }
+      if (signal.aborted) throw new Error('STYLE_ANALYSIS_CANCELLED');
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  return results;
+}
 
 export function decodeStyleDocument(fileName: string, bytes: Uint8Array): StyleSample {
   if (bytes.byteLength > MAX_BYTES) throw new Error('STYLE_DOCUMENT_TOO_LARGE');

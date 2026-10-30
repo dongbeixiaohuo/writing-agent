@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { zipSync, strToU8 } from 'fflate';
 import { DesktopApplicationHost } from '../src/application-host.js';
-import { decodeStyleDocument } from '../src/style-source.js';
+import { decodeStyleDocument, readStyleBatch } from '../src/style-source.js';
 import { CredentialBroker } from '../../../packages/runtime/credentials/src/index.js';
 import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '../../../packages/runtime/llm/src/index.js';
 import { openWorkspaceStorage, migrateWorkspaceStorage } from '../../../packages/storage/src/index.js';
@@ -138,4 +138,64 @@ test('safe public style errors do not expose provider response bodies', () => {
   const failure = safeDesktopFailure(new Error('STYLE_MODEL_NETWORK_ERROR'));
   assert.equal(failure.ok, false);
   if (!failure.ok) assert.equal(failure.error.code, 'STYLE_MODEL_FAILED');
+});
+
+test('native multi-document import returns every result and preserves successful documents on partial failure', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-style-batch-')); const host = createHost(root);
+  try {
+    const one = join(root, 'one.txt'), two = join(root, 'two.md'), bad = join(root, 'bad.docx');
+    writeFileSync(one, '第一份样文。'); writeFileSync(two, '第二份样文。'); writeFileSync(bad, 'not a zip');
+    const result = await host.styleLibrary({ action: 'import', remainingSlots: 10 }, async () => [one, bad, two]);
+    assert.deepEqual(result.items?.map(item => [item.label, item.status]), [['one.txt', 'loaded'], ['bad.docx', 'failed'], ['two.md', 'loaded']]);
+    assert.equal(JSON.stringify(result).includes(root.replaceAll('\\', '\\\\')), false);
+    assert.equal(result.items?.[1]?.status === 'failed' && result.items[1].code, 'STYLE_DOCUMENT_INVALID');
+    await assert.rejects(host.styleLibrary({ action: 'import', remainingSlots: 1 }, async () => [one, two]), /STYLE_SAMPLE_LIMIT_EXCEEDED/);
+    const failure = safeDesktopFailure(new Error('STYLE_SAMPLE_LIMIT_EXCEEDED'));
+    assert.equal(failure.ok, false);
+    if (!failure.ok) assert.match(failure.error.message, /10/);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('batch URLs are deduplicated, bounded by remaining slots, and cancellation stops queued reads', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-style-links-')); const host = createHost(root);
+  try {
+    const a = 'https://mp.weixin.qq.com/s/a', b = 'http://example.test/b';
+    const result = await host.styleLibrary({ action: 'sources', urls: [a, a, b], remainingSlots: 2 });
+    assert.deepEqual(result.items?.map(item => item.label), [a, b]);
+    await assert.rejects(host.styleLibrary({ action: 'sources', urls: [a, b], remainingSlots: 1 }), /STYLE_SAMPLE_LIMIT_EXCEEDED/);
+    await assert.rejects(host.styleLibrary({ action: 'analyze', name: '超量', samples: Array.from({ length: 11 }, (_, i) => ({ ...sample, id: `${i}` })) }), /STYLE_SAMPLE_LIMIT_EXCEEDED/);
+    const pending = host.styleLibrary({ action: 'sources', urls: [a, b], remainingSlots: 2 });
+    await host.styleLibrary({ action: 'cancel' });
+    await assert.rejects(pending, /STYLE_ANALYSIS_CANCELLED/);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('batch reader uses at most two concurrent reads and keeps ordered, sanitized partial results', async () => {
+  let active = 0, peak = 0;
+  const items = await readStyleBatch(Array.from({ length: 5 }, (_, i) => ({ label: `doc-${i}`, read: async () => {
+    active++; peak = Math.max(peak, active);
+    try { await new Promise(resolve => setTimeout(resolve, i === 0 ? 15 : 2)); if (i === 2) throw new Error('private-provider-error'); return { ...sample, id: `s-${i}` }; }
+    finally { active--; }
+  } })), new AbortController().signal, 'STYLE_SOURCE_FAILED');
+  assert.equal(peak, 2);
+  assert.deepEqual(items.map(item => item.label), ['doc-0', 'doc-1', 'doc-2', 'doc-3', 'doc-4']);
+  assert.equal(items[2]?.status === 'failed' && items[2].code, 'STYLE_SOURCE_FAILED');
+  assert.equal(JSON.stringify(items).includes('private-provider-error'), false);
+  const controller = new AbortController(); let started = 0;
+  await assert.rejects(readStyleBatch(Array.from({ length: 5 }, () => ({ label: 'cancel', read: async () => {
+    started++; controller.abort(); return sample;
+  } })), controller.signal, 'STYLE_SOURCE_FAILED'), /STYLE_ANALYSIS_CANCELLED/);
+  assert.equal(started, 1);
+});
+
+test('ten-sample profiles save and reopen, while oversized native selections import nothing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-style-ten-')); let host = createHost(root);
+  try {
+    const samples = Array.from({ length: 10 }, (_, i) => ({ ...sample, id: i === 0 ? sample.id : `s-${i}`, text: `${sample.text}第${i}份。` }));
+    const count = samples.reduce((n, entry) => n + entry.text.length, 0);
+    const saved = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: { ...fixture, samples, sampleCount: 10, analyzedCharacters: count, totalCharacters: count } })).profile!;
+    host.close(); host = createHost(root);
+    assert.equal((await host.styleLibrary({ action: 'get', id: saved.id })).profile?.samples.length, 10);
+    await assert.rejects(host.styleLibrary({ action: 'import' }, async () => Array.from({ length: 11 }, (_, i) => join(root, `unread-${i}.txt`))), /STYLE_SAMPLE_LIMIT_EXCEEDED/);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
 });
