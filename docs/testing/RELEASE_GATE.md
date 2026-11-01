@@ -1,10 +1,20 @@
 # Writing Agent 桌面发布门禁
 
-更新：2026-10-23。当前公开桌面版 **1.0.0-rc.88**，为 **Pre-release，不是稳定版**。维护者已授权同步源码与更新下载包，沿用未签名候选发布；不修改仓库 latest，不删除旧 Skill 或历史 Release。
+更新：2026-11-01。当前公开桌面版 **1.0.0-rc.93**，为 **Pre-release，不是稳定版**。沿用维护者已授权的未签名候选发布；不修改 Skill latest，不删除历史 Release。
 
-当前下载：**[rc.88](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.88)**。源码锁定 `a2324fd690c1fb8e3cfdfa70eee18ca4a31621d5`，执行与资产校验记录见 [rc.88 发布记录](../launch/RC88_RELEASE_EXECUTION.md)。
+当前下载：**[rc.93](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)**。构建源码 `eedcf922a88626a043e3cb01e4f9f134f0ae0046`，执行与附件校验见 [RC93 发布记录](../launch/RC93_RELEASE_EXECUTION.md)。
 
-## RC88 本次发布检查（2026-10-23）
+## RC93 本次发布检查（2026-11-01）
+
+- [x] PR #30 五项必需检查后正常合并；发布前构建/夹具和依赖审计问题修复后完整重验。
+- [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/41267767830)全部通过，包含 Runtime、UI、Desktop、搜索、Python、文档/镜像、生产依赖高危门禁。
+- [x] 全新安装、启动、卸载及 RC88 标签重建版 → RC93 升级、合成数据保留通过；两次启动 ready、协议 24、exitCode=0。
+- [x] 六个附件大小/digest 与 CI 一致；公开 EXE 无登录完整下载后大小和 SHA-256 一致。
+- [x] 发布为 Pre-release，固定标签指向构建提交，Skill `v0.11.0` latest 保持不变；公开包放在 `output/desktop` 根目录，旧本地 RC93 包和元数据另存保留。
+
+升级 smoke 收尾记录了桥接 handler 已移除的 stderr，保留原始记录，不声称零警告。新风格提示词的真实模型质量/耗时、正常 GPU 和完整人工旅程未验收；生产依赖仍有低危报告。以下内容为带版本的历史基线。
+
+## RC88 历史发布基线（2026-10-23）
 
 - [x] PR #28 五项必需检查后正常合并，没有绕过 main 分支保护。
 - [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/39816908062)第二次执行全部通过，覆盖 Runtime / UI / Bridge / Desktop / 搜索专项、Python、脚本、文档/镜像、生产依赖高危门禁和打包。

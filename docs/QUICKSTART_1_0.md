@@ -1,10 +1,10 @@
 # Writing Agent 桌面版快速开始
 
-更新：2026-10-23。**1.0.0-rc.88 已公开发布为 Pre-release**。以下是当前实现的操作说明，不代表稳定版承诺。[已知限制与发布门禁](testing/RELEASE_GATE.md)
+更新：2026-11-01。**1.0.0-rc.93 已公开发布为 Pre-release**。以下是当前实现的操作说明，不代表稳定版承诺。[已知限制与发布门禁](testing/RELEASE_GATE.md)
 
 ## 1. 下载、安装与升级
 
-进入 [rc.88 下载页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.88)，下载 Windows x64 的 `Writing-Agent-Setup-1.0.0-rc.88-x64.exe`。不要下载 `Source code.zip` 当作软件，也不要误装旧 `app-preview-0.1.0`。附件 `SHA256SUMS.txt` 提供本版本校验值。安装与 RC87 → RC88 升级验证范围见 [RC88 发布记录](launch/RC88_RELEASE_EXECUTION.md)；[RC87 历史记录](launch/RC87_RELEASE_EXECUTION.md)保留追溯，旧包校验值不适用于新包。
+进入 [rc.93 下载页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)，下载 Windows x64 的 `Writing-Agent-Setup-1.0.0-rc.93-x64.exe`。不要下载 `Source code.zip` 当作软件，也不要误装旧 `app-preview-0.1.0`。附件 `SHA256SUMS.txt` 提供本版本校验值。安装与 RC88 → RC93 升级验证范围见 [RC93 发布记录](launch/RC93_RELEASE_EXECUTION.md)；[RC87 历史记录](launch/RC87_RELEASE_EXECUTION.md)保留追溯，旧包校验值不适用于新包。
 
 维护者本地安装包统一放 `output/desktop`；这不是互联网下载地址。本次 RC 未签名，Windows 可能显示未知发布者提示。核对仓库来源与 SHA-256，不要关闭安全软件来强行安装。建议使用默认本地安装目录，不安装到 OneDrive 等云同步目录。
 
