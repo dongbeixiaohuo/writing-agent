@@ -544,6 +544,7 @@ export class DesktopClientBridge implements ClientBridge {
   async startConversation(text: string, options: BridgeCommandOptions = {}): Promise<{ runId: string }> {
     const result = record(await this.#invoke("startConversation", text, {
       operationId: options.operationId ?? this.#operationIdFactory(),
+      ...(options.styleSelection === undefined ? {} : { styleSelection: options.styleSelection }),
     }));
     if (typeof result.runId !== "string") throw new Error("DESKTOP_BRIDGE_RESPONSE_INVALID");
     return { runId: result.runId };
@@ -564,7 +565,7 @@ export class DesktopClientBridge implements ClientBridge {
     const result = record(await this.#invoke(
       "sendMessage",
       text,
-      { operationId: options.operationId ?? this.#operationIdFactory() },
+      { operationId: options.operationId ?? this.#operationIdFactory(), ...(options.styleSelection === undefined ? {} : { styleSelection: options.styleSelection }) },
     ));
     if (typeof result.runId !== "string") {
       throw new Error("DESKTOP_BRIDGE_RESPONSE_INVALID");

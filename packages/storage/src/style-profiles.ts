@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { StyleDraftSchema, StyleProfileSchema, validateStyleSamples, type StyleDraft, type StyleProfile, type StyleProfileSummary } from '../../writing-core/src/style-profile.js';
+import { styleParagraphs, styleStatistics } from '../../writing-core/src/style-package.js';
 
 /** Workspace-local library. Applied briefs keep their own immutable card snapshot. */
 export class StyleProfileStore {
@@ -24,15 +25,19 @@ export class StyleProfileStore {
     const draft = StyleDraftSchema.parse(value);
     const samples = validateStyleSamples(draft.samples);
     if (draft.sampleCount !== samples.length) throw new Error('STYLE_INPUT_INVALID');
-    // A user may edit the card, never manufacture a quotation in the analysis record.
-    for (const rule of draft.rules) {
-      for (const evidence of rule.evidence) {
-        if (!samples.find(sample => sample.id === evidence.sampleId)?.text.includes(evidence.quote)) throw new Error('STYLE_EVIDENCE_INVALID');
-      }
-    }
+    // Examples are optional. Preserve the usable card without storing invented quotations.
+    const rules = draft.rules.map(rule => {
+      const evidence = rule.evidence.filter(item => samples.find(sample => sample.id === item.sampleId)?.text.includes(item.quote));
+      return { ...rule, evidence, confidence: new Set(evidence.map(item => item.sampleId)).size >= 2 ? 'recurring' as const : 'sample' as const };
+    });
     if (id === null && expectedVersion !== null || id !== null && expectedVersion === null) throw new Error('STYLE_VERSION_CONFLICT');
     if (id === null && this.list().length >= 50) throw new Error('STYLE_LIBRARY_FULL');
-    const profile: StyleProfile = { ...draft, samples, id: id ?? randomUUID(), version: (expectedVersion ?? 0) + 1, updatedAt: new Date().toISOString() };
+    const pack = draft.package && { ...draft.package, statistics: styleStatistics(samples), snippets: draft.package.snippets.filter(item => {
+      const sample = samples.find(sample => sample.id === item.sampleId);
+      const paragraph = sample && styleParagraphs(sample.text).find(paragraph => paragraph.id === item.paragraphId.split(':')[0]);
+      return paragraph?.text.includes(item.quote) === true;
+    }) };
+    const profile: StyleProfile = { ...draft, ...(pack ? { package: pack } : {}), samples, rules, id: id ?? randomUUID(), version: (expectedVersion ?? 0) + 1, updatedAt: new Date().toISOString() };
     const json = JSON.stringify(profile);
     if (id === null) {
       this.database.prepare('INSERT INTO style_profiles(id, version, profile_json) VALUES (?, ?, ?)').run(profile.id, profile.version, json);

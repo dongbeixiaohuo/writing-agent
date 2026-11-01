@@ -16,16 +16,6 @@ function helpers() {
   } finally { rmSync(directory, { recursive: true, force: true }) }
 }
 
-test('a new selection replaces the previous leading card without discarding draft text', () => {
-  const { withStyleSelection } = helpers();
-  const first = withStyleSelection('原文材料：不能丢失', '个人风格卡 · A · a · v1\n短句。');
-  const next = withStyleSelection(first, '个人风格卡 · B · b · v2\n长短句交替。');
-  assert.equal(next.startsWith('请按下面明确指定的风格卡写作：'), true);
-  assert.equal((next.match(/<writing-style-card>/gu) ?? []).length, 1);
-  assert.equal(next.includes('个人风格卡 · A'), false);
-  assert.equal(next.endsWith('原文材料：不能丢失'), true);
-});
-
 function renderDialog() {
   const directory = mkdtempSync(join(tmpdir(), 'writing-agent-style-library-render-'))
   const output = join(directory, 'render.cjs')

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { SearchSettingsStore } from './search-settings.js';
 import { createStyleAnalysis, previewStyle } from '../../../packages/application/src/style-analysis.js';
 import { STYLE_SAMPLE_LIMIT, ensureStyleSampleCapacity, normalizeStyleUrl, StyleLibraryCommandSchema, type StyleLibraryResult } from '../../../packages/writing-core/src/style-profile.js';
+import { evaluateStylePreview } from '../../../packages/writing-core/src/style-package.js';
 import { readStyleBatch, readStyleDocument, readStyleUrl } from './style-source.js';
 import { styleProviderConfig } from './style-provider.js';
 import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
@@ -165,6 +166,12 @@ export class DesktopApplicationHost {
     }
     if (command.action === 'list') return { profiles: store.list() };
     if (command.action === 'get') return { profiles: store.list(), profile: store.get(command.id) };
+    if (command.action === 'selection') return { profiles: store.list(), selection: this.#service.getProjectStyleSelection(command.projectId) ?? null };
+    if (command.action === 'select') {
+      this.#service.selectProjectStyle(command.projectId, command.selection, `select-style:${randomUUID()}`);
+      await this.#bridge.refresh();
+      return { profiles: store.list(), selection: this.#service.getProjectStyleSelection(command.projectId) ?? null };
+    }
     if (this.#styleOperation) throw new Error('STYLE_LIBRARY_BUSY');
     if (command.action === 'save') return { profile: store.save(command.id, command.expectedVersion, command.draft), profiles: store.list() };
     if (command.action === 'delete') { store.remove(command.id, command.expectedVersion); return { profiles: store.list() }; }
@@ -193,9 +200,11 @@ export class DesktopApplicationHost {
         if (!config) throw new Error('MODEL_CONFIGURATION_REQUIRED');
         const provider = this.#providerFactory(styleProviderConfig(config), this.#credentials);
         const options = { provider, model: config.model, signal: controller.signal };
-        result = command.action === 'analyze'
-          ? { draft: await createStyleAnalysis({ ...options, name: command.name, samples: command.samples }) }
-          : { preview: await previewStyle({ ...options, card: command.card, topic: command.topic }) };
+        if (command.action === 'analyze') result = { draft: await createStyleAnalysis({ ...options, name: command.name, samples: command.samples }) };
+        else {
+          const preview = await previewStyle({ ...options, card: command.card, topic: command.topic, ...(command.package ? { package: command.package } : {}) });
+          result = { preview, evaluation: evaluateStylePreview(preview, command.package) };
+        }
       }
       if (this.#closed || controller.signal.aborted) throw new Error('STYLE_ANALYSIS_CANCELLED');
       return { ...result, profiles: store.list() };

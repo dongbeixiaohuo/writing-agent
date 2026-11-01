@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { StylePackageSchema, StyleSelectionInputSchema, StyleSelectionSnapshotSchema, StylePreviewEvaluationSchema } from './style-package.js';
 
 const BoundedText = (limit: number) => z.string().trim().min(1).max(limit);
 
@@ -59,20 +60,22 @@ export const StyleRuleEvidenceSchema = z.object({
 export const StyleRuleSchema = z.object({
   dimension: BoundedText(80),
   instruction: BoundedText(500),
-  evidence: z.array(StyleRuleEvidenceSchema).min(1).max(STYLE_SAMPLE_LIMIT),
-  confidence: z.enum(["sample", "recurring"]),
+  evidence: z.array(StyleRuleEvidenceSchema).max(STYLE_SAMPLE_LIMIT).default([]),
+  confidence: z.enum(["sample", "recurring"]).default('sample'),
 }).strict();
 export const StyleDraftSchema = z.object({
   name: BoundedText(160),
   card: BoundedText(1_800),
   summary: BoundedText(800),
-  rules: z.array(StyleRuleSchema).min(5).max(8),
+  rules: z.array(StyleRuleSchema).max(20),
+  notes: z.array(BoundedText(300)).max(6).optional(),
   samples: SampleListSchema,
   sampleCount: z.number().int().min(1).max(STYLE_SAMPLE_LIMIT),
   analyzedCharacters: z.number().int().positive().max(STYLE_TOTAL_CHARACTER_LIMIT),
   totalCharacters: z.number().int().positive().max(STYLE_TOTAL_CHARACTER_LIMIT),
   elapsedMs: z.number().int().nonnegative().max(24 * 60 * 60 * 1_000),
   modelRequests: z.literal(1),
+  package: StylePackageSchema.optional(),
 }).strict();
 export type StyleDraft = z.infer<typeof StyleDraftSchema>;
 
@@ -92,6 +95,8 @@ export type StyleProfileSummary = z.infer<typeof StyleProfileSummarySchema>;
 export const StyleLibraryCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("list") }).strict(),
   z.object({ action: z.literal("get"), id: BoundedText(120) }).strict(),
+  z.object({ action: z.literal('selection'), projectId: BoundedText(200) }).strict(),
+  z.object({ action: z.literal('select'), projectId: BoundedText(200), selection: StyleSelectionInputSchema }).strict(),
   z.object({ action: z.literal("analyze"), name: BoundedText(160), samples: SampleListSchema }).strict(),
   z.object({ action: z.literal("save"), id: BoundedText(120).nullable(), expectedVersion: z.number().int().positive().nullable(), draft: StyleDraftSchema }).strict(),
   z.object({ action: z.literal("delete"), id: BoundedText(120), expectedVersion: z.number().int().positive() }).strict(),
@@ -100,7 +105,7 @@ export const StyleLibraryCommandSchema = z.discriminatedUnion("action", [
   // The host opens a native picker; this command intentionally carries no file
   // contents or profile payload across the application boundary.
   z.object({ action: z.literal("import"), remainingSlots: z.number().int().min(0).max(STYLE_SAMPLE_LIMIT).optional() }).strict(),
-  z.object({ action: z.literal("preview"), card: BoundedText(1_800), topic: BoundedText(1_000) }).strict(),
+  z.object({ action: z.literal("preview"), card: BoundedText(1_800), topic: BoundedText(1_000), package: StylePackageSchema.optional() }).strict(),
   z.object({ action: z.literal("cancel") }).strict(),
 ]);
 export type StyleLibraryCommand = z.infer<typeof StyleLibraryCommandSchema>;
@@ -109,6 +114,8 @@ export const StyleLibraryResultSchema = z.object({
   profiles: z.array(StyleProfileSummarySchema).max(50), draft: StyleDraftSchema.optional(), profile: StyleProfileSchema.optional(),
   sample: StyleSampleSchema.optional(), preview: BoundedText(4_000).optional(), cancelled: z.literal(true).optional(),
   items: z.array(StyleImportItemSchema).max(STYLE_SAMPLE_LIMIT).optional(),
+  selection: StyleSelectionSnapshotSchema.nullable().optional(),
+  evaluation: StylePreviewEvaluationSchema.optional(),
 }).strict();
 export type StyleLibraryResult = z.infer<typeof StyleLibraryResultSchema>;
 

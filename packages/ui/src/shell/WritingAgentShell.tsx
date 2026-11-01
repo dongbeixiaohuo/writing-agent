@@ -91,8 +91,10 @@ import { ConversationRevisionCard } from './ConversationRevisionCard.tsx'
 import { projectNavigationTarget } from './project-navigation.ts'
 import { ProviderSettings } from './ProviderSettings.tsx'
 import { SearchSettings } from './SearchSettings.tsx'
-import { StyleLibraryDialog, supportsStyleLibrary, withStyleSelection } from './StyleLibraryDialog.tsx'
-import { styleReferenceForProfile, type StyleProfile } from '../../../writing-core/src/style-profile.js'
+import { StyleLibraryDialog, supportsStyleLibrary } from './StyleLibraryDialog.tsx'
+import { StylePicker } from './StylePicker.tsx'
+import type { StyleProfile } from '../../../writing-core/src/style-profile.js'
+import type { StyleSelectionInput } from '../../../writing-core/src/style-package.js'
 import {
   commandErrorMessage,
   dataActionErrorMessage,
@@ -523,7 +525,7 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
   </div>
 }
 
-function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, onOpenStyleLibrary, styleInsertion, onStyleInserted, hostConfiguration }: {
+function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, onOpenStyleLibrary, styleInsertion, onStyleInserted, styleLibraryOpen, hostConfiguration }: {
   bridge: ClientBridge
   hero?: boolean
   newProject?: boolean
@@ -535,7 +537,8 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   onConfigureModel?: () => void
   onOpenStyleLibrary?: () => void
   onStyleInserted?: () => void
-  styleInsertion?: string
+  styleInsertion?: StyleProfile
+  styleLibraryOpen?: boolean
   hostConfiguration?: DesktopHostConfiguration | undefined
 }) {
   const snapshot = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot)
@@ -549,6 +552,8 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   const [composing, setComposing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [styleSelection, setStyleSelection] = useState<StyleSelectionInput | undefined>(undefined)
+  const [styleBusy, setStyleBusy] = useState(false)
   const running = snapshot.activeRunId !== null
   const recoveryMode = composerRecoveryMode(snapshot.recoverableRuns, snapshot.selectedSessionId)
   const waitingForRecovery = recoveryMode === 'decision'
@@ -567,17 +572,8 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
     onHandoffConsumed?.()
   }, [focusRequest])
 
-  useLayoutEffect(() => {
-    if (styleInsertion === undefined) return
-    const next = withStyleSelection(draftRef.current, styleInsertion)
-    draftRef.current = next
-    if (editorRef.current !== null) editorRef.current.textContent = next
-    setDraftEmpty(false); setDraftSendable(true)
-    onStyleInserted?.()
-  }, [styleInsertion])
-
   const submit = async (): Promise<void> => {
-    if (draftRef.current.trim().length === 0 || running || submittingRef.current || !writable) return
+    if (draftRef.current.trim().length === 0 || running || submittingRef.current || styleBusy || !writable) return
     const submittedDraft = draftRef.current
     const editor = editorRef.current
     const editorWasFocused = document.activeElement === editor
@@ -585,7 +581,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
       setError(null)
       submittingRef.current = true
       setSubmitting(true)
-      if (newProject || snapshot.selectedProjectId.length === 0) await bridge.startConversation(submittedDraft)
+      if (newProject || snapshot.selectedProjectId.length === 0) await bridge.startConversation(submittedDraft, styleSelection === undefined ? undefined : { styleSelection })
       else await bridge.sendMessage(submittedDraft)
       const pendingDraft = draftRef.current === submittedDraft ? '' : draftRef.current
       draftRef.current = pendingDraft
@@ -678,7 +674,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
         <div className={inputCss.row}>
           <div className={inputCss.tools}>
             <span className={css.composerContext}>{newProject || snapshot.brief?.confirmationStatus !== 'confirmed' ? '从一句想法开始，边聊边完善' : '可随时补充材料、调整方向或提出修改'}</span>
-            {onOpenStyleLibrary && <button className={css.secondaryAction} type="button" onClick={onOpenStyleLibrary}>选择风格</button>}
+            {onOpenStyleLibrary && supportsStyleLibrary(hostConfiguration) && <StylePicker host={hostConfiguration} projectId={newProject ? '' : snapshot.selectedProjectId} disabled={running || submitting || waitingForRecovery} onChange={setStyleSelection} onBusyChange={setStyleBusy} onManage={onOpenStyleLibrary} refreshKey={`${styleLibraryOpen}:${newProject ? '' : JSON.stringify(snapshot.projectStyle)}`} requested={styleInsertion} onRequestedApplied={onStyleInserted} />}
           </div>
           <div className={inputCss.trailing}>
             {modelConfigured
@@ -690,7 +686,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
               className={inputCss.primary}
               type="button"
               aria-label={running ? '停止生成' : submitting ? '正在启动写作' : '发送'}
-              disabled={!running && (submitting || !draftSendable || !writable)}
+              disabled={!running && (submitting || styleBusy || !draftSendable || !writable)}
               onClick={() => running ? void stop() : void submit()}
             >
               {running ? <StopIcon /> : <ArrowUpIcon />}
@@ -779,22 +775,22 @@ function BriefEditDialog({ bridge, brief, hostConfiguration, onClose }: {
         <label className={css.formField}><span>发布平台（可选）</span><input value={form.platform} onChange={event => setForm(current => ({ ...current, platform: event.target.value }))} /></label>
         <label className={css.formField}><span>发布目标</span><select value={form.publicationGoal} onChange={event => setForm(current => ({ ...current, publicationGoal: event.target.value as BriefUpdateForm['publicationGoal'] }))}><option value="not_applicable">工作稿 / 暂不发布</option><option value="primary">主要发布渠道</option><option value="secondary">二次分发</option></select></label>
         <label className={css.formField}><span>作者声音（可选）</span><input value={form.authorVoice} onChange={event => setForm(current => ({ ...current, authorVoice: event.target.value }))} /></label>
-        <label className={css.formField}><span>风格参考（可选）</span><textarea rows={3} value={form.styleReference} onChange={event => setForm(current => ({ ...current, styleReference: event.target.value }))} /></label>
+        {supportsStyleLibrary(hostConfiguration) && <div className={css.formField}><StylePicker host={hostConfiguration} projectId={bridge.getSnapshot().selectedProjectId} disabled={saving} onChange={() => {}} onManage={() => setStyleLibraryOpen(true)} refreshKey={styleLibraryOpen} /><span className={css.settingHint}>选择后立即保存，用于后续写作。</span></div>}
+        <details className={css.formField}><summary>手动风格补充（可选）</summary>
+        <label className={css.formField}><span>表达偏好或旧版风格参考</span><textarea rows={3} value={form.styleReference} onChange={event => setForm(current => ({ ...current, styleReference: event.target.value }))} /></label>
         <div className={css.formField}><span>导入现有风格</span><label className={css.filePicker}><input type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" onChange={event => {
           const file = event.currentTarget.files?.[0]
           if (file !== undefined) void importStyleFile(file)
           event.currentTarget.value = ''
         }} /><span>选择 TXT / MD 风格文件</span></label></div>
-        {supportsStyleLibrary(hostConfiguration) && <div className={css.formField}><span>我的风格库</span><button className={css.secondaryAction} type="button" onClick={() => setStyleLibraryOpen(true)}>选择已保存风格…</button></div>}
         <label className={css.formField}><span>风格决定</span><select value={form.styleDecision} onChange={event => setForm(current => ({ ...current, styleDecision: event.target.value as BriefUpdateForm['styleDecision'] }))}><option value="unspecified">尚未指定</option><option value="user_confirmed">使用我指定的风格</option><option value="user_delegated">授权 Agent 选择</option></select></label>
+        </details>
         <label className={css.formField}><span>方向决定</span><select value={form.directionDecision} onChange={event => setForm(current => ({ ...current, directionDecision: event.target.value as BriefUpdateForm['directionDecision'] }))}><option value="tentative">继续待确认</option><option value="user_confirmed">方向已经明确</option><option value="user_delegated">授权 Agent 选择方向</option></select></label>
         <label className={clsx(css.formField, css.formWide)}><span>本篇约束（每行一条）</span><textarea rows={4} value={form.constraints} onChange={event => setForm(current => ({ ...current, constraints: event.target.value }))} /></label>
       </div>
       <div className={css.setupActions}><span className={css.settingHint}>保存后回到简报确认页。</span><div className={css.connectionActions}><button type="button" className={css.secondaryAction} onClick={onClose}>取消</button><button type="button" className={css.primaryAction} disabled={saving} onClick={() => void save()}>{saving ? '正在保存…' : '保存修改'}</button></div></div>
     </section>
-    {styleLibraryOpen && hostConfiguration !== undefined && supportsStyleLibrary(hostConfiguration) && <StyleLibraryDialog host={hostConfiguration} onClose={() => setStyleLibraryOpen(false)} onSelect={(profile) => {
-      setForm(current => ({ ...current, styleReference: styleReferenceForProfile(profile), styleDecision: 'user_confirmed' }))
-    }} />}
+    {styleLibraryOpen && hostConfiguration !== undefined && supportsStyleLibrary(hostConfiguration) && <StyleLibraryDialog host={hostConfiguration} onClose={() => setStyleLibraryOpen(false)} />}
   </div>
 }
 
@@ -807,7 +803,7 @@ function BriefConfirmationCard({ brief, confirming, error, onConfirm, onEdit }: 
 }) {
   const gaps = [
     brief.directionDecision === 'tentative' ? '写作方向将在确认后锁定' : null,
-    brief.styleDecision === 'unspecified' ? '尚未指定风格，主笔将以作者声音和文体为准' : null,
+    brief.styleName === undefined && brief.styleDecision === 'unspecified' ? '尚未指定风格，主笔将以作者声音和文体为准' : null,
     brief.authorVoice === null ? '尚未提供作者声音，不会虚构作者亲历' : null,
     brief.materialCount === 0 ? '没有参考材料，系统不得声称已核验外部资料' : null,
   ].filter((value): value is string => value !== null)
@@ -820,7 +816,7 @@ function BriefConfirmationCard({ brief, confirming, error, onConfirm, onEdit }: 
       <div><dt>平台</dt><dd>{brief.platform ?? '暂未指定'}</dd></div>
       <div><dt>材料</dt><dd>{brief.materialCount} 份已授权材料</dd></div>
       <div><dt>作者声音</dt><dd>{brief.authorVoice ?? '暂未指定'}</dd></div>
-      <div><dt>风格</dt><dd>{brief.styleReference ?? (brief.styleDecision === 'user_delegated' ? '已授权 Agent 选择' : '暂未指定')}</dd></div>
+      <div><dt>风格</dt><dd>{brief.styleName !== undefined ? brief.styleName ?? '不指定风格' : brief.styleReference?.match(/^个人风格卡 · (.*?) · /u)?.[1] ?? brief.styleReference?.slice(0, 80) ?? (brief.styleDecision === 'user_delegated' ? '已授权 Agent 选择' : '暂未指定')}</dd></div>
     </dl>
     {brief.constraints.length > 0 && <div className={css.briefConstraints}><strong>本篇约束</strong><span>{brief.constraints.join(' · ')}</span></div>}
     {gaps.length > 0 && <div className={css.briefGaps}><strong>确认前请留意</strong><ul>{gaps.slice(0, 2).map(gap => <li key={gap}>{gap}</li>)}</ul></div>}
@@ -1332,7 +1328,7 @@ export function WritingAgentShell({
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
   const [briefEditOpen, setBriefEditOpen] = useState(false)
   const [styleLibraryOpen, setStyleLibraryOpen] = useState(false)
-  const [styleComposerInsertion, setStyleComposerInsertion] = useState<string | undefined>(undefined)
+  const [styleComposerInsertion, setStyleComposerInsertion] = useState<StyleProfile | undefined>(undefined)
   const [hero, setHero] = useState(() => snapshot.selectedSessionId.length === 0)
   const [newProjectIntent, setNewProjectIntent] = useState(() => snapshot.selectedProjectId.length === 0)
   const [activeTab, setActiveTab] = useState<'conversation' | 'runs'>('conversation')
@@ -1676,7 +1672,7 @@ export function WritingAgentShell({
             setActiveTab('conversation')
             setHero(false)
             forceFollowLatest()
-          }} onConfigureModel={() => openSettings('models')} {...(supportsStyleLibrary(hostConfiguration) ? { onOpenStyleLibrary: () => setStyleLibraryOpen(true) } : {})} {...(styleComposerInsertion === undefined ? {} : { styleInsertion: styleComposerInsertion, onStyleInserted: () => setStyleComposerInsertion(undefined) })} hostConfiguration={hostConfiguration} />
+          }} onConfigureModel={() => openSettings('models')} {...(supportsStyleLibrary(hostConfiguration) ? { onOpenStyleLibrary: () => setStyleLibraryOpen(true) } : {})} {...(styleComposerInsertion === undefined ? {} : { styleInsertion: styleComposerInsertion, onStyleInserted: () => setStyleComposerInsertion(undefined) })} styleLibraryOpen={styleLibraryOpen} hostConfiguration={hostConfiguration} />
           {!newProjectIntent && snapshot.brief !== null && <details className={css.optionalSetup}><summary>高级设置（可选）</summary>
             <p>可查看和调整当前项目的写作要求，也可以直接在对话中说明。</p>
             <button className={css.secondaryAction} type="button" onClick={() => setBriefEditOpen(true)}>查看写作设置</button>
@@ -1738,6 +1734,7 @@ export function WritingAgentShell({
             onConfigureModel={() => openSettings('models')}
             {...(supportsStyleLibrary(hostConfiguration) ? { onOpenStyleLibrary: () => setStyleLibraryOpen(true) } : {})}
             {...(styleComposerInsertion === undefined ? {} : { styleInsertion: styleComposerInsertion, onStyleInserted: () => setStyleComposerInsertion(undefined) })}
+            styleLibraryOpen={styleLibraryOpen}
             hostConfiguration={hostConfiguration}
           /></div>
         </> : <div className={css.runRecordsScroll}><RunRecords key={`${snapshot.selectedProjectId}:${snapshot.selectedSessionId}`} records={snapshot.runRecords} activeRunId={snapshot.activeRunId} liveActivity={snapshot.liveActivity} loadDetail={loadTraceDetail} /></div>}
@@ -1764,7 +1761,7 @@ export function WritingAgentShell({
       {settingsOpen && <div className={appFrameCss.overlayLayer}><SettingsDialog bridge={bridge} brand={brand} initialSection={settingsSection} {...(hostConfiguration === undefined ? {} : { hostConfiguration })} onClose={() => setSettingsOpen(false)} /></div>}
       {briefEditOpen && snapshot.brief !== null && <div className={appFrameCss.overlayLayer}><BriefEditDialog bridge={bridge} brief={snapshot.brief} {...(hostConfiguration === undefined ? {} : { hostConfiguration })} onClose={() => setBriefEditOpen(false)} /></div>}
       {styleLibraryOpen && supportsStyleLibrary(hostConfiguration) && <StyleLibraryDialog host={hostConfiguration} onClose={() => setStyleLibraryOpen(false)} onSelect={(profile: StyleProfile) => {
-        setStyleComposerInsertion(styleReferenceForProfile(profile))
+        setStyleComposerInsertion(profile)
       }} />}
       {deleteProjectTarget !== null && hostConfiguration !== undefined && <div className={appFrameCss.overlayLayer}><DeleteProjectDialog
         project={deleteProjectTarget}

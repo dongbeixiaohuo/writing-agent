@@ -1568,10 +1568,12 @@ export class ApplicationClientBridge implements ClientBridge {
     if (body.length > 20_000) throw new Error('MESSAGE_TOO_LONG');
     if (this.#model.credentialReference === null) throw new Error('MODEL_CONFIGURATION_REQUIRED');
     const operationId = options.operationId ?? this.#operationIdFactory();
-    return this.#once(operationId, 'conversation.start', commandInput('conversation.start', [body]), async () => {
+    return this.#once(operationId, 'conversation.start', commandInput('conversation.start', [body, JSON.stringify(options.styleSelection ?? null)]), async () => {
+      if (options.styleSelection !== undefined) this.#service.resolveStyleSelection(options.styleSelection);
       const projectId = `project:${operationId}`;
       mutationValue(this.#service.createProject({ operationId: `${operationId}:project`, projectId,
         name: '新写作项目', nameSource: 'placeholder', mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
+      if (options.styleSelection !== undefined) this.#service.selectProjectStyle(projectId, options.styleSelection, `${operationId}:style`);
       this.#replace(this.#buildSnapshot(projectId, null, this.#snapshot.generation + 1,
         this.#snapshot.revision + 1, this.#snapshot.settings, null), true);
       return this.#startIntake(projectId, undefined, body, operationId);
@@ -1645,14 +1647,18 @@ export class ApplicationClientBridge implements ClientBridge {
     return this.#once(
       operationId,
       "run.start",
-      commandInput("run.start", [this.#snapshot.selectedProjectId, body]),
+      commandInput("run.start", [this.#snapshot.selectedProjectId, body, options.styleSelection === undefined ? 'unchanged' : JSON.stringify(options.styleSelection)]),
       async () => {
         const generation = this.#snapshot.generation;
         const projectId = this.#snapshot.selectedProjectId;
         if (projectId.length === 0) throw new Error("PROJECT_SELECTION_REQUIRED");
-        const projection = this.#service.getProjectProjection(projectId);
+        let projection = this.#service.getProjectProjection(projectId);
         const active = projection.runs.find((run) => ACTIVE_STATUSES.has(run.status));
         if (active !== undefined) throw new Error("RUN_ALREADY_ACTIVE");
+        if (options.styleSelection !== undefined) {
+          this.#service.selectProjectStyle(projectId, options.styleSelection, `${operationId}:style`);
+          projection = this.#service.getProjectProjection(projectId);
+        }
         if (projection.brief?.brief.confirmationStatus !== 'confirmed') {
           return this.#startIntake(projectId, this.#snapshot.selectedSessionId || undefined, body, operationId);
         }
@@ -2515,6 +2521,10 @@ export class ApplicationClientBridge implements ClientBridge {
       },
       settings,
       activeRunId: activeRun?.id ?? null,
+      ...(selectedProjection === undefined ? {} : (() => {
+        const selection = this.#service.getProjectStyleSelection(selectedProjectId);
+        return selection === undefined ? {} : { projectStyle: selection ? { id: selection.id, version: selection.version, name: selection.name } : null };
+      })()),
       conversationIntake: selectedProjection === undefined ? null : (() => {
         const state = this.#service.getConversationIntake(selectedProjectId);
         return { phase: state.phase, summary: state.summary, proposalVersionId: state.proposalVersionId };
@@ -2524,6 +2534,10 @@ export class ApplicationClientBridge implements ClientBridge {
           ? null
           : {
               versionId: selectedProjection.brief.id,
+              ...(() => {
+                const selection = this.#service.getProjectStyleSelection(selectedProjectId);
+                return selection === undefined ? {} : { styleName: selection?.name ?? null };
+              })(),
               topic: selectedProjection.brief.brief.topic,
               genre: selectedProjection.brief.brief.genre,
               audience: selectedProjection.brief.brief.audience,

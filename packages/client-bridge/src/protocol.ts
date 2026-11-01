@@ -391,6 +391,8 @@ export interface DeliveryWorkspace {
 }
 
 export interface BriefSummary {
+  /** Independent project style name; null explicitly disables legacy style cards. */
+  styleName?: string | null
   versionId: string
   topic: string
   genre: 'argument_commentary' | 'explanatory_analysis' | 'narrative_observation' | 'practical_experience'
@@ -433,6 +435,7 @@ export interface UiSettings {
 }
 
 export interface BridgeSnapshot {
+  projectStyle?: { id: string; version: number; name: string } | null
   liveActivity?: { runId: string; requestId: string; actor: string; phase: 'waiting' | 'connected' | 'receiving'; startedAt: number; lastActivityAt: number | null; segmentStartedAt?: number; requestOrdinal?: number; workPreview?: { label: string; text: string }; lastEventKind?: 'reasoning' | 'content' | 'tool_arguments'; receivedEvents?: number; activeTool?: { name: string; startedAt: number }; materials?: readonly { id: string; label: string; text: string }[] } | null
   liveReply?: { runId: string; requestId: string; text: string; id?: string; stage?: string; phase?: 'generating' | 'saving' } | null
   revision: number
@@ -463,6 +466,7 @@ export interface BridgeSnapshot {
 
 export interface BridgeCommandOptions {
   operationId?: string
+  styleSelection?: import('../../writing-core/src/style-package.js').StyleSelectionInput
 }
 
 export interface ResumeRunOptions extends BridgeCommandOptions {

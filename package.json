@@ -15,7 +15,7 @@
     "!**/*.pyc"
   ],
   "scripts": {
-    "test:style": "node --import tsx --test packages/application/test/style-analysis.test.ts packages/application/test/style-intake.test.ts apps/desktop/test/style-library.test.ts packages/ui/test/style-library-dialog.test.ts",
+    "test:style": "node --import tsx --test packages/application/test/style-analysis.test.ts packages/application/test/style-package.test.ts packages/application/test/style-selection.test.ts packages/application/test/style-intake.test.ts apps/desktop/test/style-library.test.ts packages/ui/test/style-library-dialog.test.ts",
     "generate-image": "tsx scripts/generate_image.ts",
     "export:html": "tsx scripts/export_markdown_to_html.ts",
     "validate:workflow": "python -B scripts/validate_workflow.py",

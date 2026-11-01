@@ -147,7 +147,9 @@ describe("expert instruction migration", () => {
     assert.match(buildExpertInstructions("draft"), /作者声音.*禁止第一人称亲历/u);
     assert.match(buildExpertInstructions("language_review"), /只有在收益明确.*局部最小修改/u);
     assert.match(buildExpertInstructions("fact_check"), /完整正文.*最终标题.*分发文案/u);
-    assert.match(buildExpertInstructions("style_modeler"), /5—8 条可执行规则.*必要短引文/u);
+    assert.match(buildExpertInstructions("style_modeler"), /不凑条数/u);
+    assert.match(buildExpertInstructions("style_modeler"), /引文.*可选/u);
+    assert.doesNotMatch(buildExpertInstructions("style_modeler"), /5—8 条|至少有两篇样文的引文/u);
     assert.match(buildExpertInstructions("style_modeler"), /风格库.*完整风格卡.*当前用户.*明确授权/u);
     assert.match(buildExpertInstructions("style_modeler"), /不要求固定 15 个维度、盲测循环或 verified 状态/u);
     assert.match(buildExpertInstructions("memory"), /只有.*user_edit.*用户偏好/u);
