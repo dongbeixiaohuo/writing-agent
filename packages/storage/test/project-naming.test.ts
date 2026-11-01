@@ -88,6 +88,7 @@ describe("project naming", () => {
     const database = new DatabaseSync(databasePath);
     try {
       database.exec(`
+        DROP TABLE style_profiles;
         ALTER TABLE projects DROP COLUMN name_source;
         DELETE FROM schema_migrations;
         INSERT INTO schema_migrations(version, applied_at) VALUES (7, '2026-10-04T00:00:00.000Z');

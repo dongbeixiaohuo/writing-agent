@@ -466,7 +466,8 @@ export interface BridgeSnapshot {
 
 export interface BridgeCommandOptions {
   operationId?: string
-  styleSelection?: import('../../writing-core/src/style-package.js').StyleSelectionInput
+  /** Wire data only; the application validates and resolves the saved profile. */
+  styleSelection?: { id: string; version: number } | null
 }
 
 export interface ResumeRunOptions extends BridgeCommandOptions {

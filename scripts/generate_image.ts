@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { ProxyAgent } from "undici";
 import { writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
@@ -125,7 +126,7 @@ async function generateImage(options: GenerateImageOptions): Promise<string> {
       const client = new OpenAI({
         baseURL: API_BASE,
         apiKey: apiKey,
-        httpAgent: httpAgent,
+        ...(proxyUrl ? { fetchOptions: { dispatcher: new ProxyAgent(proxyUrl) } } : {}),
       });
 
       const result = await client.images.generate({
