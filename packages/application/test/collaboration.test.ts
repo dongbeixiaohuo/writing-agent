@@ -16,6 +16,8 @@ import { deliveredInlineMaterialIds, inlineMaterialContext } from '../src/materi
 import { getConversationIntakeState } from '../src/conversation-intake.js';
 import { parseEvidenceLedger } from '../../writing-core/src/index.js';
 import { expandResearchEvidence } from '../src/research-evidence.js';
+import { saveProjectStyleSelection } from '../src/style-selection.js';
+import { styleStatistics } from '../../writing-core/src/style-package.js';
 
 export class CollaborationProvider extends ModelProviderBase {
   requests: ModelRequest[] = [];
@@ -202,6 +204,46 @@ function setup(provider: CollaborationProvider, interactionMode: "autonomous" | 
   const project = storage.inspectProject("p")!;
   return { storage, app, input: { projectId: "p", expectedProjectRevision: project.revision, expectedBriefVersionId: project.currentBriefVersionId!, model: "mock", parameters: {}, budget: { maxModelRequests: 60, maxToolCalls: 80, maxRetriesPerRequest: 0, maxMajorRevisions: 1 } }, close() { storage.close(); rmSync(path, { recursive: true, force: true }); } };
 }
+
+it('uses a selected project style across writing stages without leaking its samples into fact check or reader simulations', async () => {
+  const provider = new CollaborationProvider(); const f = setup(provider);
+  const marker = '独特的风格测试标记';
+  try {
+    saveProjectStyleSelection(f.storage, 'p', { id: 'style', version: 1, name: '克制观察', card: marker,
+      package: { version: 2, statistics: styleStatistics([{ id: 's', title: '样文', text: '一段特定的句式。' }]),
+        patterns: [{ kind: 'structure', instruction: '先观察后解释' }], snippets: [{ sampleId: 's', paragraphId: 'p1', kind: 'opening', quote: '一段特定的句式。' }] } }, 'style-select');
+    const result = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    for (const stage of ['outline', 'draft', 'central_revision', 'language_review']) {
+      const requests = provider.requests.filter(r => collaborationState(r)?.stage === stage);
+      assert.ok(requests.length > 0, stage);
+      assert.ok(requests.some(r => JSON.stringify(r.messages).includes(marker)), stage);
+    }
+    const facts = provider.requests.filter(r => collaborationState(r)?.stage === 'fact_check');
+    assert.ok(facts.length > 0);
+    assert.ok(facts.every(r => !JSON.stringify(r.messages).includes(marker)));
+    const reader = provider.requests.filter(r => collaborationState(r)?.stage === 'review_reader');
+    assert.ok(reader.length > 0);
+    assert.ok(reader.every(r => !JSON.stringify(r.messages).includes(marker)));
+    const gate = f.app.getProjectProjection('p').factCheck.status;
+    f.app.selectProjectStyle('p', null, 'clear-after-completion');
+    assert.equal(f.app.getProjectProjection('p').factCheck.status, gate, 'style selection alone must not invalidate unchanged body facts');
+  } finally { f.close(); }
+});
+
+it('confirmed stage handoffs retain the style through title generation', async () => {
+  const provider = new CollaborationProvider(); const f = setup(provider, 'co_creation');
+  try {
+    saveProjectStyleSelection(f.storage, 'p', { id: 's', version: 1, name: '标题风格', card: '标题应短、具体，保留独特测试标记' }, 'style');
+    const first = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision });
+    for (let index = 0; index < 7 && !provider.requests.some(r => collaborationState(r)?.stage === 'title'); index++) {
+      await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: `style-continue-${index}`, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
+    }
+    const requests = provider.requests.filter(r => collaborationState(r)?.stage === 'title');
+    assert.ok(requests.length > 0);
+    assert.ok(requests.every(r => JSON.stringify(r.messages).includes('独特测试标记')));
+  } finally { f.close(); }
+});
 
 it('provides short authorized materials on the first request without tool-read round trips', async () => {
   const provider = new CollaborationProvider();

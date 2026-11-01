@@ -131,7 +131,8 @@ function makeV7Workspace(root: string): string {
   const path = join(root, ".writing-agent", "workspace.sqlite3");
   const db = new DatabaseSync(path);
   try {
-    db.exec(`ALTER TABLE projects DROP COLUMN name_source;
+    db.exec(`DROP TABLE style_profiles;
+      ALTER TABLE projects DROP COLUMN name_source;
       DELETE FROM schema_migrations;
       INSERT INTO schema_migrations(version, applied_at) VALUES (7, '2026-10-04T00:00:00.000Z');
       UPDATE projects SET schema_version = 7;

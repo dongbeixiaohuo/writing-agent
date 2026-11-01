@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { backup as backupDatabase, DatabaseSync } from "node:sqlite";
+import { StyleProfileStore } from './style-profiles.js';
 
 import {
   AcceptRevisionProposalCommandSchema,
@@ -1290,6 +1291,7 @@ function requestSnapshotFromRow(row: RequestSnapshotRow): RequestSnapshotRecord 
   };
 }
 
+
 export class WorkspaceStorage implements StoragePort, SessionStore {
   constructor(
     private readonly database: DatabaseSync,
@@ -1302,6 +1304,10 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
 
   close(): void {
     this.database.close();
+  }
+
+  styleProfiles(): StyleProfileStore {
+    return new StyleProfileStore(this.database, this.readOnly);
   }
 
   private rollbackQuietly(): void {
@@ -5660,7 +5666,8 @@ export async function migrateWorkspaceStorage(
       fromVersion !== 4 &&
       fromVersion !== 5 &&
       fromVersion !== 6 &&
-      fromVersion !== 7
+      fromVersion !== 7 &&
+      fromVersion !== 8
     ) {
       throw new StorageOpenError(
         "SCHEMA_MIGRATION_UNSUPPORTED",

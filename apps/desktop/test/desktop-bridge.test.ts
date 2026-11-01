@@ -190,6 +190,16 @@ describe("Desktop renderer bridge", () => {
     bridge.dispose();
   });
 
+  it('transmits a style ID and version separately from the author message', async () => {
+    const api = new FakeDesktopApi(); const bridge = new DesktopClientBridge(api, () => 'style-command');
+    await bridge.handshake();
+    await bridge.startConversation('用户原文不变', { styleSelection: { id: 'my-style', version: 2 } });
+    assert.deepEqual(api.requests.at(-1)?.args, ['用户原文不变', { operationId: 'style-command', styleSelection: { id: 'my-style', version: 2 } }]);
+    await bridge.sendMessage('继续', { styleSelection: null });
+    assert.deepEqual(api.requests.at(-1)?.args, ['继续', { operationId: 'style-command', styleSelection: null }]);
+    bridge.dispose();
+  });
+
   it("ignores stale events and rejects another workspace", async () => {
     const api = new FakeDesktopApi();
     const bridge = new DesktopClientBridge(api);

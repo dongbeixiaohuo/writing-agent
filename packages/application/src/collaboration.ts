@@ -1,5 +1,7 @@
 import type { AgentRequestPolicy } from "../../runtime/agent/src/index.js";
 import { createReaderTextTasks } from './reader-simulation.js';
+import { projectStyleSelection } from './style-selection.js';
+import { styleContext } from '../../writing-core/src/style-package.js';
 import { isPublicStageOutput } from '../../writing-core/src/public-stage-output.js';
 import type { SessionStore } from "../../runtime/session/src/index.js";
 import { ToolExecutionFault, type ToolDefinition } from "../../runtime/tools/src/index.js";
@@ -287,6 +289,7 @@ export function createWritingCollaboration(options: {
       ? materials.filter(m => authorMaterialIds.has(String((m as { materialId: string }).materialId))) : materials;
     const boundBody = artifacts.find(item => item.kind === 'body')?.content;
     const articleBaseline = boundBody === undefined ? undefined : bodyArticleBaseline(boundBody);
+    const selectedStyle = projectStyleSelection(storage, projectId);
     const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
     const articleTargetCharacters = (briefId ? storage.getWritingBriefVersion(briefId)?.brief.lengthTarget.targetCharacters : undefined) ?? 1800;
     // Earlier reviews describe an older body after revision. Do not resurrect
@@ -334,7 +337,8 @@ export function createWritingCollaboration(options: {
     const allowedTools = isFactCheck && !prepared ? ['prepare_fact_check'] : actor === "director" ? [...materialReadTools, ...artifactReadTools, ...discussionReadTools, "assess_writing_readiness", "director_decide"] : actor === 'title'
       ? [...artifactReadTools, 'submit_publication_candidates']
       : [...materialReadTools, ...artifactReadTools, ...discussionReadTools, ...researchTools, ...(isFactCheck ? [] : ["assess_writing_readiness"]), ...(assignment?.stage === "fact_check" ? ['read_fact_article', "submit_fact_check", ...(factSearch.enabled() ? [...(factSearch.budget(runId).remaining > 0 ? ['search_fact_sources'] : []), 'read_fact_source'] : [])] : ["submit_writing_stage"])];
-    const commonPrompt = options.systemPrompt.split("\n").filter((line) => /^(?:材料安全：|文体规则：|作者声音：|方向决定状态：|没有已授权的一手|只有这些材料)/u.test(line)).join("\n");
+    const commonPrompt = options.systemPrompt.split("\n").filter((line) => /^(?:材料安全：|文体规则：|作者声音：|方向决定状态：|没有已授权的一手|只有这些材料)/u.test(line))
+      .map(line => selectedStyle === undefined ? line : line.replace(/风格决定状态：[^。]*。/u, selectedStyle === null ? '风格决定状态：用户已在项目设置取消指定风格。' : '风格决定状态：用户已在项目设置明确选定，下文提供按阶段筛选的参考。')).join("\n");
     let rolePrompt = actor === "director"
       ? "你是写作导演，只能调度独立专家、提问、返工或结束，不得直接写正文。director_decide.reason是传给专家的任务说明：明确本次解决什么、范围和预期输出。汇总评审分歧后给修订主笔取舍依据。nextStage仅约束普通dispatch，不覆盖用户当前修改要求；已完成正文需删改时先 rework central_revision，再dispatch central_revision→language_review→fact_check。不要直接dispatch已完成的language_review；它只能最小润色，不承担内容删改。事实blocked后若用户已授权删改，必须先实际修改当前被核查正文，再独立核查新版本，不能反复核查旧稿或再次索要同一授权；若只补充来源而无正文改动，可重新核查。提纲改向先rework outline再重新确认。全部阶段保存且当前事实门禁passed才finish，之后用一句话结束。"
       : actor === 'title'
@@ -394,7 +398,7 @@ export function createWritingCollaboration(options: {
         factPhase: prepared ? 'verify' : 'extract',
         ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
           savedSourceRecords: factRecordCatalog(storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.budget(runId),
-      })}` : `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material")).join("\n")}\nCOLLABORATION_STATE=${JSON.stringify(summary)}`,
+      })}` : `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material") && !(selectedStyle !== undefined && line.startsWith('风格参考档案'))).join("\n")}\n${styleContext(selectedStyle, actor)}\nCOLLABORATION_STATE=${JSON.stringify(summary)}`,
       allowedTools: isFactCheck ? factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled()) : allowedTools,
       ...(isFactCheck ? { projectHistory: projectFactHistory, toolFailureLoopKey: factToolFailureLoopKey } : {}),
       projectToolResult: (message, context) => isFactCheck ? projectFactToolResult(message, context, prepared ? {

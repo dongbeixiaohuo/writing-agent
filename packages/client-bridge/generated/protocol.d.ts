@@ -364,6 +364,8 @@ export interface DeliveryWorkspace {
     notice: string;
 }
 export interface BriefSummary {
+    /** Independent project style name; null explicitly disables legacy style cards. */
+    styleName?: string | null;
     versionId: string;
     topic: string;
     genre: 'argument_commentary' | 'explanatory_analysis' | 'narrative_observation' | 'practical_experience';
@@ -430,6 +432,11 @@ export interface UiSettings {
     credentialReference: string | null;
 }
 export interface BridgeSnapshot {
+    projectStyle?: {
+        id: string;
+        version: number;
+        name: string;
+    } | null;
     liveActivity?: {
         runId: string;
         requestId: string;
@@ -497,6 +504,11 @@ export interface BridgeSnapshot {
 }
 export interface BridgeCommandOptions {
     operationId?: string;
+    /** Wire data only; the application validates and resolves the saved profile. */
+    styleSelection?: {
+        id: string;
+        version: number;
+    } | null;
 }
 export interface ResumeRunOptions extends BridgeCommandOptions {
     factSearchDecision?: {

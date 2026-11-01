@@ -567,9 +567,10 @@ export function getConversationIntakeState(
     invalidatedProposalVersionId: persisted?.invalidatedProposalVersionId ?? null,
     brief,
     invalidatedBrief,
-    pendingAuthorization: reportMatchesBrief && inferredPhase === "proposal"
-      ? persisted?.pendingAuthorization ?? null
-      : null,
+    // A current-turn style-card selection may be saved while we are still
+    // collecting topic/audience details. It remains source-bound state rather
+    // than being rediscovered from assistant history or material text.
+    pendingAuthorization: reportMatchesBrief ? persisted?.pendingAuthorization ?? null : null,
     sourceTurns: sourceTurns(storage, projectId),
     assistantTurns: assistantTurns(storage, projectId),
     sessionId: persisted?.sessionId ?? null,
@@ -692,7 +693,33 @@ function isExplicitStyleDelegation(message: string): boolean {
   return /(?:风格|表达|语气)[^。！？\n]{0,16}(?:你来定|你决定|由你选择|你看着办|交给你)|(?:你来定|你决定|由你选择|你看着办)[^。！？\n]{0,16}(?:风格|表达|语气)/iu.test(message);
 }
 
+/**
+ * UI sends this complete, user-visible envelope when a saved style card is
+ * selected. This parser deliberately accepts neither prose mentions nor cards
+ * copied from history/material: callers pass only the current persisted user
+ * turn. A malformed or ambiguous envelope is ordinary untrusted prose.
+ */
+export function extractExplicitStyleCard(message: string): string | null {
+  const normalized = message.replace(/\r\n?/gu, "\n");
+  const matches = [...normalized.matchAll(/请按下面明确指定的风格卡写作：\n<writing-style-card>\n([\s\S]*?)\n<\/writing-style-card>/gu)];
+  // An explicit selection must lead the turn, not occur inside quoted source
+  // material or a prompt being discussed. A later revocation takes precedence.
+  if (matches.length !== 1 || matches[0]!.index !== 0) return null;
+  const outsideCard = normalized.slice(matches[0]![0].length);
+  if (isExplicitStyleChangeOrRevocation(outsideCard) || /(?:仅供研究|只分析不要执行|不要执行|不是我的指令)/u.test(outsideCard)) return null;
+  const reference = matches[0]![1]!;
+  const header = /^个人风格卡 · ([^\n]+) · ([^\n]+) · v([1-9]\d*)\n([\s\S]+)$/u.exec(reference);
+  if (!header) return null;
+  const [, name, id, version, card] = header;
+  if (name === undefined || id === undefined || version === undefined || card === undefined ||
+      name.trim() !== name || id.trim() !== id || card.trim() !== card ||
+      name.length > 160 || id.length > 120 || card.length > 1_800 || reference.length > 2_100) return null;
+  return reference;
+}
+
 function isExplicitStyleSelection(message: string, styleReference: string | null): boolean {
+  const explicitCard = extractExplicitStyleCard(message);
+  if (message.includes('<writing-style-card>')) return explicitCard !== null && explicitCard === styleReference;
   if (hasThirdPartyFraming(message)) return false;
   if (styleReference === null) {
     return /(?:无|不)(?:指定|需要|采用)(?:具体)?风格|保持(?:我|作者)?(?:自己|自身|自然)的?表达/iu.test(message);
@@ -703,6 +730,10 @@ function isExplicitStyleSelection(message: string, styleReference: string | null
     return false;
   }
   return /(?:风格|语气|表达|口吻|写法|就用|采用|选择|按)/iu.test(message);
+}
+
+function isExplicitStyleChangeOrRevocation(message: string): boolean {
+  return /(?:取消|撤销|不再|不用|不要|别用|不采用|改成|换成|调整为)[^。！？\n]{0,24}(?:风格|风格卡|写法|语气)|(?:风格|风格卡|写法|语气)[^。！？\n]{0,24}(?:改成|换成|调整为|不再使用|不要使用|不用|取消)/iu.test(message);
 }
 
 function isExplicitInteractionSelection(
@@ -1086,6 +1117,33 @@ export function createConversationIntakeTool(input: {
       let invalidatedProposalVersionId = previous.invalidatedProposalVersionId;
       let pendingAuthorization = previous.pendingAuthorization;
       let effectiveSummary = summary;
+      const currentSelectedStyle = extractExplicitStyleCard(input.currentUserMessage);
+      const styleChoiceChanged = currentSelectedStyle === null && isExplicitStyleChangeOrRevocation(input.currentUserMessage);
+      const currentStyleSource = currentSelectedStyle === null ? null : turns.findLast(
+        (turn) => turn.quote === input.currentUserMessage,
+      );
+      if (currentSelectedStyle !== null) {
+        if (currentStyleSource == null) {
+          throw new ToolExecutionFault("INTAKE_STYLE_AUTHORIZATION_SOURCE_INVALID", "The selected style card must come from the current persisted user message");
+        }
+        pendingAuthorization = {
+          firsthand: pendingAuthorization?.firsthand ?? [],
+          interaction: pendingAuthorization?.interaction ?? null,
+          style: {
+            sourceMaterialId: currentStyleSource.materialId,
+            sourceContentVersionId: currentStyleSource.contentVersionId,
+            sourceReference: currentStyleSource.sourceReference,
+            sourceQuote: currentStyleSource.quote,
+            decision: "user_confirmed",
+            styleReference: currentSelectedStyle,
+          },
+        };
+      } else if (styleChoiceChanged && pendingAuthorization?.style !== null && pendingAuthorization?.style !== undefined) {
+        // Do not silently carry a prior card through an explicit later change.
+        // A replacement natural-language choice still goes through the existing
+        // exact-source authorization checks supplied by the model.
+        pendingAuthorization = { ...pendingAuthorization, style: null };
+      }
 
       if (args.proposal != null) {
         const sourceDisclosure = input.proposalSourceDisclosure?.() ?? '';
@@ -1104,9 +1162,36 @@ export function createConversationIntakeTool(input: {
             (!lengthQuote || !turns.some(turn => turn.quote.includes(lengthQuote)))) {
           throw new ToolExecutionFault('INTAKE_LENGTH_AUTHORIZATION_REQUIRED', '默认面向公众号、今日头条等普通读者，建议成稿最多5000字；不要因为素材长推荐8000字。请改成5000字以内并说明取舍；仅作者明确要求长文时用targetCharactersSourceQuote引用真实原话，不要求作者为默认建议再做决定。');
         }
-        const proposedStyleReference = optionalPreference(fields.styleReference) as string | null;
+        const selectedStyleReference = currentSelectedStyle ??
+          (pendingAuthorization?.style?.decision === "user_confirmed" ? pendingAuthorization.style.styleReference : null);
+        // A UI-selected card is a complete, current user instruction. Preserve
+        // it byte-for-byte rather than asking the model to repeat it; this also
+        // prevents a shortened model field from silently weakening the brief.
+        const staleStyleProposal = styleChoiceChanged && fields.styleReference === previous.pendingAuthorization?.style?.styleReference;
+        const proposedStyleReference = staleStyleProposal ? null : selectedStyleReference ?? optionalPreference(fields.styleReference) as string | null;
+        const selectedStyleSource: ConversationPendingAuthorization["style"] = currentSelectedStyle !== null
+          ? {
+              sourceMaterialId: currentStyleSource!.materialId,
+              sourceContentVersionId: currentStyleSource!.contentVersionId,
+              sourceReference: currentStyleSource!.sourceReference,
+              sourceQuote: currentStyleSource!.quote,
+              decision: "user_confirmed",
+              styleReference: currentSelectedStyle,
+            }
+          : pendingAuthorization?.style?.decision === "user_confirmed" ? pendingAuthorization.style : null;
+        const authorizationInput: ProposalAuthorizationInput | null | undefined = selectedStyleReference === null
+          ? staleStyleProposal ? { ...(args.proposal.authorization ?? {}), style: null } : args.proposal.authorization
+          : {
+              ...(args.proposal.authorization ?? {}),
+              style: {
+                sourceMaterialId: selectedStyleSource!.sourceMaterialId,
+                sourceQuote: selectedStyleSource!.sourceQuote,
+                decision: "user_confirmed",
+                styleReference: selectedStyleReference,
+              },
+            };
         const proposedAuthorization = normalizeProposalAuthorization(
-          args.proposal.authorization,
+          authorizationInput,
           turns,
           proposedStyleReference,
         );

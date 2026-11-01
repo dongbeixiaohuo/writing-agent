@@ -1,0 +1,7 @@
+.picker { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; max-width:100%; }
+.picker label { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.picker select { font:inherit; color:inherit; background:var(--surface, transparent); border:1px solid var(--border, #d8d4cc); border-radius:8px; padding:6px 24px 6px 8px; max-width:210px; cursor:pointer; }
+.picker select:focus-visible { outline:2px solid currentColor; outline-offset:2px; }
+.picker select:disabled { cursor:default; opacity:.65; }
+.picker [role=alert] { color:#b33828; max-width:300px; }
+.hint { opacity:.65; font-size:11px; }

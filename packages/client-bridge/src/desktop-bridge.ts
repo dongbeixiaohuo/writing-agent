@@ -15,6 +15,7 @@ import {
 } from "./protocol.js";
 
 export type DesktopRpcMethod =
+  | 'styleLibrary'
   | 'searchStatus'
   | 'configureSearch'
   | 'testSearchConnection'
@@ -62,6 +63,7 @@ export type DesktopRpcMethod =
   | "deleteProject";
 
 export const DESKTOP_RPC_METHODS = Object.freeze([
+  'styleLibrary',
   'searchStatus',
   'configureSearch',
   'testSearchConnection',
@@ -323,6 +325,7 @@ export interface SearchConnectionView {
   readonly message: string;
 }
 export interface DesktopHostConfiguration {
+  styleLibrary?(command: import('../../writing-core/src/style-profile.js').StyleLibraryCommand): Promise<import('../../writing-core/src/style-profile.js').StyleLibraryResult>;
   searchStatus?(): Promise<SearchSettingsView>;
   configureSearch?(input: SearchSettingsInput): Promise<SearchSettingsView>;
   testSearchConnection?(provider: 'deepseek' | 'parallel' | 'tavily'): Promise<SearchSettingsView>;
@@ -541,6 +544,7 @@ export class DesktopClientBridge implements ClientBridge {
   async startConversation(text: string, options: BridgeCommandOptions = {}): Promise<{ runId: string }> {
     const result = record(await this.#invoke("startConversation", text, {
       operationId: options.operationId ?? this.#operationIdFactory(),
+      ...(options.styleSelection === undefined ? {} : { styleSelection: options.styleSelection }),
     }));
     if (typeof result.runId !== "string") throw new Error("DESKTOP_BRIDGE_RESPONSE_INVALID");
     return { runId: result.runId };
@@ -561,7 +565,7 @@ export class DesktopClientBridge implements ClientBridge {
     const result = record(await this.#invoke(
       "sendMessage",
       text,
-      { operationId: options.operationId ?? this.#operationIdFactory() },
+      { operationId: options.operationId ?? this.#operationIdFactory(), ...(options.styleSelection === undefined ? {} : { styleSelection: options.styleSelection }) },
     ));
     if (typeof result.runId !== "string") {
       throw new Error("DESKTOP_BRIDGE_RESPONSE_INVALID");

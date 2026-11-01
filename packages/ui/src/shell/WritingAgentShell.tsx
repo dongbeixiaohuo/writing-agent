@@ -14,7 +14,6 @@ import {
   useState,
   useSyncExternalStore,
   type KeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject,
 } from 'react'
@@ -82,6 +81,7 @@ import {
 import css from './WritingAgentShell.module.css'
 import { aboutVersionView } from './about.ts'
 import { conversationFollowTarget, CONVERSATION_FOLLOW_THRESHOLD } from './conversation-follow.ts'
+import { ConversationNavigator } from './ConversationNavigator.tsx'
 import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, stageRoleLabel, runRecordsTabLabel } from './interaction.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import { runProgressSummary, runDisplayStatus, runSavedStageLabel, runStopReasonLabel } from './run-records.ts'
@@ -91,6 +91,10 @@ import { ConversationRevisionCard } from './ConversationRevisionCard.tsx'
 import { projectNavigationTarget } from './project-navigation.ts'
 import { ProviderSettings } from './ProviderSettings.tsx'
 import { SearchSettings } from './SearchSettings.tsx'
+import { StyleLibraryDialog, supportsStyleLibrary } from './StyleLibraryDialog.tsx'
+import { StylePicker } from './StylePicker.tsx'
+import type { StyleProfile } from '../../../writing-core/src/style-profile.js'
+import type { StyleSelectionInput } from '../../../writing-core/src/style-package.js'
 import {
   commandErrorMessage,
   dataActionErrorMessage,
@@ -211,7 +215,7 @@ function useModalDialog(onClose: () => void): RefObject<HTMLElement> {
 function Timeline({ items, brand, footer, diagnostic = false }: { items: readonly TimelineItem[]; brand: WritingAgentBrand; footer?: ReactNode; diagnostic?: boolean }) {
   if (items.length === 0 && footer === undefined) return <p className={css.emptyTimeline}>此会话还没有内容。</p>
   return (
-    <div className={css.timeline} aria-live="polite">
+    <div className={css.timeline} aria-live="polite" data-conversation-timeline>
       {items.filter(item => diagnostic || (item.kind === 'message' ? item.audience !== 'diagnostic' : item.audience === 'conversation')).map(item => item.kind === 'message' ? (
         <article
           className={clsx(css.message, item.role === 'user' ? css.userMessage : css.assistantMessage)}
@@ -521,93 +525,7 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
   </div>
 }
 
-function ConversationMinimap({ scrollRef, itemCount }: {
-  scrollRef: RefObject<HTMLElement | null>
-  itemCount: number
-}) {
-  const trackRef = useRef<HTMLDivElement>(null)
-  const [markers, setMarkers] = useState<readonly { top: number; height: number }[]>([])
-  const [viewport, setViewport] = useState({ top: 0, height: 0 })
-  const [scrollable, setScrollable] = useState(false)
-
-  useLayoutEffect(() => {
-    const container = scrollRef.current
-    if (container === null) return
-    const measure = (): void => {
-      const scrollHeight = container.scrollHeight
-      const canScroll = scrollHeight > container.clientHeight + 1
-      setScrollable(canScroll)
-      const trackHeight = trackRef.current?.clientHeight ?? 0
-      if (!canScroll || trackHeight <= 0) {
-        setMarkers([])
-        return
-      }
-      const base = container.getBoundingClientRect().top
-      const next: { top: number; height: number }[] = []
-      container.querySelectorAll('[data-message-id]').forEach(element => {
-        const rect = element.getBoundingClientRect()
-        next.push({
-          top: ((rect.top - base + container.scrollTop) / scrollHeight) * trackHeight,
-          height: Math.max(2, (rect.height / scrollHeight) * trackHeight),
-        })
-      })
-      setMarkers(next)
-      setViewport({
-        top: (container.scrollTop / scrollHeight) * trackHeight,
-        height: (container.clientHeight / scrollHeight) * trackHeight,
-      })
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [scrollRef, itemCount, scrollable])
-
-  useEffect(() => {
-    const container = scrollRef.current
-    if (container === null) return
-    let raf = 0
-    const onScroll = (): void => {
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        const trackHeight = trackRef.current?.clientHeight ?? 0
-        const scrollHeight = container.scrollHeight
-        if (trackHeight <= 0 || scrollHeight <= 0) return
-        setViewport({
-          top: (container.scrollTop / scrollHeight) * trackHeight,
-          height: (container.clientHeight / scrollHeight) * trackHeight,
-        })
-      })
-    }
-    container.addEventListener('scroll', onScroll, { passive: true })
-    return () => { container.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf) }
-  }, [scrollRef])
-
-  const jump = (event: ReactMouseEvent<HTMLDivElement>): void => {
-    const container = scrollRef.current
-    const track = trackRef.current
-    if (container === null || track === null) return
-    const rect = track.getBoundingClientRect()
-    const fraction = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height))
-    container.scrollTo({ top: fraction * container.scrollHeight - container.clientHeight / 2, behavior: 'smooth' })
-  }
-
-  return <div
-    ref={trackRef}
-    className={css.minimap}
-    style={{ display: scrollable ? undefined : 'none' }}
-    role="presentation"
-    aria-label="对话位置快速定位"
-    onClick={jump}
-  >
-    {scrollable && <>
-      <div className={css.minimapViewport} style={{ top: viewport.top, height: viewport.height }} />
-      {markers.map((marker, index) => <div key={index} className={css.minimapMarker} style={{ top: marker.top, height: marker.height }} />)}
-    </>}
-  </div>
-}
-
-function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, hostConfiguration }: {
+function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, onOpenStyleLibrary, styleInsertion, onStyleInserted, styleLibraryOpen, hostConfiguration }: {
   bridge: ClientBridge
   hero?: boolean
   newProject?: boolean
@@ -617,6 +535,10 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   onSubmitted?: (submission: ComposerSubmission) => void
   onHandoffConsumed?: () => void
   onConfigureModel?: () => void
+  onOpenStyleLibrary?: () => void
+  onStyleInserted?: () => void
+  styleInsertion?: StyleProfile
+  styleLibraryOpen?: boolean
   hostConfiguration?: DesktopHostConfiguration | undefined
 }) {
   const snapshot = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot)
@@ -630,6 +552,8 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   const [composing, setComposing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [styleSelection, setStyleSelection] = useState<StyleSelectionInput | undefined>(undefined)
+  const [styleBusy, setStyleBusy] = useState(false)
   const running = snapshot.activeRunId !== null
   const recoveryMode = composerRecoveryMode(snapshot.recoverableRuns, snapshot.selectedSessionId)
   const waitingForRecovery = recoveryMode === 'decision'
@@ -649,7 +573,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   }, [focusRequest])
 
   const submit = async (): Promise<void> => {
-    if (draftRef.current.trim().length === 0 || running || submittingRef.current || !writable) return
+    if (draftRef.current.trim().length === 0 || running || submittingRef.current || styleBusy || !writable) return
     const submittedDraft = draftRef.current
     const editor = editorRef.current
     const editorWasFocused = document.activeElement === editor
@@ -657,7 +581,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
       setError(null)
       submittingRef.current = true
       setSubmitting(true)
-      if (newProject || snapshot.selectedProjectId.length === 0) await bridge.startConversation(submittedDraft)
+      if (newProject || snapshot.selectedProjectId.length === 0) await bridge.startConversation(submittedDraft, styleSelection === undefined ? undefined : { styleSelection })
       else await bridge.sendMessage(submittedDraft)
       const pendingDraft = draftRef.current === submittedDraft ? '' : draftRef.current
       draftRef.current = pendingDraft
@@ -750,6 +674,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
         <div className={inputCss.row}>
           <div className={inputCss.tools}>
             <span className={css.composerContext}>{newProject || snapshot.brief?.confirmationStatus !== 'confirmed' ? '从一句想法开始，边聊边完善' : '可随时补充材料、调整方向或提出修改'}</span>
+            {onOpenStyleLibrary && supportsStyleLibrary(hostConfiguration) && <StylePicker host={hostConfiguration} projectId={newProject ? '' : snapshot.selectedProjectId} disabled={running || submitting || waitingForRecovery} onChange={setStyleSelection} onBusyChange={setStyleBusy} onManage={onOpenStyleLibrary} refreshKey={`${styleLibraryOpen}:${newProject ? '' : JSON.stringify(snapshot.projectStyle)}`} requested={styleInsertion} onRequestedApplied={onStyleInserted} />}
           </div>
           <div className={inputCss.trailing}>
             {modelConfigured
@@ -761,7 +686,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
               className={inputCss.primary}
               type="button"
               aria-label={running ? '停止生成' : submitting ? '正在启动写作' : '发送'}
-              disabled={!running && (submitting || !draftSendable || !writable)}
+              disabled={!running && (submitting || styleBusy || !draftSendable || !writable)}
               onClick={() => running ? void stop() : void submit()}
             >
               {running ? <StopIcon /> : <ArrowUpIcon />}
@@ -789,9 +714,10 @@ const GENRE_LABELS: Readonly<Record<BriefSummary['genre'], string>> = {
   practical_experience: '实用经验',
 }
 
-function BriefEditDialog({ bridge, brief, onClose }: {
+function BriefEditDialog({ bridge, brief, hostConfiguration, onClose }: {
   bridge: ClientBridge
   brief: BriefSummary
+  hostConfiguration?: DesktopHostConfiguration
   onClose: () => void
 }) {
   const [form, setForm] = useState<BriefUpdateForm>({
@@ -810,6 +736,7 @@ function BriefEditDialog({ bridge, brief, onClose }: {
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [styleLibraryOpen, setStyleLibraryOpen] = useState(false)
   const dialogRef = useModalDialog(onClose)
 
   const importStyleFile = async (file: File): Promise<void> => {
@@ -848,18 +775,22 @@ function BriefEditDialog({ bridge, brief, onClose }: {
         <label className={css.formField}><span>发布平台（可选）</span><input value={form.platform} onChange={event => setForm(current => ({ ...current, platform: event.target.value }))} /></label>
         <label className={css.formField}><span>发布目标</span><select value={form.publicationGoal} onChange={event => setForm(current => ({ ...current, publicationGoal: event.target.value as BriefUpdateForm['publicationGoal'] }))}><option value="not_applicable">工作稿 / 暂不发布</option><option value="primary">主要发布渠道</option><option value="secondary">二次分发</option></select></label>
         <label className={css.formField}><span>作者声音（可选）</span><input value={form.authorVoice} onChange={event => setForm(current => ({ ...current, authorVoice: event.target.value }))} /></label>
-        <label className={css.formField}><span>风格参考（可选）</span><textarea rows={3} value={form.styleReference} onChange={event => setForm(current => ({ ...current, styleReference: event.target.value }))} /></label>
+        {supportsStyleLibrary(hostConfiguration) && <div className={css.formField}><StylePicker host={hostConfiguration} projectId={bridge.getSnapshot().selectedProjectId} disabled={saving} onChange={() => {}} onManage={() => setStyleLibraryOpen(true)} refreshKey={styleLibraryOpen} /><span className={css.settingHint}>选择后立即保存，用于后续写作。</span></div>}
+        <details className={css.formField}><summary>手动风格补充（可选）</summary>
+        <label className={css.formField}><span>表达偏好或旧版风格参考</span><textarea rows={3} value={form.styleReference} onChange={event => setForm(current => ({ ...current, styleReference: event.target.value }))} /></label>
         <div className={css.formField}><span>导入现有风格</span><label className={css.filePicker}><input type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" onChange={event => {
           const file = event.currentTarget.files?.[0]
           if (file !== undefined) void importStyleFile(file)
           event.currentTarget.value = ''
         }} /><span>选择 TXT / MD 风格文件</span></label></div>
         <label className={css.formField}><span>风格决定</span><select value={form.styleDecision} onChange={event => setForm(current => ({ ...current, styleDecision: event.target.value as BriefUpdateForm['styleDecision'] }))}><option value="unspecified">尚未指定</option><option value="user_confirmed">使用我指定的风格</option><option value="user_delegated">授权 Agent 选择</option></select></label>
+        </details>
         <label className={css.formField}><span>方向决定</span><select value={form.directionDecision} onChange={event => setForm(current => ({ ...current, directionDecision: event.target.value as BriefUpdateForm['directionDecision'] }))}><option value="tentative">继续待确认</option><option value="user_confirmed">方向已经明确</option><option value="user_delegated">授权 Agent 选择方向</option></select></label>
         <label className={clsx(css.formField, css.formWide)}><span>本篇约束（每行一条）</span><textarea rows={4} value={form.constraints} onChange={event => setForm(current => ({ ...current, constraints: event.target.value }))} /></label>
       </div>
       <div className={css.setupActions}><span className={css.settingHint}>保存后回到简报确认页。</span><div className={css.connectionActions}><button type="button" className={css.secondaryAction} onClick={onClose}>取消</button><button type="button" className={css.primaryAction} disabled={saving} onClick={() => void save()}>{saving ? '正在保存…' : '保存修改'}</button></div></div>
     </section>
+    {styleLibraryOpen && hostConfiguration !== undefined && supportsStyleLibrary(hostConfiguration) && <StyleLibraryDialog host={hostConfiguration} onClose={() => setStyleLibraryOpen(false)} />}
   </div>
 }
 
@@ -872,7 +803,7 @@ function BriefConfirmationCard({ brief, confirming, error, onConfirm, onEdit }: 
 }) {
   const gaps = [
     brief.directionDecision === 'tentative' ? '写作方向将在确认后锁定' : null,
-    brief.styleDecision === 'unspecified' ? '尚未指定风格，主笔将以作者声音和文体为准' : null,
+    brief.styleName === undefined && brief.styleDecision === 'unspecified' ? '尚未指定风格，主笔将以作者声音和文体为准' : null,
     brief.authorVoice === null ? '尚未提供作者声音，不会虚构作者亲历' : null,
     brief.materialCount === 0 ? '没有参考材料，系统不得声称已核验外部资料' : null,
   ].filter((value): value is string => value !== null)
@@ -885,7 +816,7 @@ function BriefConfirmationCard({ brief, confirming, error, onConfirm, onEdit }: 
       <div><dt>平台</dt><dd>{brief.platform ?? '暂未指定'}</dd></div>
       <div><dt>材料</dt><dd>{brief.materialCount} 份已授权材料</dd></div>
       <div><dt>作者声音</dt><dd>{brief.authorVoice ?? '暂未指定'}</dd></div>
-      <div><dt>风格</dt><dd>{brief.styleReference ?? (brief.styleDecision === 'user_delegated' ? '已授权 Agent 选择' : '暂未指定')}</dd></div>
+      <div><dt>风格</dt><dd>{brief.styleName !== undefined ? brief.styleName ?? '不指定风格' : brief.styleReference?.match(/^个人风格卡 · (.*?) · /u)?.[1] ?? brief.styleReference?.slice(0, 80) ?? (brief.styleDecision === 'user_delegated' ? '已授权 Agent 选择' : '暂未指定')}</dd></div>
     </dl>
     {brief.constraints.length > 0 && <div className={css.briefConstraints}><strong>本篇约束</strong><span>{brief.constraints.join(' · ')}</span></div>}
     {gaps.length > 0 && <div className={css.briefGaps}><strong>确认前请留意</strong><ul>{gaps.slice(0, 2).map(gap => <li key={gap}>{gap}</li>)}</ul></div>}
@@ -1396,6 +1327,8 @@ export function WritingAgentShell({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
   const [briefEditOpen, setBriefEditOpen] = useState(false)
+  const [styleLibraryOpen, setStyleLibraryOpen] = useState(false)
+  const [styleComposerInsertion, setStyleComposerInsertion] = useState<StyleProfile | undefined>(undefined)
   const [hero, setHero] = useState(() => snapshot.selectedSessionId.length === 0)
   const [newProjectIntent, setNewProjectIntent] = useState(() => snapshot.selectedProjectId.length === 0)
   const [activeTab, setActiveTab] = useState<'conversation' | 'runs'>('conversation')
@@ -1678,6 +1611,9 @@ export function WritingAgentShell({
           </div>
           <div className={sidebarCss.footArea}>
             <div className={sidebarCss.settingsArea}>
+              {supportsStyleLibrary(hostConfiguration) && <button className={sidebarCss.panelRow} type="button" onClick={() => setStyleLibraryOpen(true)}>
+                <span className={sidebarCss.panelGlyph}><EditIcon /></span>{!sidebarCollapsed && <span className={sidebarCss.panelTitle}>风格库</span>}
+              </button>}
               <button className={sidebarCss.panelRow} type="button" onClick={() => openSettings('general')}>
                 <span className={sidebarCss.panelGlyph}><SettingsIcon /></span>{!sidebarCollapsed && <span className={sidebarCss.panelTitle}>设置</span>}
               </button>
@@ -1736,7 +1672,7 @@ export function WritingAgentShell({
             setActiveTab('conversation')
             setHero(false)
             forceFollowLatest()
-          }} onConfigureModel={() => openSettings('models')} hostConfiguration={hostConfiguration} />
+          }} onConfigureModel={() => openSettings('models')} {...(supportsStyleLibrary(hostConfiguration) ? { onOpenStyleLibrary: () => setStyleLibraryOpen(true) } : {})} {...(styleComposerInsertion === undefined ? {} : { styleInsertion: styleComposerInsertion, onStyleInserted: () => setStyleComposerInsertion(undefined) })} styleLibraryOpen={styleLibraryOpen} hostConfiguration={hostConfiguration} />
           {!newProjectIntent && snapshot.brief !== null && <details className={css.optionalSetup}><summary>高级设置（可选）</summary>
             <p>可查看和调整当前项目的写作要求，也可以直接在对话中说明。</p>
             <button className={css.secondaryAction} type="button" onClick={() => setBriefEditOpen(true)}>查看写作设置</button>
@@ -1782,7 +1718,7 @@ export function WritingAgentShell({
             </section>}
             </>} />
           </div>
-          <ConversationMinimap scrollRef={conversationScrollRef} itemCount={timeline.length} />
+          <ConversationNavigator scrollRef={conversationScrollRef} conversationKey={snapshot.selectedSessionId} />
           </div>
           {showJumpLatest && <button className={css.jumpLatest} type="button" onClick={forceFollowLatest}>回到最新进度 ↓</button>}
           <div className={css.composerSeat}><Composer
@@ -1796,6 +1732,9 @@ export function WritingAgentShell({
             onHandoffConsumed={() => setComposerHandoff(null)}
             onSubmitted={forceFollowLatest}
             onConfigureModel={() => openSettings('models')}
+            {...(supportsStyleLibrary(hostConfiguration) ? { onOpenStyleLibrary: () => setStyleLibraryOpen(true) } : {})}
+            {...(styleComposerInsertion === undefined ? {} : { styleInsertion: styleComposerInsertion, onStyleInserted: () => setStyleComposerInsertion(undefined) })}
+            styleLibraryOpen={styleLibraryOpen}
             hostConfiguration={hostConfiguration}
           /></div>
         </> : <div className={css.runRecordsScroll}><RunRecords key={`${snapshot.selectedProjectId}:${snapshot.selectedSessionId}`} records={snapshot.runRecords} activeRunId={snapshot.activeRunId} liveActivity={snapshot.liveActivity} loadDetail={loadTraceDetail} /></div>}
@@ -1820,7 +1759,10 @@ export function WritingAgentShell({
         )}
       </aside>
       {settingsOpen && <div className={appFrameCss.overlayLayer}><SettingsDialog bridge={bridge} brand={brand} initialSection={settingsSection} {...(hostConfiguration === undefined ? {} : { hostConfiguration })} onClose={() => setSettingsOpen(false)} /></div>}
-      {briefEditOpen && snapshot.brief !== null && <div className={appFrameCss.overlayLayer}><BriefEditDialog bridge={bridge} brief={snapshot.brief} onClose={() => setBriefEditOpen(false)} /></div>}
+      {briefEditOpen && snapshot.brief !== null && <div className={appFrameCss.overlayLayer}><BriefEditDialog bridge={bridge} brief={snapshot.brief} {...(hostConfiguration === undefined ? {} : { hostConfiguration })} onClose={() => setBriefEditOpen(false)} /></div>}
+      {styleLibraryOpen && supportsStyleLibrary(hostConfiguration) && <StyleLibraryDialog host={hostConfiguration} onClose={() => setStyleLibraryOpen(false)} onSelect={(profile: StyleProfile) => {
+        setStyleComposerInsertion(profile)
+      }} />}
       {deleteProjectTarget !== null && hostConfiguration !== undefined && <div className={appFrameCss.overlayLayer}><DeleteProjectDialog
         project={deleteProjectTarget}
         hostConfiguration={hostConfiguration}

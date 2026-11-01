@@ -1,7 +1,68 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import * as follow from '../src/shell/conversation-follow.js'
 import * as interaction from '../src/shell/interaction.js'
+
+test('conversation navigation fits a centered, bounded set of equally spaced ticks', () => {
+  assert.equal(typeof follow.conversationNavigationCapacity, 'function')
+  assert.equal(follow.conversationNavigationCapacity(900), 16)
+  assert.equal(follow.conversationNavigationCapacity(172), 10)
+  assert.equal(follow.conversationNavigationCapacity(40), 0)
+})
+
+test('long conversations retain first, last and active messages without crowding the rail', () => {
+  assert.equal(typeof follow.conversationNavigationMarkers, 'function')
+  const markers = follow.conversationNavigationMarkers(200, 73, 16)
+  assert.equal(markers.length, 16)
+  assert.equal(new Set(markers).size, 16)
+  assert.equal(markers[0], 0)
+  assert.equal(markers.at(-1), 199)
+  assert.ok(markers.includes(73))
+  assert.deepEqual(markers, [...markers].sort((a, b) => a - b))
+  assert.deepEqual(follow.conversationNavigationMarkers(4, 2, 16), [0, 1, 2, 3])
+  assert.deepEqual(follow.conversationNavigationMarkers(200, 73, 3), [0, 73, 199])
+  assert.deepEqual(follow.conversationNavigationMarkers(200, 73, 1), [73])
+  assert.deepEqual(follow.conversationNavigationMarkers(0, -1, 16), [])
+  assert.deepEqual(follow.conversationNavigationMarkers(5, 2, 0), [])
+})
+
+test('navigation selection follows the reading position and reaches the latest message at the bottom', () => {
+  assert.equal(typeof follow.conversationNavigationIndex, 'function')
+  const offsets = [40, 400, 900]
+  const metrics = { scrollTop: 0, clientHeight: 300, scrollHeight: 1600 }
+  assert.equal(follow.conversationNavigationIndex(metrics, offsets), 0)
+  assert.equal(follow.conversationNavigationIndex({ ...metrics, scrollTop: 400 }, offsets), 1)
+  assert.equal(follow.conversationNavigationIndex({ ...metrics, scrollTop: 1300 }, offsets), 2)
+  assert.equal(follow.conversationNavigationIndex(metrics, []), -1)
+  assert.equal(follow.conversationNavigationIndex({ ...metrics, scrollHeight: 200 }, offsets), -1)
+})
+
+test('navigation jumps to message anchors, not a proportional scroll fraction', () => {
+  assert.equal(typeof follow.conversationNavigationTarget, 'function')
+  const metrics = { scrollTop: 0, clientHeight: 400, scrollHeight: 2000 }
+  assert.equal(follow.conversationNavigationTarget(metrics, 300), 276)
+  assert.equal(follow.conversationNavigationTarget(metrics, 0), 0)
+  assert.equal(follow.conversationNavigationTarget(metrics, 1900), 1600)
+  assert.equal(follow.conversationNavigationTarget({ ...metrics, scrollHeight: 200 }, 300), 0)
+})
+
+test('conversation rail replaces the full-height minimap without changing the native scroll surface', () => {
+  const source = readFileSync(new URL('../src/shell/WritingAgentShell.tsx', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../src/shell/WritingAgentShell.module.css', import.meta.url), 'utf8')
+  assert.match(source, /<ConversationNavigator/u)
+  assert.doesNotMatch(source, /ConversationMinimap/u)
+  assert.match(css, /\.conversationNavigator\s*\{[^}]*top:\s*50%/u)
+  assert.match(css, /\.conversationNavigator\s*\{[^}]*right:\s*18px/u)
+  assert.doesNotMatch(css, /\.minimapViewport/u)
+  assert.match(css, /\.scrollBody\s*\{[^}]*overflow-y:\s*auto/u)
+})
+
+test('navigation gutter is stable before the rail mounts and survives narrow-layout padding', () => {
+  const css = readFileSync(new URL('../src/shell/WritingAgentShell.module.css', import.meta.url), 'utf8')
+  assert.equal(/\.conversationWrap\s+\.timeline\s*\{[^}]*padding-inline-end:\s*64px/u.test(css), true)
+  assert.doesNotMatch(css, /\.conversationWrap:has\(\.conversationNavigator\)/u)
+})
 
 test('working clock reports the whole execution segment, not just the latest request', () => {
   const activity = { runId: 'r', requestId: 'q2', actor: 'review_editor', phase: 'waiting' as const, startedAt: 61000, segmentStartedAt: 1000, requestOrdinal: 2, lastActivityAt: null };

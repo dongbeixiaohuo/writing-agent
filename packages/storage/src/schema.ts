@@ -1,13 +1,20 @@
 import type { DatabaseSync } from "node:sqlite";
 
 export const APPLICATION_ID = 0x57414754;
-export const CURRENT_SCHEMA_VERSION = 8;
+export const CURRENT_SCHEMA_VERSION = 9;
 
 export function createSchema(database: DatabaseSync, appliedAt: string): void {
   database.exec(`
     CREATE TABLE schema_migrations (
       version INTEGER PRIMARY KEY,
       applied_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE style_profiles (
+      id TEXT PRIMARY KEY,
+      version INTEGER NOT NULL,
+      profile_json TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1))
     ) STRICT;
 
     CREATE TABLE projects (
@@ -456,7 +463,8 @@ export function migrateSchema(
     fromVersion !== 4 &&
     fromVersion !== 5 &&
     fromVersion !== 6 &&
-    fromVersion !== 7
+    fromVersion !== 7 &&
+    fromVersion !== 8
   ) {
     throw new Error(`Unsupported schema migration from version ${fromVersion}`);
   }
@@ -852,10 +860,19 @@ export function migrateSchema(
           CHECK (name_source IN ('placeholder', 'agent', 'manual', 'legacy'));
       `);
     }
-    database.exec(`UPDATE projects SET schema_version = ${CURRENT_SCHEMA_VERSION};`);
+    database.exec(`UPDATE projects SET schema_version = 8;`);
     database
       .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
-      .run(CURRENT_SCHEMA_VERSION, appliedAt);
-    database.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION};`);
+      .run(8, appliedAt);
+    database.exec(`PRAGMA user_version = 8;`);
+  }
+  if (fromVersion <= 8) {
+    database.exec(`CREATE TABLE style_profiles (
+      id TEXT PRIMARY KEY, version INTEGER NOT NULL, profile_json TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1))
+    ) STRICT;
+    UPDATE projects SET schema_version = 9;`);
+    database.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(9, appliedAt);
+    database.exec('PRAGMA user_version = 9;');
   }
 }
