@@ -144,7 +144,7 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启�
 
 更完整的说明见[桌面与 Skill 能力对照](docs/DESKTOP_SKILL_COMPARISON.md)。
 
-公开 RC 的安装、升级和代表性写作检查进展见[发布门禁](docs/testing/RELEASE_GATE.md)与 [RC88 发布记录](docs/launch/RC88_RELEASE_EXECUTION.md)。Parallel / Tavily 的真实搜索与模型核查保存记录属于历史专项；DeepSeek 和本次恢复逻辑的合成回归不等于真实付费搜索、真实模型耗时或文章质量验收。来源网页正文仍可能读取失败。OneDrive 路径 GPU 异常与本地路径 smoke 通过的证据分别保留，smoke 禁用硬件加速，不能据此宣称正常 GPU 已通过。99 个接入预设尚未逐个实连验收；RC 不代表完整人工体验或全部旧版能力已验收。
+公开 RC 的安装、升级和代表性写作检查进展见[发布门禁](docs/testing/RELEASE_GATE.md)与 [RC93 发布记录](docs/launch/RC93_RELEASE_EXECUTION.md)。Parallel / Tavily 的真实搜索与模型核查保存记录属于历史专项；DeepSeek 和本次恢复逻辑的合成回归不等于真实付费搜索、真实模型耗时或文章质量验收。来源网页正文仍可能读取失败。OneDrive 路径 GPU 异常与本地路径 smoke 通过的证据分别保留，smoke 禁用硬件加速，不能据此宣称正常 GPU 已通过。99 个接入预设尚未逐个实连验收；RC 不代表完整人工体验或全部旧版能力已验收。
 
 如果依赖原版的完整能力，请继续使用 Claude Code Skill；尝试桌面 RC 时先用独立测试项目，重要稿件另做备份。欢迎反馈，但请不要把 RC 当作无需人工检查的生产工具。
 

@@ -1,8 +1,10 @@
 # 桌面与 Claude Code Skill：能力和边界
 
-更新：2026-10-23。这是实现边界说明，不是“完全迁移已验收”的声明。当前公开候选为 [RC88](launch/RC88_RELEASE_EXECUTION.md)；[RC87 发布记录](launch/RC87_RELEASE_EXECUTION.md)与[RC80 审计后调整](implementation/RC80_AUDIT_FOLLOWUP.md)保留历史验证范围，不代表旧安装包具有后续新增行为。仍受[发布门禁](testing/RELEASE_GATE.md)约束，自动回归不等于所有迁移场景完成真实模型与人工验收。
+更新：2026-11-01。这是实现边界说明，不是“完全迁移已验收”的声明。当前公开候选为 [RC93](launch/RC93_RELEASE_EXECUTION.md)；[RC87 发布记录](launch/RC87_RELEASE_EXECUTION.md)与[RC80 审计后调整](implementation/RC80_AUDIT_FOLLOWUP.md)保留历史验证范围，不代表旧安装包具有后续新增行为。仍受[发布门禁](testing/RELEASE_GATE.md)约束，自动回归不等于所有迁移场景完成真实模型与人工验收。
 
-RC88 新增默认关闭的 DeepSeek 搜索，使用独立 Key，显式启用后优先请求并按成功搜索请求计费；仅取摘要，不额外调用付费 Fetch。重复读取无进展时暂停、过长限流等待可恢复，同轮已授权来源快照可复用。作者确认、标题选择与事实门禁仍保留。合成接口及流程回归不等于 DeepSeek 真实付费实测或真实模型完整写作；安装、升级与 GPU 边界以 RC88 发布记录为准，正常 GPU 不能由禁用硬件加速的 smoke 结果证明。
+RC93 增加桌面风格库、最多 10 份样文联合提取、项目风格下拉选择及有界风格包。实现及验证边界见[风格库说明](implementation/2026-10-30-style-library.md)；新提示词的真实模型风格质量仍待验收。
+
+历史 RC88 新增默认关闭的 DeepSeek 搜索，使用独立 Key，显式启用后优先请求并按成功搜索请求计费；仅取摘要，不额外调用付费 Fetch。重复读取无进展时暂停、过长限流等待可恢复，同轮已授权来源快照可复用。作者确认、标题选择与事实门禁仍保留。合成接口及流程回归不等于 DeepSeek 真实付费实测或真实模型完整写作；安装、升级与 GPU 边界以 RC88 发布记录为准，正常 GPU 不能由禁用硬件加速的 smoke 结果证明。
 
 | 方面 | 独立桌面版 | Claude Code Skill / 插件 |
 |---|---|---|
