@@ -6,7 +6,7 @@
 
 从一个模糊想法出发，与写作导演、主笔、审校和去 AI 味专家一起把文章写出来。你可以在过程中补充材料、改变方向、选择标题，而不只是等着接收最终结果。
 
-[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.88)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
+[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
 
 ## 老朋友，这个项目正在发生什么变化？
 
@@ -20,9 +20,9 @@
 - **原版用户**：可以继续使用原工作流，不必迁移；[直接跳到原版介绍与安装入口](#claude-code-skill)。
 - **准备尝试新版的老用户**：请先看[迁移边界](#rc-status)。**原版能力尚未全部迁入，桌面版目前不是完整替代品。**
 
-> **当前状态 · 2026-10-23**
+> **当前状态 · 2026-11-01**
 >
-> 桌面版 **[1.0.0-rc.88 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.88)**，提供 Windows x64 安装包。相比 RC87，本次新增可选 DeepSeek 搜索、重复读取无进展时的暂停与恢复、过长限流等待提示，并复用同轮已授权来源快照，减少重复联网。作者确认、事实核查与标题选择继续保留。它是 **RC（候选测试版），不是稳定正式版**；未签名，验证范围见 [RC88 发布记录](docs/launch/RC88_RELEASE_EXECUTION.md)。
+> 桌面版 **[1.0.0-rc.93 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)**，提供 Windows x64 安装包。本次公开版本增加风格库、最多 10 份样文联合提取、输入区风格名称下拉选择、项目独立风格快照及统计/片段组成的风格包，并更新紧凑对话导航。作者确认、事实核查与标题选择继续保留。它是 **RC（候选测试版），不是稳定正式版**；未签名，安装升级和下载校验范围见 [RC93 发布记录](docs/launch/RC93_RELEASE_EXECUTION.md)。
 >
 > 原版 Skill 版本线仍为 `v0.11.x`。Releases 中的 `v0.11.0` 是 Skill 版本，`app-preview-0.1.0` 是早期桌面预览，两者都不是这次重构的新 App。公开下载以本仓库标注“桌面版”的 Release 为准。
 
@@ -100,15 +100,21 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启�
 
 事实核查绑定当前版本；正文、标题或证据变化后，旧结论可能需要更新。核查通过也不是“绝对无误”的保证，重要内容仍需人工复核。
 
+### 6. 保存常用写法，按名称选择风格
+
+在左侧“风格库”粘贴文字、批量导入 TXT/MD/DOCX，或批量读取网页与公众号链接；合计最多 **10 份样文**，超出会明确提示减少或分组。提取后可编辑、试写、保存。样文会发送给当前配置的模型，技术错误会保留已导入内容。
+
+写作输入区直接下拉选择风格名字，各项目独立保存选择，内部提示词不占用聊天输入框。风格包包含实际统计、结构与表达写法、可选原文片段；只学习表达，不继承样文事实、身份和亲历。旧风格卡可继续使用，重新提取并保存后升级。统计对照不等于作者相似度保证；新提示词的真实模型效果仍待验证，详见[风格库说明](docs/implementation/2026-10-30-style-library.md)。
+
 <a id="desktop-start"></a>
 
 ## 下载与第一次使用
 
-**[查看 rc.88 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.88)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.88/Writing-Agent-Setup-1.0.0-rc.88-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.88/SHA256SUMS.txt)
+**[查看 rc.93 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.93/Writing-Agent-Setup-1.0.0-rc.93-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.93/SHA256SUMS.txt)
 
 此包未签名，Windows 可能显示“未知发布者”或 SmartScreen 提醒。请核对仓库来源和校验值，不要关闭安全防护。不要把旧 `app-preview-0.1.0` 当作这次新版。
 
-升级前请备份工作区并退出旧版，再运行新安装包。安装与 RC87 → RC88 升级的实际验证范围见 [RC88 发布记录](docs/launch/RC88_RELEASE_EXECUTION.md)，不代表所有历史数据库已穷举；当前没有自动更新。历史构建与 RC80 → RC87 升级结果保留在 [RC87 记录](docs/launch/RC87_RELEASE_EXECUTION.md)，其哈希不能用于新包。请以当前 Release 附件及校验值为准。系统复制粘贴偶发异常仍在排查，本版不宣称解决该问题。
+升级前请备份工作区并退出旧版，再运行新安装包。安装与 RC88 → RC93 升级的实际验证范围见 [RC93 发布记录](docs/launch/RC93_RELEASE_EXECUTION.md)，不代表所有历史数据库已穷举；当前没有自动更新。历史构建及升级结果保留在 [RC88 记录](docs/launch/RC88_RELEASE_EXECUTION.md)和 [RC87 记录](docs/launch/RC87_RELEASE_EXECUTION.md)，其哈希不能用于新包。请以当前 Release 附件及校验值为准。系统复制粘贴偶发异常仍在排查，本版不宣称解决该问题。
 
 1. 找到明确标注“桌面版”的 Release，阅读 RC 限制，下载 Windows x64 的 `Writing-Agent-Setup-版本号-x64.exe`。GitHub 自动附带的 `Source code.zip` 是源码，不是安装包。
 2. 安装后进入“设置 → 模型”，选择供应商，填写 Key 与模型 ID，验证连接。
