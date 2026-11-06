@@ -1,10 +1,10 @@
 # Writing Agent 桌面版快速开始
 
-更新：2026-11-01。**1.0.0-rc.93 已公开发布为 Pre-release**。以下是当前实现的操作说明，不代表稳定版承诺。[已知限制与发布门禁](testing/RELEASE_GATE.md)
+更新：2026-11-07。**1.0.0-rc.96 已公开发布为 Pre-release**。以下是当前实现的操作说明，不代表稳定版承诺。[已知限制与发布门禁](testing/RELEASE_GATE.md)
 
 ## 1. 下载、安装与升级
 
-进入 [rc.93 下载页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)，下载 Windows x64 的 `Writing-Agent-Setup-1.0.0-rc.93-x64.exe`。不要下载 `Source code.zip` 当作软件，也不要误装旧 `app-preview-0.1.0`。附件 `SHA256SUMS.txt` 提供本版本校验值。安装与 RC88 → RC93 升级验证范围见 [RC93 发布记录](launch/RC93_RELEASE_EXECUTION.md)；[RC87 历史记录](launch/RC87_RELEASE_EXECUTION.md)保留追溯，旧包校验值不适用于新包。
+进入 [rc.96 下载页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)，下载 Windows x64 的 `Writing-Agent-Setup-1.0.0-rc.96-x64.exe`。不要下载 `Source code.zip` 当作软件，也不要误装旧 `app-preview-0.1.0`。附件 `SHA256SUMS.txt` 提供本版本校验值。安装与 RC93 → RC96 升级验证范围见 [RC96 发布记录](launch/RC96_RELEASE_EXECUTION.md)；[RC93 历史记录](launch/RC93_RELEASE_EXECUTION.md)保留追溯，旧包校验值不适用于新包。
 
 维护者本地安装包统一放 `output/desktop`；这不是互联网下载地址。本次 RC 未签名，Windows 可能显示未知发布者提示。核对仓库来源与 SHA-256，不要关闭安全软件来强行安装。建议使用默认本地安装目录，不安装到 OneDrive 等云同步目录。
 
@@ -22,9 +22,11 @@
 进入“设置 → 模型”：
 
 - 新手选择预置供应商，核对国内/国际、通用 API/套餐接口，再填 API Key 和模型 ID。
-- 自定义接口需填协议和地址：OpenAI Chat Completions、OpenAI Responses 或 Anthropic-compatible。以实际服务商支持为准，不能仅因“兼容 OpenAI”就改成 Responses。
+- 自定义接口需填协议和地址：OpenAI Chat Completions、OpenAI Responses 或 Anthropic-compatible，地址支持 HTTP 和 HTTPS。以实际服务商支持为准，不能仅因“兼容 OpenAI”就改成 Responses。
+- 使用 Magpie 时先启动网关并配置上游，选择 Magpie 预设后获取完整模型 ID；按网关实际配置填写 Key 和地址。
 - 点击保存并验证连接。测试会发出真实请求，可能产生用量；失败时看具体错误，不必重复建立项目。
 - 已保存模型可在主对话输入框附近切换；本轮运行中不要假设切换会改变已经发出的请求。
+- “角色模型分配”的三组默认均跟随默认模型。可按界面建议为策划与统筹、写作与表达、审校与辅助分别选择已验证的模型；下一次启动或继续任务时生效。验证失败的模型需要重新验证或更换，不会自动回退到其他供应商。
 
 Key 优先放在系统凭据存储，不会明文写入模型配置。系统保存不可用时，界面会提示仅当前会话有效，重启后需重填。连接测试通过只是代表性能力检查，不保证整篇长任务在该服务上永不超时或报错。
 

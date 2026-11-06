@@ -6,7 +6,7 @@
 
 从一个模糊想法出发，与写作导演、主笔、审校和去 AI 味专家一起把文章写出来。你可以在过程中补充材料、改变方向、选择标题，而不只是等着接收最终结果。
 
-[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
+[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
 
 ## 老朋友，这个项目正在发生什么变化？
 
@@ -20,9 +20,9 @@
 - **原版用户**：可以继续使用原工作流，不必迁移；[直接跳到原版介绍与安装入口](#claude-code-skill)。
 - **准备尝试新版的老用户**：请先看[迁移边界](#rc-status)。**原版能力尚未全部迁入，桌面版目前不是完整替代品。**
 
-> **当前状态 · 2026-11-01**
+> **当前状态 · 2026-11-07**
 >
-> 桌面版 **[1.0.0-rc.93 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)**，提供 Windows x64 安装包。本次公开版本增加风格库、最多 10 份样文联合提取、输入区风格名称下拉选择、项目独立风格快照及统计/片段组成的风格包，并更新紧凑对话导航。作者确认、事实核查与标题选择继续保留。它是 **RC（候选测试版），不是稳定正式版**；未签名，安装升级和下载校验范围见 [RC93 发布记录](docs/launch/RC93_RELEASE_EXECUTION.md)。
+> 桌面版 **[1.0.0-rc.96 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)**，提供 Windows x64 安装包。本次增加三组角色模型配置、HTTP API 地址和 Magpie 网关预设，修复 Magpie 下明确 DeepSeek 路由的工具调用兼容、连接测试输出额度和验证提示残留问题。风格库、作者确认、事实核查与标题选择继续保留。它是 **RC（候选测试版），不是稳定正式版**；未签名，安装升级和下载校验范围见 [RC96 发布记录](docs/launch/RC96_RELEASE_EXECUTION.md)。
 >
 > 原版 Skill 版本线仍为 `v0.11.x`。Releases 中的 `v0.11.0` 是 Skill 版本，`app-preview-0.1.0` 是早期桌面预览，两者都不是这次重构的新 App。公开下载以本仓库标注“桌面版”的 Release 为准。
 
@@ -54,18 +54,20 @@
 
 专家采用独立调用上下文，接收与当前任务相关的材料和阶段成果；程序记录调度、保存和确认状态。读者模拟是写作参考，不是真实读者调查，也不保证文章成为热文。
 
-### 3. 内置 99 个模型接入预设，保留自定义配置
+### 3. 内置 100 个模型接入预设，保留自定义配置
 
 不用从零找地址、拼配置：在“设置 → 模型”中搜索和选择预设，填写该账户的 **API Key 和模型 ID**，再验证连接。已经配置好的模型可以在主对话输入区切换。
 
-目录覆盖 MiniMax、DeepSeek、智谱 / Z.AI、千问 / 百炼、Kimi、OpenAI、Anthropic、Gemini，以及聚合平台和第三方中转；标明**国内 / 国际、通用 API、Coding Plan、Token Plan 等产品区别**，帮助你选对账户入口。
+目录覆盖 MiniMax、DeepSeek、智谱 / Z.AI、千问 / 百炼、Kimi、OpenAI、Anthropic、Gemini，以及 Magpie 本地网关、聚合平台和第三方中转；标明**国内 / 国际、通用 API、Coding Plan、Token Plan 等产品区别**，帮助你选对账户入口。
 
-- **99 指当前界面的可选配置预设数，不是 99 家独立厂商或 99 个模型。** 同一供应商可能有不同地区或套餐入口。
+- **100 指当前界面的可选配置预设数，不是 100 家独立厂商或 100 个模型。** 同一供应商可能有不同地区或套餐入口。
 - 预置资料参考 [CC-Switch](https://github.com/farion1231/cc-switch)，并按本项目适配器整理；收录不等于所有服务都已实连验收。
-- 保留自定义模型 API，支持 **OpenAI Chat Completions、OpenAI Responses、Anthropic Messages** 三类协议，具体以服务端支持为准。
+- 保留自定义模型 API，地址支持 HTTP 和 HTTPS；支持 **OpenAI Chat Completions、OpenAI Responses、Anthropic Messages** 三类协议，具体以服务端支持为准。
 - 网页会员、API 余额与编程套餐不一定通用；选择预设不会替你开通套餐，也不保证套餐允许用于写作。第三方中转需自行评估可信度。
 
-统计口径：2026-09-30 当前源码的可选目录。后续版本可能调整。
+“角色模型分配”提供策划与统筹、写作与表达、审校与辅助三组。默认均跟随同一模型；需要时可从已验证模型中分别选择，界面提供简单的选型建议。无需逐个配置专家。详见[三组模型说明](docs/implementation/2026-11-06-model-groups.md)。
+
+统计口径：2026-11-07 当前源码的可选目录。后续版本可能调整；预设及连接验证通过不代表实际写作效果已验收。
 
 ### 4. 可选免费搜索，也可以接 DeepSeek 或 Tavily
 
@@ -110,11 +112,11 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启�
 
 ## 下载与第一次使用
 
-**[查看 rc.93 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.93/Writing-Agent-Setup-1.0.0-rc.93-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.93/SHA256SUMS.txt)
+**[查看 rc.96 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.96/Writing-Agent-Setup-1.0.0-rc.96-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.96/SHA256SUMS.txt)
 
 此包未签名，Windows 可能显示“未知发布者”或 SmartScreen 提醒。请核对仓库来源和校验值，不要关闭安全防护。不要把旧 `app-preview-0.1.0` 当作这次新版。
 
-升级前请备份工作区并退出旧版，再运行新安装包。安装与 RC88 → RC93 升级的实际验证范围见 [RC93 发布记录](docs/launch/RC93_RELEASE_EXECUTION.md)，不代表所有历史数据库已穷举；当前没有自动更新。历史构建及升级结果保留在 [RC88 记录](docs/launch/RC88_RELEASE_EXECUTION.md)和 [RC87 记录](docs/launch/RC87_RELEASE_EXECUTION.md)，其哈希不能用于新包。请以当前 Release 附件及校验值为准。系统复制粘贴偶发异常仍在排查，本版不宣称解决该问题。
+升级前请备份工作区并退出旧版，再运行新安装包。安装与 RC93 → RC96 升级的实际验证范围见 [RC96 发布记录](docs/launch/RC96_RELEASE_EXECUTION.md)，不代表所有历史数据库已穷举；当前没有自动更新。历史构建及升级结果保留在 [RC93 记录](docs/launch/RC93_RELEASE_EXECUTION.md)和 [RC88 记录](docs/launch/RC88_RELEASE_EXECUTION.md)，其哈希不能用于新包。请以当前 Release 附件及校验值为准。系统复制粘贴偶发异常仍在排查，本版不宣称解决该问题。
 
 1. 找到明确标注“桌面版”的 Release，阅读 RC 限制，下载 Windows x64 的 `Writing-Agent-Setup-版本号-x64.exe`。GitHub 自动附带的 `Source code.zip` 是源码，不是安装包。
 2. 安装后进入“设置 → 模型”，选择供应商，填写 Key 与模型 ID，验证连接。
@@ -144,7 +146,7 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启�
 
 更完整的说明见[桌面与 Skill 能力对照](docs/DESKTOP_SKILL_COMPARISON.md)。
 
-公开 RC 的安装、升级和代表性写作检查进展见[发布门禁](docs/testing/RELEASE_GATE.md)与 [RC93 发布记录](docs/launch/RC93_RELEASE_EXECUTION.md)。Parallel / Tavily 的真实搜索与模型核查保存记录属于历史专项；DeepSeek 和本次恢复逻辑的合成回归不等于真实付费搜索、真实模型耗时或文章质量验收。来源网页正文仍可能读取失败。OneDrive 路径 GPU 异常与本地路径 smoke 通过的证据分别保留，smoke 禁用硬件加速，不能据此宣称正常 GPU 已通过。99 个接入预设尚未逐个实连验收；RC 不代表完整人工体验或全部旧版能力已验收。
+公开 RC 的安装、升级和代表性写作检查进展见[发布门禁](docs/testing/RELEASE_GATE.md)与 [RC96 发布记录](docs/launch/RC96_RELEASE_EXECUTION.md)。Parallel / Tavily 的真实搜索与模型核查保存记录属于历史专项；DeepSeek 搜索与 Magpie 模型兼容的合成回归不等于真实付费搜索、真实模型耗时或文章质量验收。来源网页正文仍可能读取失败。OneDrive 路径 GPU 异常与本地路径 smoke 通过的证据分别保留，smoke 禁用硬件加速，不能据此宣称正常 GPU 已通过。100 个接入预设尚未逐个实连验收；RC 不代表完整人工体验或全部旧版能力已验收。
 
 如果依赖原版的完整能力，请继续使用 Claude Code Skill；尝试桌面 RC 时先用独立测试项目，重要稿件另做备份。欢迎反馈，但请不要把 RC 当作无需人工检查的生产工具。
 
