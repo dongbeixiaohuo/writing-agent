@@ -74,6 +74,27 @@ const readMaterialTool = {
 } as const;
 
 describe("OpenAI-compatible provider", () => {
+  it("applies Magpie DeepSeek compatibility per request model, respecting explicit settings", () => {
+    const options = { id: "magpie", baseURL: "http://127.0.0.1:3425/v1", allowInsecureHttp: true,
+      credentialRef: "test/magpie", resolveCredential: async () => fakeApiKey, models: {} };
+    const provider = new OpenAICompatibleProvider(options);
+    const payload = (model: string, adapter = provider) => adapter.snapshotRequest({
+      requestId: "model-route", model, messages: [{ role: "user", content: "写作" }], parameters: {},
+    }).normalizedPayload as Record<string, unknown>;
+    for (const model of ["deepseek/deepseek-flash", "bailian-token-plan/deepseek-v4.1-flash-1017"]) {
+      assert.equal(payload(model).reasoning_effort, "none");
+      assert.equal(payload(model).model, model);
+      assert.equal(payload(model, new OpenAICompatibleProvider({ ...options, id: "custom" })).reasoning_effort, undefined);
+      assert.equal(payload(model, new OpenAICompatibleProvider({ ...options, extraBody: { reasoning_effort: "high" } })).reasoning_effort, "high");
+      const explicit = payload(model, new OpenAICompatibleProvider({ ...options, extraBody: { thinking: { type: "enabled" } } }));
+      assert.equal(explicit.reasoning_effort, undefined);
+      assert.deepEqual(explicit.thinking, { type: "enabled" });
+    }
+    for (const model of ["minimax/MiniMax-M3.1-Flash", "group/writing", "group/deepseek", "other/not-deepseek", "deepseek/not-deepseek"]) {
+      assert.equal(payload(model).reasoning_effort, undefined, model);
+    }
+  });
+
   it("round-trips streamed tool calls/results and then streams article text", async () => {
     const bodies: Record<string, unknown>[] = [];
     const authorizationHeaders: Array<string | undefined> = [];

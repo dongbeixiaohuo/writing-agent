@@ -44,7 +44,7 @@ const SETUP_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   PROJECT_STYLE_FILE_READ_FAILED: "风格文件读取失败，请确认文件可访问后重试。",
   PROVIDER_URL_REQUIRED: "请填写 API 地址。",
   PROVIDER_URL_INVALID: "API 地址格式不正确。",
-  PROVIDER_HTTPS_REQUIRED: "API 地址必须使用 HTTPS。",
+  PROVIDER_HTTPS_REQUIRED: "API 地址请使用 HTTP 或 HTTPS。",
   PROVIDER_ID_REQUIRED: "请填写配置名称。",
   PROVIDER_MODEL_REQUIRED: "请填写模型名称。",
   PROVIDER_API_KEY_REQUIRED: "请填写 API Key。",
@@ -94,7 +94,7 @@ const COMMAND_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   DESKTOP_COMMAND_FAILED: "本次操作未能完成，原因尚未确认。请重试；若仍失败，请反馈操作位置和时间。",
   DESKTOP_PROVIDER_INPUT_INVALID: "模型配置格式无效，请检查填写内容。",
   DESKTOP_PROVIDER_PROFILE_INVALID: "已保存的模型配置无法读取，请重新保存。",
-  INSECURE_PROVIDER_URL_REJECTED: "API 地址必须使用 HTTPS。",
+  INSECURE_PROVIDER_URL_REJECTED: "API 地址请使用 HTTP 或 HTTPS。",
   MODEL_PROVIDER_REQUIRED: "尚未配置可用模型，请先在模型设置中完成配置。",
   MODEL_TOOLS_UNVERIFIED: "当前模型尚未确认支持工具调用，请在模型设置中检查配置。",
   PROJECT_NOT_FOUND: "当前项目不可用，请重新选择或创建项目。",
@@ -240,7 +240,7 @@ export function normalizeProviderSetup(
   } catch {
     throw new Error("PROVIDER_URL_INVALID");
   }
-  if (parsed.protocol !== "https:") throw new Error("PROVIDER_HTTPS_REQUIRED");
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("PROVIDER_URL_INVALID");
   return {
     kind: form.kind,
     providerId: required(form.providerId, "PROVIDER_ID_REQUIRED"),

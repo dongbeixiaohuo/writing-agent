@@ -76,19 +76,17 @@ export function parseDesktopProviderProfileInput(value: unknown): DesktopProvide
   };
 }
 
-function assertTransport(baseURL: string, allowInsecureHttp: boolean): void {
+function assertTransport(baseURL: string): URL {
   let url: URL;
   try {
     url = new URL(baseURL);
   } catch {
     throw providerProfileError("PROVIDER_URL_INVALID", "Provider URL is invalid");
   }
-  if (url.protocol === "https:") return;
-  if (url.protocol === "http:" && allowInsecureHttp) return;
-  throw providerProfileError(
-    "INSECURE_PROVIDER_URL_REJECTED",
-    "Provider URL must use HTTPS",
-  );
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw providerProfileError("PROVIDER_URL_INVALID", "Provider URL must use HTTP or HTTPS");
+  }
+  return url;
 }
 
 export function loadDesktopProviderProfile(
@@ -274,7 +272,7 @@ export function previousProvider(catalog: DesktopProviderCatalog, input: Desktop
 }
 
 export function providerConfigForInput(input: DesktopProviderProfileInput, previous?: NormalizedProviderConfig): NormalizedProviderConfig {
-  assertTransport(input.baseURL, input.allowInsecureHttp === true);
+  const transport = assertTransport(input.baseURL);
   const sameTransport = previous?.kind === input.kind && previous.baseURL === input.baseURL.trim().replace(/\/+$/u, '');
   const preset = PROVIDER_PRESETS.find(item => item.id === input.providerId && item.kind === input.kind
     && item.baseURL === input.baseURL.trim().replace(/\/+$/u, ''));
@@ -290,7 +288,9 @@ export function providerConfigForInput(input: DesktopProviderProfileInput, previ
   const config = parseProviderConfig({ schemaVersion: 2, kind: input.kind, providerId: input.providerId,
     baseURL: input.baseURL, model: input.model, tools: input.tools, usage: input.usage,
     credentialRef: previous?.credentialRef ?? 'managed:pending',
-    ...(input.allowInsecureHttp === undefined ? {} : { allowInsecureHttp: input.allowInsecureHttp }),
+    // Entering an HTTP endpoint in desktop settings authorizes that transport.
+    // Persist it so discovery, probes and all role-bound adapters agree after restart.
+    ...(transport.protocol === 'http:' ? { allowInsecureHttp: true } : {}),
     ...(extraBody === undefined ? {} : { extraBody }),
     ...(input.kind === 'anthropic_compatible' ? {
       ...(input.anthropicVersion === undefined ? {} : { anthropicVersion: input.anthropicVersion }),

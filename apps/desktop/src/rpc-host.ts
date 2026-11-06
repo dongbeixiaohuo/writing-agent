@@ -70,7 +70,7 @@ const publicMessages: Readonly<Record<string, string>> = {
   DESKTOP_HOST_CLOSED: "Desktop host is closed",
   DESKTOP_PROVIDER_INPUT_INVALID: "Desktop provider configuration is invalid",
   DESKTOP_PROVIDER_PROFILE_INVALID: "Desktop provider profile is invalid",
-  INSECURE_PROVIDER_URL_REJECTED: "Provider URL must use HTTPS",
+  INSECURE_PROVIDER_URL_REJECTED: "Provider URL must use HTTP or HTTPS",
   LOCK_CONFLICT: "The requested content is locked",
   MODEL_PROVIDER_REQUIRED: "A model provider must be configured before writing",
   MODEL_TOOLS_UNVERIFIED: "The selected model is not verified for tool calling",

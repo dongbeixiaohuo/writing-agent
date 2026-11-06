@@ -615,7 +615,20 @@ export class OpenAICompatibleProvider extends ModelProviderBase {
 
   private wireBody(request: ModelRequest): WireRequest {
     const body = serializeRequest(request);
-    return this.extraBody === undefined ? body : { ...this.extraBody, ...body };
+    // Magpie translates Chat's reasoning_effort into each upstream's thinking
+    // switch. DeepSeek's default thinking mode rejects required tool choice;
+    // use the same non-thinking mode as our direct DeepSeek preset. Resolve
+    // from the *request* model, never from a profile shared by several models.
+    // Opaque group aliases and other providers must retain their own defaults.
+    const deepseekRoute = this.id === "magpie" &&
+      /^(?!group\/)[^/]+\/deepseek(?:-|$)/iu.test(request.model);
+    const explicitReasoning = ["reasoning_effort", "reasoning", "thinking", "enable_thinking"]
+      .some(key => Object.hasOwn(this.extraBody ?? {}, key));
+    return {
+      ...(deepseekRoute && !explicitReasoning ? { reasoning_effort: "none" } : {}),
+      ...this.extraBody,
+      ...body,
+    };
   }
 
   override snapshotRequest(request: ModelRequest): ProviderRequestSnapshot {

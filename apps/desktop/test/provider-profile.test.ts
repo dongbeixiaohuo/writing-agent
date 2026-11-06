@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { createConfiguredProvider } from "../../../packages/runtime/provider-config/src/index.js";
 
 import {
   CredentialBroker,
@@ -296,29 +297,35 @@ test("legacy Anthropic transport options never follow a different endpoint or pr
   }
 });
 
-test("desktop provider profile rejects insecure HTTP unless explicitly allowed", async () => {
-  const root = mkdtempSync(join(tmpdir(), "wa-provider-profile-reject-"));
+test("desktop HTTP configuration survives saving and instantiates all protocol adapters", async () => {
+  const root = mkdtempSync(join(tmpdir(), "wa-provider-http-"));
   const path = join(root, "provider.json");
   const broker = new CredentialBroker({ environment: {} });
   try {
-    await assert.rejects(
-      saveDesktopProviderProfile(path, broker, {
-        kind: "openai_compatible",
-        providerId: "unsafe",
-        baseURL: "http://api.example.test/v1",
-        model: "example-model",
-        tools: "supported",
-        usage: "unknown",
-        apiKey: "not-real",
-        persistence: "session",
-      }),
-      (error: unknown) => {
-        assert.equal((error as { code?: string }).code, "INSECURE_PROVIDER_URL_REJECTED");
-        assert.equal((error as Error).message, "Provider URL must use HTTPS");
-        return true;
-      },
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    for (const kind of ['openai_compatible', 'openai_responses', 'anthropic_compatible'] as const) {
+      for (const baseURL of ['http://127.0.0.1:3425/v1', 'http://192.168.1.20:3425/v1', 'http://gateway.example.test/v1']) {
+        const input = parseDesktopProviderProfileInput({ profileId: null, kind, providerId: 'gateway',
+          baseURL, model: 'provider/model', tools: 'supported', usage: 'unknown', apiKey: 'not-real', persistence: 'session' });
+        const saved = await saveDesktopProviderProfile(path, broker, input);
+        const loaded = loadDesktopProviderProfile(path)!;
+        assert.equal(saved.config.allowInsecureHttp, true);
+        assert.deepEqual(loaded, saved.config);
+        assert.doesNotThrow(() => createConfiguredProvider(loaded, broker));
+        assert.equal(providerConfigForInput({ ...input, baseURL: 'https://gateway.example.test/v1' }, loaded).allowInsecureHttp, undefined);
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('desktop rejects unsupported schemes before storing a credential', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-provider-scheme-'));
+  const broker = new CredentialBroker({ environment: {} });
+  try {
+    for (const baseURL of ['ftp://gateway.test/v1', 'file:///tmp/model', 'invalid']) {
+      await assert.rejects(saveDesktopProviderProfile(join(root, 'provider.json'), broker, {
+        kind: 'openai_compatible', providerId: 'test', baseURL, model: 'test', tools: 'supported', usage: 'unknown',
+        apiKey: 'not-real', persistence: 'session',
+      }), error => (error as { code?: string }).code === 'PROVIDER_URL_INVALID');
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

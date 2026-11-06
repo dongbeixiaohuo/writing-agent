@@ -6,8 +6,9 @@ export const PROVIDER_PRODUCTS = {
   api: '通用 API', coding: 'Coding Plan', token: 'Token Plan', agent: 'Agent Plan',
   step: 'Step Plan', subscription: '订阅套餐', shared: 'API / 套餐共用入口',
   platform: '平台 API（计费见平台）',
+  gateway: '模型网关',
 } as const;
-export const PROVIDER_CHANNELS = { direct: '官方直连', aggregator: '聚合平台', relay: '第三方中转' } as const;
+export const PROVIDER_CHANNELS = { direct: '官方直连', aggregator: '聚合平台', relay: '第三方中转', local: '本地 / 自部署网关' } as const;
 export interface ProviderOffering {
   readonly provider: string;
   readonly region: keyof typeof PROVIDER_REGIONS;
@@ -21,6 +22,7 @@ type IdentityRow = readonly [ids: readonly string[], provider: string, region: P
   product: ProviderOffering['product'], channel?: ProviderOffering['channel'], edition?: string | undefined, regionDetail?: string];
 
 const IDENTITIES: readonly IdentityRow[] = [
+  [['magpie'], 'Magpie', 'unspecified', 'gateway', 'local'],
   [['minimax-cn', 'cc-minimax'], 'MiniMax', 'cn', 'shared', 'direct', 'Token Plan'],
   [['minimax-global', 'cc-minimax-en'], 'MiniMax', 'international', 'shared', 'direct', 'Coding Plan'],
   [['deepseek', 'cc-deepseek', 'deepseek-anthropic'], 'DeepSeek', 'unspecified', 'api'],

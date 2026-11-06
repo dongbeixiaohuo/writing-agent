@@ -3,7 +3,7 @@ import { CC_SWITCH_CODEX_PRESETS } from './cc-switch-codex-presets.js';
 import { providerOffering, providerProductLabel, providerRegionLabel, PROVIDER_CHANNELS, type ProviderOffering } from './provider-offerings.js';
 export { PROVIDER_REGIONS, PROVIDER_PRODUCTS, PROVIDER_CHANNELS, providerProductLabel, providerRegionLabel } from './provider-offerings.js';
 
-export const PROVIDER_PRESET_GROUPS = ['国内服务', '国际服务', '官方服务（不区分地区）', '套餐专用接口', 'API / 套餐共用入口', '聚合平台', '第三方中转'] as const;
+export const PROVIDER_PRESET_GROUPS = ['国内服务', '国际服务', '官方服务（不区分地区）', '套餐专用接口', 'API / 套餐共用入口', '聚合平台', '第三方中转', '本地与自部署'] as const;
 export const PROVIDER_PROTOCOL_LABELS = {
   openai_compatible: 'OpenAI Chat Completions',
   openai_responses: 'OpenAI Responses',
@@ -32,6 +32,9 @@ export interface ProviderPreset {
 // Checked 2026-09-21; sources and adapter path conventions are documented in
 // docs/implementation/PROVIDER_PRESETS.md. No affiliate links or SDK code copied.
 const EXISTING_PROVIDER_PRESETS: readonly Omit<ProviderPreset, 'offering'>[] = [
+  { id: 'magpie', label: 'Magpie', group: '本地与自部署', kind: 'openai_compatible',
+    baseURL: 'http://127.0.0.1:3425/v1', modelHint: '完整模型 ID：provider/model 或 group/分组名',
+    note: '先启动 Magpie 并配置上游模型。本机连接的 API Key 填 magpie；共享网关使用 Magpie 中创建的网关 Key。点击“获取可用模型”选择完整 ID。端口或局域网地址不同，可展开“自定义设置”修改 API 地址。' },
   { id: 'minimax-cn', label: 'MiniMax · 国内', group: '国内服务', kind: 'anthropic_compatible',
     baseURL: 'https://api.minimax.cn/anthropic/v1', modelHint: '例如 MiniMax-M3',
     note: '使用 MiniMax 国内开放平台的 Key。旧地址或专用网关可选择自定义配置，已有配置不会自动迁移。' },
@@ -137,6 +140,8 @@ const PRESET_EXTRA_BODY: Readonly<Record<string, Readonly<Record<string, unknown
 };
 
 function describePreset(data: Omit<ProviderPreset, 'offering' | 'label' | 'group'>, offering: ProviderOffering): ProviderPreset {
+  if (offering.channel === 'local') return { ...data, offering, group: '本地与自部署',
+    label: `${offering.provider} · ${providerRegionLabel(offering)} · ${providerProductLabel(offering)} · ${PROVIDER_PROTOCOL_LABELS[data.kind]}` };
   const plan = ['coding', 'token', 'agent', 'step', 'subscription'].includes(offering.product);
   const group: ProviderPreset['group'] = offering.product === 'shared' ? 'API / 套餐共用入口'
     : plan ? '套餐专用接口' : offering.channel === 'aggregator' ? '聚合平台'
