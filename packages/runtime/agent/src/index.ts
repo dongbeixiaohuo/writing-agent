@@ -10,6 +10,7 @@ import type {
   ModelMessage,
   ModelParameters,
   ModelProvider,
+  ModelRouteResolver,
   ModelRequest,
   TokenUsage,
 } from "../../llm/src/index.js";
@@ -69,6 +70,7 @@ export interface StageOutputPreview {
 export interface AgentRuntimeOptions {
   readonly onModelStream?: (input: { projectId: string; sessionId: string; runId: string; requestId: string; actor?: string; lifecycle?: 'started' | 'finished'; textAudience?: 'conversation'; outputPreview?: StageOutputPreview; parallelTextProgress?: { readonly requests:number; readonly completed:number; readonly failed:number; readonly total:number }; event: ModelEvent | null }) => void;
   readonly provider: ModelProvider;
+  readonly resolveModel?: ModelRouteResolver;
   readonly tools: ToolRegistry;
   readonly sessions: SessionStore;
   readonly requestPolicy?: (runId: string) => AgentRequestPolicy;
@@ -264,6 +266,15 @@ function failureFromModel(error: ModelError): AgentRunError {
   };
 }
 
+function failureFromRouteResolver(error: unknown): AgentRunError {
+  const record = typeof error === 'object' && error !== null ? error as { code?: unknown; message?: unknown } : null;
+  return {
+    code: typeof record?.code === 'string' && record.code.length > 0 ? record.code : 'MODEL_ROUTE_RESOLUTION_FAILED',
+    message: error instanceof Error ? error.message : typeof record?.message === 'string' ? record.message : 'Model route could not be resolved',
+    retryable: false,
+  };
+}
+
 function isUnknownExternalModelOutcome(error: ModelError): boolean {
   return (
     error.code === "NETWORK_ERROR" ||
@@ -315,6 +326,7 @@ async function waitBeforeRetry(
 
 export class AgentRuntime {
   readonly #provider: ModelProvider;
+  readonly #resolveModel: ModelRouteResolver | undefined;
   readonly #tools: ToolRegistry;
   readonly #sessions: SessionStore;
   readonly #requestPolicy: AgentRuntimeOptions["requestPolicy"];
@@ -334,6 +346,7 @@ export class AgentRuntime {
   constructor(options: AgentRuntimeOptions) {
     this.#onModelStream = options.onModelStream;
     this.#provider = options.provider;
+    this.#resolveModel = options.resolveModel;
     this.#tools = options.tools;
     this.#sessions = options.sessions;
     this.#requestPolicy = options.requestPolicy;
@@ -345,6 +358,10 @@ export class AgentRuntime {
     this.#pauseAfterTool = options.pauseAfterTool ?? (() => null);
     this.#pauseBeforeRequest = options.pauseBeforeRequest ?? (() => null);
     this.#waitBeforeRetry = options.waitBeforeRetry ?? waitBeforeRetry;
+  }
+
+  #modelBinding(input: AgentRunInput, actor: string | undefined): { readonly provider: ModelProvider; readonly model: string } {
+    return this.#resolveModel?.(actor ?? 'intake') ?? { provider: this.#provider, model: input.model };
   }
 
   start(input: AgentRunInput): AgentRunHandle {
@@ -579,6 +596,7 @@ export class AgentRuntime {
 
   async #collectModelAttempt(
     request: ModelRequest,
+    provider: ModelProvider,
     active: ActiveRun,
     textAudience?: 'conversation',
     actor?: string,
@@ -607,7 +625,7 @@ export class AgentRuntime {
     };
     preview(null, 'started');
     try {
-      for await (const event of this.#provider.stream(request)) {
+      for await (const event of provider.stream(request)) {
         const elapsed = Math.round(performance.now() - began);
         if (event.type === 'response_activity' && event.phase === 'headers') stream.headersMs ??= elapsed;
         if (event.type === 'response_activity' && event.phase === 'reasoning') {
@@ -661,7 +679,17 @@ export class AgentRuntime {
     // The exact assignment, body, personas, model and output cap bind reuse.
     // Completed children survive process replacement; only explicit resume
     // permits another attempt at children that failed in an earlier segment.
-    const batchId = contentHash(canonicalJson({ scope:policy.scopeId, model:input.model, tasks:batch.tasks,
+    let bindings: Map<string, { readonly provider: ModelProvider; readonly model: string }>;
+    try {
+      bindings = new Map(batch.tasks.map(task => [task.id, this.#modelBinding(input, task.actor)]));
+    } catch (error) {
+      const failure = failureFromRouteResolver(error);
+      return { ok:false, result:this.#failRun(active, failure.code, failure.message, failure.retryable) };
+    }
+    const batchId = contentHash(canonicalJson({ scope:policy.scopeId, model:input.model, bindings:batch.tasks.map(task => {
+      const binding = bindings.get(task.id)!;
+      return { id:task.id, actor:task.actor, provider:binding.provider.id, model:binding.model };
+    }), tasks:batch.tasks,
       parameters:input.parameters, maxOutputTokens:batch.maxOutputTokens ?? null }));
     const events = this.#sessions.listRunEvents(runId);
     const resumeSeq = events.findLast(e => e.type === 'run.resumed')?.projectSeq ?? 0;
@@ -692,13 +720,14 @@ export class AgentRuntime {
     try {
       plans = needed.map(task => {
         const requestId = this.#idFactory(), snapshotId = this.#idFactory(), operationId = this.#idFactory();
-        const request: ModelRequest = { requestId, model:input.model, messages:structuredClone(task.messages), parameters:{ ...input.parameters,
+        const binding = bindings.get(task.id)!;
+        const request: ModelRequest = { requestId, model:binding.model, messages:structuredClone(task.messages), parameters:{ ...input.parameters,
           toolChoice:'none', ...(batch.maxOutputTokens === undefined ? {} : { maxOutputTokens:Math.min(input.parameters.maxOutputTokens ?? batch.maxOutputTokens, batch.maxOutputTokens) }) } };
-        const provider = this.#provider.snapshotRequest(request);
+        const providerSnapshot = binding.provider.snapshotRequest(request);
         this.#sessions.saveRequestSnapshot({ snapshotId, projectId, sessionId, runId, request,
-          provider:{ id:this.#provider.id, adapterVersion:this.#provider.adapterVersion, ...provider }, toolSchemas:[],
+          provider:{ id:binding.provider.id, adapterVersion:binding.provider.adapterVersion, ...providerSnapshot }, toolSchemas:[],
           assemblyVersion:REQUEST_ASSEMBLY_VERSION, contentReferences:contentReferences(request.messages) });
-        return { task, request, requestId, snapshotId, operationId, provider };
+        return { task, request, requestId, snapshotId, operationId, provider:binding.provider, providerSnapshot };
       });
     } catch {
       return { ok:false, result:this.#failRun(active, 'REQUEST_ASSEMBLY_FAILED', 'Parallel text request could not be assembled', false) };
@@ -730,7 +759,7 @@ export class AgentRuntime {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const expired = new Promise<null>(resolve => { timer = setTimeout(() => { timedOut = true; controller.abort('parallel_task_timeout'); resolve(null); }, batch.timeoutMs); });
       // Race also protects the parent from providers that ignore AbortSignal.
-      const attempt = await Promise.race([this.#collectModelAttempt(request, { ...active, controller }, undefined, task.actor, undefined, false), expired, stopped]);
+      const attempt = await Promise.race([this.#collectModelAttempt(request, plan.provider, { ...active, controller }, undefined, task.actor, undefined, false), expired, stopped]);
       clearTimeout(timer);
       active.controller.signal.removeEventListener('abort', stop);
       if (this.#sessions.getRun(runId)?.status !== 'running') return { ...identity, ok:false as const, code:'ABORTED' };
@@ -745,7 +774,7 @@ export class AgentRuntime {
               ...(attempt?.error?.providerDetail ? { providerDetail:attempt.error.providerDetail } : {}),
               ...(attempt?.error?.providerRequestId ? { providerRequestId:attempt.error.providerRequestId } : {}),
               ...(attempt?.text ? { responseText:attempt.text, responseTextHash:contentHash(attempt.text) } : {}),
-              ...(plan.provider.outputTokenLimit ? { outputTokenLimit:plan.provider.outputTokenLimit } : {}) }) };
+              ...(plan.providerSnapshot.outputTokenLimit ? { outputTokenLimit:plan.providerSnapshot.outputTokenLimit } : {}) }) };
       // Text-only children cannot change external business state. An uncertain
       // response is missing feedback, not an unknown article write that freezes
       // the parent. Preserve the exact transport error, never fabricate text.
@@ -782,14 +811,6 @@ export class AgentRuntime {
     active: ActiveRun,
   ): Promise<AgentRunResult> {
     const { projectId, sessionId, runId } = active;
-    const previousDelay = this.#sessions.listRunEvents(runId).findLast(event =>
-      event.type === 'run.waiting_user' && event.payload.stopReason === 'PROVIDER_RETRY_DEFERRED');
-    if (previousDelay?.payload.provider === this.#provider.id && previousDelay.payload.model === input.model &&
-        typeof previousDelay.payload.retryNotBefore === 'number' && previousDelay.payload.retryNotBefore > Date.now()) {
-      return this.#deferProviderRetry(active, { provider: this.#provider.id, model: input.model,
-        retryNotBefore: previousDelay.payload.retryNotBefore,
-        ...(typeof previousDelay.payload.retryAfterMs === 'number' ? { retryAfterMs: previousDelay.payload.retryAfterMs } : {}) });
-    }
     const permissionGrant = this.#createPermissionGrant({
       projectId,
       runId,
@@ -822,6 +843,21 @@ export class AgentRuntime {
       }
       let requestId = this.#idFactory();
       const policy = this.#requestPolicy?.(runId);
+      let binding: { readonly provider: ModelProvider; readonly model: string };
+      try {
+        binding = this.#modelBinding(input, policy?.actor);
+      } catch (error) {
+        const failure = failureFromRouteResolver(error);
+        return this.#failRun(active, failure.code, failure.message, failure.retryable);
+      }
+      const previousDelay = this.#sessions.listRunEvents(runId).findLast(event =>
+        event.type === 'run.waiting_user' && event.payload.stopReason === 'PROVIDER_RETRY_DEFERRED');
+      if (previousDelay?.payload.provider === binding.provider.id && previousDelay.payload.model === binding.model &&
+          typeof previousDelay.payload.retryNotBefore === 'number' && previousDelay.payload.retryNotBefore > Date.now()) {
+        return this.#deferProviderRetry(active, { provider: binding.provider.id, model: binding.model,
+          retryNotBefore: previousDelay.payload.retryNotBefore,
+          ...(typeof previousDelay.payload.retryAfterMs === 'number' ? { retryAfterMs: previousDelay.payload.retryAfterMs } : {}) });
+      }
       if (policy !== undefined && policy.scopeId !== scopeId) {
         scopeId = policy.scopeId;
         outputRecoveryCount = 0;
@@ -850,6 +886,13 @@ export class AgentRuntime {
       const offeredTools = policy?.modelTools ?? policy?.allowedTools;
       const toolSchemas = this.#tools.schemaSnapshots().filter((tool) => offeredTools === undefined || offeredTools.includes(tool.name));
       const tools = modelTools(this.#tools).filter((tool) => offeredTools === undefined || offeredTools.includes(tool.name));
+      // Application preflight may not know which role will execute next. Check
+      // the binding actually selected for this request so routed profiles cannot
+      // bypass the tool-calling requirement, while text-only reader children
+      // remain valid on models without tools.
+      if (tools.length > 0 && binding.provider.capabilitiesFor(binding.model).tools !== 'supported') {
+        return this.#failRun(active, 'MODEL_TOOLS_UNVERIFIED', 'Selected model has not been verified for tool calling', false);
+      }
       // A truncation recovery escalates the output cap once (x2, capped);
       // retrying with the same exhausted budget can only truncate again.
       const escalatedOutputTokens = pendingOutputTokenLimit;
@@ -858,7 +901,7 @@ export class AgentRuntime {
       const requestHistory = policy?.projectHistory?.(originalHistory) ?? originalHistory;
       const request: ModelRequest = {
         requestId,
-        model: input.model,
+        model: binding.model,
         messages: requestHistory.map((message, index) => message.role === 'tool' && policy?.projectToolResult
           ? { ...message, content: policy.projectToolResult(message, { messages: requestHistory, index }) } : message),
         ...(tools.length === 0 ? {} : { tools }),
@@ -881,7 +924,7 @@ export class AgentRuntime {
       } else {
         let providerSnapshot;
         try {
-          providerSnapshot = this.#provider.snapshotRequest(request);
+          providerSnapshot = binding.provider.snapshotRequest(request);
         } catch (error) {
           return this.#failRun(
             active,
@@ -901,8 +944,8 @@ export class AgentRuntime {
             runId,
             request,
             provider: {
-              id: this.#provider.id,
-              adapterVersion: this.#provider.adapterVersion,
+              id: binding.provider.id,
+              adapterVersion: binding.provider.adapterVersion,
               ...providerSnapshot,
             },
             toolSchemas,
@@ -946,7 +989,7 @@ export class AgentRuntime {
           });
           if (!dispatched.dispatched) return this.#budgetResult(active);
 
-          attempt = await this.#collectModelAttempt(request, active, policy?.textAudience, policy?.actor, policy?.outputPreview);
+          attempt = await this.#collectModelAttempt(request, binding.provider, active, policy?.textAudience, policy?.actor, policy?.outputPreview);
           if (this.#sessions.getRun(runId)?.status === "cancelled") {
             return this.#cancelledResult(active);
           }
@@ -1029,7 +1072,7 @@ export class AgentRuntime {
               if (!Number.isFinite(retryDelay) || retryDelay < 0 || retryDelay > MAX_INTERACTIVE_RETRY_WAIT_MS) {
                 const retryNotBefore = Date.now() + Math.ceil(retryDelay);
                 const validDate = Number.isSafeInteger(retryNotBefore) && retryNotBefore <= 8_640_000_000_000_000 && retryDelay >= 0;
-                return this.#deferProviderRetry(active, { provider: this.#provider.id, model: input.model,
+                return this.#deferProviderRetry(active, { provider: binding.provider.id, model: binding.model,
                   providerCode: attempt.error.code,
                   ...(Number.isSafeInteger(Math.ceil(retryDelay)) && retryDelay >= 0 ? { retryAfterMs: retryDelay } : {}),
                   ...(validDate ? { retryNotBefore } : { invalidRetryAfter: true }) });

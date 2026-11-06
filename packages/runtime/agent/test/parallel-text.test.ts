@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { it } from 'node:test';
 import { openWorkspaceStorage } from '../../../storage/src/index.js';
-import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '../../llm/src/index.js';
+import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent, type ModelRouteResolver } from '../../llm/src/index.js';
 import { ToolRegistry } from '../../tools/src/index.js';
 import { AgentRuntime, type AgentRequestPolicy } from '../src/index.js';
 
-function fixture(provider: ModelProviderBase, timeoutMs = 1000) {
+function fixture(provider: ModelProviderBase, timeoutMs = 1000, resolveModel?: ModelRouteResolver) {
   const dir = mkdtempSync(join(tmpdir(), 'parallel-reader-'));
   const storage = openWorkspaceStorage({ workspacePath: dir });
   storage.createProject({ projectId: 'p', operationId: 'p', name: 'readers', mode: 'quick', actor: { kind: 'user', id: 'u' } });
@@ -26,6 +26,7 @@ function fixture(provider: ModelProviderBase, timeoutMs = 1000) {
     },
   };
   const runtime = () => new AgentRuntime({ provider, sessions: storage,
+    ...(resolveModel ? { resolveModel } : {}),
     tools: ToolRegistry.create([{ name: 'save', version: '1.0.0', description: 'save', effect: 'local_idempotent', permissions: [],
       inputSchema: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] },
       execute() { saves++; return {}; } }]),
@@ -70,6 +71,34 @@ it('fans out isolated requests concurrently, persists all inputs/usage, saves an
     assert.equal(run.usage.modelRequests, 3); assert.equal(run.usage.totalTokens, 36);
     assert.equal(run.status, 'waiting_user');
     assert.equal(f.storage.listRunEvents(result.runId).filter(e => e.type === 'run.waiting_user').length, 1);
+  } finally { f.close(); }
+});
+
+it('routes every reader child to its assigned model and records the actual binding', async () => {
+  const requests: Array<{ provider: string; model: string }> = [];
+  const actors: string[] = [];
+  class Provider extends ModelProviderBase {
+    constructor(id: string) { super(id, '1', { protocol:'mock', streaming:'supported', tools:'supported', usage:'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push({ provider:this.id, model:request.model });
+      yield { type:'text_delta', delta:'reaction-routed' }; yield { type:'completed', finishReason:'stop' };
+    }
+  }
+  const review = new Provider('review-provider');
+  const f = fixture(new Provider('default-provider'), 1000, actor => {
+    actors.push(actor!); return { provider:review, model:'review-model' };
+  });
+  try {
+    const result = await f.runtime().run(f.input);
+    assert.equal(f.saves, 1);
+    for (const actor of ['review_reader_a', 'review_reader_b', 'review_reader_c']) assert.ok(actors.includes(actor));
+    assert.deepEqual(requests, Array(3).fill({ provider:'review-provider', model:'review-model' }));
+    const snapshots = f.storage.listRequestSnapshots(result.runId);
+    assert.equal(snapshots.length, 3);
+    for (const snapshot of snapshots) {
+      assert.equal(snapshot.request.model, 'review-model');
+      assert.equal(snapshot.provider, 'review-provider');
+    }
   } finally { f.close(); }
 });
 

@@ -11,6 +11,8 @@ function rpcError(code: string, message: string): DesktopRpcResponse {
 }
 
 const publicMessages: Readonly<Record<string, string>> = {
+  MODEL_GROUPS_INVALID: '分组模型配置无效，请重新选择。',
+  MODEL_GROUP_UNAVAILABLE: '分组指定的模型尚未通过验证或配置已变化。请在模型设置中重新验证、选择其他模型或改为跟随默认。',
   STYLE_INPUT_INVALID: '风格资料格式不正确，请检查名称、样文数量和长度后重试。',
   STYLE_SAMPLE_LIMIT_EXCEEDED: STYLE_SAMPLE_LIMIT_MESSAGE,
   STYLE_SOURCE_URL_INVALID: '请输入 HTTP 或 HTTPS 链接，每行一个；请移除非链接文字后重试。',

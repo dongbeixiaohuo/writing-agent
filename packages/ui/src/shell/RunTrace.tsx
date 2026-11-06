@@ -14,7 +14,7 @@ const STATUS: Readonly<Record<DiagnosticOperationStatus, string>> = {
 const ACTOR: Readonly<Record<string, string>> = {
   director: '写作导演', intake: '需求澄清助手', author: '作者交流', research: '资料研究', outline: '选题策划',
   draft: '内容主笔', review_editor: '编辑审校', review_publish: '发布审校', review_reader: '读者审校',
-  central_revision: '修订主笔', language_review: '语言终审', title: '标题策划', fact_check: '事实核查',
+  central_revision: '修订主笔', language_review: '语言终审', title: '标题策划', fact_check: '事实核查', fact_extract: '提取待查事实',
 }
 
 const TOOL_LABEL: Readonly<Record<string, string>> = {

@@ -5,6 +5,8 @@ import { PROVIDER_PRESETS, PREFERRED_PROVIDER_PRESETS, PROVIDER_PROTOCOL_LABELS,
 import { commandErrorMessage, normalizeProviderSetup, providerConnectionMessage, setupErrorMessage } from './onboarding.ts'
 import { PlusIcon, TrashIcon } from './Icons.tsx'
 import css from './WritingAgentShell.module.css'
+import { ModelGroupSettings } from './ModelGroupSettings.tsx'
+import type { GroupModelSelection, ModelGroupSelections } from '../../../client-bridge/src/model-groups.ts'
 
 const emptyForm = (): DesktopProviderSetupInput => ({ profileId: null, displayName: '',
   kind: 'openai_compatible', providerId: 'custom', baseURL: '', model: '', tools: 'supported',
@@ -107,13 +109,13 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
       editRequest.current++; setCheckingKey(false)
       const saved = await host.configureProvider(input)
       setStatus(saved); setChoices({}); setEditing(false); setForm(emptyForm())
-      setNotice(`已使用 ${saved.model}。已有项目的下一次消息、确认或重试都会使用此模型。正在验证连接…`)
+      setNotice(`默认模型已设为 ${saved.model}，跟随默认的分组将使用它。正在验证连接…`)
       const result = await host.testProviderConnection()
-      setStatus(current => current ? { ...current, connectionTest: result } : current)
+      setStatus(await host.providerStatus('summary'))
       if (result.ok) {
-        setNotice(`已保存并验证通过：${saved.model} 已可用。已有项目下次继续时生效。`)
+        setNotice(`已保存并验证通过：${saved.model} 已可用，可在上方分组中选择。`)
       } else {
-        setNotice(`已保存 ${saved.model}，但连接验证未通过。已有项目下次继续时会使用此模型。`)
+        setNotice(`已保存默认模型 ${saved.model}，但连接验证未通过，暂不能单独分配给分组。`)
         setError(`配置已保存。${providerConnectionMessage(result).text}`)
       }
     } catch (reason) { setError(explain(reason, '模型配置未保存')) }
@@ -126,19 +128,30 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
     try {
       const saved = await host.selectProvider(profile.profileId, choices[profile.profileId] ?? profile.model)
       setStatus(saved)
-      setNotice(`已切换为 ${saved.model}。已有项目的下一次消息、确认或重试都会使用此模型。`)
+      setNotice(`默认模型已切换为 ${saved.model}。跟随默认的分组将在下次启动或继续时使用它；单独选择的分组保持不变。`)
     } catch (reason) { setError(explain(reason, '模型切换失败')) }
     finally { setBusy(false) }
   }
 
-  const testConnection = async () => {
+  const testConnection = async (target: GroupModelSelection) => {
     if (!host) return
     setBusy(true); setError(null)
     try {
-      const result = await host.testProviderConnection()
-      setStatus(current => current ? { ...current, connectionTest: result } : current)
+      const result = await host.testProviderConnection(target)
+      setStatus(await host.providerStatus('summary'))
+      if (result.ok) setNotice(`${target.model} 已验证通过，可在分组中选择。默认模型未改变。`)
       if (!result.ok) setError(providerConnectionMessage(result).text)
     } catch (reason) { setError(explain(reason, '连接验证失败')) }
+    finally { setBusy(false) }
+  }
+
+  const saveGroups = async (groups: ModelGroupSelections) => {
+    if (!host?.configureModelGroups) return
+    setBusy(true); setError(null); setNotice(null)
+    try {
+      setStatus(await host.configureModelGroups(groups))
+      setNotice('分组模型已保存，下次启动或继续任务时生效。')
+    } catch (reason) { setError(explain(reason, '分组模型未保存，请重新选择已验证的模型。')) }
     finally { setBusy(false) }
   }
 
@@ -168,22 +181,23 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
     </div>
     <p className={css.providerLead}>{editing
       ? (existing ? `编辑 ${existing.displayName} 的连接、Key 和模型。` : '添加供应商和 API 密钥，选择本次写作使用的模型。')
-      : '添加供应商和 API 密钥，选择本次写作使用的模型。'}</p>
-    <p className={css.settingHint}>模型选择对所有项目生效，包括已有对话；从下一次请求开始使用。</p>
+      : '先配置默认模型，再按需要为三组角色选择不同模型。'}</p>
+    <p className={css.settingHint}>配置对所有项目生效，已有对话下次继续时使用；正在执行任务时请先停止再调整。</p>
     {!host ? <p className={css.aboutCopy}>请在桌面版中添加和切换模型。</p> : <>
       {loading && <p role="status">正在读取模型配置…</p>}
+      {status && host.configureModelGroups && <ModelGroupSettings status={status} busy={busy || loading} onChange={groups => void saveGroups(groups)} />}
       <div className={css.providerList} aria-label="已保存的模型供应商">
         {profiles.map(profile => {
           const identity = PROVIDER_PRESETS.find(item => item.id === identifyProviderPreset(profile))
           const active = status?.activeProfileId === profile.profileId
           const model = choices[profile.profileId] ?? profile.model
           const selected = active && model === status?.model
-          const verified = Boolean(profile.verifiedAt) || (active && status?.connectionTest?.ok === true)
+          const verified = !(profile.credentialChecked === true && !profile.configured) && Boolean(profile.verifiedModels?.[model] ?? (model === profile.model ? profile.verifiedAt : null))
           return <section className={css.providerCard} key={profile.profileId}>
             <div className={css.providerCardHeading}>
               <div className={css.providerIdentity}><strong>{profile.displayName}</strong>
                 <span className={clsx(css.providerDot, verified && css.providerDotReady)} aria-label={verified ? '连接已验证' : profile.credentialChecked === false ? '配置已保存，Key 尚未检查' : profile.configured ? '已保存 Key' : '需要填写 Key'} />
-                {active && <span className={css.providerCurrent}>当前使用</span>}
+                {active && <span className={css.providerCurrent}>默认供应商</span>}
               </div>
               <button type="button" className={css.secondaryAction} disabled={busy} onClick={() => openEditor(profile)} aria-label={`编辑 ${profile.displayName}`}>编辑</button>
             </div>
@@ -192,15 +206,15 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
               : '自定义连接 · 地区 / 套餐未确认'} · {PROVIDER_PROTOCOL_LABELS[profile.kind]}</p>
             {identity && ['shared', 'token', 'coding', 'agent', 'step', 'subscription'].includes(identity.offering.product) && <p className={css.settingHint}>套餐与扣费方式以 Key 的实际权益为准，未通过连接验证核实。</p>}
             <div className={css.providerModelChoice}>
-              <label className={css.formField}><span>使用模型</span><select aria-label={`${profile.displayName} 的模型`} value={model}
+              <label className={css.formField}><span>模型</span><select aria-label={`${profile.displayName} 的模型`} value={model}
                 onChange={event => setChoices(current => ({ ...current, [profile.profileId]: event.target.value }))} disabled={busy}>
                 {profile.models.map(id => <option value={id} key={id}>{id}</option>)}
               </select></label>
-              <button type="button" className={selected ? css.secondaryAction : css.primaryAction} disabled={busy || selected || (profile.credentialChecked !== false && !profile.configured)} onClick={() => void select(profile)}>{selected ? '正在使用' : '使用此模型'}</button>
-              {active && <button type="button" className={css.providerCustomize} disabled={busy} onClick={() => void testConnection()}>验证连接</button>}
+              <button type="button" className={selected ? css.secondaryAction : css.primaryAction} disabled={busy || selected || (profile.credentialChecked !== false && !profile.configured)} onClick={() => void select(profile)}>{selected ? '当前默认' : '设为默认'}</button>
+              <button type="button" className={css.providerCustomize} disabled={busy} onClick={() => void testConnection({ profileId: profile.profileId, model })}>验证连接</button>
             </div>
-            <p className={css.settingHint}>{profile.credentialChecked === false ? '配置已保存 · 编辑或使用时检查 Key' : !profile.configured ? '未找到可用 Key，请点击编辑补充。' : active && status?.connectionTest
-              ? providerConnectionMessage(status.connectionTest).text : 'Key 已保存 · 连接尚未验证'}{profile.credentialPersistence === 'session' ? ' · Key 仅本次启动可用' : ''}</p>
+            <p className={css.settingHint}>{verified ? `${model} · 已验证通过` : profile.credentialChecked === false ? `${model} · 尚未验证，可点击验证连接` : !profile.configured ? '未找到可用 Key，请点击编辑补充。' : active && model === status?.model && status?.connectionTest
+              ? providerConnectionMessage(status.connectionTest).text : 'Key 已保存 · 此模型连接尚未验证'}{profile.credentialPersistence === 'session' ? ' · Key 仅本次启动可用' : ''}</p>
           </section>
         })}
       </div>

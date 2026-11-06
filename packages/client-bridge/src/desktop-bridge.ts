@@ -52,6 +52,7 @@ export type DesktopRpcMethod =
   | "testProviderConnection"
   | "configureProvider"
   | "selectProvider"
+  | "configureModelGroups"
   | "listProviderModels"
   | "previewDiagnostics"
   | "exportDiagnostics"
@@ -100,6 +101,7 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "testProviderConnection",
   "configureProvider",
   "selectProvider",
+  "configureModelGroups",
   "listProviderModels",
   "previewDiagnostics",
   "exportDiagnostics",
@@ -205,6 +207,7 @@ export interface DesktopProviderSetupInput {
 }
 
 export interface DesktopSavedProviderView {
+  readonly verifiedModels?: Readonly<Record<string, string>>;
   readonly credentialChecked?: boolean;
   readonly profileId: string;
   readonly displayName: string;
@@ -222,6 +225,7 @@ export interface DesktopSavedProviderView {
 }
 
 export interface DesktopProviderStatusView {
+  readonly modelGroups?: import('./model-groups.js').ModelGroupSelections;
   readonly credentialChecked?: boolean;
   readonly activeProfileId?: string | null;
   readonly profiles?: readonly DesktopSavedProviderView[];
@@ -336,8 +340,9 @@ export interface DesktopHostConfiguration {
   providerDetails(profileId: string): Promise<DesktopSavedProviderView>;
   configureProvider(input: DesktopProviderSetupInput): Promise<DesktopProviderStatusView>;
   selectProvider(profileId: string, model: string): Promise<DesktopProviderStatusView>;
+  configureModelGroups?(groups: import('./model-groups.js').ModelGroupSelections): Promise<DesktopProviderStatusView>;
   listProviderModels(input: DesktopProviderSetupInput): Promise<readonly string[]>;
-  testProviderConnection(): Promise<DesktopProviderConnectionResultView>;
+  testProviderConnection(target?: import('./model-groups.js').GroupModelSelection): Promise<DesktopProviderConnectionResultView>;
   previewDiagnostics(): Promise<DesktopDiagnosticPreviewView>;
   exportDiagnostics(confirmationHash: string): Promise<DesktopDiagnosticExportResultView>;
   selectLegacyMigrationSource(

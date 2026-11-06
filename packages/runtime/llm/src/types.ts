@@ -191,6 +191,11 @@ export interface ModelProvider {
   stream(request: ModelRequest): AsyncIterable<ModelEvent>;
 }
 
+/** Host-owned role routing. Returning undefined preserves the caller's default binding. */
+export type ModelRouteResolver = (
+  actor: string | undefined,
+) => { readonly provider: ModelProvider; readonly model: string } | undefined;
+
 export async function collectModelEvents(
   stream: AsyncIterable<ModelEvent>,
 ): Promise<ModelEvent[]> {

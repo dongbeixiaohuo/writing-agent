@@ -17,7 +17,7 @@ import {
   type AgentRunInput,
   type RunBudget,
 } from "../../runtime/agent/src/index.js";
-import type { ModelParameters, ModelProvider } from "../../runtime/llm/src/index.js";
+import type { ModelParameters, ModelProvider, ModelRouteResolver } from "../../runtime/llm/src/index.js";
 import { checkpointIntentReceipt, createConversationIntent, pendingCheckpoint } from './conversation-intent.js';
 import type {
   RecoveredRun,
@@ -135,6 +135,7 @@ export interface WritingApplicationServiceOptions {
   readonly factSearchConfiguration?: () => FactSearchConfiguration;
   readonly storage: WritingApplicationStorage;
   readonly provider?: ModelProvider;
+  readonly resolveModel?: ModelRouteResolver;
   readonly idFactory?: () => string;
 }
 
@@ -553,6 +554,7 @@ export class WritingApplicationService {
   }
   readonly #storage: WritingApplicationStorage;
   readonly #provider: ModelProvider | null;
+  readonly #resolveModel: ModelRouteResolver | undefined;
   readonly #factSearchConfiguration: () => FactSearchConfiguration;
   readonly #authorWebFetcher: AuthorWebFetcher | undefined;
   readonly #idFactory: (() => string) | undefined;
@@ -644,6 +646,7 @@ export class WritingApplicationService {
   constructor(options: WritingApplicationServiceOptions) {
     this.#storage = options.storage;
     this.#provider = options.provider ?? null;
+    this.#resolveModel = options.resolveModel;
     this.#factSearchConfiguration = options.factSearchConfiguration ?? (() => ({ parallelEnabled: false, tavilyEnabled: false }));
     this.#authorWebFetcher = options.authorWebFetcher;
     this.#idFactory = options.idFactory;
@@ -727,7 +730,7 @@ export class WritingApplicationService {
         "A model provider is required for conversational intake",
       );
     }
-    if (provider.capabilitiesFor(input.model).tools !== "supported") {
+    if (!this.#resolveModel && provider.capabilitiesFor(input.model).tools !== "supported") {
       throw new ApplicationServiceError(
         "MODEL_TOOLS_UNVERIFIED",
         "Selected model has not been verified for tool calling",
@@ -835,6 +838,7 @@ export class WritingApplicationService {
     let savingReply = false;
     const runtime = new AgentRuntime({
       provider,
+      ...(this.#resolveModel === undefined ? {} : { resolveModel: this.#resolveModel }),
       onModelStream: this.#streamPreview.observe,
       tools,
       sessions: this.#storage,
@@ -952,13 +956,14 @@ export class WritingApplicationService {
     if (!this.#storage.inspectProject(projectId)) throw new ApplicationServiceError('PROJECT_NOT_FOUND', 'Project does not exist');
     if (!input.userInstruction.trim() || input.userInstruction.length > 20_000) throw new ApplicationServiceError('AUTHOR_MESSAGE_INVALID', 'Message must contain 1 to 20000 characters');
     if (!this.#provider) throw new ApplicationServiceError('MODEL_PROVIDER_REQUIRED', 'A model provider is required');
-    if (this.#provider.capabilitiesFor(input.model).tools !== 'supported') throw new ApplicationServiceError('MODEL_TOOLS_UNVERIFIED', 'Model tools are required');
+    if (!this.#resolveModel && this.#provider.capabilitiesFor(input.model).tools !== 'supported') throw new ApplicationServiceError('MODEL_TOOLS_UNVERIFIED', 'Model tools are required');
     if (input.sessionId !== undefined) {
       if (!input.sessionId.trim()) throw new ApplicationServiceError('INVALID_SESSION_ID', 'Session ID must not be empty');
       const session = this.#storage.getSession(input.sessionId);
       if (session && session.projectId !== projectId) throw new ApplicationServiceError('SESSION_SCOPE_INVALID', 'Session belongs to another project');
     }
     const handle = startAuthorConversation({ storage: this.#storage, provider: this.#provider, input,
+      ...(this.#resolveModel === undefined ? {} : { resolveModel: this.#resolveModel }),
       ...(this.#authorWebFetcher ? { authorWebFetcher: this.#authorWebFetcher } : {}),
       onModelStream: this.#streamPreview.observe,
       ...(this.#idFactory ? { idFactory: this.#idFactory } : {}) });
@@ -1264,7 +1269,7 @@ export class WritingApplicationService {
       );
     }
     const capabilities = provider.capabilitiesFor(input.model);
-    if (capabilities.tools !== "supported") {
+    if (!this.#resolveModel && capabilities.tools !== "supported") {
       throw new ApplicationServiceError(
         "MODEL_TOOLS_UNVERIFIED",
         "Selected model has not been verified for tool calling",
@@ -1427,6 +1432,7 @@ export class WritingApplicationService {
     ]);
     const runtime = new AgentRuntime({
       provider,
+      ...(this.#resolveModel === undefined ? {} : { resolveModel: this.#resolveModel }),
       tools,
       sessions: this.#storage,
       requestPolicy: collaboration.requestPolicy,
@@ -1691,7 +1697,7 @@ export class WritingApplicationService {
       );
     }
     const capabilities = provider.capabilitiesFor(input.model);
-    if (capabilities.tools !== "supported") {
+    if (!this.#resolveModel && capabilities.tools !== "supported") {
       throw new ApplicationServiceError(
         "MODEL_TOOLS_UNVERIFIED",
         "Selected model has not been verified for tool calling",
@@ -1719,12 +1725,13 @@ export class WritingApplicationService {
     ]);
     const runtime = new AgentRuntime({
       provider,
+      ...(this.#resolveModel === undefined ? {} : { resolveModel: this.#resolveModel }),
       tools,
       sessions: this.#storage,
       onModelStream: this.#streamPreview.observe,
       requestPolicy: runId => {
         const binding = factBinding(), prepared = factPreparation(this.#storage, runId, binding);
-        return { actor: 'fact_check', scopeId: `fact-check-only:${body.id}:${evidence.id}:${binding?.titleVersionId}:${prepared?.preparationId ?? 'extract'}`,
+        return { actor: prepared ? 'fact_check' : 'fact_extract', scopeId: `fact-check-only:${body.id}:${evidence.id}:${binding?.titleVersionId}:${prepared?.preparationId ?? 'extract'}`,
           systemPrompt: factReviewPrompt(prepared ? 'verify' : 'extract', factSearch.enabled()),
           progressKey: JSON.stringify({ ...factInput, factPhase: prepared ? 'verify' : 'extract',
             artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),

@@ -1,5 +1,6 @@
 /** Public workflow command failures shared by desktop transport and conversation UI. */
 export const WORKFLOW_COMMAND_MESSAGES: Readonly<Record<string, string>> = {
+  MODEL_GROUP_UNAVAILABLE: '分组指定的模型未通过验证或配置已变化。请到模型设置重新验证、选择其他模型或改为跟随默认，再继续；稿件和已完成阶段仍保留。',
   FACT_SEARCH_DECISION_REQUIRED: '请在当前搜索提示选择重试、追加搜索或不再搜索；旧提示已失效时，请使用最新提示。',
   SEARCH_DISABLED: '当前已关闭全部搜索服务。请在设置中重新开启搜索，或选择“不再搜索，继续核查”；已取得结果仍保留。',
   CHECKPOINT_DECISION_REQUIRED: '请先回复当前共创节点；只有经过本轮对话确认后才会继续。',

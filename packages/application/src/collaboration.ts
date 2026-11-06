@@ -384,7 +384,7 @@ export function createWritingCollaboration(options: {
       ...(outputPreview ? { outputPreview } : {}),
       ...(outputPreview ? { textOutputTool: { name: 'submit_writing_stage', arguments: { stage: outputPreview.stage }, contentArgument: 'content' },
         modelTools: [...materialReadTools, ...artifactReadTools, ...discussionReadTools, 'assess_writing_readiness'], toolChoice: 'auto' as const } : {}),
-      actor,
+      actor: isFactCheck && !prepared ? 'fact_extract' : actor,
       // Receipt IDs and remaining budget are observation metadata, not task
       // progress. Keep the exact business inputs/versions and deduplicated
       // material slices so new tasks or real reads still reset the guard.
