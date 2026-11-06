@@ -173,6 +173,82 @@ describe("AgentRuntime", () => {
     }
   });
 
+  it("routes each request by policy actor and records the resolved provider and model", async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "writing-agent-role-routing-"));
+    const storage = openWorkspaceStorage({ workspacePath });
+    assert.equal(storage.createProject({ operationId: "create-project", projectId: "project-1", name: "角色路由", mode: "quick", actor: runtimeActor }).ok, true);
+    class RoutedProvider extends ModelProviderBase {
+      readonly requests: ModelRequest[] = [];
+      constructor() { super("routed-provider", "1", { protocol: "mock", streaming: "supported", tools: "supported", usage: "unknown" }); }
+      protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+        this.requests.push(structuredClone(request));
+        yield { type: "text_delta", delta: "已完成。" };
+        yield { type: "completed", finishReason: "stop" };
+      }
+    }
+    const fallback = new TwoStopProvider();
+    const routed = new RoutedProvider();
+    const runtime = new AgentRuntime({
+      provider: fallback,
+      resolveModel: actor => actor === "outline" ? { provider: routed, model: "routed-model" } : undefined,
+      tools: ToolRegistry.create([]), sessions: storage,
+      requestPolicy: () => ({ scopeId: "outline", actor: "outline", systemPrompt: "outline", userMessage: "go", allowedTools: [] }),
+      finalOutputCommitter: { commit: async () => ({ artifactVersionId: "artifact-1" }) },
+    });
+    try {
+      const result = await runtime.run({ projectId: "project-1", purpose: "draft", model: "fallback-model", systemPrompt: "fallback", userMessage: "go", parameters: {}, grantedPermissions: [], expectedBodyVersionId: null });
+      assert.equal(result.ok, true);
+      assert.equal(routed.requests[0]?.model, "routed-model");
+      assert.equal(fallback.requests.length, 0);
+      const snapshot = storage.listRequestSnapshots(result.runId)[0]!;
+      assert.equal(snapshot.request.model, "routed-model");
+      assert.equal(snapshot.provider, "routed-provider");
+    } finally { storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+  });
+
+  it("keeps resolver failure code and message instead of dispatching the fallback", async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "writing-agent-route-error-"));
+    const storage = openWorkspaceStorage({ workspacePath });
+    assert.equal(storage.createProject({ operationId: "create-project", projectId: "project-1", name: "路由失败", mode: "quick", actor: runtimeActor }).ok, true);
+    const fallback = new TwoStopProvider();
+    const runtime = new AgentRuntime({
+      provider: fallback,
+      resolveModel: () => { const error = new Error("规划组模型不可用"); Object.assign(error, { code: "MODEL_GROUP_UNAVAILABLE" }); throw error; },
+      tools: ToolRegistry.create([]), sessions: storage,
+    });
+    try {
+      const result = await runtime.run({ projectId: "project-1", purpose: "draft", model: "fallback-model", systemPrompt: "fallback", userMessage: "go", parameters: {}, grantedPermissions: [], expectedBodyVersionId: null });
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.equal(result.error.code, "MODEL_GROUP_UNAVAILABLE");
+        assert.equal(result.error.message, "规划组模型不可用");
+      }
+      assert.equal(fallback.requests.length, 0);
+    } finally { storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+  });
+
+  it("checks tool capability on the resolved binding rather than the fallback model", async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "writing-agent-route-capability-"));
+    const storage = openWorkspaceStorage({ workspacePath });
+    assert.equal(storage.createProject({ operationId: "create-project", projectId: "project-1", name: "路由能力", mode: "quick", actor: runtimeActor }).ok, true);
+    class UnsupportedProvider extends ModelProviderBase {
+      requests = 0;
+      constructor() { super("unsupported-route", "1", { protocol: "mock", streaming: "supported", tools: "unsupported", usage: "unknown" }); }
+      protected async *providerStream(): AsyncIterable<ProviderStreamEvent> { this.requests += 1; yield { type: "completed", finishReason: "stop" }; }
+    }
+    const fallback = new TwoStopProvider(); const routed = new UnsupportedProvider();
+    const runtime = new AgentRuntime({
+      provider: fallback, resolveModel: () => ({ provider: routed, model: "no-tools" }), sessions: storage,
+      tools: ToolRegistry.create([{ name: "save", version: "1.0.0", description: "save", effect: "local_idempotent", permissions: [], inputSchema: { type: "object" }, execute: () => ({}) }]),
+    });
+    try {
+      const result = await runtime.run({ projectId: "project-1", purpose: "draft", model: "fallback-model", systemPrompt: "fallback", userMessage: "go", parameters: {}, grantedPermissions: [], expectedBodyVersionId: null });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, "MODEL_TOOLS_UNVERIFIED");
+      assert.equal(routed.requests, 0);
+    } finally { storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
+  });
+
   it("pauses after a completed local tool when the application requests a user checkpoint", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "writing-agent-user-checkpoint-"));
     const storage = openWorkspaceStorage({ workspacePath });

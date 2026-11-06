@@ -5,6 +5,7 @@ import { STYLE_SAMPLE_LIMIT, ensureStyleSampleCapacity, normalizeStyleUrl, Style
 import { evaluateStylePreview } from '../../../packages/writing-core/src/style-package.js';
 import { readStyleBatch, readStyleDocument, readStyleUrl } from './style-source.js';
 import { styleProviderConfig } from './style-provider.js';
+import { DEFAULT_MODEL_GROUPS, type GroupModelSelection, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
 import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -57,6 +58,10 @@ import {
   loadDesktopProviderProfile,
   loadDesktopProviderCatalog,
   markDesktopProviderVerified,
+  verifiedProviderModels,
+  groupProviderConfig,
+  parseModelGroups,
+  saveModelGroups,
   selectDesktopProvider,
   previousProvider,
   providerConfigForInput,
@@ -196,7 +201,7 @@ export class DesktopApplicationHost {
         else if (typeof selected === 'string') result = { sample: await readStyleDocument(selected) };
         else result = { items: await readStyleBatch(paths.map(path => ({ label: basename(path), read: () => readStyleDocument(path) })), controller.signal, 'STYLE_DOCUMENT_READ_FAILED') };
       } else {
-        const config = this.#providerConfig;
+        const config = groupProviderConfig(loadDesktopProviderCatalog(this.#providerProfilePath), this.#providerConfig, 'style_modeler');
         if (!config) throw new Error('MODEL_CONFIGURATION_REQUIRED');
         const provider = this.#providerFactory(styleProviderConfig(config), this.#credentials);
         const options = { provider, model: config.model, signal: controller.signal };
@@ -221,7 +226,7 @@ export class DesktopApplicationHost {
       kind: profile.config.kind, providerId: profile.config.providerId, baseURL: profile.config.baseURL,
       model: profile.config.model, tools: profile.config.tools, usage: profile.config.usage,
       configured: metadata.configured, credentialPersistence: metadata.persistence, credentialChecked: true,
-      verifiedAt: profile.verifiedAt ?? null };
+      verifiedModels: verifiedProviderModels(profile), verifiedAt: verifiedProviderModels(profile)[profile.config.model] ?? null };
   }
 
   async providerStatus(mode?: 'summary' | 'active'): Promise<DesktopProviderStatus> {
@@ -236,11 +241,11 @@ export class DesktopApplicationHost {
         kind: profile.config.kind, providerId: profile.config.providerId, baseURL: profile.config.baseURL,
         model: profile.config.model, tools: profile.config.tools, usage: profile.config.usage,
         configured: metadata?.configured ?? false, credentialPersistence: metadata?.persistence ?? 'missing' as const,
-        credentialChecked: checked, verifiedAt: profile.verifiedAt ?? null };
+        credentialChecked: checked, verifiedModels: verifiedProviderModels(profile), verifiedAt: verifiedProviderModels(profile)[profile.config.model] ?? null };
     }));
     if (config === null) {
       return {
-        activeProfileId: catalog.activeProfileId, profiles,
+        activeProfileId: catalog.activeProfileId, profiles, modelGroups: catalog.modelGroups ?? DEFAULT_MODEL_GROUPS,
         configured: false,
         kind: null,
         providerId: null,
@@ -256,7 +261,7 @@ export class DesktopApplicationHost {
     }
     const credential = metadataById.get(catalog.activeProfileId ?? '');
     return {
-      activeProfileId: catalog.activeProfileId, profiles,
+      activeProfileId: catalog.activeProfileId, profiles, modelGroups: catalog.modelGroups ?? DEFAULT_MODEL_GROUPS,
       configured: credential?.configured ?? false,
       credentialChecked: credential !== undefined,
       kind: config.kind,
@@ -284,6 +289,22 @@ export class DesktopApplicationHost {
       const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(entry => entry.id === profileId);
       if (!profile || !(await this.#credentials.inspect(profile.config.credentialRef)).configured) throw new Error('PROVIDER_API_KEY_REQUIRED');
       return selectDesktopProvider(this.#providerProfilePath, profileId, model, prepare);
+    });
+  }
+
+  async configureModelGroups(groups: ModelGroupSelections): Promise<DesktopProviderStatus> {
+    groups = parseModelGroups(groups);
+    return this.#changeProvider(async prepare => {
+      const config = this.#providerConfig;
+      if (!config) throw new Error('MODEL_PROVIDER_REQUIRED');
+      const catalog = loadDesktopProviderCatalog(this.#providerProfilePath);
+      for (const selection of Object.values(groups)) {
+        if (!selection) continue;
+        const profile = catalog.profiles.find(p => p.id === selection.profileId);
+        if (!profile || !(await this.#credentials.inspect(profile.config.credentialRef)).configured) throw new Error('PROVIDER_API_KEY_REQUIRED');
+      }
+      saveModelGroups(this.#providerProfilePath, groups, () => prepare(config));
+      return config;
     });
   }
 
@@ -351,13 +372,16 @@ export class DesktopApplicationHost {
     } catch { throw new Error('PROVIDER_CATALOG_UNAVAILABLE'); }
   }
 
-  async testProviderConnection(): Promise<DesktopProviderConnectionResultView> {
+  async testProviderConnection(target?: GroupModelSelection): Promise<DesktopProviderConnectionResultView> {
     if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
     if (this.#providerChanging) throw new Error('PROVIDER_SETTINGS_BUSY');
     if (this.#hasExecutingRun()) throw new Error("ACTIVE_RUNS_PRESENT");
-    const config = this.#providerConfig;
+    const catalog = loadDesktopProviderCatalog(this.#providerProfilePath);
+    const profile = catalog.profiles.find(p => p.id === (target?.profileId ?? catalog.activeProfileId));
+    if (target && (!profile || !profile.models.includes(target.model))) throw new Error('PROVIDER_PROFILE_NOT_FOUND');
+    const config = target && profile ? { ...profile.config, model: target.model } : this.#providerConfig;
     if (config === null) throw new Error("MODEL_PROVIDER_REQUIRED");
-    const testedProfileId = loadDesktopProviderCatalog(this.#providerProfilePath).activeProfileId;
+    const testedProfileId = profile?.id ?? null;
     const provider = this.#providerFactory(config, this.#credentials);
     const result = await probeModelConnection(provider, {
       requestId: `desktop-connection-${randomUUID()}`,
@@ -384,11 +408,9 @@ export class DesktopApplicationHost {
           retryable: result.error.retryable,
           ...(result.error.providerDetail === undefined ? {} : { providerDetail: result.error.providerDetail }),
         };
-    if (config === this.#providerConfig) this.#connectionTest = connectionTest;
-    if (connectionTest.ok && config === this.#providerConfig) {
-      if (testedProfileId !== null) {
-        try { markDesktopProviderVerified(this.#providerProfilePath, testedProfileId, config); } catch { /* keep the test result even if the stamp fails */ }
-      }
+    if (testedProfileId === loadDesktopProviderCatalog(this.#providerProfilePath).activeProfileId && JSON.stringify(config) === JSON.stringify(this.#providerConfig)) this.#connectionTest = connectionTest;
+    if (testedProfileId !== null) {
+      markDesktopProviderVerified(this.#providerProfilePath, testedProfileId, config, connectionTest.ok && connectionTest.tools === 'supported');
     }
     return connectionTest;
   }
@@ -681,11 +703,24 @@ export class DesktopApplicationHost {
     const provider = config === null
       ? undefined
       : this.#providerFactory(config, this.#credentials);
+    const providers = new Map<string, ModelProvider>();
+    if (config && provider) providers.set(JSON.stringify(config), provider);
+    const resolveModel = (actor?: string) => {
+      // Settings changes are rejected while a run executes. A continued task
+      // reads the saved mapping; retries within a request retain its binding.
+      const selected = groupProviderConfig(loadDesktopProviderCatalog(this.#providerProfilePath), config, actor);
+      if (!selected) return undefined;
+      const key = JSON.stringify(selected);
+      let selectedProvider = providers.get(key);
+      if (!selectedProvider) { selectedProvider = this.#providerFactory(selected, this.#credentials); providers.set(key, selectedProvider); }
+      return { provider: selectedProvider, model: selected.model };
+    };
     const service = new WritingApplicationService({
       storage: this.#storage,
       factSearchConfiguration: () => this.#searchSettings.configuration(),
       ...(this.#authorWebFetcher ? { authorWebFetcher: this.#authorWebFetcher } : {}),
       ...(provider === undefined ? {} : { provider }),
+      resolveModel,
     });
     const bridge = createApplicationBridge({
       service,

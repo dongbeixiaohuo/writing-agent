@@ -22,6 +22,10 @@ export interface RunFailureContext {
  */
 export function explainRunFailure(context: RunFailureContext): RunFailureExplanation {
   const { errorCode: code, technicalName, transportPhase } = context
+  if (code === 'MODEL_GROUP_UNAVAILABLE') return {
+    title: '分组指定的模型暂不可用', detail: '该组的模型尚未通过验证或配置已变化，本次没有自动换用其他模型。',
+    remediation: '在模型设置中重新验证对应模型、选择其他已验证模型或改为跟随默认，然后继续任务；已保存内容仍保留。',
+  }
   if (code === 'TOOL_NO_PROGRESS') return {
     title:'重复读取没有推进当前任务', detail:'模型连续读取相同业务输入和结果，没有提交新的成果；程序已暂停自动循环，避免继续消耗请求。',
     remediation:'已保存内容仍保留。查看最近工具记录后可重试当前步骤，无需重新提供材料。',

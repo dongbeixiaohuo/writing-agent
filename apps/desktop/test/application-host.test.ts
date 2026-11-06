@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { createServer } from "node:http";
+import { once } from "node:events";
 
 import {
   CredentialBroker,
@@ -646,6 +648,122 @@ test("desktop application host backs up the workspace and deletes only the exact
     assert.equal(host.bridge.getSnapshot().projects.some(project => project.id === second.projectId), true);
   } finally {
     host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test('HTTP gateway lists models and verifies tools through the saved desktop transport after reload', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-http-gateway-'));
+  const path = join(root, 'provider.json');
+  const credentials = new CredentialBroker({ environment: {} });
+  const requests: { path: string; key: string | undefined; model?: unknown }[] = [];
+  const server = createServer((request, response) => {
+    void (async () => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+      requests.push({ path: request.url!, key: request.headers.authorization, model: body.model });
+      if (request.url === '/v1/models') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ data: [{ id: 'group/writing' }, { id: 'provider/test' }] }));
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write(`data: ${JSON.stringify({ id: 'probe', choices: [{ index: 0, delta: { role: 'assistant',
+        tool_calls: [{ index: 0, id: 'probe-call', type: 'function', function: {
+          name: 'writing_agent_capability_probe', arguments: '{"value":"ok"}',
+        } }] }, finish_reason: null }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ id: 'probe', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`);
+      response.end('data: [DONE]\n\n');
+    })().catch(() => { response.statusCode = 500; response.end(); });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const baseURL = `http://127.0.0.1:${address.port}/v1`;
+  let host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path, credentials });
+  try {
+    const input = { kind: 'openai_compatible' as const, providerId: 'magpie', baseURL,
+      model: 'group/writing', tools: 'supported' as const, usage: 'unknown' as const, apiKey: 'magpie', persistence: 'session' as const };
+    const status = await host.configureProvider(input);
+    assert.deepEqual(await host.listProviderModels({ ...input, profileId: status.activeProfileId!, apiKey: '' }), ['group/writing', 'provider/test']);
+    host.close();
+    host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path, credentials });
+    const result = await host.testProviderConnection();
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests.map(r => r.path), ['/v1/models', '/v1/chat/completions']);
+    assert.ok(requests.every(r => r.key === 'Bearer magpie'));
+    assert.equal(requests[1]!.model, 'group/writing');
+    assert.equal(loadDesktopProviderProfile(path)!.allowInsecureHttp, true);
+  } finally {
+    host.close(); server.close(); server.closeAllConnections(); await once(server, 'close');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Magpie DeepSeek verification uses compatible wire parameters and revokes only the failed model', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-magpie-deepseek-'));
+  const path = join(root, 'provider.json');
+  const credentials = new CredentialBroker({ environment: {} });
+  const models = ['deepseek/deepseek-flash', 'bailian-token-plan/deepseek-v4.1-flash-1017'];
+  const bodies: Record<string, unknown>[] = [];
+  let truncate = false;
+  const server = createServer((request, response) => {
+    void (async () => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      bodies.push(body);
+      if (body.reasoning_effort !== 'none') {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'DeepSeek: Thinking mode does not support this tool_choice' } }));
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write(`data: ${JSON.stringify({ id: 'probe', choices: [{ index: 0, delta: { role: 'assistant',
+        tool_calls: [{ index: 0, id: 'probe-call', type: 'function', function: {
+          name: 'writing_agent_capability_probe', arguments: '{"value":"ok"}',
+        } }] }, finish_reason: null }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ id: 'probe', choices: [{ index: 0, delta: {}, finish_reason: truncate ? 'length' : 'tool_calls' }] })}\n\n`);
+      response.end('data: [DONE]\n\n');
+    })().catch(() => { response.destroy(); });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  let host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path, credentials });
+  try {
+    const saved = await host.configureProvider({ kind: 'openai_compatible', providerId: 'magpie',
+      baseURL: `http://127.0.0.1:${address.port}/v1`, model: models[0]!, models,
+      tools: 'supported', usage: 'unknown', apiKey: 'local-test-key', persistence: 'session' });
+    const profileId = saved.activeProfileId!;
+    host.close();
+    host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path, credentials });
+    for (const model of models) {
+      const result = await host.testProviderConnection({ profileId, model });
+      assert.equal(result.ok, true, JSON.stringify(result));
+    }
+    const good = (await host.providerStatus('summary')).profiles!.find(p => p.profileId === profileId)!;
+    assert.ok(models.every(model => good.verifiedModels?.[model]));
+    truncate = true;
+    const failed = await host.testProviderConnection({ profileId, model: models[1]! });
+    assert.equal(failed.ok, false, 'a parsed tool call followed by length is not verified');
+    const status = await host.providerStatus('summary');
+    const profile = status.profiles!.find(p => p.profileId === profileId)!;
+    assert.ok(profile.verifiedModels?.[models[0]!]);
+    assert.equal(profile.verifiedModels?.[models[1]!], undefined);
+    assert.equal(status.model, models[0], 'testing another model does not change the default');
+    assert.equal(bodies.length, 3, 'one request per click, no silent retries');
+    assert.ok(bodies.every(body => body.max_tokens === 2048 && body.tool_choice === 'required'));
+    host.close();
+    host = new DesktopApplicationHost({ workspacePath: root, providerProfilePath: path, credentials });
+    assert.equal((await host.providerStatus('summary')).profiles![0]!.verifiedModels?.[models[1]!], undefined);
+  } finally {
+    host.close(); server.close(); server.closeAllConnections(); await once(server, 'close');
     rmSync(root, { recursive: true, force: true });
   }
 });

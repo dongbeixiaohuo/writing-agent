@@ -9,6 +9,7 @@
 - [Windows 复制粘贴异常采集](testing/CLIPBOARD_DIAGNOSTICS.md)：手动采集占用进程与系统环境，不读取剪贴板内容。
 - [桌面版与原版 Skill 能力对照](DESKTOP_SKILL_COMPARISON.md)：选择适合自己的入口。
 - [桌面风格库](implementation/2026-10-30-style-library.md)：从样文提取、保存并选用风格；当前源码功能，发布与验证边界见文内。
+- [三组角色模型配置](implementation/2026-11-06-model-groups.md)：按策划、写作、审校选择已验证的模型，默认共用一个模型；当前源码功能。
 - 原版使用说明见 [Claude Code 指南](CLAUDE_CODE_GUIDE.md)。个人资料不纳入版本化产品入口。
 
 ## 产品与开发维护源

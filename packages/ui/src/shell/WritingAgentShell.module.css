@@ -3170,3 +3170,7 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
 .stageExecutionList small { display: block; color: var(--text-secondary, #6b7280); font-size: 12px; }
 .stageExecutionList p { margin: 6px 0; font-size: 13px; line-height: 1.7; }
 .stageExecutionList summary { cursor: pointer; font-size: 12px; color: var(--brand-color, #4e7bff); }
+
+.modelGroups { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border-color, #d8d3c8); border-radius: 12px; margin-bottom: 20px; }
+.modelGroupRow { display: grid; gap: 5px; }
+.modelGroupRow p { margin: 0; }

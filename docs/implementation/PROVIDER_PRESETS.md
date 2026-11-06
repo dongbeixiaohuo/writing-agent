@@ -1,5 +1,23 @@
 # 模型供应商预设
 
+## 2026-11-06：HTTP 模型端点与 Magpie
+
+- 桌面模型设置接受 HTTP 和 HTTPS，包括本机、局域网及自定义服务器地址。主进程根据用户填写的协议保存 HTTP 传输选项，使模型列表、连接验证、三组角色路由和重启后的调用保持一致；无需额外开关。仍拒绝非 HTTP(S) 地址。
+- 新增 `magpie` 预设：OpenAI Chat Completions，默认 `http://127.0.0.1:3425/v1`。分类为本地 / 自部署模型网关，不把它描述为模型原厂或订阅套餐。
+- 先在 Magpie 中配置上游模型并启动网关。本机 Key 填 `magpie`；共享地址使用 Magpie 创建的网关 Key。模型 ID 保留 `provider/model` 或 `group/分组名`，可通过“获取可用模型”读取目录。修改端口或地址可使用“自定义设置”。不代填真实凭据，不预选未验证模型。
+- 官方依据：[README](https://github.com/yetone/magpie#supported-agents)、[网关参考](https://github.com/yetone/magpie/blob/main/docs/reference.md)。接入使用现有兼容协议，未引入 Magpie SDK 或自动启动服务。
+- 回归覆盖：表单 HTTP(S) 校验、三种协议保存与恢复、Magpie 目录身份、受控本机 HTTP 服务的模型列表与工具调用连接验证。模拟服务通过不代表用户的 Magpie 上游账号已经验证。
+
+### Magpie 下 DeepSeek 的验证兼容
+
+- 对 `providerId=magpie` 且明确为 `供应商/deepseek-*` 的 Chat 请求，按每次请求的模型加入 `reasoning_effort: "none"`，由 Magpie 转换成上游的非思考模式。覆盖 `deepseek/deepseek-flash` 和 `bailian-token-plan/deepseek-v4.1-flash-1017`，验证与正式写作使用同一适配路径；不会把参数写入整个多模型供应商配置。显式 `extraBody` 思考配置优先，其他模型及无法识别上游的 `group/*` 别名不做猜测。
+- 原因：DeepSeek 默认思考模式与本应用的 `tool_choice: "required"` 不兼容。依据：[DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode/)、[Magpie Chat 入口中 reasoning_effort / ThinkOff 的处理](https://github.com/yetone/magpie/blob/main/internal/gateway/chat.go)。这不是 Key 或账户余额错误。
+- 连接探测输出上限由 64 提高至 2048 token，为计入输出额度的思考保留余量。一次点击仍仅发送一次受控请求，必须收到完整流和有效探测工具调用；截断、仅返回文字和上游报错均不标记可用。
+- 重新验证立即清除旧成功提示；结果按供应商与模型分别显示。失败不再被摘要模式的“Key 尚未检查”遮盖，失败模型的可用标记仍由 Host 撤销并持久化，不影响同供应商的其他已验证模型。
+- 验证边界：受控 HTTP 服务覆盖请求参数、重启恢复、两种 DeepSeek 路由、截断失败后的标记撤销；真实 Magpie 版本和上游账户仍需用户连接复测。
+
+以下为既有版本变更记录，其目录数量和选择策略仅适用于相应版本。
+
 更新：2026-09-26，桌面候选 rc.41。保留 rc.14 的 15 个预设；rc.37 增加供应商列表和旧项目切换；rc.38 分离列表/凭据检查，增加 OpenAI Responses；rc.39 导入 cc-switch Codex 元数据；rc.40 修正套餐身份和共用地址错误归并；rc.41 修复搜索反馈和输入卡顿，精简同服务双协议。
 
 ## 实现范围
@@ -119,6 +137,6 @@ API 参数与官网资料交叉核对于 2026-09-21，不代表全部真实账�
 6. 浏览器仍不得直接调用模型。静态地址位于 `packages/client-bridge/src/provider-presets.ts`，Host 统一验证与发起请求，CSP/IPC/HTTPS 边界不变。分发检查不再仅凭 `api.deepseek.com` 字符串误判上游运行时混入，同时新增 renderer 不得使用 fetch/XMLHttpRequest/WebSocket 的源码检查。
 7. 自定义页面可编辑协议、地址、模型和显示名称；高级设置保留配置标识。相同规范化 Anthropic 端点已保存的 `authHeader`、`anthropicVersion`、`defaultMaxOutputTokens` 由 Host 保留，但不在此页编辑。切换端点或协议不会继承这些参数。不会把旧 HTTP 放行选项自动继承到新配置。
 8. 桌面 `provider.json` 升级为 schemaVersion 3 目录，条目内仍为模型适配器原有 v2 配置。读取旧 v1/v2 文件不修改文件或 Key；首次保存才升级。新 Key 使用独立托管引用，不覆盖其他供应商。CLI 配置格式不变；升级后不保证旧客户端能读取新目录格式。
-9. 目录请求只发往用户填写的 HTTPS 地址，禁止重定向，15 秒超时、1 MiB 响应上限。目录失败不改当前配置，不要求用户必须联网拉目录。
+9. 目录请求只发往用户填写的 HTTP(S) 地址（2026-11-06 起支持 HTTP），禁止重定向，15 秒超时、1 MiB 响应上限。目录失败不改当前配置，不要求用户必须联网拉目录。
 
 代码：`packages/client-bridge/src/provider-presets.ts`、`packages/client-bridge/src/cc-switch-codex-presets.ts`、`packages/ui/src/shell/ProviderSettings.tsx`、`apps/desktop/src/provider-profile.ts`。维护源数据时同步固定 commit、来源哈希和覆盖测试；如供应商需要新协议或额外认证参数，不得仅加地址并宣称支持。本次不实现截图中的 Bedrock、插件、Agent 预设和配置文件编辑等独立功能。

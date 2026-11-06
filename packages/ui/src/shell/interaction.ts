@@ -10,7 +10,7 @@ export function conversationWorkingCopy(activity: BridgeSnapshot['liveActivity']
     director: '正在核对已有内容，安排下一步', intake: '正在梳理你的想法', author: '正在处理你的修改意见',
     research: '正在整理参考材料与写作依据', outline: '正在整理文章提纲', draft: '正在起草文章',
     review_editor: '正在检查文章结构与表达', review_publish: '正在检查发布注意事项', review_reader: '三个模拟读者正在独立阅读',
-    central_revision: '正在按审校意见修改文章', language_review: '正在润色文字', title: '正在构思标题', fact_check: '正在核对文章中的事实',
+    central_revision: '正在按审校意见修改文章', language_review: '正在润色文字', title: '正在构思标题', fact_check: '正在核对文章中的事实', fact_extract: '正在提取需要核对的事实',
   }
   const elapsedSeconds = activity ? Math.max(0, Math.floor((now - (activity.segmentStartedAt ?? activity.startedAt)) / 1000)) : 0
   if (activity?.activeTool) {

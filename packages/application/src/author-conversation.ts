@@ -2,7 +2,7 @@ import { AgentRuntime, FinalOutputContinuationRequiredError, type AgentRunHandle
 import { ToolRegistry, ToolExecutionFault, createBuiltinReadTools, type ToolDefinition, type ToolExecutionContext } from '../../runtime/tools/src/index.js';
 import type { JsonValue, MutationResult } from '../../writing-core/src/index.js';
 import type { WritingApplicationStorage, StartConversationTurnInput } from './index.js';
-import type { ModelProvider } from '../../runtime/llm/src/index.js';
+import type { ModelProvider, ModelRouteResolver } from '../../runtime/llm/src/index.js';
 import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
 import { addConversationMaterialToBrief } from './conversation-materials.js';
 import { createAuthorWebTool, authorizedAuthorWebUrls, AUTHOR_WEB_INSTRUCTIONS, type AuthorWebFetcher } from './author-web.js';
@@ -64,6 +64,7 @@ export function startAuthorConversation(options: {
   onModelStream?: import('../../runtime/agent/src/index.js').AgentRuntimeOptions['onModelStream'];
   storage: WritingApplicationStorage;
   provider: ModelProvider;
+  resolveModel?: ModelRouteResolver;
   input: StartConversationTurnInput;
   idFactory?: () => string;
 }): AgentRunHandle {
@@ -407,6 +408,7 @@ export function startAuthorConversation(options: {
     : body && factCheckAuthorized && !response ? 'request_author_fact_check'
     : fullWritingAuthorized && !response ? 'request_author_full_writing' : null;
   const runtime = new AgentRuntime({ provider, sessions: storage, tools: ToolRegistry.create(definitions),
+    ...(options.resolveModel === undefined ? {} : { resolveModel: options.resolveModel }),
     ...(options.onModelStream ? { onModelStream: options.onModelStream } : {}),
     ...(options.idFactory ? { idFactory: options.idFactory } : {}),
     requestPolicy: (runId) => {

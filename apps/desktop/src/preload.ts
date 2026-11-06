@@ -109,11 +109,16 @@ const api: DesktopHostApi = {
     if (!response.ok) throw new Error(response.error.code);
     return response.result as readonly string[];
   },
-  async testProviderConnection(): Promise<DesktopProviderConnectionResultView> {
+  async configureModelGroups(groups: import('../../../packages/client-bridge/src/model-groups.js').ModelGroupSelections): Promise<DesktopProviderStatusView> {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'configureModelGroups', args: [groups] });
+    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+    return response.result as DesktopProviderStatusView;
+  },
+  async testProviderConnection(target?: import('../../../packages/client-bridge/src/model-groups.js').GroupModelSelection): Promise<DesktopProviderConnectionResultView> {
     const response = await invoke({
       protocolVersion: UI_BRIDGE_PROTOCOL_VERSION,
       method: "testProviderConnection",
-      args: [],
+      args: [target],
     });
     if (!response.ok) throw new Error(response.error.code);
     return response.result as DesktopProviderConnectionResultView;

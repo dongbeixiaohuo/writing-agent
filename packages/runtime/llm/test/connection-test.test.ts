@@ -95,6 +95,35 @@ describe("model connection capability probe", () => {
     });
   });
 
+  it("allows reasoning headroom in one request and still requires a valid tool call", async () => {
+    const provider = new MockModelProvider(probeScenario);
+    const originalStream = provider.stream.bind(provider);
+    let calls = 0;
+    provider.stream = request => {
+      calls++;
+      assert.equal(request.parameters.maxOutputTokens, 2048);
+      assert.equal(request.parameters.toolChoice, "required");
+      return originalStream(request);
+    };
+    assert.equal((await probeModelConnection(provider, {
+      requestId: "bounded-probe", model: "mock-writer", testTools: true,
+    })).ok, true);
+    assert.equal(calls, 1);
+  });
+
+  it("does not mark a truncated or text-only response as tools verified", async () => {
+    for (const steps of [
+      [{ type: "error", error: { code: "MODEL_OUTPUT_TRUNCATED", message: "length", retryable: false } }],
+      [{ type: "text_delta", delta: "OK" }, { type: "completed", finishReason: "stop" }],
+    ] as const) {
+      const result = await probeModelConnection(new MockModelProvider({ ...probeScenario, steps: [...steps] }), {
+        requestId: "incomplete-probe", model: "mock-writer", testTools: true,
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.ok(["MODEL_OUTPUT_TRUNCATED", "MODEL_UNSUPPORTED"].includes(result.error.code));
+    }
+  });
+
   it("keeps provider error classification and identifies the failing stage", async () => {
     const scenario: MockScenario = {
       ...probeScenario,

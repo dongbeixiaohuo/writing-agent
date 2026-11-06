@@ -41,6 +41,17 @@ test('title planning has its own persisted activity duration', () => {
   assert.equal(stageActiveDurations([event('request.dispatch_attempted', 5), event('request.completed', 30)], 'r').get('title'), 25000)
 })
 
+test('fact extraction and verification both contribute to fact-check stage time', () => {
+  const event = (type: string, operationId: string, seconds: number, actor: string) => ({ type, operationId, runId: 'r',
+    occurredAt: new Date(seconds * 1000).toISOString(), payload: { actor } })
+  assert.equal(stageActiveDurations([
+    event('request.dispatch_attempted', 'extract', 0, 'fact_extract'),
+    event('request.completed', 'extract', 10, 'fact_extract'),
+    event('request.dispatch_attempted', 'verify', 10, 'fact_check'),
+    event('request.completed', 'verify', 30, 'fact_check'),
+  ], 'r').get('fact_check'), 30000)
+})
+
 test('three overlapping reader requests show wall time once, not the sum of three model durations', () => {
   const event = (type:string, id:string, seconds:number, actor:string) => ({type, operationId:id, runId:'r',
     occurredAt:new Date(seconds * 1000).toISOString(), payload:{actor}})

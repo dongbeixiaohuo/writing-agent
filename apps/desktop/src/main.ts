@@ -34,7 +34,7 @@ import { inspectWorkspaceBackupFile } from "../../../packages/storage/src/index.
 import type { DesktopApplicationHost } from "./application-host.js";
 import { describeDesktopStartupFailure, recordDesktopStartupFailure, registerDesktopProcessDiagnostics, startDesktopApplicationHost } from "./startup.js";
 import { NetworkAccessPolicy, SecureWebFetcher } from "../../../packages/runtime/tools/src/index.js";
-import { parseDesktopProviderProfileInput } from "./provider-profile.js";
+import { parseDesktopProviderProfileInput, parseModelGroups } from "./provider-profile.js";
 import { dispatchDesktopRpc, safeDesktopFailure } from "./rpc-host.js";
 import { resolveDesktopRunEnvironment } from "./run-environment.js";
 import {
@@ -226,7 +226,12 @@ async function handleRpc(
       return { ok: true, result: await currentHost.providerDetails(parsed.args[0]), snapshot: currentHost.bridge.getSnapshot() };
     }
     if (parsed.method === "testProviderConnection") {
-      return { ok: true, result: await currentHost.testProviderConnection(), snapshot: currentHost.bridge.getSnapshot() };
+      const target = parsed.args[0] === undefined ? undefined : parseModelGroups({ planning: parsed.args[0], writing: null, review: null }).planning ?? undefined;
+      return { ok: true, result: await currentHost.testProviderConnection(target), snapshot: currentHost.bridge.getSnapshot() };
+    }
+    if (parsed.method === 'configureModelGroups') {
+      const result = await currentHost.configureModelGroups(parseModelGroups(parsed.args[0]));
+      return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
     }
     if (parsed.method === "configureProvider") {
       const inputProfile: DesktopProviderProfileInput = parseDesktopProviderProfileInput(parsed.args[0]);

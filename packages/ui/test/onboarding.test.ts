@@ -56,7 +56,7 @@ test("a local style file keeps its source name and bounded UTF-8 content", async
   );
 });
 
-test("provider onboarding requires HTTPS and never invents a credential", () => {
+test("provider onboarding accepts HTTP and HTTPS and never invents a credential", () => {
   assert.deepEqual(normalizeProviderSetup({
     kind: "openai_compatible",
     providerId: " example ",
@@ -76,19 +76,22 @@ test("provider onboarding requires HTTPS and never invents a credential", () => 
     apiKey: "secret-not-real",
     persistence: "system",
   });
-  assert.throws(
-    () => normalizeProviderSetup({
+  for (const baseURL of ['http://api.example.test/v1', 'http://192.168.1.10:3425/v1', 'http://127.0.0.1:3425/v1']) {
+    assert.equal(normalizeProviderSetup({
       kind: "openai_compatible",
       providerId: "example",
-      baseURL: "http://api.example.test/v1",
+      baseURL,
       model: "model-1",
       tools: "supported",
       usage: "unknown",
       apiKey: "secret-not-real",
       persistence: "session",
-    }),
-    /PROVIDER_HTTPS_REQUIRED/u,
-  );
+    }).baseURL, baseURL);
+  }
+  for (const baseURL of ['ftp://api.example.test/v1', 'file:///tmp/test', 'not-a-url']) {
+    assert.throws(() => normalizeProviderSetup({ kind: 'openai_compatible', providerId: 'test',
+      baseURL, model: 'test', tools: 'supported', usage: 'unknown', apiKey: 'test', persistence: 'session' }), /PROVIDER_URL_INVALID/);
+  }
 });
 
 test("onboarding errors are translated into actionable Chinese copy", () => {

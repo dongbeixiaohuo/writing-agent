@@ -44,7 +44,7 @@ const ACTORS: Readonly<Record<string, string>> = {
   editor: '编辑审校', review_editor: '编辑审校', publisher: '发布审校', review_publish: '发布审校',
   reader: '模拟读者', review_reader: '模拟读者', language_reviewer: '语言终审', language_review: '语言终审',
   review_reader_a: '模拟读者 A · 匆忙路人', review_reader_b: '模拟读者 B · 目标读者', review_reader_c: '模拟读者 C · 懂行读者',
-  fact_checker: '事实核查', fact_check: '事实核查', title: '标题策划', opening: '开头策划',
+  fact_checker: '事实核查', fact_check: '事实核查', fact_extract: '提取待查事实', title: '标题策划', opening: '开头策划',
   topic_generator: '选题建议', topic_research: '选题研究', position: '立场分析', concretizer: '细节具象化',
   empathy: '共情审视', style_modeler: '风格分析', illustrator: '配图策划', memory: '偏好整理', retrospective: '写作复盘',
 };

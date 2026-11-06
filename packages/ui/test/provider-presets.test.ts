@@ -11,7 +11,7 @@ const existing: DesktopProviderSetupInput = {
   tools: 'supported', usage: 'reported', apiKey: 'test-only-secret', persistence: 'session',
 };
 
-test('mainstream provider catalog uses distinct HTTPS endpoints and contains no credentials', () => {
+test('provider catalog uses HTTP(S) endpoints and contains no credentials', () => {
   assert.ok(Array.isArray(presets.PROVIDER_PRESETS));
   const catalog = presets.PROVIDER_PRESETS;
   for (const id of ['deepseek', 'minimax-cn', 'minimax-global', 'qwen-cn', 'qwen-sg',
@@ -22,7 +22,7 @@ test('mainstream provider catalog uses distinct HTTPS endpoints and contains no 
   assert.equal(new Set(catalog.map(p => p.id)).size, catalog.length);
   for (const preset of catalog) {
     const url = new URL(preset.baseURL);
-    assert.equal(url.protocol, 'https:');
+    assert.equal(url.protocol, preset.id === 'magpie' ? 'http:' : 'https:');
     assert.equal(url.username + url.password + url.search + url.hash, '');
     assert.equal('apiKey' in preset, false);
     assert.ok(preset.note.length > 0);
@@ -116,7 +116,7 @@ test('search exposes protocols and Chinese names; third-party and plan entries s
   assert.ok(presets.filterProviderPresets('Responses').every(p => p.kind === 'openai_responses'));
   assert.equal(presets.filterProviderPresets('no-such-provider-123').length, 0);
   assert.equal(presets.filterProviderPresets('').length, presets.PREFERRED_PROVIDER_PRESETS.length);
-  assert.equal(presets.PROVIDER_PRESETS.length, 120);
+  assert.equal(presets.PROVIDER_PRESETS.length, 121);
   for (const p of presets.PROVIDER_PRESETS) {
     if (p.group === '第三方中转') assert.match(p.note, /内容和 API Key 会发送到此平台/);
     if (p.group === '套餐专用接口') assert.match(p.note, /确认套餐允许用于本写作应用/);
@@ -212,7 +212,7 @@ test('new choices prefer Responses only within the same region and account offer
   }
   // A provider's Anthropic Coding Plan does not replace its paid general API.
   for (const id of ['zhipu-anthropic', 'zai-anthropic', 'cc-tencent-token-plan', 'cc-qwencloud-coding', 'gemini', 'siliconflow-anthropic']) assert.ok(ids.has(id), id);
-  assert.equal(choices.length, 99);
+  assert.equal(choices.length, 100);
 });
 
 test('DeepSeek presets carry the reviewed thinking-disabled adaptation after real-account falsification', () => {
@@ -228,4 +228,23 @@ test('unified region wording and Chinese provider aliases are searchable', () =>
   assert.ok(presets.filterProviderPresets('深度求索').some(p => p.id === 'deepseek-anthropic'));
   assert.ok(presets.filterProviderPresets('通义 国际').some(p => p.id === 'qwen-sg-anthropic'));
   assert.ok(presets.filterProviderPresets('智谱 国际').some(p => p.id === 'zai-anthropic'));
+});
+
+
+test('Magpie offers its documented gateway and preserves full routed model IDs', () => {
+  const preset = presets.filterProviderPresets('Magpie')[0]!;
+  assert.equal(preset.id, 'magpie');
+  assert.equal(preset.offering.channel, 'local');
+  assert.equal(preset.offering.product, 'gateway');
+  assert.equal(preset.kind, 'openai_compatible');
+  assert.equal(preset.baseURL, 'http://127.0.0.1:3425/v1');
+  assert.match(preset.note, /API Key 填 magpie/);
+  const form = presets.applyProviderPreset(existing, preset.id);
+  assert.equal(form.apiKey, '');
+  assert.equal(form.model, '');
+  for (const model of ['deepseek/deepseek-v4-pro', 'group/writing']) {
+    const input = normalizeProviderSetup({ ...form, apiKey: 'magpie', model });
+    assert.equal(input.model, model);
+    assert.equal(presets.identifyProviderPreset(input), 'magpie');
+  }
 });

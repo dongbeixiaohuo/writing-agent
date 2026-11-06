@@ -130,7 +130,10 @@ export async function probeModelConnection(
     ...(options.testTools ? { tools: [probeTool] } : {}),
     parameters: {
       temperature: 0,
-      maxOutputTokens: 64,
+      // Some compatible models count private reasoning against this budget.
+      // 64 can end the stream before the tiny probe call is emitted. Keep a
+      // bounded single request, with headroom rather than automatic retries.
+      maxOutputTokens: 2048,
       ...(options.testTools ? { toolChoice: "required" as const } : {}),
     },
     ...(options.signal === undefined ? {} : { signal: options.signal }),

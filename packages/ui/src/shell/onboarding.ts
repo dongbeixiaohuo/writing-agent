@@ -44,7 +44,7 @@ const SETUP_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   PROJECT_STYLE_FILE_READ_FAILED: "风格文件读取失败，请确认文件可访问后重试。",
   PROVIDER_URL_REQUIRED: "请填写 API 地址。",
   PROVIDER_URL_INVALID: "API 地址格式不正确。",
-  PROVIDER_HTTPS_REQUIRED: "API 地址必须使用 HTTPS。",
+  PROVIDER_HTTPS_REQUIRED: "API 地址请使用 HTTP 或 HTTPS。",
   PROVIDER_ID_REQUIRED: "请填写配置名称。",
   PROVIDER_MODEL_REQUIRED: "请填写模型名称。",
   PROVIDER_API_KEY_REQUIRED: "请填写 API Key。",
@@ -76,6 +76,8 @@ const COMMAND_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   PROVIDER_API_KEY_REQUIRED: '请填写此供应商的 API Key；同一地址的已有配置可以留空沿用。',
   PROVIDER_PROFILE_NOT_FOUND: '这项模型配置已变化，请重新打开模型设置。',
   PROVIDER_SETTINGS_BUSY: '正在保存模型配置，请稍后重试。',
+  MODEL_GROUPS_INVALID: '分组模型配置无效，请重新选择。',
+  MODEL_GROUP_UNAVAILABLE: '分组指定的模型尚未通过验证或配置已变化，请重新验证、选择其他模型或改为跟随默认。',
   PROVIDER_CATALOG_UNAVAILABLE: '暂时无法获取模型目录，可以直接填写服务商提供的模型 ID。',
   INTAKE_PROPOSAL_CONFLICT: "写作方向已发生变化，请先看最新建议再确认。",
   UNKNOWN_OUTCOME_REQUIRES_CONFIRMATION: "上次模型请求的结果未知，请先选择“确认重试并继续”，系统不会自行重复请求。",
@@ -92,7 +94,7 @@ const COMMAND_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   DESKTOP_COMMAND_FAILED: "本次操作未能完成，原因尚未确认。请重试；若仍失败，请反馈操作位置和时间。",
   DESKTOP_PROVIDER_INPUT_INVALID: "模型配置格式无效，请检查填写内容。",
   DESKTOP_PROVIDER_PROFILE_INVALID: "已保存的模型配置无法读取，请重新保存。",
-  INSECURE_PROVIDER_URL_REJECTED: "API 地址必须使用 HTTPS。",
+  INSECURE_PROVIDER_URL_REJECTED: "API 地址请使用 HTTP 或 HTTPS。",
   MODEL_PROVIDER_REQUIRED: "尚未配置可用模型，请先在模型设置中完成配置。",
   MODEL_TOOLS_UNVERIFIED: "当前模型尚未确认支持工具调用，请在模型设置中检查配置。",
   PROJECT_NOT_FOUND: "当前项目不可用，请重新选择或创建项目。",
@@ -238,7 +240,7 @@ export function normalizeProviderSetup(
   } catch {
     throw new Error("PROVIDER_URL_INVALID");
   }
-  if (parsed.protocol !== "https:") throw new Error("PROVIDER_HTTPS_REQUIRED");
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("PROVIDER_URL_INVALID");
   return {
     kind: form.kind,
     providerId: required(form.providerId, "PROVIDER_ID_REQUIRED"),

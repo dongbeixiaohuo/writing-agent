@@ -501,11 +501,12 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
     .flatMap(profile => profile.models.map(model => ({ profile, model })))
 
   return <div className={css.modelSwitchRoot} ref={rootRef}>
-    <button type="button" aria-label={`切换模型，当前 ${currentLabel}`} aria-expanded={open} aria-haspopup="menu"
+    <button type="button" aria-label={`切换默认模型，当前 ${currentLabel}`} aria-expanded={open} aria-haspopup="menu"
       onClick={() => void toggle()}
       className={clsx(css.connectionPill, css.connectionAction, offline && css.connectionOffline, running && css.connectionRunning)}>
-      {currentLabel}⌄</button>
-    {open && <div className={css.modelSwitchMenu} role="menu" aria-label="可切换的模型">
+      默认 · {currentLabel}⌄</button>
+    {open && <div className={css.modelSwitchMenu} role="menu" aria-label="可切换的默认模型">
+      <p className={css.modelSwitchHint}>切换默认模型只影响“跟随默认”的分组。单独配置的分组保持不变，可在模型设置中调整。</p>
       {loading && <p className={css.modelSwitchHint} role="status">正在读取已配置的模型…</p>}
       {busy && <p className={css.modelSwitchHint} role="status">正在切换模型，请稍候…</p>}
       {!loading && error === null && choices.length === 0 && <p className={css.modelSwitchHint}>没有已保存 Key 的模型可切换，请先在模型设置中完成配置。</p>}
@@ -514,7 +515,7 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
         return <button key={`${profile.profileId}:${model}`} type="button" role="menuitemradio" aria-checked={active}
           className={css.modelSwitchItem} disabled={busy || active} onClick={() => void choose(profile.profileId, model)}>
           <span className={css.modelSwitchItemMain}>{model}<small>{profile.displayName}</small></span>
-          {active && <span className={css.modelSwitchCurrent}>当前使用</span>}
+          {active && <span className={css.modelSwitchCurrent}>当前默认</span>}
         </button>
       })}
       {error !== null && <p className={css.modelSwitchError} role="alert">{error}</p>}

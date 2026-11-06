@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import type { DesktopHostConfiguration, DesktopProviderSetupInput, DesktopProviderStatusView, DesktopSavedProviderView } from '../../../client-bridge/src/desktop-bridge.ts'
+import type { DesktopHostConfiguration, DesktopProviderConnectionResultView, DesktopProviderSetupInput, DesktopProviderStatusView, DesktopSavedProviderView } from '../../../client-bridge/src/desktop-bridge.ts'
 import { PROVIDER_PRESETS, PREFERRED_PROVIDER_PRESETS, PROVIDER_PROTOCOL_LABELS, PROVIDER_CHANNELS, providerRegionLabel, providerProductLabel, applyProviderPreset, identifyProviderPreset, RESPONSES_PREFERRED_OVER_CHAT, type ProviderPreset } from '../../../client-bridge/src/provider-presets.ts'
 import { commandErrorMessage, normalizeProviderSetup, providerConnectionMessage, setupErrorMessage } from './onboarding.ts'
 import { PlusIcon, TrashIcon } from './Icons.tsx'
 import css from './WritingAgentShell.module.css'
+import { ModelGroupSettings } from './ModelGroupSettings.tsx'
+import type { GroupModelSelection, ModelGroupSelections } from '../../../client-bridge/src/model-groups.ts'
 
 const emptyForm = (): DesktopProviderSetupInput => ({ profileId: null, displayName: '',
   kind: 'openai_compatible', providerId: 'custom', baseURL: '', model: '', tools: 'supported',
   usage: 'reported', apiKey: '', persistence: 'system' })
+
+const connectionKey = (profileId: string, model: string) => JSON.stringify([profileId, model])
 
 // Static catalog grouping for the provider dropdown; never depends on state.
 const presetGroups: [string, ProviderPreset[]][] = []
@@ -32,6 +36,7 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
   const [choices, setChoices] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [connectionResults, setConnectionResults] = useState<Record<string, DesktopProviderConnectionResultView>>({})
   const [checkingKey, setCheckingKey] = useState(false)
   const [changePreset, setChangePreset] = useState(false)
   const editRequest = useRef(0)
@@ -106,17 +111,17 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
       setBusy(true)
       editRequest.current++; setCheckingKey(false)
       const saved = await host.configureProvider(input)
-      setStatus(saved); setChoices({}); setEditing(false); setForm(emptyForm())
-      setNotice(`已使用 ${saved.model}。已有项目的下一次消息、确认或重试都会使用此模型。正在验证连接…`)
+      setStatus(saved); setChoices({}); setConnectionResults({}); setEditing(false); setForm(emptyForm())
+      setNotice(`默认模型已设为 ${saved.model}，跟随默认的分组将使用它。正在验证连接…`)
       const result = await host.testProviderConnection()
-      setStatus(current => current ? { ...current, connectionTest: result } : current)
+      setStatus(await host.providerStatus('summary'))
       if (result.ok) {
-        setNotice(`已保存并验证通过：${saved.model} 已可用。已有项目下次继续时生效。`)
+        setNotice(`已保存并验证通过：${saved.model} 已可用，可在上方分组中选择。`)
       } else {
-        setNotice(`已保存 ${saved.model}，但连接验证未通过。已有项目下次继续时会使用此模型。`)
+        setNotice(`已保存默认模型 ${saved.model}，但连接验证未通过，暂不能单独分配给分组。`)
         setError(`配置已保存。${providerConnectionMessage(result).text}`)
       }
-    } catch (reason) { setError(explain(reason, '模型配置未保存')) }
+    } catch (reason) { setNotice(null); setError(explain(reason, '模型配置保存或连接验证未完成')) }
     finally { setBusy(false) }
   }
 
@@ -126,25 +131,37 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
     try {
       const saved = await host.selectProvider(profile.profileId, choices[profile.profileId] ?? profile.model)
       setStatus(saved)
-      setNotice(`已切换为 ${saved.model}。已有项目的下一次消息、确认或重试都会使用此模型。`)
+      setNotice(`默认模型已切换为 ${saved.model}。跟随默认的分组将在下次启动或继续时使用它；单独选择的分组保持不变。`)
     } catch (reason) { setError(explain(reason, '模型切换失败')) }
     finally { setBusy(false) }
   }
 
-  const testConnection = async () => {
+  const testConnection = async (target: GroupModelSelection) => {
     if (!host) return
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); setNotice(null)
     try {
-      const result = await host.testProviderConnection()
-      setStatus(current => current ? { ...current, connectionTest: result } : current)
+      const result = await host.testProviderConnection(target)
+      setConnectionResults(current => ({ ...current, [connectionKey(target.profileId, target.model)]: result }))
+      setStatus(await host.providerStatus('summary'))
+      if (result.ok) setNotice(`${target.model} 已验证通过，可在分组中选择。默认模型未改变。`)
       if (!result.ok) setError(providerConnectionMessage(result).text)
     } catch (reason) { setError(explain(reason, '连接验证失败')) }
     finally { setBusy(false) }
   }
 
+  const saveGroups = async (groups: ModelGroupSelections) => {
+    if (!host?.configureModelGroups) return
+    setBusy(true); setError(null); setNotice(null)
+    try {
+      setStatus(await host.configureModelGroups(groups))
+      setNotice('分组模型已保存，下次启动或继续任务时生效。')
+    } catch (reason) { setError(explain(reason, '分组模型未保存，请重新选择已验证的模型。')) }
+    finally { setBusy(false) }
+  }
+
   const loadModels = async () => {
     if (!host) return
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); setNotice(null)
     try {
       const items = await host.listProviderModels({ ...form, model: models[selectedModel]?.trim() || 'catalog-probe' })
       setCatalog(items)
@@ -168,22 +185,25 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
     </div>
     <p className={css.providerLead}>{editing
       ? (existing ? `编辑 ${existing.displayName} 的连接、Key 和模型。` : '添加供应商和 API 密钥，选择本次写作使用的模型。')
-      : '添加供应商和 API 密钥，选择本次写作使用的模型。'}</p>
-    <p className={css.settingHint}>模型选择对所有项目生效，包括已有对话；从下一次请求开始使用。</p>
+      : '先配置默认模型，再按需要为三组角色选择不同模型。'}</p>
+    <p className={css.settingHint}>配置对所有项目生效，已有对话下次继续时使用；正在执行任务时请先停止再调整。</p>
     {!host ? <p className={css.aboutCopy}>请在桌面版中添加和切换模型。</p> : <>
       {loading && <p role="status">正在读取模型配置…</p>}
+      {status && host.configureModelGroups && <ModelGroupSettings status={status} busy={busy || loading} onChange={groups => void saveGroups(groups)} />}
       <div className={css.providerList} aria-label="已保存的模型供应商">
         {profiles.map(profile => {
           const identity = PROVIDER_PRESETS.find(item => item.id === identifyProviderPreset(profile))
           const active = status?.activeProfileId === profile.profileId
           const model = choices[profile.profileId] ?? profile.model
           const selected = active && model === status?.model
-          const verified = Boolean(profile.verifiedAt) || (active && status?.connectionTest?.ok === true)
+          const connectionResult = connectionResults[connectionKey(profile.profileId, model)] ?? (selected ? status?.connectionTest : null)
+          const failedVerification = connectionResult?.ok === false
+          const verified = !failedVerification && !(profile.credentialChecked === true && !profile.configured) && Boolean(profile.verifiedModels?.[model] ?? (model === profile.model ? profile.verifiedAt : null))
           return <section className={css.providerCard} key={profile.profileId}>
             <div className={css.providerCardHeading}>
               <div className={css.providerIdentity}><strong>{profile.displayName}</strong>
-                <span className={clsx(css.providerDot, verified && css.providerDotReady)} aria-label={verified ? '连接已验证' : profile.credentialChecked === false ? '配置已保存，Key 尚未检查' : profile.configured ? '已保存 Key' : '需要填写 Key'} />
-                {active && <span className={css.providerCurrent}>当前使用</span>}
+                <span className={clsx(css.providerDot, verified && css.providerDotReady)} aria-label={failedVerification ? '连接验证未通过' : verified ? '连接已验证' : profile.credentialChecked === false ? '配置已保存，Key 尚未检查' : profile.configured ? '已保存 Key' : '需要填写 Key'} />
+                {active && <span className={css.providerCurrent}>默认供应商</span>}
               </div>
               <button type="button" className={css.secondaryAction} disabled={busy} onClick={() => openEditor(profile)} aria-label={`编辑 ${profile.displayName}`}>编辑</button>
             </div>
@@ -192,15 +212,14 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
               : '自定义连接 · 地区 / 套餐未确认'} · {PROVIDER_PROTOCOL_LABELS[profile.kind]}</p>
             {identity && ['shared', 'token', 'coding', 'agent', 'step', 'subscription'].includes(identity.offering.product) && <p className={css.settingHint}>套餐与扣费方式以 Key 的实际权益为准，未通过连接验证核实。</p>}
             <div className={css.providerModelChoice}>
-              <label className={css.formField}><span>使用模型</span><select aria-label={`${profile.displayName} 的模型`} value={model}
-                onChange={event => setChoices(current => ({ ...current, [profile.profileId]: event.target.value }))} disabled={busy}>
+              <label className={css.formField}><span>模型</span><select aria-label={`${profile.displayName} 的模型`} value={model}
+                onChange={event => { setChoices(current => ({ ...current, [profile.profileId]: event.target.value })); setNotice(null); setError(null) }} disabled={busy}>
                 {profile.models.map(id => <option value={id} key={id}>{id}</option>)}
               </select></label>
-              <button type="button" className={selected ? css.secondaryAction : css.primaryAction} disabled={busy || selected || (profile.credentialChecked !== false && !profile.configured)} onClick={() => void select(profile)}>{selected ? '正在使用' : '使用此模型'}</button>
-              {active && <button type="button" className={css.providerCustomize} disabled={busy} onClick={() => void testConnection()}>验证连接</button>}
+              <button type="button" className={selected ? css.secondaryAction : css.primaryAction} disabled={busy || selected || (profile.credentialChecked !== false && !profile.configured)} onClick={() => void select(profile)}>{selected ? '当前默认' : '设为默认'}</button>
+              <button type="button" className={css.providerCustomize} disabled={busy} onClick={() => void testConnection({ profileId: profile.profileId, model })}>验证连接</button>
             </div>
-            <p className={css.settingHint}>{profile.credentialChecked === false ? '配置已保存 · 编辑或使用时检查 Key' : !profile.configured ? '未找到可用 Key，请点击编辑补充。' : active && status?.connectionTest
-              ? providerConnectionMessage(status.connectionTest).text : 'Key 已保存 · 连接尚未验证'}{profile.credentialPersistence === 'session' ? ' · Key 仅本次启动可用' : ''}</p>
+            <p className={css.settingHint}>{failedVerification ? `${model} · ${providerConnectionMessage(connectionResult).text}` : verified ? `${model} · 已验证通过` : profile.credentialChecked === false ? `${model} · 尚未验证，可点击验证连接` : !profile.configured ? '未找到可用 Key，请点击编辑补充。' : 'Key 已保存 · 此模型连接尚未验证'}{profile.credentialPersistence === 'session' ? ' · Key 仅本次启动可用' : ''}</p>
           </section>
         })}
       </div>
@@ -248,13 +267,13 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
           </details></>}
           <label className={css.formField}><span>显示名称</span><input aria-label="供应商显示名称" value={form.displayName ?? ''} placeholder="例如：我的 MiniMax" onChange={event => update({ displayName: event.target.value })} /></label>
           {mode === 'custom' && <div className={css.providerTransport}>
-            <label className={css.formField}><span>API 地址</span><input aria-label="API 地址" value={form.baseURL} placeholder="填写服务商提供的 HTTPS 基础地址" onChange={event => update({ baseURL: event.target.value, apiKey: '' })} /></label>
+            <label className={css.formField}><span>API 地址</span><input aria-label="API 地址" value={form.baseURL} placeholder="填写 HTTP 或 HTTPS 基础地址" onChange={event => update({ baseURL: event.target.value, apiKey: '' })} /></label>
             <label className={css.formField}><span>API 协议</span><select aria-label="API 协议" value={form.kind} onChange={event => update({ kind: event.target.value as DesktopProviderSetupInput['kind'], apiKey: '' })}>
               <option value="openai_compatible">OpenAI Chat Completions</option><option value="openai_responses">OpenAI Responses</option><option value="anthropic_compatible">Anthropic Messages</option>
             </select></label>
           </div>}
           <label className={css.formField}><span>API Key</span><input aria-label="API Key" type="password" autoComplete="new-password" value={form.apiKey} onChange={event => update({ apiKey: event.target.value })}
-            placeholder={canReuseKey ? '已保存，留空可继续使用；输入新 Key 可替换' : '输入此供应商的 API Key'} />
+            placeholder={canReuseKey ? '已保存，留空可继续使用；输入新 Key 可替换' : matchesPreset && preset?.id === 'magpie' ? '本机填写 magpie；共享网关填写网关 Key' : '输入此供应商的 API Key'} />
             <small className={css.settingHint}>{canReuseKey ? '修改模型名称不需要重新填写 Key。' : 'Key 优先保存在 Windows 凭据管理器，不会显示在配置文件中。'}</small></label>
           {checkingKey && <p className={css.settingHint} role="status">正在检查此供应商已保存的 Key，其他设置可以先编辑…</p>}
           <details className={css.advancedSettings}>
