@@ -1,10 +1,20 @@
 # Writing Agent 桌面发布门禁
 
-更新：2026-11-01。当前公开桌面版 **1.0.0-rc.93**，为 **Pre-release，不是稳定版**。沿用维护者已授权的未签名候选发布；不修改 Skill latest，不删除历史 Release。
+更新：2026-11-07。当前公开桌面版 **1.0.0-rc.96**，为 **Pre-release，不是稳定版**。沿用维护者已授权的未签名候选发布；不修改 Skill latest，不删除历史 Release。
 
-当前下载：**[rc.93](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.93)**。构建源码 `eedcf922a88626a043e3cb01e4f9f134f0ae0046`，执行与附件校验见 [RC93 发布记录](../launch/RC93_RELEASE_EXECUTION.md)。
+当前下载：**[rc.96](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)**。构建源码 `12ac1ac48d1223bef9680223abfd4ed6479bfa11`，执行与附件校验见 [RC96 发布记录](../launch/RC96_RELEASE_EXECUTION.md)。
 
-## RC93 本次发布检查（2026-11-01）
+## RC96 本次发布检查（2026-11-07）
+
+- [x] PR #32 五项必需检查后正常合并；派生供应商文件来源哈希更新后校验通过，未跳过检查。
+- [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/42262638445)全部通过，包含 Runtime、UI、Bridge、Desktop、搜索、Python、文档/镜像、生产依赖高危门禁。
+- [x] 全新安装、启动、卸载及 RC93 标签重建版 → RC96 升级、合成数据保留通过；两次启动 ready、协议 24、exitCode=0。
+- [x] 六个附件大小/digest 与 CI 一致；公开 EXE 无登录完整下载后大小和 SHA-256 一致。
+- [x] Pre-release 与固定标签已发布，Skill `v0.11.0` latest 保持不变；公开 EXE 放在 `output/desktop` 根目录。
+
+两次 smoke 收尾均有桥接 handler 已移除的 stderr，保留原始证据；生产依赖仍有两项低危报告。Magpie/DeepSeek 新增回归使用受控服务，真实上游耗时、写作质量、正常 GPU 和完整人工旅程未验收。以下为有日期的历史基线。
+
+## RC93 历史发布基线（2026-11-01）
 
 - [x] PR #30 五项必需检查后正常合并；发布前构建/夹具和依赖审计问题修复后完整重验。
 - [x] 最终合并 SHA 的[干净候选构建](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/41267767830)全部通过，包含 Runtime、UI、Desktop、搜索、Python、文档/镜像、生产依赖高危门禁。
@@ -90,7 +100,7 @@ rc.57 成品从 OneDrive 路径启动曾出现 GPU 崩溃，同字节复制到�
 
 - 原定 12 例 × 三组真实生成与人工盲评。
 - 原定 5 位独立用户上手实验，记录失败及真实分母。
-- 模型/协议兼容实测矩阵；99 个接入预设不等于 99 家服务已验收。
+- 模型/协议兼容实测矩阵；100 个接入预设不等于 100 家服务已验收。
 - 完整原生桌面旅程与已知严重问题收敛；单独批准稳定版版本号和 latest 策略。
 
 ## 资产和回退
