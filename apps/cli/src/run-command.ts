@@ -121,7 +121,7 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
       return;
     }
     if (collaboration?.actor === "director") {
-      if (collaboration.finished) {
+      if (collaboration.finished || collaboration.nextStage === null && request.parameters.toolChoice === 'none') {
         yield { type: "text_delta", delta: "完整写作工作流和事实门禁已通过。" };
         yield { type: "completed", finishReason: "stop" }; return;
       }

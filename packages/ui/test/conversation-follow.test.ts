@@ -71,29 +71,29 @@ test('working clock reports the whole execution segment, not just the latest req
 
 test('private stages explain the work and upcoming author-facing result', () => {
   const activity = { runId: 'r', requestId: 'q', actor: 'research', phase: 'receiving' as const, startedAt: 1, lastActivityAt: 1000 };
-  assert.match(interaction.conversationWorkingCopy(activity, 2000).detail, /核对材料.*提纲/);
-  assert.match(interaction.conversationWorkingCopy({ ...activity, actor: 'director' }, 2000).detail, /检查.*足够/);
+  assert.match(interaction.conversationWorkingCopy(activity, 2000).detail, /事实、案例和观点.*写作依据/);
+  assert.match(interaction.conversationWorkingCopy({ ...activity, actor: 'director' }, 2000).detail, /已完成的内容.*后续工作/);
 });
 
-test('record tab distinguishes stable task count from live request count', () => {
+test('record tab indicates ongoing work without exposing request counters', () => {
   assert.equal(interaction.runRecordsTabLabel(7, null), '运行记录');
   const activity = { runId: 'r', requestId: 'q', actor: 'director', phase: 'waiting' as const, startedAt: 1, lastActivityAt: null, requestOrdinal: 3 };
-  assert.equal(interaction.runRecordsTabLabel(7, 'r', activity), '运行记录（本轮 3 次请求）');
-  assert.equal(interaction.runRecordsTabLabel(7, 'r', { ...activity, requestOrdinal: 4 }), '运行记录（本轮 4 次请求）');
-  assert.equal(interaction.runRecordsTabLabel(7, 'other', activity), '运行记录（执行中）');
+  assert.equal(interaction.runRecordsTabLabel(7, 'r', activity), '运行记录（进行中）');
+  assert.equal(interaction.runRecordsTabLabel(7, 'r', { ...activity, requestOrdinal: 4 }), '运行记录（进行中）');
+  assert.equal(interaction.runRecordsTabLabel(7, 'other', activity), '运行记录（进行中）');
 });
 
 test('waiting copy distinguishes no response, private progress, and a stalled stream without invented progress', () => {
   const progress = { runId: 'r', requestId: 'q', actor: 'director', phase: 'waiting' as const, startedAt: 1000, lastActivityAt: null };
   const waiting = interaction.conversationWorkingCopy(progress, 46000);
-  assert.match(waiting.title, /核对/);
-  assert.match(waiting.detail, /等待模型回复/);
+  assert.match(waiting.title, /写作导演 Agent/);
+  assert.match(waiting.detail, /没有新回复.*继续等待.*停止/);
   assert.equal(waiting.elapsedSeconds, 45);
   const receiving = interaction.conversationWorkingCopy({ ...progress, phase: 'receiving', lastActivityAt: 45000 }, 46000);
-  assert.match(receiving.detail, /已收到模型数据/);
+  assert.match(receiving.detail, /后续工作/);
   assert.doesNotMatch(receiving.detail, /思考|百分|%/);
   const stalled = interaction.conversationWorkingCopy({ ...progress, phase: 'receiving', lastActivityAt: 10000 }, 46000);
-  assert.match(stalled.detail, /36 秒未收到新内容/);
+  assert.match(stalled.detail, /没有新回复/);
   assert.match(interaction.conversationWorkingCopy({ ...progress, actor: 'outline' }, 2000).title, /提纲/);
 });
 
@@ -132,18 +132,31 @@ test('a growing live reply follows its new text without scrolling into the contr
 test('process copy distinguishes provider processing from an actual external search', () => {
   const base = { runId:'r', requestId:'q', actor:'fact_check', phase:'receiving' as const, startedAt:1000, lastActivityAt:65000, receivedEvents:20 };
   const reasoning = interaction.conversationWorkingCopy({ ...base, lastEventKind:'reasoning' }, 66000);
-  assert.match(reasoning.detail, /模型服务.*处理.*尚未.*可展示/);
+  assert.match(reasoning.detail, /正文、标题和参考来源/);
   const search = interaction.conversationWorkingCopy({ ...base, activeTool:{name:'search_fact_sources', startedAt:60000} }, 66000);
-  assert.match(search.title, /搜索/);
-  assert.match(search.detail, /6 秒/);
+  assert.match(search.title, /事实核查 Agent.*寻找可靠来源/);
+  assert.match(search.detail, /查找依据/);
   assert.doesNotMatch(search.detail, /正在等待模型回复/);
 });
 
 test('reasoning activity reports a wait without exposing or inventing private reasoning', () => {
   const activity = { runId:'r', requestId:'q', actor:'draft', phase:'receiving' as const, startedAt:1000, lastActivityAt:65000, receivedEvents:3, lastEventKind:'reasoning' as const };
   const copy = interaction.conversationWorkingCopy(activity, 66000);
-  assert.match(copy.detail, /模型服务.*处理/);
-  assert.match(copy.detail, /不会展示或推测私有推理/);
-  assert.match(copy.detail, /可展示答复.*流式显示/);
+  assert.match(copy.detail, /提纲和选定的风格/);
+  assert.doesNotMatch(copy.detail, /私有推理|数据活动|工具参数|流式|请求/);
+  assert.match(copy.detail, /新内容会逐步显示/);
   assert.doesNotMatch(copy.detail, /逐步显示.*素材/);
+});
+
+test('all writing roles keep the same task description across transport events', () => {
+  for (const actor of ['intake', 'author', 'director', 'research', 'outline', 'draft', 'review_editor', 'review_publish', 'review_reader', 'central_revision', 'language_review', 'title', 'fact_check', 'fact_extract', 'unknown']) {
+    const base = { runId: 'r', requestId: 'q', actor, phase: 'waiting' as const, startedAt: 1000, lastActivityAt: null };
+    const waiting = interaction.conversationWorkingCopy(base, 2000);
+    assert.match(waiting.title, /Agent 正在/);
+    for (const lastEventKind of ['reasoning', 'tool_arguments', 'content'] as const) {
+      const receiving = interaction.conversationWorkingCopy({ ...base, phase: 'receiving', lastActivityAt: 1500, lastEventKind, receivedEvents: 999 }, 2000);
+      assert.deepEqual(receiving, waiting, 'transport metadata must not invent a new task or appear as progress');
+      assert.doesNotMatch(JSON.stringify(receiving), /推理|流式|数据活动|999|工具参数|百分|%/);
+    }
+  }
 });

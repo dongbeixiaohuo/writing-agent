@@ -176,7 +176,7 @@ for (const mode of ['text', 'tool'] as const) for (const outcome of ['cancel', '
   } finally { release(); bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
 });
 
-test('shows the actual intake rejection cause at a historical protection stop instead of a generic writing failure', async () => {
+test('preserves the intake rejection cause in diagnostics and explains how to continue at a historical stop', async () => {
   const workspacePath = mkdtempSync(join(tmpdir(), 'wa-chat-rejection-'));
   const storage = openWorkspaceStorage({ workspacePath });
   const service = new WritingApplicationService({ storage });
@@ -192,10 +192,10 @@ test('shows the actual intake rejection cause at a historical protection stop in
   try {
     await bridge.selectSession('project', 'session');
     const items = bridge.getSnapshot().timelineBySession.session;
-    assert.ok(items.some(item => item.kind === 'tool' && item.label === '整理本轮回复'));
-    const stop = items.find(item => item.kind === 'tool' && item.label === '已触发运行保护');
+    assert.ok(items.some(item => item.kind === 'tool' && item.label === '整理本轮回复' && /原话.*不一致/u.test(item.detail)));
+    const stop = items.find(item => item.kind === 'tool' && item.label === '写作暂时暂停');
     assert.ok(stop?.kind === 'tool');
-    assert.match(stop.detail, /原话.*不一致/u);
+    assert.match(stop.detail, /没有保存成功.*可以重试/u);
     assert.doesNotMatch(JSON.stringify(items), /使用写作工具|写作工具执行失败|private data/u);
     assert.equal(storage.getRun('run')!.status, 'budget_exhausted');
   } finally { bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
@@ -215,14 +215,13 @@ for (const savedReply of [false, true]) test(`historical intake protection expla
   try {
     await bridge.selectSession('project', 'session');
     const items = bridge.getSnapshot().timelineBySession.session;
-    const stop = items.find(item => item.kind === 'tool' && item.label === '已触发运行保护');
+    const stop = items.find(item => item.kind === 'tool' && item.label === '写作暂时暂停');
     assert.ok(stop?.kind === 'tool');
-    assert.match(stop.detail, /不是.*账户额度/u);
-    assert.doesNotMatch(JSON.stringify(items), /预算已用完|缩小任务/u);
+    assert.doesNotMatch(stop.detail, /预算|账户额度|缩小任务/u);
     if (savedReply) {
       assert.match(stop.detail, /回复已保存.*继续对话/u);
       assert.ok(items.some(item => item.kind === 'message' && item.body === '你想从什么角度聊起？'));
-    } else assert.match(stop.detail, /未能保存.*回复/u);
+    } else assert.match(stop.detail, /回复没有保存成功.*消息仍保留.*可以重试/u);
     assert.equal(storage.getRun('run')?.status, 'budget_exhausted');
     assert.ok(bridge.getSnapshot().recoverableRuns.some(run => run.runId === 'run'), 'intake protection must expose a scoped retry, even without a brief');
   } finally { bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }

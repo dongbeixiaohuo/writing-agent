@@ -15,6 +15,10 @@ export function publicStageFixtureEvents(request: ModelRequest, name: string, ar
   const reader = readerSimulationFixtureEvents(request);
   if (reader) return reader;
   const state = collaborationState(request);
+  if (name === 'director_decide' && args.action === 'finish' && state?.actor === 'director'
+      && state.nextStage === null && request.parameters.toolChoice === 'none') {
+    return [{ type: 'text_delta', delta: args.reason }, { type: 'completed', finishReason: 'stop' }];
+  }
   return name === 'submit_writing_stage' && isPublicStageOutput(state?.stage) && state.stage === args.stage
     && !request.tools?.some(t => t.name === name)
     ? [{ type: 'text_delta', delta: args.content }, { type: 'completed', finishReason: 'stop' }] : null;
@@ -48,7 +52,7 @@ export function readerSimulationFixtureEvents(request: ModelRequest): ProviderSt
 export function directorFixtureTurn(request: ModelRequest): ProviderStreamEvent[] | null {
   const state = collaborationState(request);
   if (state === null || state.actor !== "director") return null;
-  if (state.finished) return [{ type: "text_delta", delta: "全部阶段和事实门禁已通过。" }, { type: "completed", finishReason: "stop" }];
+  if (state.finished || state.nextStage === null && request.parameters.toolChoice === 'none') return [{ type: "text_delta", delta: "全部阶段和事实门禁已通过。" }, { type: "completed", finishReason: "stop" }];
   const ready = state.ready || request.messages.some((message) => message.role === "tool" && message.name === "assess_writing_readiness" && JSON.parse(message.content).result?.status === "ready");
   if (!ready) return null;
   return [{ type: "tool_call_delta", index: 0, id: `director-${request.requestId}`, name: "director_decide", argumentsDelta: JSON.stringify({ action: state.nextStage === null ? "finish" : "dispatch", stage: state.nextStage, reason: "基于绑定输入与已完成阶段安排下一专家；修订时综合独立意见。", questions: [], inputVersionIds: state.inputVersionIds }) }, { type: "completed", finishReason: "tool_calls" }];

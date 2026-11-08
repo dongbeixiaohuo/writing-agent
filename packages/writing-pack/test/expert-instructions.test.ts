@@ -7,6 +7,23 @@ import {
 } from "../src/expert-instructions.js";
 
 describe("expert instruction migration", () => {
+  it('reviews process commentary semantically while preserving factual limits and real quotations', () => {
+    for (const role of ['outline', 'draft', 'review_editor', 'review_publish', 'central_revision', 'language_review'] as const) {
+      const instruction = buildExpertInstructions(role);
+      assert.match(instruction, /面向读者的解释与向作者汇报写作过程/);
+      assert.match(instruction, /必要的研究范围、条件和不确定性.*不能.*删除/);
+      assert.match(instruction, /引用他人原话.*作者明确要求的注释仍可保留/);
+    }
+    const editor = buildExpertInstructions('review_editor');
+    assert.match(editor, /案例是否成立.*材料是否支持/);
+    assert.match(editor, /不列为建议保留/);
+    assert.match(editor, /不检查每节是否凑齐风格卡动作/);
+    const humanizer = buildExpertInstructions('language_review');
+    assert.match(humanizer, /理由留在内部/);
+    assert.match(humanizer, /删标签不等于改成真实发生/);
+    assert.match(humanizer, /不能一见括号.*就删/);
+    assert.doesNotMatch(humanizer, /并说明保留了什么|先指出具体问题/);
+  });
   it('plans information progression instead of turning limited personal material into abstract filler', () => {
     const outline = buildExpertInstructions('outline');
     const draft = buildExpertInstructions('draft');
@@ -148,7 +165,8 @@ describe("expert instruction migration", () => {
     assert.match(buildExpertInstructions("language_review"), /只有在收益明确.*局部最小修改/u);
     assert.match(buildExpertInstructions("fact_check"), /完整正文.*最终标题.*分发文案/u);
     assert.match(buildExpertInstructions("style_modeler"), /不凑条数/u);
-    assert.match(buildExpertInstructions("style_modeler"), /引文.*可选/u);
+    assert.match(buildExpertInstructions("style_modeler"), /连续原文示范/u);
+    assert.match(buildExpertInstructions("style_modeler"), /具体动作.*适用情形.*学歪/u);
     assert.doesNotMatch(buildExpertInstructions("style_modeler"), /5—8 条|至少有两篇样文的引文/u);
     assert.match(buildExpertInstructions("style_modeler"), /风格库.*完整风格卡.*当前用户.*明确授权/u);
     assert.match(buildExpertInstructions("style_modeler"), /不要求固定 15 个维度、盲测循环或 verified 状态/u);

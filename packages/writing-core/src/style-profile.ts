@@ -1,9 +1,11 @@
 import { z } from "zod";
-import { StylePackageSchema, StyleSelectionInputSchema, StyleSelectionSnapshotSchema, StylePreviewEvaluationSchema } from './style-package.js';
+import { STYLE_CARD_LIMIT, StylePackageSchema, StyleSelectionInputSchema, StyleSelectionSnapshotSchema, StylePreviewEvaluationSchema } from './style-package.js';
 
 const BoundedText = (limit: number) => z.string().trim().min(1).max(limit);
 
 export const STYLE_SAMPLE_LIMIT = 10;
+export const STYLE_PERSONAL_PROFILE_LIMIT = 50;
+export const STYLE_BUILTIN_PROFILE_LIMIT = 10;
 export const STYLE_SAMPLE_CHARACTER_LIMIT = 100_000;
 export const STYLE_TOTAL_CHARACTER_LIMIT = 300_000;
 export const STYLE_SAMPLE_LIMIT_MESSAGE = `每次联合分析最多 ${STYLE_SAMPLE_LIMIT} 份样本（文档、网页和粘贴文字合计）。本次未添加，请减少所选内容后重试，或分组创建风格。`;
@@ -59,27 +61,28 @@ export const StyleRuleEvidenceSchema = z.object({
 }).strict();
 export const StyleRuleSchema = z.object({
   dimension: BoundedText(80),
-  instruction: BoundedText(500),
+  instruction: BoundedText(1_200),
   evidence: z.array(StyleRuleEvidenceSchema).max(STYLE_SAMPLE_LIMIT).default([]),
   confidence: z.enum(["sample", "recurring"]).default('sample'),
 }).strict();
 export const StyleDraftSchema = z.object({
   name: BoundedText(160),
-  card: BoundedText(1_800),
+  card: BoundedText(STYLE_CARD_LIMIT),
   summary: BoundedText(800),
   rules: z.array(StyleRuleSchema).max(20),
   notes: z.array(BoundedText(300)).max(6).optional(),
   samples: SampleListSchema,
   sampleCount: z.number().int().min(1).max(STYLE_SAMPLE_LIMIT),
-  analyzedCharacters: z.number().int().positive().max(STYLE_TOTAL_CHARACTER_LIMIT),
+  analyzedCharacters: z.number().int().nonnegative().max(STYLE_TOTAL_CHARACTER_LIMIT),
   totalCharacters: z.number().int().positive().max(STYLE_TOTAL_CHARACTER_LIMIT),
   elapsedMs: z.number().int().nonnegative().max(24 * 60 * 60 * 1_000),
-  modelRequests: z.literal(1),
+  modelRequests: z.union([z.literal(0), z.literal(1)]),
   package: StylePackageSchema.optional(),
 }).strict();
 export type StyleDraft = z.infer<typeof StyleDraftSchema>;
 
 export const StyleProfileSchema = StyleDraftSchema.extend({
+  builtin: z.literal(true).optional(),
   id: BoundedText(120),
   version: z.number().int().positive(),
   updatedAt: z.string().datetime({ offset: true }),
@@ -87,6 +90,7 @@ export const StyleProfileSchema = StyleDraftSchema.extend({
 export type StyleProfile = z.infer<typeof StyleProfileSchema>;
 
 export const StyleProfileSummarySchema = z.object({
+  builtin: z.literal(true).optional(),
   id: BoundedText(120), name: BoundedText(160), version: z.number().int().positive(),
   updatedAt: z.string().datetime({ offset: true }), sampleCount: z.number().int().min(1).max(STYLE_SAMPLE_LIMIT), summary: BoundedText(800),
 }).strict();
@@ -105,13 +109,13 @@ export const StyleLibraryCommandSchema = z.discriminatedUnion("action", [
   // The host opens a native picker; this command intentionally carries no file
   // contents or profile payload across the application boundary.
   z.object({ action: z.literal("import"), remainingSlots: z.number().int().min(0).max(STYLE_SAMPLE_LIMIT).optional() }).strict(),
-  z.object({ action: z.literal("preview"), card: BoundedText(1_800), topic: BoundedText(1_000), package: StylePackageSchema.optional() }).strict(),
+  z.object({ action: z.literal("preview"), card: BoundedText(STYLE_CARD_LIMIT), topic: BoundedText(1_000), package: StylePackageSchema.optional() }).strict(),
   z.object({ action: z.literal("cancel") }).strict(),
 ]);
 export type StyleLibraryCommand = z.infer<typeof StyleLibraryCommandSchema>;
 
 export const StyleLibraryResultSchema = z.object({
-  profiles: z.array(StyleProfileSummarySchema).max(50), draft: StyleDraftSchema.optional(), profile: StyleProfileSchema.optional(),
+  profiles: z.array(StyleProfileSummarySchema).max(STYLE_PERSONAL_PROFILE_LIMIT + STYLE_BUILTIN_PROFILE_LIMIT), draft: StyleDraftSchema.optional(), profile: StyleProfileSchema.optional(),
   sample: StyleSampleSchema.optional(), preview: BoundedText(4_000).optional(), cancelled: z.literal(true).optional(),
   items: z.array(StyleImportItemSchema).max(STYLE_SAMPLE_LIMIT).optional(),
   selection: StyleSelectionSnapshotSchema.nullable().optional(),
@@ -131,9 +135,9 @@ export function styleReferenceForProfile(profile: StyleProfileReferenceInput): s
   const id = BoundedText(120).parse(profile.id);
   const version = z.number().int().positive().parse(profile.version);
   const name = BoundedText(160).parse(profile.name);
-  const card = BoundedText(1_800).parse(profile.card);
+  const card = BoundedText(STYLE_CARD_LIMIT).parse(profile.card);
   const prefix = `个人风格卡 · ${name} · ${id} · v${version}\n`;
-  return `${prefix}${card.slice(0, Math.max(0, 2_100 - prefix.length))}`;
+  return `${prefix}${card}`;
 }
 
 /** Normalize only transport noise; source text remains untrusted data. */

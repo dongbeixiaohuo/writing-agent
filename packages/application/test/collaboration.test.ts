@@ -17,7 +17,7 @@ import { getConversationIntakeState } from '../src/conversation-intake.js';
 import { parseEvidenceLedger } from '../../writing-core/src/index.js';
 import { expandResearchEvidence } from '../src/research-evidence.js';
 import { saveProjectStyleSelection } from '../src/style-selection.js';
-import { styleStatistics } from '../../writing-core/src/style-package.js';
+import { styleStatistics, STYLE_APPLICATION_POLICY } from '../../writing-core/src/style-package.js';
 
 export class CollaborationProvider extends ModelProviderBase {
   requests: ModelRequest[] = [];
@@ -205,19 +205,24 @@ function setup(provider: CollaborationProvider, interactionMode: "autonomous" | 
   return { storage, app, input: { projectId: "p", expectedProjectRevision: project.revision, expectedBriefVersionId: project.currentBriefVersionId!, model: "mock", parameters: {}, budget: { maxModelRequests: 60, maxToolCalls: 80, maxRetriesPerRequest: 0, maxMajorRevisions: 1 } }, close() { storage.close(); rmSync(path, { recursive: true, force: true }); } };
 }
 
-it('uses a selected project style across writing stages without leaking its samples into fact check or reader simulations', async () => {
+for (const version of [2, 3] as const) it(`uses v${version} project style across writing stages without leaking samples into fact checks or reader simulations`, async () => {
   const provider = new CollaborationProvider(); const f = setup(provider);
   const marker = '独特的风格测试标记';
   try {
-    saveProjectStyleSelection(f.storage, 'p', { id: 'style', version: 1, name: '克制观察', card: marker,
-      package: { version: 2, statistics: styleStatistics([{ id: 's', title: '样文', text: '一段特定的句式。' }]),
-        patterns: [{ kind: 'structure', instruction: '先观察后解释' }], snippets: [{ sampleId: 's', paragraphId: 'p1', kind: 'opening', quote: '一段特定的句式。' }] } }, 'style-select');
+    const quote = '一段有前后关系的句式。'.repeat(40) + '\n\n末尾的落点。';
+    const card = version === 3 ? marker.repeat(420) + '指南末尾条件' : marker;
+    saveProjectStyleSelection(f.storage, 'p', { id: 'style', version: 1, name: '克制观察', card,
+      package: { version, statistics: styleStatistics([{ id: 's', title: '样文', text: quote }]),
+        patterns: [{ kind: 'structure', instruction: '先观察后解释' }], snippets: [{ sampleId: 's', paragraphId: 'p1', kind: 'opening', quote, explanation: '写法解释标记', application: '换题迁移标记' }] } }, 'style-select');
     const result = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision });
     assert.equal(result.ok, true, JSON.stringify(result));
-    for (const stage of ['outline', 'draft', 'central_revision', 'language_review']) {
+    for (const stage of ['outline', 'draft', 'review_editor', 'central_revision', 'language_review']) {
       const requests = provider.requests.filter(r => collaborationState(r)?.stage === stage);
       assert.ok(requests.length > 0, stage);
-      assert.ok(requests.some(r => JSON.stringify(r.messages).includes(marker)), stage);
+      assert.ok(requests.every(r => r.messages.some(m => m.content.includes(card) && m.content.includes(quote) && m.content.includes('换题迁移标记'))), stage);
+      assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes(STYLE_APPLICATION_POLICY))), stage);
+      assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes('面向读者的解释与向作者汇报写作过程'))), stage);
+      if (stage === 'language_review') assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes('不构成作者锁定要求'))));
     }
     const facts = provider.requests.filter(r => collaborationState(r)?.stage === 'fact_check');
     assert.ok(facts.length > 0);
@@ -234,14 +239,17 @@ it('uses a selected project style across writing stages without leaking its samp
 it('confirmed stage handoffs retain the style through title generation', async () => {
   const provider = new CollaborationProvider(); const f = setup(provider, 'co_creation');
   try {
-    saveProjectStyleSelection(f.storage, 'p', { id: 's', version: 1, name: '标题风格', card: '标题应短、具体，保留独特测试标记' }, 'style');
+    const card = '标题应短、具体，保留独特测试标记'.repeat(240) + '标题指南末尾';
+    saveProjectStyleSelection(f.storage, 'p', { id: 's', version: 1, name: '标题风格', card,
+      package: { version: 3, statistics: styleStatistics([{ id: 's', title: '标题示范', text: '连续标题示例' }]), patterns: [],
+        snippets: [{ sampleId: 's', paragraphId: 'p1', kind: 'title', quote: '连续标题示例', explanation: '标题写法分析', application: '标题迁移条件' }] } }, 'style');
     const first = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision });
     for (let index = 0; index < 7 && !provider.requests.some(r => collaborationState(r)?.stage === 'title'); index++) {
       await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: `style-continue-${index}`, decision: 'resume', userInstruction: '继续', expectedProjectRevision: f.storage.inspectProject('p')!.revision })).result;
     }
     const requests = provider.requests.filter(r => collaborationState(r)?.stage === 'title');
     assert.ok(requests.length > 0);
-    assert.ok(requests.every(r => JSON.stringify(r.messages).includes('独特测试标记')));
+    assert.ok(requests.every(r => r.messages.some(m => m.content.includes(card) && m.content.includes('连续标题示例') && m.content.includes('标题迁移条件'))));
   } finally { f.close(); }
 });
 
@@ -965,6 +973,47 @@ it('finishes durably when the director finishes instead of requesting another mo
   } finally { f.close(); }
 });
 
+it('finishes a passed workflow without asking the model for an inapplicable stage enum', async () => {
+  class FinishStageProvider extends CollaborationProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request);
+      if (state?.actor === 'director' && state.nextStage === null && !state.finished) {
+        this.requests.push(structuredClone(request));
+        if (request.tools?.some(tool => tool.name === 'director_decide')) {
+          // The reported failure was /stage enum validation after the final fact
+          // gate passed. Its raw rejected value was not retained; use a synthetic
+          // non-stage completion label to reproduce that same contract failure.
+          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'director_decide',
+            argumentsDelta: JSON.stringify({ action: 'finish', stage: '完成', reason: '稿件已保存并通过核查。', questions: [] }) };
+          yield { type: 'completed', finishReason: 'tool_calls' };
+        } else {
+          yield { type: 'text_delta', delta: '稿件已保存并通过核查，可以查看当前稿件。' };
+          yield { type: 'completed', finishReason: 'stop' };
+        }
+        return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new FinishStageProvider(); const f = setup(provider);
+  try {
+    const result = await f.app.runDraft(f.input);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(f.app.getProjectProjection('p').factCheck.status, 'passed');
+    const finishRequests = provider.requests.filter(request => {
+      const state = collaborationState(request);
+      return state?.actor === 'director' && state.nextStage === null && !state.finished;
+    });
+    assert.equal(finishRequests.length, 1);
+    assert.equal(finishRequests[0]!.parameters.toolChoice, 'none');
+    assert.deepEqual(finishRequests[0]!.tools ?? [], []);
+    const finish = f.storage.listRunEvents(result.runId).findLast(event => event.type === 'tool.requested' && event.payload.toolName === 'director_decide');
+    assert.equal(finish?.payload.origin, 'harness_text_output');
+    assert.deepEqual(finish?.payload.arguments, { action: 'finish', stage: null, reason: '稿件已保存并通过核查，可以查看当前稿件。', questions: [] });
+    assert.equal(f.storage.listRunEvents(result.runId).filter(event => event.type === 'run.completed').length, 1);
+  } finally { f.close(); }
+});
+
 it('returns fact findings to the director before asking the author to fix agent work', async () => {
   let directorReviewed = false;
   class ResolveFacts extends CollaborationProvider {
@@ -1328,7 +1377,7 @@ it('stops duplicate language output and explicitly retries only that expert, kee
     await bridge.selectSession('p',first.sessionId);
     assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason,'STAGE_OUTPUT_NOT_SAVED');
     const rows = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
-    assert.ok(rows.some(row=>row.kind==='tool' && row.label==='自动重写已暂停'));
+    assert.ok(rows.some(row=>row.kind==='tool' && row.label==='这一步未能保存'));
     assert.ok(!rows.some(row=>row.kind==='tool' && row.detail.includes('存在结果未知的外部请求')));
     const resumedAt = provider.actors.length; provider.reject = false;
     await bridge.resumeRun(first.runId,'resume',{operationId:'retry-text-save'});
@@ -1550,6 +1599,10 @@ it("uses real director decisions and independent same-draft reviews before compl
       const role = collaborationState(request)?.actor;
       if (role === 'review_reader') assert.match(request.messages[0]!.content, /模拟反应.*不是真实用户调研/u);
       else if (role === 'fact_check') assert.match(request.messages[0]!.content, /事实核查专员|写作助手.*提取/u);
+      else if (role === 'director' && request.parameters.toolChoice === 'none') {
+        assert.equal(collaborationState(request)?.nextStage, null);
+        assert.match(request.messages[0]!.content, /所有阶段均已完成/u);
+      }
       else if (role) assert.ok(request.messages[0]!.content.includes(buildExpertInstructions(role)), `${role} must receive migrated professional instructions`);
     }
     assert.equal(JSON.stringify(reader.messages).includes("SECRET_OPINION_review_editor"), false);
@@ -1570,6 +1623,10 @@ it("uses real director decisions and independent same-draft reviews before compl
     assert.match(languageRequest.messages[0]!.content, /不是.*评审报告/u);
     assert.match(languageRequest.messages[0]!.content, /内部材料标签/u);
     assert.match(languageRequest.messages[0]!.content, /不虚构来源、不移除实质限定/u);
+    const languageState = collaborationState(languageRequest) as any;
+    assert.match(languageState.bodyOutputContract.preserveMeaning.hypotheticalScenes, /原稿明确是假设.*保留假设本身/u);
+    assert.match(languageState.bodyOutputContract.preserveMeaning.meaningfulNotes, /说明数字口径/u);
+    assert.match(languageState.bodyOutputContract.preserveMeaning.styleScope, /不重新执行风格指南/u);
     const directorRequest = provider.requests.find(request => collaborationState(request)?.actor === 'director')!;
     assert.match(directorRequest.messages[0]!.content, /不要.*整理稿/u);
     const decisions = f.storage.listRunEvents(result.runId).filter((event) => event.type === "tool.completed" && (event.payload.result as any)?.toolName === "director_decide");
@@ -2034,6 +2091,6 @@ it('rejects an invalid evidence ledger at research commit and stops the blind re
     await bridge.selectSession('p', first.sessionId);
     assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason, 'TOOL_FAILURE_LOOP');
     const rows = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
-    assert.ok(rows.some((row) => row.kind === 'tool' && row.label === '自动重试已暂停'));
+    assert.ok(rows.some((row) => row.kind === 'tool' && row.label === '这一步未能完成'));
   } finally { bridge.dispose(); f.close(); }
 });

@@ -38,6 +38,8 @@ test("accepts only one complete current-user style-card envelope", () => {
   assert.equal(extractExplicitStyleCard(`${userTurn}\n上面的风格卡不要使用，仅供研究。`), null);
   assert.equal(extractExplicitStyleCard(userTurn.replace("</writing-style-card>", "")), null);
   assert.equal(extractExplicitStyleCard(`${userTurn}\n${userTurn}`), null);
+  const longReference = styleReferenceForProfile({ id: 'long', version: 1, name: '完整指南', card: '保持完整条件。'.repeat(700) + '最后一个条件' });
+  assert.equal(extractExplicitStyleCard(userTurn.replace(reference, longReference)), longReference);
 });
 
 test("persists a first-turn selection through follow-up questions before the model creates a proposal", async () => {

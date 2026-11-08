@@ -12,8 +12,8 @@ test('no-progress and deferred-provider waits are actionable pauses, never autho
     assert.doesNotMatch(copy.primaryAction, /认可|确认/);
     assert.match(copy.description, /已保存/);
     assert.doesNotMatch(copy.title, /结果未知|丢失/);
-    if (stopReason === 'TOOL_NO_PROGRESS') assert.match(copy.description, /重复.*读取|无进展/);
-    else assert.match(copy.description, /服务商.*等待|模型服务.*稍后|重试时间/);
+    if (stopReason === 'TOOL_NO_PROGRESS') assert.match(copy.description, /材料.*已保存/);
+    else assert.match(copy.description, /请在.*后重试/);
     assert.deepEqual(recoveryContinueAction(recovery), {kind:'resume', decision:'resume'});
   }
 });
@@ -23,7 +23,7 @@ test('all-reader failure has an explicit retry action, not author-approval or in
   const copy = checkpointCopy(recovery, undefined);
   assert.equal(copy.role, '模拟读者');
   assert.equal(copy.primaryAction, '重试模拟读者');
-  assert.match(copy.description, /只重试读者阶段/);
+  assert.match(copy.description, /只重试读者反馈这一步/);
   assert.deepEqual(recoveryContinueAction(recovery), {kind:'resume', decision:'resume'});
   assert.equal(composerRecoveryMode([recovery], 's'), 'decision');
 })
@@ -44,8 +44,8 @@ test('live timer names execution accumulation rather than the current stage and 
     startedAt: 320000, segmentStartedAt: 0, lastActivityAt: null, requestOrdinal: 1 }
   const copy = conversationWorkingCopy(activity, 410000)
   assert.equal(copy.elapsedSeconds, 410)
-  assert.match(copy.detail, /当前请求已等待 90 秒/u)
-  assert.match(copy.detail, /包含此前阶段，不是当前阶段耗时/u)
+  assert.match(copy.detail, /还没有新回复/u)
+  assert.doesNotMatch(copy.detail, /当前请求|累计|阶段耗时/u)
   assert.equal(conversationWorkingCopy({ ...activity, segmentStartedAt: 400000, startedAt: 400000 }, 410000).elapsedSeconds, 10)
 })
 
@@ -57,7 +57,7 @@ test('version-bound confirmation and legacy rework gates use a direct action and
     assert.deepEqual(recoveryContinueAction(recovery), {kind:'resume', decision:'resume'})
     assert.equal(composerRecoveryMode([recovery], 's'), 'answer')
     assert.match(checkpointCopy(recovery, undefined).primaryAction, /认可当前阶段/u)
-    if (stopReason === 'TOOL_FAILURE_LOOP') assert.match(checkpointCopy(recovery, undefined).description, /不再让模型重新判断按钮含义/u)
+    if (stopReason === 'TOOL_FAILURE_LOOP') assert.match(checkpointCopy(recovery, undefined).description, /认可当前成果.*点击下方按钮继续/u)
   }
 })
 
@@ -67,14 +67,14 @@ test('checkpoint action names the next expert, including title before fact check
   assert.match(checkpoint('outline', 'draft').primaryAction, /内容主笔/u)
   assert.match(checkpoint('language_review', 'fact_check').primaryAction, /标题策划/u)
   assert.match(checkpoint('language_review', 'fact_check').description, /标题.*事实/u)
-  assert.match(checkpoint('review_editor', 'review_publish').description, /修改.*本阶段|返工/u)
+  assert.match(checkpoint('review_editor', 'review_publish').description, /提出修改要求/u)
 })
 
 test('version permission failures are explained as program conflicts, not missing user evidence', () => {
   const copy = checkpointCopy({ runId: 'r', sessionId: 's', status: 'waiting_user', stopReason: 'TOOL_FAILURE_LOOP', checkpointStage: null, nextStage: null,
     validationFailure: { code: 'TOOL_PERMISSION_DENIED', tool: 'read_artifact_version', explanation: '调度读取版本与权限冲突。这不是文章事实核查不通过，也不是你缺少材料。' } }, undefined)
-  assert.match(copy.title, /读取版本.*程序冲突/)
-  assert.match(copy.description, /不是文章事实核查不通过/)
+  assert.match(copy.title, /这一步未能完成.*已保存内容仍在/)
+  assert.match(copy.description, /无需重新提供材料/); assert.doesNotMatch(copy.description, /TOOL_PERMISSION_DENIED|调度读取版本|权限冲突/)
   assert.equal(copy.primaryAction, '重试这一步')
 })
 
@@ -82,15 +82,23 @@ test('repeated stage-save rejection offers one explicit retry without claiming a
   const copy = checkpointCopy({ runId:'r', sessionId:'s', status:'waiting_user', stopReason:'STAGE_OUTPUT_NOT_SAVED', checkpointStage:null, nextStage:'language_review' }, undefined)
   assert.equal(copy.primaryAction, '重试这一步')
   assert.match(copy.title, /上一版稿件仍在/)
-  assert.match(copy.description, /保存校验/)
+  assert.match(copy.description, /没有保存成功/)
   assert.doesNotMatch(copy.title, /超时|连接|额度/)
 })
 
 test('protected writing offers explicit continuation without asking for title confirmation again', () => {
   const copy = checkpointCopy({ runId: 'r', sessionId: 's', status: 'budget_exhausted', stopReason: 'BUDGET_EXHAUSTED', checkpointStage: null, nextStage: null }, undefined)
   assert.equal(copy.primaryAction, '继续未完成步骤')
-  assert.match(copy.description, /不重做/)
+  assert.match(copy.description, /已保存稿件和已确认标题保留/)
 })
+
+test('an uncertain external operation still requires an explicit retry decision', () => {
+  const recovery: RecoverableRunSummary = { runId: 'r', sessionId: 's', status: 'waiting_user', stopReason: 'UNKNOWN_EXTERNAL_OUTCOME', checkpointStage: null, nextStage: null };
+  const copy = checkpointCopy(recovery, undefined);
+  assert.match(copy.description, /无法确定.*是否完成/);
+  assert.match(copy.description, /重试可能重复执行/);
+  assert.deepEqual(recoveryContinueAction(recovery), { kind: 'resume', decision: 'retry_unknown' });
+});
 
 import type {
   FactCheckWorkspace,

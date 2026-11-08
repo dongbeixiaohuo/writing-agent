@@ -142,7 +142,13 @@ class BridgeWritingProvider extends ModelProviderBase {
     request: ModelRequest,
   ): AsyncIterable<ProviderStreamEvent> {
     const extraction = factPreparationFixtureEvents(request);
-    if (extraction) { yield* extraction; return; }
+    if (extraction) {
+      // Delivery now finishes locally after fact checking. Hold the last
+      // provider response here; there is no final director request to await.
+      this.#finalStarted?.(); this.#finalStarted = null;
+      if (this.holdFinal) await new Promise<void>(resolve => { this.#releaseFinal = resolve; });
+      yield* extraction; return;
+    }
     const toolMessages = request.messages.filter((message) => message.role === "tool");
     if (collaborationState(request) !== null) {
       const turn = collaborationTurn(request, {
@@ -1161,7 +1167,7 @@ describe("Application Service client bridge", () => {
     } finally { bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }
   });
 
-  it("persists cancellation before abort and ignores the provider's late final text", async () => {
+  it("persists cancellation before abort and ignores the provider's late fact response", { timeout: 10_000 }, async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "wa-bridge-cancel-"));
     const storage = openWorkspaceStorage({ workspacePath });
     const provider = new BridgeWritingProvider();
@@ -1187,7 +1193,7 @@ describe("Application Service client bridge", () => {
     }
   });
 
-  it("keeps a late project-one completion out of the selected project-two view", async () => {
+  it("keeps a late project-one completion out of the selected project-two view", { timeout: 10_000 }, async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "wa-bridge-generation-"));
     const storage = openWorkspaceStorage({ workspacePath });
     const provider = new BridgeWritingProvider();

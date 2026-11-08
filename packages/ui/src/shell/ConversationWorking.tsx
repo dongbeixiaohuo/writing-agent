@@ -35,18 +35,13 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
   }
   return <section className={css.conversationWorking} aria-label="写作进行中" data-conversation-working data-conversation-message={snapshot.liveReply ? undefined : 'status'}>
     <div className={css.workingHeading}>
-      <strong role="status" aria-label="正在处理你的消息">{copy.title}</strong>
+      <strong role="status">{copy.title}</strong>
       <div className={css.workingActions}>
-        {snapshot.liveActivity && <span className={css.workingElapsed} aria-live="off">本次执行累计 {copy.elapsedSeconds} 秒（含此前阶段）</span>}
+        {snapshot.liveActivity && <span className={css.workingElapsed} aria-live="off">本轮已用时 {copy.elapsedSeconds} 秒</span>}
         <button type="button" onClick={() => void stop()} disabled={stopping || !snapshot.activeRunId}>{stopping ? '正在停止…' : '停止'}</button>
       </div>
     </div>
     <p>{copy.detail}</p>
-    {snapshot.liveActivity?.workPreview && !snapshot.liveReply && <aside className={css.workPreview} data-work-preview aria-label="临时素材预览">
-      <strong>{snapshot.liveActivity.workPreview.label}</strong>
-      <MarkdownContent content={snapshot.liveActivity.workPreview.text} />
-      <small>正在加工；这份临时预览不会作为最终回复留在主对话中。</small>
-    </aside>}
     {material && !snapshot.liveReply && <aside className={css.materialPreview} data-material-preview aria-label="参考材料预览">
       <div className={css.materialPreviewHeader}>
         <strong>写作要求与参考素材（{materials.length} 项）</strong>
@@ -54,11 +49,11 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
           {materials.map((item, index) => <option value={index} key={item.id}>{item.label}</option>)}
         </select>}
       </div>
-      <p>这里区分写作要求、来源素材和已保存成果；只展示本轮实际提供的内容，不是实际进度，不会自动切换。可手动选择查看。</p>
+      <p>可查看这次使用的写作要求与参考材料。</p>
       <details data-material-details>
         <summary>查看“{material.label}”节选</summary>
         <div className={css.materialExcerpt}><MarkdownContent content={materialExcerpt(material.text)} /></div>
-        <small>仅展示节选，不是模型新回复或任务完成度。</small>
+        <small>参考材料节选</small>
       </details>
     </aside>}
     {error && <p role="alert">{error}</p>}

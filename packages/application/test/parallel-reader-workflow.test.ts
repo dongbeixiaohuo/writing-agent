@@ -40,7 +40,12 @@ class ReadersProvider extends ImmediateWorkflowProvider {
       if (this.failure === 'all' || this.failure === 'c' && request.messages[0]!.content.startsWith('READER_SIMULATION_V1=c')) {
         this.failed = true;
         yield { type:'error', error:{ code:'NETWORK_ERROR', message:'test unavailable', retryable:true } };
-      } else yield* reaction;
+      } else {
+        // A complete reaction may quote the article's figures. It must survive
+        // parsing, parallel aggregation, persistence and a later resume.
+        for (const event of reaction) yield event.type === 'text_delta' && request.messages[0]!.content.startsWith('READER_SIMULATION_V1=c')
+          ? {...event, delta:JSON.stringify({...JSON.parse(event.delta), leaveAt:'第二部分的68%、24%读着有点绕，我停下来想了想。'})} : event;
+      }
     } finally { request.signal!.removeEventListener('abort', abort); this.active--; }
   }
 }
@@ -107,7 +112,11 @@ for (const failure of ['none', 'c'] as const) it(`real workflow saves one isolat
     assert.equal(JSON.parse(artifact.content).runId, first.runId);
     assert.equal(JSON.parse(artifact.content).bodyVersionId, body.id);
     assert.doesNotMatch(artifact.content, /必须修改|可选优化|建议保留|2\/3|多数读者/);
-    if (failure === 'c') assert.match(artifact.content, /未返回/);
+    if (failure === 'c') assert.match(artifact.content, /反馈未完成/);
+    else {
+      assert.match(artifact.content, /模拟读者 C[\s\S]*68%、24%/);
+      assert.doesNotMatch(artifact.content, /未返回|反馈未完成/);
+    }
     const waits = f.storage.listRunEvents(first.runId).filter(e => e.type === 'run.waiting_user' && e.payload.stage === 'review_reader');
     assert.equal(waits.length, 1);
     assert.equal(f.storage.getRun(first.runId)?.stopReason, 'CO_CREATION_CHECKPOINT');
@@ -164,7 +173,7 @@ it('all missing readers fail without an empty report; explicit retry resumes onl
     try {
       await bridge.selectSession('p', first.sessionId);
       assert.equal(bridge.getSnapshot().recoverableRuns.find(r=>r.runId===first.runId)?.stopReason, 'PARALLEL_TEXT_ALL_FAILED');
-      assert.match(JSON.stringify(bridge.getSnapshot().timelineBySession[first.sessionId]), /三个模拟读者都未返回.*未自动重试/);
+      assert.match(JSON.stringify(bridge.getSnapshot().timelineBySession[first.sessionId]), /模拟读者 Agent 暂时没能完成反馈/);
     } finally { bridge.dispose(); }
     const before = f.storage.listArtifactVersions('p', 'report', `workflow:${first.runId}:review_editor`).map(a=>a.id);
     const retry = await f.app.resumeDraft({...f.input, expectedProjectRevision:f.storage.inspectProject('p')!.revision,

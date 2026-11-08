@@ -8,6 +8,7 @@ import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '
 import { DEFAULT_MODEL_GROUPS, modelGroupForActor } from '../../../packages/client-bridge/src/model-groups.js';
 import { groupProviderConfig, loadDesktopProviderCatalog, markDesktopProviderVerified, saveDesktopProviderProfile, saveModelGroups, selectDesktopProvider, verifiedProviderModels } from '../src/provider-profile.js';
 import { DesktopApplicationHost } from '../src/application-host.js';
+import { styleAnalysisResponse } from '../../../packages/application/test/style-analysis-fixture.js';
 
 const input = { profileId: null, kind: 'openai_compatible' as const, providerId: 'test', baseURL: 'https://model.example.test/v1',
   model: 'fast', models: ['fast', 'writer'], tools: 'supported' as const, usage: 'unknown' as const, apiKey: 'synthetic-test', persistence: 'session' as const };
@@ -67,7 +68,7 @@ test('desktop verifies a non-default model without switching default, persists g
         yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'writing_agent_capability_probe', argumentsDelta: '{"value":"ok"}' };
         yield { type: 'completed', finishReason: 'tool_calls' };
       } else {
-        yield { type: 'text_delta', delta: JSON.stringify({ summary: '平实自然的短句。', rules: [] }) };
+        yield { type: 'text_delta', delta: JSON.stringify(styleAnalysisResponse('one')) };
         yield { type: 'completed', finishReason: 'stop' };
       }
     }

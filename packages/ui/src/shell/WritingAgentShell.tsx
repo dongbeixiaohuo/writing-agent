@@ -235,7 +235,7 @@ function Timeline({ items, brand, footer, diagnostic = false }: { items: readonl
           </header>}
           <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
           <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleLabel(item.stage) : item.actorLabel ?? brand.assistantName} · ${item.createdAt}`}
-            {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 本阶段活动耗时 ${Math.round(item.activeDurationMs / 1000)} 秒（排除等待确认）`}
+            {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 处理用时 ${Math.round(item.activeDurationMs / 1000)} 秒`}
           </div>
         </article>
       ) : (
@@ -267,7 +267,7 @@ function WorkflowProgress({ run, detailed = false }: { run: RunRecordView; detai
         {run.stages.map(stage => <li key={stage.id} data-stage-status={stage.status}>
           <span className={css.workflowStageIcon}>{stage.status === 'completed' ? <CheckIcon /> : <ToolIcon />}</span>
           <div><strong>{stage.label}</strong><small>{stageRoleCopy(stage.id).role}{detailed ? ` · ${stage.detail}` : ''}</small>
-            {stage.activeDurationMs != null && <small>已记录活动耗时 {Math.round(stage.activeDurationMs / 1000)} 秒（含恢复与返工，排除等待确认）</small>}
+            {stage.activeDurationMs != null && <small>处理用时 {Math.round(stage.activeDurationMs / 1000)} 秒</small>}
             {detailed && <><p>{stageRoleCopy(stage.id).action}</p>
               {(run.diagnostics?.segments.some(segment => segment.decisions.some(decision => decision.stage === stage.id))) && <details>
                 <summary>查看本阶段分派与返工记录</summary>
@@ -365,7 +365,7 @@ export function CheckpointDecisionCard({
       <div><span>{copy.role} · {copy.eyebrow}</span><h2>{copy.title}</h2></div>
     </div>
     <p className={css.checkpointDescription}>{copy.description}</p>
-    {searchRecovery && <p>检索词：{searchRecovery.query}<br />检索额度 {searchRecovery.used}/{searchRecovery.limit} · 网络尝试 {searchRecovery.attemptsUsed}/{searchRecovery.attemptsLimit}。不再搜索不会丢弃已有来源，结论会明确说明未联网核对的条目。</p>}
+    {searchRecovery && <p>正在查找：{searchRecovery.query}</p>}
     {needsInput && !!recovery.inputRequest?.questions.length && <ol>{recovery.inputRequest.questions.map((question, index) => <li key={index}>{question}</li>)}</ol>}
     {isTitleDiscussion && !!recovery.inputRequest?.candidates?.length && <ol aria-label="标题候选">
       {recovery.inputRequest.candidates.map((candidate, index) => <li key={index}><strong>{candidate.title}</strong>
