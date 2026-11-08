@@ -6,7 +6,7 @@
 
 从一个模糊想法出发，与写作导演、主笔、审校和去 AI 味专家一起把文章写出来。你可以在过程中补充材料、改变方向、选择标题，而不只是等着接收最终结果。
 
-[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
+[了解新版 App](#desktop-app) · **[下载 Windows 桌面 RC](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.98)** · [上手说明](#desktop-start) · [RC 状态与迁移进度](#rc-status) · **[老用户：Claude Code Skill + Subagent 入口](#claude-code-skill)**
 
 ## 老朋友，这个项目正在发生什么变化？
 
@@ -20,9 +20,9 @@
 - **原版用户**：可以继续使用原工作流，不必迁移；[直接跳到原版介绍与安装入口](#claude-code-skill)。
 - **准备尝试新版的老用户**：请先看[迁移边界](#rc-status)。**原版能力尚未全部迁入，桌面版目前不是完整替代品。**
 
-> **当前状态 · 2026-11-07**
+> **当前状态 · 2026-11-09**
 >
-> 桌面版 **[1.0.0-rc.96 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)**，提供 Windows x64 安装包。本次增加三组角色模型配置、HTTP API 地址和 Magpie 网关预设，修复 Magpie 下明确 DeepSeek 路由的工具调用兼容、连接测试输出额度和验证提示残留问题。风格库、作者确认、事实核查与标题选择继续保留。它是 **RC（候选测试版），不是稳定正式版**；未签名，安装升级和下载校验范围见 [RC96 发布记录](docs/launch/RC96_RELEASE_EXECUTION.md)。
+> 桌面版 **[1.0.0-rc.98 已公开发布](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.98)**，提供 Windows x64 安装包。本次保留风格提取的具体写法和连贯示例，调整写作、审校与润色，减少工作备注和固定套路进入正文；修复模拟读者引用百分比时的反馈误判及导演收尾失败，过程说明改为面向作者的 Agent 进度。已有正文、标题和个人风格不会自动重写。它是 **RC（候选测试版），不是稳定正式版**；未签名，安装升级和下载校验范围见 [RC98 发布记录](docs/launch/RC98_RELEASE_EXECUTION.md)。
 >
 > 原版 Skill 版本线仍为 `v0.11.x`。Releases 中的 `v0.11.0` 是 Skill 版本，`app-preview-0.1.0` 是早期桌面预览，两者都不是这次重构的新 App。公开下载以本仓库标注“桌面版”的 Release 为准。
 
@@ -112,11 +112,11 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启�
 
 ## 下载与第一次使用
 
-**[查看 rc.96 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.96/Writing-Agent-Setup-1.0.0-rc.96-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.96/SHA256SUMS.txt)
+**[查看 rc.98 发布说明和全部附件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.98)** · **[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.98/Writing-Agent-Setup-1.0.0-rc.98-x64.exe)** · [SHA-256 校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.98/SHA256SUMS.txt)
 
 此包未签名，Windows 可能显示“未知发布者”或 SmartScreen 提醒。请核对仓库来源和校验值，不要关闭安全防护。不要把旧 `app-preview-0.1.0` 当作这次新版。
 
-升级前请备份工作区并退出旧版，再运行新安装包。安装与 RC93 → RC96 升级的实际验证范围见 [RC96 发布记录](docs/launch/RC96_RELEASE_EXECUTION.md)，不代表所有历史数据库已穷举；当前没有自动更新。历史构建及升级结果保留在 [RC93 记录](docs/launch/RC93_RELEASE_EXECUTION.md)和 [RC88 记录](docs/launch/RC88_RELEASE_EXECUTION.md)，其哈希不能用于新包。请以当前 Release 附件及校验值为准。系统复制粘贴偶发异常仍在排查，本版不宣称解决该问题。
+升级前请备份工作区并退出旧版，再运行新安装包。安装与 RC96 → RC98 升级的实际验证范围见 [RC98 发布记录](docs/launch/RC98_RELEASE_EXECUTION.md)，不代表所有历史数据库已穷举；当前没有自动更新。历史构建及升级结果保留在 [RC96 记录](docs/launch/RC96_RELEASE_EXECUTION.md)、[RC93 记录](docs/launch/RC93_RELEASE_EXECUTION.md)和 [RC88 记录](docs/launch/RC88_RELEASE_EXECUTION.md)，其哈希不能用于新包。请以当前 Release 附件及校验值为准。系统复制粘贴偶发异常仍在排查，本版不宣称解决该问题。
 
 1. 找到明确标注“桌面版”的 Release，阅读 RC 限制，下载 Windows x64 的 `Writing-Agent-Setup-版本号-x64.exe`。GitHub 自动附带的 `Source code.zip` 是源码，不是安装包。
 2. 安装后进入“设置 → 模型”，选择供应商，填写 Key 与模型 ID，验证连接。
@@ -139,14 +139,14 @@ Parallel 也已完成真实搜索与模型核查保存验证。桌面端开启�
 | 对话需求、导演与独立专家、阶段确认 | 已接入；自然语言交流与恢复有专项验证，完整用户旅程仍需验收 |
 | 初稿、审校、集中修订、去 AI 味、标题与事实核查 | 已接入；正在依据真实反馈修正交接与提示体验 |
 | 稿件版本、局部修改、TXT / HTML 导出 | 已接入；正式交付受当前版本核查状态约束 |
-| 风格参考与分析 | 已接入参考和方法；原版的量化指纹、陌生题材仿写与独立盲测尚未形成完整自动闭环 |
+| 风格参考与分析 | 提取并传递完整指南、连贯原文和迁移示例，按题材选择写法；原版的陌生题材仿写与独立盲测尚未形成完整自动闭环 |
 | 配图 | 支持配图策划和确认，**尚未接入自动生成图片** |
 | 外部资料与搜索 | 有公开 URL 读取与可选事实搜索，不代表原版所有研究工具已迁移 |
 | 发布后复盘与学习 | 不宣称与原版完整复盘流程等价；自动指标采集、历史改稿差异学习等仍未形成闭环 |
 
 更完整的说明见[桌面与 Skill 能力对照](docs/DESKTOP_SKILL_COMPARISON.md)。
 
-公开 RC 的安装、升级和代表性写作检查进展见[发布门禁](docs/testing/RELEASE_GATE.md)与 [RC96 发布记录](docs/launch/RC96_RELEASE_EXECUTION.md)。Parallel / Tavily 的真实搜索与模型核查保存记录属于历史专项；DeepSeek 搜索与 Magpie 模型兼容的合成回归不等于真实付费搜索、真实模型耗时或文章质量验收。来源网页正文仍可能读取失败。OneDrive 路径 GPU 异常与本地路径 smoke 通过的证据分别保留，smoke 禁用硬件加速，不能据此宣称正常 GPU 已通过。100 个接入预设尚未逐个实连验收；RC 不代表完整人工体验或全部旧版能力已验收。
+公开 RC 的安装、升级和代表性写作检查进展见[发布门禁](docs/testing/RELEASE_GATE.md)与 [RC98 发布记录](docs/launch/RC98_RELEASE_EXECUTION.md)。Parallel / Tavily 的真实搜索与模型核查保存记录属于历史专项；DeepSeek 搜索与 Magpie 模型兼容的合成回归不等于真实付费搜索、真实模型耗时或文章质量验收。RC98 的真实模型受控样例也不等于同选题完整文章验收。来源网页正文仍可能读取失败。OneDrive 路径 GPU 异常与本地路径 smoke 通过的证据分别保留，smoke 禁用硬件加速，不能据此宣称正常 GPU 已通过。100 个接入预设尚未逐个实连验收；RC 不代表完整人工体验或全部旧版能力已验收。
 
 如果依赖原版的完整能力，请继续使用 Claude Code Skill；尝试桌面 RC 时先用独立测试项目，重要稿件另做备份。欢迎反馈，但请不要把 RC 当作无需人工检查的生产工具。
 
