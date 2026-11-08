@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { styleStatistics, styleMetrics, styleParagraphs, styleContext, styleWritingGuide, evaluateStylePreview, type StylePackage } from '../../writing-core/src/style-package.js';
+import { STYLE_APPLICATION_POLICY, styleStatistics, styleMetrics, styleParagraphs, styleContext, styleWritingGuide, evaluateStylePreview, type StylePackage } from '../../writing-core/src/style-package.js';
 
 test('statistics are calculated per sample, with actual min/max and explicit paragraph rules', () => {
   const samples = [{ id: 'a', title: '甲', text: '我来了。\n\n你呢？' }, { id: 'b', title: '乙', text: '走吧！' }];
@@ -11,6 +11,25 @@ test('statistics are calculated per sample, with actual min/max and explicit par
   assert.deepEqual(stats.ranges.characters, { min: 3, max: 7 });
   assert.deepEqual(styleParagraphs('甲\r\n\r\n乙'), [{ id: 'p1', text: '甲' }, { id: 'p2', text: '乙' }]);
   assert.equal(styleMetrics('').sentenceMedian, 0);
+});
+
+test('automatic style observations remain choices rather than paragraph quotas', () => {
+  assert.match(STYLE_APPLICATION_POLICY, /自动提取指南.*不自动成为逐节执行的硬约束/);
+  assert.match(STYLE_APPLICATION_POLICY, /只有作者明确指定的固定结构才照办/);
+  assert.match(STYLE_APPLICATION_POLICY, /没有用到某条手法本身不是缺陷/);
+  for (const version of [2, 3] as const) {
+    const card = '每节必须完成现象、归因和反问。';
+    const selection = {id:'s', name:'示例', version:1, card, package:{version, patterns:[], snippets:[], statistics:styleStatistics([{id:'a',title:'示例',text:'先观察，再解释。'}])}};
+    for (const role of ['outline', 'draft', 'review_editor', 'review_publish', 'central_revision', 'language_review']) {
+      const context = styleContext(selection, role);
+      assert.ok(context.includes(card), 'keep the guide intact while changing how it is applied');
+      assert.match(context, /不按条目覆盖率验收/);
+      if (role === 'language_review') {
+        assert.match(context, /不重新执行指南中的起草、结构或收尾动作/);
+        assert.ok(context.indexOf('原稿的假设场景必须仍用明确的条件或设想句式') > context.indexOf(card));
+      }
+    }
+  }
 });
 
 test('v3 stages retain whole guides and choose whole relevant examples beyond the first three', () => {

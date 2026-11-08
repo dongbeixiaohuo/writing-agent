@@ -31,6 +31,7 @@ const response = JSON.stringify(styleAnalysisResponse());
   assert.ok(draft.card.includes(output.patterns[0]!.instruction));
   assert.ok(draft.card.includes(output.patterns[0]!.whenToUse));
   assert.ok(draft.card.includes(output.patterns[0]!.avoid));
+  assert.match(provider.requests[0]!.messages[0]!.content, /不推成新文章每节都必须完成的循环/);
   assert.equal(draft.package!.snippets[0]!.quote,text);
   assert.deepEqual(draft.package!.snippets[0]!.paragraphIds,['p1','p2']);
   assert.equal(draft.package!.contrasts![0]!.styled,output.contrasts[0]!.styled);

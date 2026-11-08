@@ -7,6 +7,23 @@ import {
 } from "../src/expert-instructions.js";
 
 describe("expert instruction migration", () => {
+  it('reviews process commentary semantically while preserving factual limits and real quotations', () => {
+    for (const role of ['outline', 'draft', 'review_editor', 'review_publish', 'central_revision', 'language_review'] as const) {
+      const instruction = buildExpertInstructions(role);
+      assert.match(instruction, /面向读者的解释与向作者汇报写作过程/);
+      assert.match(instruction, /必要的研究范围、条件和不确定性.*不能.*删除/);
+      assert.match(instruction, /引用他人原话.*作者明确要求的注释仍可保留/);
+    }
+    const editor = buildExpertInstructions('review_editor');
+    assert.match(editor, /案例是否成立.*材料是否支持/);
+    assert.match(editor, /不列为建议保留/);
+    assert.match(editor, /不检查每节是否凑齐风格卡动作/);
+    const humanizer = buildExpertInstructions('language_review');
+    assert.match(humanizer, /理由留在内部/);
+    assert.match(humanizer, /删标签不等于改成真实发生/);
+    assert.match(humanizer, /不能一见括号.*就删/);
+    assert.doesNotMatch(humanizer, /并说明保留了什么|先指出具体问题/);
+  });
   it('plans information progression instead of turning limited personal material into abstract filler', () => {
     const outline = buildExpertInstructions('outline');
     const draft = buildExpertInstructions('draft');

@@ -221,6 +221,8 @@ for (const version of [2, 3] as const) it(`uses v${version} project style across
       assert.ok(requests.length > 0, stage);
       assert.ok(requests.every(r => r.messages.some(m => m.content.includes(card) && m.content.includes(quote) && m.content.includes('换题迁移标记'))), stage);
       assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes(STYLE_APPLICATION_POLICY))), stage);
+      assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes('面向读者的解释与向作者汇报写作过程'))), stage);
+      if (stage === 'language_review') assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes('不构成作者锁定要求'))));
     }
     const facts = provider.requests.filter(r => collaborationState(r)?.stage === 'fact_check');
     assert.ok(facts.length > 0);
@@ -1375,7 +1377,7 @@ it('stops duplicate language output and explicitly retries only that expert, kee
     await bridge.selectSession('p',first.sessionId);
     assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason,'STAGE_OUTPUT_NOT_SAVED');
     const rows = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
-    assert.ok(rows.some(row=>row.kind==='tool' && row.label==='自动重写已暂停'));
+    assert.ok(rows.some(row=>row.kind==='tool' && row.label==='这一步未能保存'));
     assert.ok(!rows.some(row=>row.kind==='tool' && row.detail.includes('存在结果未知的外部请求')));
     const resumedAt = provider.actors.length; provider.reject = false;
     await bridge.resumeRun(first.runId,'resume',{operationId:'retry-text-save'});
@@ -1621,6 +1623,10 @@ it("uses real director decisions and independent same-draft reviews before compl
     assert.match(languageRequest.messages[0]!.content, /不是.*评审报告/u);
     assert.match(languageRequest.messages[0]!.content, /内部材料标签/u);
     assert.match(languageRequest.messages[0]!.content, /不虚构来源、不移除实质限定/u);
+    const languageState = collaborationState(languageRequest) as any;
+    assert.match(languageState.bodyOutputContract.preserveMeaning.hypotheticalScenes, /原稿明确是假设.*保留假设本身/u);
+    assert.match(languageState.bodyOutputContract.preserveMeaning.meaningfulNotes, /说明数字口径/u);
+    assert.match(languageState.bodyOutputContract.preserveMeaning.styleScope, /不重新执行风格指南/u);
     const directorRequest = provider.requests.find(request => collaborationState(request)?.actor === 'director')!;
     assert.match(directorRequest.messages[0]!.content, /不要.*整理稿/u);
     const decisions = f.storage.listRunEvents(result.runId).filter((event) => event.type === "tool.completed" && (event.payload.result as any)?.toolName === "director_decide");
@@ -2085,6 +2091,6 @@ it('rejects an invalid evidence ledger at research commit and stops the blind re
     await bridge.selectSession('p', first.sessionId);
     assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason, 'TOOL_FAILURE_LOOP');
     const rows = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
-    assert.ok(rows.some((row) => row.kind === 'tool' && row.label === '自动重试已暂停'));
+    assert.ok(rows.some((row) => row.kind === 'tool' && row.label === '这一步未能完成'));
   } finally { bridge.dispose(); f.close(); }
 });

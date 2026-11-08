@@ -8,7 +8,7 @@ import { ToolExecutionFault, type ToolDefinition } from "../../runtime/tools/src
 import type { JsonValue, StoragePort } from "../../writing-core/src/index.js";
 import { FactClaimStatusSchema, FactClaimTypeSchema } from "../../writing-core/src/index.js";
 import { workflowStageSequence, type WritingWorkflowStage } from "../../writing-pack/src/index.js";
-import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
+import { buildExpertInstructions, LANGUAGE_REVIEW_SEMANTIC_CONTRACT } from '../../writing-pack/src/expert-instructions.js';
 import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, type WritingWorkflowTools } from "./workflow-tools.js";
 import { getPublicationCandidates, savePublicationCandidates, isPublicationSelectionCurrent, isUsablePublicationTitle,
   PUBLICATION_SELECTION_WAIT_REASON, selectedPublicationContext, type PublicationCandidate } from './publication-choice.js';
@@ -321,6 +321,7 @@ export function createWritingCollaboration(options: {
       ...(assignment?.stage === 'language_review' && articleBaseline !== undefined ? { bodyOutputContract: {
         requiredHeadings: articleBaseline.split(/\r?\n/u).filter(line => /^#{1,6}\s/u.test(line)),
         articleCharacters: articleBaseline.length, legacyProcessPostscript: articleBaseline !== boundBody?.trim(),
+        preserveMeaning: LANGUAGE_REVIEW_SEMANTIC_CONTRACT,
         output: 'complete_article_only',
       } } : {}),
       ...(includeDiscussion ? { authorReviewDiscussion: deduplicateReviewDiscussion(options.authorReviewDiscussion ?? [],
@@ -374,7 +375,7 @@ export function createWritingCollaboration(options: {
       ? { id: `${runId}:preview:${scopeId}`, stage } : undefined;
     if (outputPreview) rolePrompt += '\n本次是纯文本成果生成：以普通回复逐步输出本阶段完整的 Markdown 提纲、文章或审校建议，不把全文包装为 JSON，不先写“正在整理”等开场说明。成果输出前仅在必要时调用已提供的读取工具补读目录中的原文，不重读本次已完整提供的内容。不输出私有推理、调度指令或内部字段。审校建议说明问题、阅读影响和修改建议，使用简短分段。程序会在完整响应结束后把这份原文交给 submit_writing_stage 校验保存，不需要你再次复制、调用或宣称保存成功。预览不代表已保存，也不代表作者已确认或事实核查已通过。';
     if (outputPreview) rolePrompt += '\n确实发现任务依赖的必要作者信息缺口时，不写成果或缺料说明，调用 assess_writing_readiness(status=needs_input) 提出最多两个具体问题并等待回答。当前 ready 已由程序按输入版本确认，不要重复提交 ready。';
-    if (stage === 'language_review') rolePrompt += '\n最小润色允许消除旧稿中的重复流程说明和内部材料标签，这不等于删改文章事实。将“据整理稿所记”这类工作表述改为材料确实支持的自然来源归属，不虚构来源、不移除实质限定；若确需改变论点或事实，交回主笔。任务说明中要求保留全部工作声明或附改动清单时，以本条与正文交付契约为准。';
+    if (stage === 'language_review') rolePrompt += '\n最小润色包括消除旧稿中的工作备注、注释式真假标签和解释写作步骤的文字，这不等于删改文章事实。假设保留“如果/设想”等自然语气，不重复加“说明性假设，不是真事”；将内部材料标签改为材料确实支持的自然来源归属，不虚构来源、不移除实质限定。审校称赞过这些标签或提纲要求每节重复同一动作，不构成作者锁定要求；根据实际阅读效果修复，不按公式补齐。若确需改变核心论点或事实，交回主笔。任务说明中要求保留全部工作声明或附改动清单时，以本条与正文交付契约为准。';
     if (assignment?.stage && ['draft', 'central_revision', 'language_review'].includes(assignment.stage)) rolePrompt += '\n正文交付契约由程序规定，优先于任务说明中的输出格式建议：只输出完整文章，不附改动说明、审校结论、版本号或“无需修改”等状态。没有修改时返回完整原文。语言润色必须保留 bodyOutputContract.requiredHeadings 的 Markdown 标题；不要因标题已确认而省略它。旧稿末尾如带明确的改动说明，说明不是文章，不复制进新正文，不把其字数算进正文基线。';
     if (actor === 'director' && !current.ready) rolePrompt += '\n先根据实际提供的材料判断本阶段是否充分。充分时优先一次调用 director_decide(action=dispatch, stage=nextStage, readinessReason=简短的充分性判断, reason=简短任务说明, questions=[])，程序会同时校验读取和阶段权限，无需先单独提交 ready。材料未完整提供时先补读；确有作者信息缺口时用 ask 或 assess_writing_readiness needs_input，不强行推进。';
     if (downstream && !isFactCheck) rolePrompt += '\n上下文按职责提供：evidence_table的claimFields是列名，claimRows每行按列对应一条完整主张，source_id对应sources。仅omittedFields列出的字段未提供；需要精确引语或事实依据时用read_artifact_version读取绑定证据版本，不猜省略内容。目录projection=evidence_catalog/artifact_catalog不等于全文，导演通常据阶段状态交接，不为调度重读全部产物。materialCatalog只是授权目录，不代表读过原文；需要上下文时用read_material读取。factCheck为状态与未解决主张，不改变门禁。';
