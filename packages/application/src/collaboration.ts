@@ -379,8 +379,15 @@ export function createWritingCollaboration(options: {
     if (actor === 'director' && !current.ready) rolePrompt += '\n先根据实际提供的材料判断本阶段是否充分。充分时优先一次调用 director_decide(action=dispatch, stage=nextStage, readinessReason=简短的充分性判断, reason=简短任务说明, questions=[])，程序会同时校验读取和阶段权限，无需先单独提交 ready。材料未完整提供时先补读；确有作者信息缺口时用 ask 或 assess_writing_readiness needs_input，不强行推进。';
     if (downstream && !isFactCheck) rolePrompt += '\n上下文按职责提供：evidence_table的claimFields是列名，claimRows每行按列对应一条完整主张，source_id对应sources。仅omittedFields列出的字段未提供；需要精确引语或事实依据时用read_artifact_version读取绑定证据版本，不猜省略内容。目录projection=evidence_catalog/artifact_catalog不等于全文，导演通常据阶段状态交接，不为调度重读全部产物。materialCatalog只是授权目录，不代表读过原文；需要上下文时用read_material读取。factCheck为状态与未解决主张，不改变门禁。';
     if (discussionReadTools.length) rolePrompt += '\nauthorReviewDiscussion保留作者每条决定及其顺序。contentFromMaterial指向本次materials中相同版本的完整原话，contentFromArtifactId指向本次完整产物；它们仍是原角色的发言，不代表同意。旧助手说明按sequence索引，遇到“这一条/第二处”等指代不清时，用read_review_discussion读取该sequence恢复上下文，不能根据目录猜测或忽略作者的否定。';
+    // Once every stage and the current fact gate passed, there is no stage for
+    // the model to choose. Bind the finish operation locally, using the same
+    // validated tool path as normal decisions; recheck all gates at execution.
+    const finishing = actor === 'director' && !current.finished && current.ready && current.nextStage === null
+      && workflow.completion(runId).publicationReady;
     return {
-      scopeId,
+      scopeId: finishing ? `${scopeId}:completion` : scopeId,
+      ...(finishing ? { textOutputTool: { name: 'director_decide', arguments: { action: 'finish', stage: null, questions: [] }, contentArgument: 'reason' },
+        modelTools: [], toolChoice: 'none' as const } : {}),
       ...(outputPreview ? { outputPreview } : {}),
       ...(outputPreview ? { textOutputTool: { name: 'submit_writing_stage', arguments: { stage: outputPreview.stage }, contentArgument: 'content' },
         modelTools: [...materialReadTools, ...artifactReadTools, ...discussionReadTools, 'assess_writing_readiness'], toolChoice: 'auto' as const } : {}),
@@ -390,7 +397,8 @@ export function createWritingCollaboration(options: {
       // material slices so new tasks or real reads still reset the guard.
       progressKey: JSON.stringify({ task: actor === 'director' ? directorMessage : actor === 'title' ? assignment!.reason : options.expertMessage,
         ...summary, savedSourceRecords: undefined, searchBudget: undefined, researchSearchBudget: undefined }),
-      systemPrompt: isFactCheck ? factReviewPrompt(prepared ? 'verify' : 'extract', factSearch.enabled())
+      systemPrompt: finishing ? '你是写作导演。当前文章所有阶段均已完成，已保存的正文和选定标题已通过程序事实门禁。只用一至两句中文告诉作者可以查看当前稿件，后续想调整可以继续提出。不要重写文章、重新审校、索要确认或发起新任务；不输出JSON、阶段名或工具参数。程序会再次校验当前版本与完成条件并记录收尾。'
+        : isFactCheck ? factReviewPrompt(prepared ? 'verify' : 'extract', factSearch.enabled())
         : `${commonPrompt}\nACTOR=${actor}\n${buildExpertInstructions(actor)}\n${rolePrompt}\n${sharedStateRules}`,
       userMessage: isFactCheck ? `核对当前文章的重要事实，不重新审稿。\nCOLLABORATION_STATE=${JSON.stringify({
         actor, stage: 'fact_check', ready: current.ready, finished: current.finished, nextStage: current.nextStage, inputVersionIds: inputs,
@@ -399,14 +407,14 @@ export function createWritingCollaboration(options: {
         ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
           savedSourceRecords: factRecordCatalog(storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.budget(runId),
       })}` : `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material") && !(selectedStyle !== undefined && line.startsWith('风格参考档案'))).join("\n")}\n${styleContext(selectedStyle, actor)}\nCOLLABORATION_STATE=${JSON.stringify(summary)}`,
-      allowedTools: isFactCheck ? factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled()) : allowedTools,
+      allowedTools: finishing ? ['director_decide'] : isFactCheck ? factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled()) : allowedTools,
       ...(isFactCheck ? { projectHistory: projectFactHistory, toolFailureLoopKey: factToolFailureLoopKey } : {}),
       projectToolResult: (message, context) => isFactCheck ? projectFactToolResult(message, context, prepared ? {
         versionId: prepared.evidenceVersionId, evidenceIds: prepared.claims.flatMap(c => c.matchedEvidenceIds) } : undefined) : projectInlineRead(message, artifactContext.completeArtifacts, summary.materials, artifacts),
       toolValidationError: call => call.name === 'submit_fact_check' ? factSubmissionError(prepared, call.arguments)
         : call.name === 'search_fact_sources' && factSearch.budget(runId).retryQuery && (call.arguments as { query?: string }).query?.trim() !== factSearch.budget(runId).retryQuery
           ? { code: 'SEARCH_RETRY_QUERY_REQUIRED', message: '用户选择重试原检索词，不改写查询。', retryable: false, details: { query: factSearch.budget(runId).retryQuery } } : null,
-      ...(!outputPreview && !current.finished ? { toolChoice: 'required' as const } : {}),
+      ...(!outputPreview && !current.finished && !finishing ? { toolChoice: 'required' as const } : {}),
       expectedBodyVersionId: assignment?.expectedBodyVersionId === undefined ? current.expectedBodyVersionId : assignment.expectedBodyVersionId,
       authorizeTool(call) {
         const args = call.arguments as Record<string, unknown>;

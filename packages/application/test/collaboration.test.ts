@@ -965,6 +965,47 @@ it('finishes durably when the director finishes instead of requesting another mo
   } finally { f.close(); }
 });
 
+it('finishes a passed workflow without asking the model for an inapplicable stage enum', async () => {
+  class FinishStageProvider extends CollaborationProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request);
+      if (state?.actor === 'director' && state.nextStage === null && !state.finished) {
+        this.requests.push(structuredClone(request));
+        if (request.tools?.some(tool => tool.name === 'director_decide')) {
+          // The reported failure was /stage enum validation after the final fact
+          // gate passed. Its raw rejected value was not retained; use a synthetic
+          // non-stage completion label to reproduce that same contract failure.
+          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'director_decide',
+            argumentsDelta: JSON.stringify({ action: 'finish', stage: '完成', reason: '稿件已保存并通过核查。', questions: [] }) };
+          yield { type: 'completed', finishReason: 'tool_calls' };
+        } else {
+          yield { type: 'text_delta', delta: '稿件已保存并通过核查，可以查看当前稿件。' };
+          yield { type: 'completed', finishReason: 'stop' };
+        }
+        return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new FinishStageProvider(); const f = setup(provider);
+  try {
+    const result = await f.app.runDraft(f.input);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(f.app.getProjectProjection('p').factCheck.status, 'passed');
+    const finishRequests = provider.requests.filter(request => {
+      const state = collaborationState(request);
+      return state?.actor === 'director' && state.nextStage === null && !state.finished;
+    });
+    assert.equal(finishRequests.length, 1);
+    assert.equal(finishRequests[0]!.parameters.toolChoice, 'none');
+    assert.deepEqual(finishRequests[0]!.tools ?? [], []);
+    const finish = f.storage.listRunEvents(result.runId).findLast(event => event.type === 'tool.requested' && event.payload.toolName === 'director_decide');
+    assert.equal(finish?.payload.origin, 'harness_text_output');
+    assert.deepEqual(finish?.payload.arguments, { action: 'finish', stage: null, reason: '稿件已保存并通过核查，可以查看当前稿件。', questions: [] });
+    assert.equal(f.storage.listRunEvents(result.runId).filter(event => event.type === 'run.completed').length, 1);
+  } finally { f.close(); }
+});
+
 it('returns fact findings to the director before asking the author to fix agent work', async () => {
   let directorReviewed = false;
   class ResolveFacts extends CollaborationProvider {
@@ -1550,6 +1591,10 @@ it("uses real director decisions and independent same-draft reviews before compl
       const role = collaborationState(request)?.actor;
       if (role === 'review_reader') assert.match(request.messages[0]!.content, /模拟反应.*不是真实用户调研/u);
       else if (role === 'fact_check') assert.match(request.messages[0]!.content, /事实核查专员|写作助手.*提取/u);
+      else if (role === 'director' && request.parameters.toolChoice === 'none') {
+        assert.equal(collaborationState(request)?.nextStage, null);
+        assert.match(request.messages[0]!.content, /所有阶段均已完成/u);
+      }
       else if (role) assert.ok(request.messages[0]!.content.includes(buildExpertInstructions(role)), `${role} must receive migrated professional instructions`);
     }
     assert.equal(JSON.stringify(reader.messages).includes("SECRET_OPINION_review_editor"), false);
