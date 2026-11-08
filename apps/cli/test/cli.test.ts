@@ -575,6 +575,8 @@ describe("minimal runtime CLI", () => {
         assert.match(version?.content ?? "", /材料记录：下班后我沿着河边/);
         assert.equal(storage.listMaterials("project-1").length, 1);
         assert.equal(storage.listActiveDecisions("project-1").length, 1);
+        assert.equal(storage.listEvents('project-1').filter(event => event.type === 'request.failed').length, 0,
+          'the offline director must honor the text-only completion handoff without format retries');
       } finally {
         storage.close();
       }
