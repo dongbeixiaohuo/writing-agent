@@ -24,7 +24,7 @@ test('loop and provider-backoff pauses project a clear cause and a safe retry ti
       if (stopReason === 'PROVIDER_RETRY_DEFERRED') assert.equal(recovery.retryNotBefore, retryNotBefore);
       else assert.equal(recovery.retryNotBefore, undefined);
       const text = JSON.stringify(snapshot.timelineBySession);
-      assert.match(text, stopReason === 'TOOL_NO_PROGRESS' ? /无进展|重复读取/ : /模型服务.*稍后|服务商.*等待/);
+      assert.match(text, stopReason === 'TOOL_NO_PROGRESS' ? /写作助手 Agent.*没能完成/ : /稍后.*重试/);
       assert.doesNotMatch(text, /需要你确认当前共创阶段/);
     } finally { f.close(); }
   }
@@ -125,7 +125,7 @@ async function fixture(purpose = 'writing-pack:draft') {
   };
 }
 
-test('permission-loop diagnostics survive later waits and explain the concrete cause in main chat', async () => {
+test('permission-loop diagnostics survive later waits while main chat offers a plain retry', async () => {
   const f = await fixture();
   try {
     f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'permission-loop', reason: 'TOOL_FAILURE_LOOP',
@@ -137,9 +137,10 @@ test('permission-loop diagnostics survive later waits and explain the concrete c
     f.storage.resumeRun({ projectId: 'project', runId: 'run', operationId: 'retry', decision: 'resume' });
     f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'checkpoint', reason: 'CO_CREATION_CHECKPOINT', payload: { stage: 'language_review', nextStage: 'fact_check' } });
     const later = await f.snapshot();
-    const error = later.timelineBySession.session.find(item => item.kind === 'tool' && item.label === '自动重试已暂停');
+    const error = later.timelineBySession.session.find(item => item.kind === 'tool' && item.label === '这一步未能完成');
     assert.ok(error?.kind === 'tool');
-    assert.match(error.detail, /当前阶段权限之外/);
+    assert.match(error.detail, /已保存内容仍在/);
+    assert.doesNotMatch(error.detail, /权限|TOOL_PERMISSION_DENIED|read_artifact_version/);
   } finally { f.close(); }
 });
 
@@ -164,7 +165,7 @@ test('a paused question already covered by the reason is shown once, not twice',
   } finally { f.close(); }
 });
 
-test('model failure surfaces the sanitized upstream reason in the timeline', async () => {
+test('model failure gives an action in conversation and keeps upstream details in diagnostics', async () => {
   const f = await fixture();
   try {
     f.event('request.dispatch_attempted', 'model-1', { requestId: 'request-1', attemptIndex: 0, outputRecoveryAttempt: 0 });
@@ -175,12 +176,13 @@ test('model failure surfaces the sanitized upstream reason in the timeline', asy
     });
     f.storage.finishRun({ projectId: 'project', runId: 'run', operationId: 'fail', status: 'failed', stopReason: 'INVALID_REQUEST' });
     const snapshot = await f.snapshot();
-    const row = snapshot.timelineBySession.session.find(item => item.kind === 'tool' && item.label === '运行失败');
+    const row = snapshot.timelineBySession.session.find(item => item.kind === 'tool' && item.audience === 'conversation');
     assert.ok(row?.kind === 'tool');
     assert.match(row.detail, /模型服务拒绝了请求/u);
-    assert.match(row.detail, /上游返回：unknown parameter: include/u);
+    assert.doesNotMatch(row.detail, /上游返回|unknown parameter|include/u);
     const requestRow = snapshot.timelineBySession.session.find(item => item.kind === 'tool' && item.label === '写作模型');
     assert.ok(requestRow?.kind === 'tool');
+    assert.notEqual(requestRow.audience, 'conversation');
     assert.match(requestRow.detail, /上游返回：unknown parameter: include/u);
   } finally { f.close(); }
 });
@@ -490,7 +492,7 @@ for (const legacy of [false, true]) test(`model error classification uses the re
     f.storage.finishRun({ projectId: 'project', runId: 'run', operationId: 'fail', status: 'failed', stopReason: code, payload: { code } });
     const snapshot = await f.snapshot();
     const text = JSON.stringify(snapshot.timelineBySession.session);
-    assert.match(text, legacy ? /格式校验/u : /输出.*上限/u);
+    assert.match(text, legacy ? /没能完成这次回复/u : /没有完整生成.*没有写入稿件/u);
     assert.doesNotMatch(text, /账户额度不足/u);
     assert.equal(snapshot.runRecords[0]?.stopReason, code);
   } finally { f.close(); }

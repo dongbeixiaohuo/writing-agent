@@ -86,12 +86,12 @@ test('main conversation links to the current manuscript while export settings li
     assert.doesNotMatch(passed, /aria-label="文章导出"|导出文件格式|读取参考材料|系统已阻止直接写作/u);
     assert.match(passed, /网络中断，请重试/u);
     assert.match(passed, /请确认这份提纲/u);
-    assert.match(passed, /本阶段活动耗时 61 秒/u);
+    assert.match(passed, /处理用时 61 秒/u);
     assert.match(passed, /事实核查专员/u);
     const streaming = render('not_checked', 'running');
     assert.match(streaming, /这是一段正在到达的回复/u);
     assert.match(streaming, /正在生成.*尚未保存/u);
-    assert.match(render('not_checked', 'running', null, 'waiting'), /aria-label="正在处理你的消息"/u);
+    assert.match(render('not_checked', 'running', null, 'waiting'), /role="status">[^<]*Agent 正在/u);
     assert.match(render('not_checked', 'running', null, 'waiting'), /data-conversation-message="status"/u);
     assert.match(render('passed', 'ready', null, 'delivery'), /aria-label="文章导出"/u);
     assert.match(render('passed', 'ready', null, 'read'), /<h1>一篇文章<\/h1>/u);
@@ -112,7 +112,7 @@ test('main conversation links to the current manuscript while export settings li
     }
     assert.match(render('not_checked', 'ready', 'UNKNOWN_EXTERNAL_OUTCOME'), /确认重试并继续/u);
     const multiple = render('not_checked', 'ready', 'MULTIPLE');
-    assert.match(multiple, /上次外部请求的结果未知/u);
+    assert.match(multiple, /还无法确认上次操作是否完成/u);
     assert.match(multiple, />认可当前阶段，交给内容主笔</u);
     assert.equal((multiple.match(/>结束本轮</gu) ?? []).length, 2);
     assert.equal((render('not_checked', 'ready', 'MULTIPLE_CHECKPOINTS').match(/>认可当前阶段，交给内容主笔</gu) ?? []).length, 1);
@@ -132,7 +132,7 @@ test('main conversation links to the current manuscript while export settings li
     assert.match(render('stale'), /当前稿件的核查结果已失效/);
     const timeout = render('not_checked', 'ready', 'UNKNOWN_EXTERNAL_OUTCOME', null, {source:'model',cause:'timeout',replyAccepted:true});
     assert.match(timeout, /已收到你的回复/u);
-    assert.match(timeout, /模型响应超时/u);
+    assert.match(timeout, /回复还没有完成，这一步已暂停/u);
     assert.match(timeout, />重试这一步</u);
     assert.match(timeout, /data-conversation-recovery="true"/u);
     assert.doesNotMatch(timeout, /避免重复写入|aria-label="本阶段成果"|外部请求的结果未知/u);

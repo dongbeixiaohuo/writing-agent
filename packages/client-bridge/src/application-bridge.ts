@@ -370,23 +370,23 @@ function nestedProviderDetail(payload: Readonly<Record<string, unknown>>): strin
 
 function modelFailureDetail(code: string | null, providerDetail: string | null = null): string {
   const messages: Readonly<Record<string, string>> = {
-    ABORTED: "模型请求已停止。",
+    ABORTED: "写作已停止，已保存的内容仍在。",
     AUTH_FAILED: "API Key 无效或没有访问权限，请在“设置 → 模型”中更新 Key 并验证连接。",
     INVALID_REQUEST: "模型服务拒绝了请求，请检查服务类型、API 地址和模型 ID。",
-    MODEL_RESPONSE_INVALID: "模型回复未通过格式校验，本轮未完成；你的输入仍保留，可以重试。若反复出现，请反馈运行记录，无需重新填写资料。",
+    MODEL_RESPONSE_INVALID: "写作助手 Agent 没能完成这次回复。你的输入仍保留，可以重试；若再次遇到问题，可查看运行记录了解原因。",
     PARALLEL_TEXT_ALL_FAILED: '三个模拟读者都没有返回可用感受，本阶段未保存。可以稍后重试读者阶段；已保存的文章和前面审校结果仍在。具体模型错误可查看运行记录。',
-    MODEL_REQUIRED_TOOL_MISSING: "模型尚未提交本轮需要保存的操作，不能标为完成。你的输入与已保存内容仍保留，可以重试这一步。",
-    STAGE_OUTPUT_NOT_SAVED: "这一阶段的内容反复未通过保存校验，已停止自动重写。上一版稿件仍保留；不是模型账户额度或网络故障。请反馈此阶段的运行记录，不必重新填写材料。",
-    TOOL_FAILURE_LOOP: "程序提交反复被同一门禁拒绝，已停止自动重试。已保存的内容仍保留；这不是模型账户额度或网络故障。请反馈这条运行记录，或重试当前步骤。",
-    TOOL_NO_PROGRESS: "模型反复读取相同信息但没有推进任务，程序已暂停，避免继续消耗请求；已保存内容仍保留，可以重试这一步。",
+    MODEL_REQUIRED_TOOL_MISSING: "这一步还没有完成，暂时无法继续。你的输入与已保存内容仍保留，可以重试这一步。",
+    STAGE_OUTPUT_NOT_SAVED: "这次生成的内容没有保存成功，上一版稿件仍在。可以重试这一步；具体原因可在运行记录中查看。",
+    TOOL_FAILURE_LOOP: "写作助手 Agent 遇到问题，暂时停在了这里。已保存的内容仍在，可以重试这一步；具体原因可在运行记录中查看。",
+    TOOL_NO_PROGRESS: "写作助手 Agent 暂时没能完成这一步。已保存的内容仍在，可以重试，无需重新提供材料。",
     PROVIDER_RETRY_DEFERRED: "模型服务要求稍后重试，程序已保存进度并暂停等待；请在建议时间后重试，或检查模型服务配置。",
-    MODEL_OUTPUT_TRUNCATED: "模型回复达到单次输出长度上限而被截断，本阶段未完成；残缺内容没有写入稿件，已保存的阶段仍保留。请反馈这条运行记录，无需重新填写资料。",
+    MODEL_OUTPUT_TRUNCATED: "这次回复没有完整生成，未完成的内容没有写入稿件。已保存的成果仍在，可以重试这一步；具体原因可在运行记录中查看。",
     MODEL_UNSUPPORTED: "模型名称不可用，请检查服务商提供的模型 ID，并在“设置 → 模型”中验证连接。",
     NETWORK_ERROR: "无法连接模型服务，请检查 API 地址和网络后验证连接。",
     PROVIDER_UNAVAILABLE: "模型服务暂不可用，请稍后验证连接或重试。",
     QUOTA_EXCEEDED: "模型账户额度不足，请在服务商后台检查余额或套餐。",
     RATE_LIMITED: "模型请求过于频繁，请稍后重试。",
-    TIMEOUT: "大模型未在等待时限内返回完整回复，这一步未完成；已保存内容仍在，请稍后重试。",
+    TIMEOUT: "等待回复的时间较长，这一步已暂停。已保存内容仍在，请稍后重试。",
     UNKNOWN_PROVIDER_ERROR: "模型请求未完成，具体原因尚未确认；已保存内容仍在。请查看这一步的运行记录，稍后重试。",
   };
   const base = code === null
@@ -474,9 +474,7 @@ function timelineForSession(
     ['writing-pack:intake', 'writing-pack:author-conversation'].includes(String(event.payload.purpose))).map(event => event.runId));
   const savedIntakeReplyRunIds = new Set<string>();
   const displayedFactRunIds = new Set<string>();
-  const latestToolFailureCodes = new Map<string, string>();
   const latestModelFailureCodes = new Map<string, string>();
-  const latestModelFailureDetails = new Map<string, string>();
   // Bound to the saved result's event boundary, so later rework never changes
   // the duration shown under an earlier result. Original events are durable.
   const timingEvents = new Map<string, WritingProjectProjection['events'][number][]>();
@@ -498,12 +496,6 @@ function timelineForSession(
     if (event.type === 'request.failed') {
       const code = nestedErrorCode(event.payload);
       if (code !== null) latestModelFailureCodes.set(event.runId, code);
-      const providerDetail = nestedProviderDetail(event.payload);
-      if (providerDetail !== null) latestModelFailureDetails.set(event.runId, providerDetail);
-    }
-    if (event.type === 'tool.failed') {
-      const failureCode = nestedErrorCode(event.payload);
-      if (failureCode !== null) latestToolFailureCodes.set(event.runId, failureCode);
     }
     if (intake && event.type === 'run.completed') continue;
     if (event.type === 'tool.completed') {
@@ -558,7 +550,7 @@ function timelineForSession(
       const instruction =
         textPayload(event.payload, "displayInstruction") ??
         (event.type === "run.resumed"
-          ? "从已保存边界继续写作"
+          ? "从已保存进度继续写作"
           : "生成草稿");
       items.push({
         id: event.id,
@@ -657,7 +649,7 @@ function timelineForSession(
           role: "assistant",
           body: deliveryReady(versionId)
             ? factCheckCompletionSummary(projection.factCheck.assessment)
-            : '工作稿和阶段结果已保存，但尚未达到正式交付条件。请查看当前核查问题，并在这里补充材料或告诉我如何修改。',
+            : '稿件已保存，还有一些核查问题需要处理。请查看当前提示，在这里补充材料或告诉我如何修改。',
           createdAt,
           ...(deliveryReady(versionId) ? savedTiming(event.runId, 'fact_check') : {}),
         });
@@ -667,7 +659,7 @@ function timelineForSession(
       if (event.payload.stopReason === 'FACT_SEARCH_DECISION_REQUIRED') {
         const request = event.payload.searchRecovery as any;
         items.push({ id: event.id, kind: 'message', role: 'assistant', createdAt,
-          body: `事实搜索已暂停。${request.reason}\n\n检索词：${request.query}\n检索额度：${request.used}/${request.limit}；网络尝试：${request.attemptsUsed}/${request.attemptsLimit}。\n\n请使用下方按钮选择继续搜索或不追加。已取得的来源和稿件仍保留；不再搜索时会说明实际未联网核查的范围。` });
+          body: `事实核查 Agent 暂时无法继续查找来源。${request.kind === 'limit' ? '本轮搜索次数已用完。' : '这次搜索没有取得可用结果。'}\n\n正在查找：${request.query}\n\n你可以使用下方按钮继续搜索，或使用已有资料完成核查。稿件和已取得的来源仍在；缺少依据的内容会单独说明。` });
         continue;
       }
       const inputRequest = writingInputRequest(event.payload);
@@ -683,26 +675,26 @@ function timelineForSession(
       const stage = textPayload(event.payload, "stage");
       if (reason === 'TOOL_NO_PROGRESS' || reason === 'PROVIDER_RETRY_DEFERRED') {
         items.push({ id:event.id, kind:'tool', audience:'conversation',
-          label:reason === 'TOOL_NO_PROGRESS' ? '重复读取无进展，已暂停' : '模型服务要求稍后重试',
+          label:reason === 'TOOL_NO_PROGRESS' ? '这一步暂时停在了这里' : '这一步需要稍后再试',
           detail:reason === 'TOOL_NO_PROGRESS'
-            ? '反复读取相同信息但没有推进当前任务，程序已停止自动循环。已保存内容仍在；可以查看运行记录并重试这一步，无需重新提供材料。'
-            : '模型服务要求稍后重试或返回了无效的重试时间，程序已保存进度并暂停等待。请按下方提示稍后重试；没有继续挂着计时，也未提前请求服务。',
+            ? '写作助手 Agent 暂时没能完成这一步。已保存内容仍在，可以重试，无需重新提供材料。'
+            : '已保存的内容仍在，请按下方提示稍后重试。',
           state:'failure' });
         continue;
       }
       if (reason === 'PARALLEL_TEXT_ALL_FAILED') {
         items.push({ id:event.id, kind:'tool', audience:'conversation', label:'模拟读者未完成',
-          detail:'三个模拟读者都未返回可用反应，未保存读者反馈，也未自动重试。请查看运行记录；稍后可重试当前读者阶段，之前的稿件与审校仍保留。', state:'failure' });
+          detail:'模拟读者 Agent 暂时没能完成反馈。稿件和之前的审校意见仍在，可以只重试读者反馈这一步。', state:'failure' });
         continue;
       }
       if (reason === 'STAGE_OUTPUT_NOT_SAVED') {
-        items.push({ id:event.id, kind:'tool', audience:'conversation', label:'自动重写已暂停',
-          detail:'本阶段保存校验反复未通过；上一版稿件仍保留，可查看原因或重试这一步。', state:'failure' });
+        items.push({ id:event.id, kind:'tool', audience:'conversation', label:'这一步未能保存',
+          detail:'这次生成的内容没有保存成功，上一版稿件仍在。可以重试这一步；具体原因可在运行记录中查看。', state:'failure' });
         continue;
       }
       if (reason === 'TOOL_FAILURE_LOOP') {
-        items.push({ id:event.id, kind:'tool', audience:'conversation', label:'自动重试已暂停',
-          detail:toolFailureExplanation(event.payload).explanation, state:'failure' });
+        items.push({ id:event.id, kind:'tool', audience:'conversation', label:'这一步未能完成',
+          detail:'写作助手 Agent 遇到问题，暂时停在了这里。已保存内容仍在；请查看下方提示决定如何继续，具体原因可在运行记录中查看。', state:'failure' });
         continue;
       }
       if (reason === 'CO_CREATION_CHECKPOINT') {
@@ -730,17 +722,17 @@ function timelineForSession(
         kind: "tool",
         audience: 'conversation',
         label: "需要你的决定",
-        detail: "存在结果未知的外部请求，请确认是否重试。",
+        detail: "还无法确认上次操作是否完成，请先查看运行记录，再决定是否重试。重试可能重复执行该操作。",
         state: "success",
       });
       continue;
     }
     const terminal: Readonly<Record<string, { label: string; state: "success" | "failure" | "cancelled" }>> = {
       "run.completed": { label: "运行完成", state: "success" },
-      "run.cancelled": { label: "运行已停止", state: "cancelled" },
-      "run.failed": { label: "运行失败", state: "failure" },
-      "run.budget_exhausted": { label: "已触发运行保护", state: "failure" },
-      "run.interrupted": { label: "进程中断，等待继续", state: "failure" },
+      "run.cancelled": { label: "写作已停止", state: "cancelled" },
+      "run.failed": { label: "这一步没有完成", state: "failure" },
+      "run.budget_exhausted": { label: "写作暂时暂停", state: "failure" },
+      "run.interrupted": { label: "写作中断，可以继续", state: "failure" },
     };
     const terminalState = terminal[event.type];
     if (terminalState !== undefined) {
@@ -755,18 +747,15 @@ function timelineForSession(
                 (textPayload(event.payload, 'code') ?? textPayload(event.payload, 'stopReason')) === 'MODEL_RESPONSE_INVALID'
                   && latestModelFailureCodes.get(event.runId) === 'MODEL_OUTPUT_TRUNCATED'
                   ? 'MODEL_OUTPUT_TRUNCATED' : textPayload(event.payload, 'code') ?? textPayload(event.payload, 'stopReason'),
-                latestModelFailureDetails.get(event.runId) ?? null,
               )
             : event.type === "run.budget_exhausted"
               ? intake
                 ? savedIntakeReplyRunIds.has(event.runId)
-                  ? "本轮回复已保存，但后续收尾触发了程序内部调用上限；不是服务商账户额度不足。你可以直接继续对话。"
-                  : latestToolFailureCodes.get(event.runId)?.startsWith('INTAKE_')
-                    ? `本轮需求回复未能保存。${toolFailureDetail(latestToolFailureCodes.get(event.runId)!)}为避免重复失败，已停止继续调用；不是服务商账户额度不足。`
-                  : "模型多次尝试后仍未能保存本轮回复，已达到程序内部调用上限；不是服务商账户额度不足。你的消息仍保留，可以重试；若再次出现，请反馈这条运行记录。"
-                : "本轮自动处理已暂停，不是服务商账户额度不足。已保存稿件和已确认选择保留；请点击下方继续按钮，从未完成的步骤接着处理。"
+                  ? "本轮回复已保存，你可以直接继续对话。"
+                  : "这次回复没有保存成功，写作助手 Agent 已暂停。你的消息仍保留，可以重试；具体原因可在运行记录中查看。"
+                : "写作暂时暂停，已保存稿件和已确认选择保留。请点击下方继续按钮，接着完成剩余工作。"
               : event.type === "run.interrupted"
-                ? "进程中断；已保存内容仍在，可从当前状态继续。"
+                ? "写作中断了，已保存内容仍在，可以接着继续。"
                 : event.type === "run.completed"
                   ? deliveryReady(textPayload(event.payload, 'artifactVersionId')) ? '稿件已保存，当前版本可正式导出' : '尚未达到交付条件，请处理当前问题'
                   : terminalState.label,

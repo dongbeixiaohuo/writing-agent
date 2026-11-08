@@ -1,6 +1,7 @@
 .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, #0b1018 42%, transparent); }
 .dialog { width: min(1040px, 100%); max-height: min(820px, calc(100vh - 48px)); overflow: auto; border: 1px solid var(--dsw-alias-border-l3); border-radius: 16px; background: var(--dsw-specific-popover); color: var(--dsw-alias-label-primary); box-shadow: 0 24px 70px rgb(0 0 0 / 24%); }
 .dialog .header { position: sticky; top: 0; z-index: 1; background: var(--dsw-specific-popover); }
+.operationStatus { margin: 0; padding: 12px 24px; border-bottom: 1px solid var(--dsw-alias-border-l3); font-size: 14px; line-height: 1.6; }
 .samples .importLimitNotice { margin: 8px 0 0; }
 .sourceRow { margin-top: 12px; align-items: flex-start; }
 .sourceRow textarea { flex: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 8px; color: inherit; background: var(--dsw-specific-input-major); font: inherit; resize: vertical; }

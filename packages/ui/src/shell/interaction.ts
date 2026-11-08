@@ -6,44 +6,40 @@ import type {
 } from '../../../client-bridge/src/protocol.ts'
 
 export function conversationWorkingCopy(activity: BridgeSnapshot['liveActivity'], now: number) {
-  const labels: Record<string, string> = {
-    director: '正在核对已有内容，安排下一步', intake: '正在梳理你的想法', author: '正在处理你的修改意见',
-    research: '正在整理参考材料与写作依据', outline: '正在整理文章提纲', draft: '正在起草文章',
-    review_editor: '正在检查文章结构与表达', review_publish: '正在检查发布注意事项', review_reader: '三个模拟读者正在独立阅读',
-    central_revision: '正在按审校意见修改文章', language_review: '正在润色文字', title: '正在构思标题', fact_check: '正在核对文章中的事实', fact_extract: '正在提取需要核对的事实',
+  const tasks: Record<string, { title: string; detail: string }> = {
+    director: { title: '写作导演 Agent 正在安排下一步', detail: '结合已完成的内容安排后续工作；需要你确认时，会在这里停下来。' },
+    intake: { title: '写作助手 Agent 正在梳理你的想法', detail: '结合你的选题和要求，整理这篇文章的写作方向。' },
+    author: { title: '写作助手 Agent 正在处理你的意见', detail: '结合当前稿件回应你的想法，确认接下来怎么调整。' },
+    research: { title: '资料研究 Agent 正在整理参考材料', detail: '为文章寻找有用的事实、案例和观点，准备写作依据。' },
+    outline: { title: '选题策划 Agent 正在整理提纲', detail: '围绕已确认的方向安排文章结构，完成后请你过目。' },
+    draft: { title: '内容主笔 Agent 正在撰写初稿', detail: '按照提纲和选定的风格展开正文，新内容会逐步显示。' },
+    review_editor: { title: '编辑审校 Agent 正在审读文章', detail: '检查结构、论证和表达，整理值得修改的地方。' },
+    review_publish: { title: '发布审校 Agent 正在检查发布风险', detail: '结合发布平台，检查容易引起误解或需要调整的内容。' },
+    review_reader: { title: '模拟读者 Agent 正在独立阅读', detail: '三位模拟读者会分别说出阅读感受，完成后放在一起供你参考。' },
+    central_revision: { title: '内容主笔 Agent 正在修改文章', detail: '结合审校意见和你的取舍，完善这一版正文。' },
+    language_review: { title: '语言润色 Agent 正在打磨文字', detail: '调整生硬的句子和套话，保留文章的语气与个性。' },
+    title: { title: '标题策划 Agent 正在构思标题', detail: '结合正文拟定标题候选，完成后请你选择或提出修改意见。' },
+    fact_check: { title: '事实核查 Agent 正在核对文章', detail: '对照正文、标题和参考来源，检查重要事实是否可靠。' },
+    fact_extract: { title: '事实核查 Agent 正在整理待核对的内容', detail: '从文章中找出需要确认的事实，准备逐一核查。' },
   }
   const elapsedSeconds = activity ? Math.max(0, Math.floor((now - (activity.segmentStartedAt ?? activity.startedAt)) / 1000)) : 0
-  if (activity?.activeTool) {
-    const seconds = Math.max(0, Math.floor((now - activity.activeTool.startedAt) / 1000))
-    const name = activity.activeTool.name
-    return { title: name === 'search_research_sources' ? '正在补查研究资料' : name === 'search_fact_sources' ? '正在搜索事实来源' : name === 'read_fact_source' ? '正在读取来源原文' : '正在处理工具操作',
-      detail: `本次工具操作已用时 ${seconds} 秒。上方是本次执行累计时间，包含此前阶段。${name === 'search_research_sources' ? '等待背景搜索返回；失败或达到上限会保留信息缺口，继续使用已有材料，不视为已查证。' : name === 'search_fact_sources' || name === 'read_fact_source' ? '等待外部服务返回；超时会说明未能查证，不会把搜索失败当作核查通过。' : '运行记录可查看具体操作与结果。'}你可以随时停止，已保存稿件不会丢失。`, elapsedSeconds }
+  const task = activity && tasks[activity.actor] || { title: '写作助手 Agent 正在处理你的消息', detail: '有新回复会显示在这里。' }
+  const toolTasks: Record<string, { title: string; detail: string }> = {
+    search_research_sources: { title: '资料研究 Agent 正在查找参考资料', detail: '补充与选题相关的资料，供后续写作参考。' },
+    search_fact_sources: { title: '事实核查 Agent 正在寻找可靠来源', detail: '为需要核对的内容查找依据，核查结果会在完成后告诉你。' },
+    read_fact_source: { title: '事实核查 Agent 正在查阅来源原文', detail: '对照原文核实文章中的说法。' },
   }
-  const requestSeconds = activity ? Math.max(0, Math.floor((now - activity.startedAt) / 1000)) : 0
-  if (activity?.actor === 'review_reader') return { title:labels.review_reader!,
-    detail:`三个读者并行阅读同一篇文章，不看彼此的反应。下方显示完成状态，结束后按身份合并；内部结构化输出不会作为聊天回复显示。当前批次已用时 ${requestSeconds} 秒，可随时停止。`, elapsedSeconds }
-  const idle = activity?.lastActivityAt ? Math.max(0, Math.floor((now - activity.lastActivityAt) / 1000)) : 0
-  const detail = !activity ? '有新回复会直接显示在这里。'
-    : activity.phase === 'receiving' ? idle >= 30 ? `已收到部分模型数据，${idle} 秒未收到新内容；仍在等待，你可以停止。`
-      : activity.lastEventKind === 'reasoning' ? `模型服务仍在处理，尚未收到可展示的答复。已接收 ${activity.receivedEvents ?? 1} 次数据活动；本界面不会展示或推测私有推理，收到可展示答复后会直接流式显示。`
-      : activity.lastEventKind === 'tool_arguments' ? '模型正在准备操作。下方逐步展示可公开的任务说明或检索词，操作是否成功以运行记录为准。'
-      : '已收到模型数据。下方可展示已读取素材；最终回复会在生成时逐步显示。'
-    : activity.phase === 'connected' ? '模型服务已连接，正在等待模型回复。'
-    : requestSeconds >= 30 ? '仍在等待模型回复，比平时稍久。你可以继续等待，也可以停止。' : '正在等待模型回复，有新内容会直接显示在这里。'
-  const context: Record<string, string> = {
-    director: '正在检查已有信息是否足够，并安排下一步；确实缺少信息时会在这里问你。',
-    research: '正在核对材料能支持哪些内容，为提纲准备依据；可阅读的提纲会在生成时逐步显示。',
-    fact_check: '正在对照当前稿件、标题和材料核查事实；核查完成后会说明结果及是否需要调整。',
-    title: '正在结合当前正文拟定标题候选，整理好后会请你选择或提出修改意见。',
-  }
-  return { title: activity ? labels[activity.actor] ?? '正在处理你的消息' : '已收到，正在处理你的消息',
-    detail: `${activity && context[activity.actor] ? `${context[activity.actor]} ` : ''}${detail}${activity ? ` 当前请求已等待 ${requestSeconds} 秒；上方计时是本次执行的累计时间，包含此前阶段，不是当前阶段耗时。` : ''}`, elapsedSeconds }
+  const current = activity?.activeTool ? toolTasks[activity.activeTool.name] ?? task : task
+  // Describe the assigned work, never infer thoughts from transport events.
+  const lastUpdate = activity?.activeTool?.startedAt ?? activity?.lastActivityAt ?? activity?.startedAt
+  const waiting = lastUpdate !== undefined && now - lastUpdate >= 30_000
+  return { ...current, detail: waiting
+    ? `${current.detail} 这一步暂时还没有新回复，你可以继续等待，也可以停止。`
+    : current.detail, elapsedSeconds }
 }
 
 export function runRecordsTabLabel(count: number, activeRunId: string | null, activity?: BridgeSnapshot['liveActivity']) {
-  const live = activeRunId ? activity?.runId === activeRunId && activity.requestOrdinal
-    ? `本轮 ${activity.requestOrdinal} 次请求` : '执行中' : ''
-  return live ? `运行记录（${live}）` : '运行记录'
+  return activeRunId ? '运行记录（进行中）' : '运行记录'
 }
 
 export interface StageRoleCopy {
@@ -52,15 +48,15 @@ export interface StageRoleCopy {
 }
 
 const STAGE_ROLE_COPY: Readonly<Record<WritingWorkflowStageId, StageRoleCopy>> = {
-  research: { role: '资料研究', action: '整理证据与边界' },
+  research: { role: '资料研究', action: '整理参考资料与写作依据' },
   outline: { role: '选题策划', action: '形成文章方向与提纲' },
   draft: { role: '内容主笔', action: '完成第一版全文' },
   review_editor: { role: '编辑审校', action: '检查结构与论证' },
   review_publish: { role: '发布审校', action: '检查平台与发布风险' },
-  review_reader: { role: '模拟读者', action: '三个独立模拟读者并行阅读，只给真实口吻的感受，不是编辑意见' },
+  review_reader: { role: '模拟读者', action: '分别阅读文章，分享各自的感受' },
   central_revision: { role: '内容主笔', action: '集中处理审校意见' },
   language_review: { role: '去 AI 味与语言润色', action: '消除套话和机械表达，保留作者声音，不编造亲历' },
-  fact_check: { role: '事实核查', action: '核对易错或可疑的重要事实，中低风险不阻断' },
+  fact_check: { role: '事实核查', action: '核对文章中的重要事实' },
 }
 
 export function stageRoleCopy(stage: WritingWorkflowStageId): StageRoleCopy {
@@ -86,49 +82,46 @@ export function checkpointCopy(
 ): CheckpointCopy {
   if (recovery.inputRequest?.kind === 'search_recovery') return { role: '事实核查', eyebrow: '搜索等待你的决定',
     title: recovery.inputRequest.searchRecovery?.kind === 'limit' ? '搜索已到本轮上限' : '搜索服务未取得结果',
-    description: recovery.inputRequest.reason, feedbackPlaceholder: '', primaryAction: '选择搜索处理方式' };
+    description: '事实核查 Agent 暂时无法继续查找来源。你可以继续搜索，或使用已有资料完成核查；缺少依据的内容会单独说明。', feedbackPlaceholder: '', primaryAction: '选择搜索处理方式' };
   if (recovery.stopReason === 'TOOL_NO_PROGRESS') return {
-    role: '写作助手', eyebrow: '无进展保护 · 自动循环已停止', title: '重复读取没有推进，已暂停这一步',
-    description: '模型重复读取相同信息，但没有提交新的成果。这不是模型无响应，已保存内容仍在；无需重新提供材料。可以查看运行记录并重试当前步骤，重试会再次请求模型并产生用量。',
+    role: '写作助手', eyebrow: '已暂停 · 已保存内容保留', title: '写作助手 Agent 暂时没能完成这一步',
+    description: '你的材料和已保存的成果都还在，可以重试这一步。如果再次遇到问题，可查看运行记录了解原因。',
     feedbackPlaceholder: '', primaryAction: '重试这一步',
   }
   if (recovery.stopReason === 'PROVIDER_RETRY_DEFERRED') {
     const timestamp = recovery.retryNotBefore;
     const retryTime = timestamp !== undefined && Number.isSafeInteger(timestamp) && timestamp >= 0 && timestamp <= 8_640_000_000_000_000
       ? new Date(timestamp).toLocaleString('zh-CN', { hour12: false }) : null;
-    return { role: '写作助手', eyebrow: '服务商要求等待 · 进度已保存', title: '模型服务要求稍后再试',
-      description: `模型服务的重试时间超出本轮自动等待范围，或返回了无效的重试时间，已保存进度并暂停。${retryTime ? `建议本机时间 ${retryTime} 后重试；提前点击不会再次请求同一模型。` : '请检查服务状态后再重试。'}也可以在设置中选择其他可用模型，不必重新提供材料。`,
+    return { role: '写作助手', eyebrow: '已暂停 · 已保存内容保留', title: '这一步需要稍后再试',
+      description: `${retryTime ? `请在 ${retryTime} 后重试。` : '请稍后重试，或在设置中选择其他可用模型。'}你的材料和已保存的成果都还在。`,
       feedbackPlaceholder: '', primaryAction: '稍后重试这一步' };
   }
   if (recovery.stopReason === 'PARALLEL_TEXT_ALL_FAILED') return {
-    role:'模拟读者', eyebrow:'读者反馈未完成 · 未自动重试', title:'三个模拟读者都未返回可用感受',
-    description:'未保存空反馈，也未继续改稿。可查看运行记录中的具体模型错误，稍后只重试读者阶段；稿件和前面的审校仍保留。重试会再次请求模型并产生用量。',
+    role:'模拟读者', eyebrow:'读者反馈未完成', title:'模拟读者 Agent 暂时没能完成反馈',
+    description:'稿件和之前的审校意见都还在。你可以只重试读者反馈这一步，收到反馈后再决定怎么改稿。',
     feedbackPlaceholder:'', primaryAction:'重试模拟读者',
   }
   if (recovery.stopReason === 'TOOL_FAILURE_LOOP' && recovery.checkpointApproval) return {
-    role: '写作助手', eyebrow: '当前成果仍在 · 需要确认', title: '当前决策记录要求修改，流程已暂停',
-    description: `请核对当前保存的成果。若认可，点击下方按钮直接确认，不再让模型重新判断按钮含义；如仍需修改，在主对话中说明即可。${recovery.checkpointStage === 'language_review'
-      ? '下一步由「标题策划」提出标题候选；确认标题后，再交给「事实核查」专家。核查发现正文问题将返回「内容主笔」集中修订，这是返工。'
+    role: '写作助手', eyebrow: '当前成果已保存 · 需要确认', title: '请确认这一版是否可以继续',
+    description: `认可当前成果后，点击下方按钮继续；需要修改，也可以在对话中说明。${recovery.checkpointStage === 'language_review'
+      ? '下一步由标题策划 Agent 拟定标题；你选定标题后，再进行事实核查。'
       : recovery.nextStage ? `下一步由「${stageRoleCopy(recovery.nextStage).role}」${stageRoleCopy(recovery.nextStage).action}。` : ''}`,
     feedbackPlaceholder: '', primaryAction: recovery.checkpointStage === 'language_review' ? '认可当前阶段，交给标题策划'
       : recovery.nextStage ? `认可当前阶段，交给${stageRoleCopy(recovery.nextStage).role}` : '认可当前阶段，继续',
   }
   if (recovery.stopReason === 'STAGE_OUTPUT_NOT_SAVED') return {
-    role: '写作助手', eyebrow: '保存校验未通过 · 自动重写已停止', title: '这一步未能保存，上一版稿件仍在',
-    description: '同一阶段反复未通过保存校验，程序已停止继续生成，避免重复刷屏。不是连接或账户额度问题；无需重新提供材料。可查看运行记录中的具体校验原因，或主动重试当前步骤；重试会产生模型用量。',
+    role: '写作助手', eyebrow: '已暂停 · 上一版内容保留', title: '这一步未能保存，上一版稿件仍在',
+    description: '这次生成的内容没有保存成功。可以重试这一步，无需重新提供材料；具体原因可在运行记录中查看。',
     feedbackPlaceholder: '', primaryAction: '重试这一步',
   }
   if (recovery.stopReason === 'TOOL_FAILURE_LOOP') return {
-    role: '写作助手', eyebrow: '程序操作未通过 · 自动重试已停止', title: recovery.validationFailure?.code === 'TOOL_PERMISSION_DENIED'
-      ? '读取版本时发生程序冲突，稿件仍在' : '这一步操作未能完成，已保存内容仍在',
-    description: recovery.validationFailure
-      ? `${recovery.validationFailure.explanation} 已停止自动重试，避免空转。修复后可重试这一步，不重做已保存内容；重试会产生模型用量。`
-      : '程序操作连续未通过校验，已停止自动重试，避免空转。已保存内容保留。请查看运行记录中的错误原因；这不一定是文章事实问题，不必先重新提供材料。',
+    role: '写作助手', eyebrow: '已暂停 · 已保存内容保留', title: '这一步未能完成，已保存内容仍在',
+    description: '写作助手 Agent 遇到问题，暂时停在了这里。可以重试这一步，无需重新提供材料；具体原因可在运行记录中查看。',
     feedbackPlaceholder: '', primaryAction: '重试这一步',
   }
   if (recovery.stopReason === 'BUDGET_EXHAUSTED') {
     return { role: '写作助手', eyebrow: '自动处理已暂停 · 已保存内容保留', title: '这一步还没有完成，可以从这里继续',
-      description: '本轮自动调用已达到保护上限，不是服务商账户额度不足。已保存稿件和已确认标题保留；继续时不重做已保存阶段，从未完成的步骤接着处理。会再次请求模型并产生用量。',
+      description: '这一轮已经处理了一段时间，先暂停在这里。已保存稿件和已确认标题保留，继续后会接着完成剩余工作。继续可能产生额外模型费用。',
       feedbackPlaceholder: '', primaryAction: '继续未完成步骤' }
   }
   if (recovery.inputRequest?.kind === 'publication_selection') {
@@ -137,7 +130,7 @@ export function checkpointCopy(
   }
   if (recovery.stopReason === 'WRITING_INPUT_REQUIRED') {
     return {
-      role: '写作助手', eyebrow: '需要你补充 · 后续步骤尚未执行',
+      role: '写作助手', eyebrow: '等待你补充信息',
       title: '需要补充信息，写作已暂停',
       description: recovery.inputRequest?.reason ?? '当前信息不足以继续，请补充主题或相关材料。',
       feedbackPlaceholder: '回答上面的问题，也可以直接在主对话输入框回复',
@@ -156,21 +149,17 @@ export function checkpointCopy(
     if (recovery.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && recovery.interruption?.source === 'model') {
       return {
         role: '写作助手', eyebrow: recovery.interruption.replyAccepted ? '已收到你的回复 · 这一步暂时中断' : '回复尚未完成 · 写作暂时暂停',
-        title: recovery.interruption.timeoutPhase === 'first_response' ? '等待模型回复较久，已暂停这一步'
-          : recovery.interruption.timeoutPhase === 'stream_idle' ? '模型回复中途停顿，已暂停这一步'
-          : recovery.interruption.cause === 'timeout' ? '模型响应超时，这一步还没完成' : '没有收到完整的模型回复，这一步还没完成',
-        description: `${recovery.interruption.timeoutPhase ? (recovery.interruption.timeoutPhase === 'first_response'
-          ? `等待 ${Math.round((recovery.interruption.timeoutMs ?? 0) / 1000)} 秒仍未收到有效回复，客户端已停止等待。`
-          : `已收到部分内容，但连续 ${Math.round((recovery.interruption.timeoutMs ?? 0) / 1000)} 秒没有新内容，客户端已暂停。未完成的内容没有作为正式成果保存。`) : ''}已保存的内容还在，无需重复确认或重新填写。点击“重试这一步”后继续；重试会再次请求模型，可能产生额外用量。`,
+        title: '回复还没有完成，这一步已暂停',
+        description: '写作助手 Agent 没能完成这次回复，未完成的内容没有作为正式成果保存。已保存的内容仍在，可以重试这一步，无需重新填写。',
         feedbackPlaceholder: '', primaryAction: '重试这一步',
       }
     }
     return {
-      role: '运行恢复',
+      role: '写作助手',
       eyebrow: '需要你的决定',
       title: recovery.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME'
-        ? '上次外部请求的结果未知'
-        : '上次写作在保存边界处中断',
+        ? '还无法确认上次操作是否完成'
+        : '上次写作中断，可以接着继续',
       description: recovery.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME'
         ? '无法确定上次操作是否完成，系统已暂停自动执行。请先在运行记录中检查，再决定是否重试；重试可能重复执行该操作。'
         : '已保存的材料、稿件和决定都还在，可以从当前状态继续。',
@@ -194,12 +183,12 @@ export function checkpointCopy(
           ? `${completed?.role}已经完成，先核对这一轮建议好吗？`
           : '当前阶段已经完成，是否继续？',
     description: completedStage === 'language_review'
-      ? '下一步由「标题策划」提出标题候选；你确认标题后，再由「事实核查」专家核查。若核查发现正文问题，将返回「内容主笔」集中修订并重新核查，这是返工。'
+      ? '下一步由标题策划 Agent 拟定标题；你选定标题后，再进行事实核查。需要调整的内容，会交给内容主笔 Agent 修改。'
       : completedStage === 'review_reader'
       ? '下一步由「写作导演」结合文章目标和你的取舍解读，再交给「修订主笔」。这些只是模拟感受，不按票数改稿；你可以先讨论，也可以认可后继续。'
       : next === null
       ? '请先查看当前成果；确认后继续下一步。'
-      : `下一步由「${next.role}」${next.action}。你可以直接认可，也可以提出修改要求，返工本阶段后再继续。`,
+      : `下一步由${next.role} Agent ${next.action}。你可以直接认可，也可以先提出修改要求。`,
     feedbackPlaceholder: completedStage === 'outline'
       ? '例如：保留前两部分，把第三部分改成案例拆解，不要写趋势预测'
       : completedStage === 'draft'

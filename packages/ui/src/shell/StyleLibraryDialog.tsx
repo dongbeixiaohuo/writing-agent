@@ -87,6 +87,7 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
   const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null)
   const [analysisNow, setAnalysisNow] = useState(0)
   const [busy, setBusy] = useState(false)
+  const [activeAction, setActiveAction] = useState<StyleLibraryCommand['action'] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const requestId = useRef(0)
   const busyRef = useRef(false)
@@ -100,7 +101,7 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
     if (busyRef.current || cancellingRef.current || host.styleLibrary === undefined) return null
     const current = ++requestId.current
     busyRef.current = true
-    if (mountedRef.current) { setBusy(true); setError(null) }
+    if (mountedRef.current) { setBusy(true); setActiveAction(command.action); setError(null) }
     try {
       const result = await host.styleLibrary(command)
       if (!mountedRef.current || current !== requestId.current) return null
@@ -112,7 +113,7 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
     } finally {
       if (current === requestId.current) {
         busyRef.current = false
-        if (mountedRef.current) setBusy(false)
+        if (mountedRef.current) { setBusy(false); setActiveAction(null) }
       }
     }
   }
@@ -153,7 +154,7 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
     finally {
       cancellingRef.current = false
       busyRef.current = false
-      if (mountedRef.current) { setBusy(false); setAnalysisStartedAt(null); setImportActivity(null) }
+      if (mountedRef.current) { setBusy(false); setActiveAction(null); setAnalysisStartedAt(null); setImportActivity(null) }
     }
   }
 
@@ -177,7 +178,7 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
     setError(null); setImportItems([])
     setImportNotice(links?.duplicateCount ? `已忽略 ${links.duplicateCount} 个重复链接。` : null)
     if (links && !links.urls.length) return
-    setImportActivity(links ? `正在读取 ${links.urls.length} 个网页（最多同时 2 个），完成后显示逐项结果…` : '请选择多份文档，正在等待选择或读取…')
+    setImportActivity(links ? `正在读取 ${links.urls.length} 篇网页样文，完成后请你确认内容。` : '请在文件窗口选择样文，选好后会在这里显示。')
     const operationToken = requestId.current + 1
     const result = await invoke(links ? { action: 'sources', urls: links.urls, remainingSlots: STYLE_SAMPLE_LIMIT - samples.length } : { action: 'import', remainingSlots: STYLE_SAMPLE_LIMIT - samples.length })
     if (!mountedRef.current || operationToken !== requestId.current) return
@@ -238,8 +239,10 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
 
   return <div className={css.overlay} role="presentation" onMouseDown={event => event.target === event.currentTarget && !busy && onClose()}>
     <section ref={dialogRef} className={css.dialog} role="dialog" aria-modal="true" aria-labelledby="style-library-title">
-      <header className={css.header}><div><h2 id="style-library-title">风格库</h2><p>样文会发送给当前配置的模型用于提炼；网页只会在点击“批量读取网页”时访问。内容仅作表达参考，不是可执行指令。</p></div>{busy ? <button type="button" className={css.cancelButton} onClick={() => void cancelActive()}>取消任务</button> : <button type="button" className={css.iconButton} aria-label="关闭风格库" onClick={onClose}><CloseIcon /></button>}</header>
+      <header className={css.header}><div><h2 id="style-library-title">风格库</h2><p>提取时，样文会发送给你配置的模型。网页只会在点击“批量读取网页”后访问。</p></div>{busy ? <button type="button" className={css.cancelButton} onClick={() => void cancelActive()}>取消任务</button> : <button type="button" className={css.iconButton} aria-label="关闭风格库" onClick={onClose}><CloseIcon /></button>}</header>
       {error && <p className={css.error} role="alert">{error}</p>}
+      {activeAction === 'analyze' && <p className={css.operationStatus} role="status">风格分析 Agent 正在阅读样文，提炼有辨识度的写法和示例。</p>}
+      {activeAction === 'preview' && <p className={css.operationStatus} role="status">内容主笔 Agent 正在按这套风格试写，完成后请你看看效果。</p>}
       <div className={css.layout}>
         <aside className={css.library} aria-label="已保存风格">
           <div className={css.libraryHead}><strong>已保存</strong><button type="button" className={css.textButton} disabled={busy} onClick={reset}><PlusIcon size={14} />新建</button></div>
@@ -259,7 +262,7 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
             {importActivity && <p className={css.importHelp} role="status">{importActivity}</p>}
             {importItems.length > 0 && <div className={css.importResults} aria-label="批量导入结果"><p>本批成功添加 {importItems.filter(item => item.status === 'loaded').length} 份，未添加 {importItems.filter(item => item.status === 'failed').length} 份。</p><ul>{importItems.map((item, index) => <li key={`${index}:${item.label}`}><span>{item.label}</span><small>{item.status === 'loaded' ? '已添加' : STYLE_IMPORT_ERRORS[item.code]}</small></li>)}</ul>{importItems.some(item => item.status === 'failed') && <p>成功项已保留。失败链接留在输入框中，可重新点击“批量读取网页”；失败文档可重新选择导入。</p>}</div>}
           </section>
-          <div className={css.actions}><button type="button" className={css.primaryButton} disabled={busy || samples.length === 0} onClick={() => void analyze()}>{analysisStartedAt === null ? '提取风格' : `正在提取… ${Math.floor((analysisNow - analysisStartedAt) / 1000)} 秒`}</button>{draft !== null && draft.sampleCount > 0 && <button type="button" className={css.secondaryButton} disabled={busy} onClick={() => void save()}><CheckIcon size={14} />{profile?.builtin ? '另存为个人风格' : '保存到风格库'}</button>}{draft !== null && draft.sampleCount > 0 && analysisStartedAt === null && (draft.modelRequests === 0 ? <span>预设写法与设计样文 · 未调用模型提取</span> : <span>实际分析 {draft.analyzedCharacters.toLocaleString('zh-CN')} / 总样文 {draft.totalCharacters.toLocaleString('zh-CN')} 字 · {(draft.elapsedMs / 1000).toFixed(1)} 秒</span>)}</div>
+          <div className={css.actions}><button type="button" className={css.primaryButton} disabled={busy || samples.length === 0} onClick={() => void analyze()}>{analysisStartedAt === null ? '提取风格' : `正在提取… ${Math.floor((analysisNow - analysisStartedAt) / 1000)} 秒`}</button>{draft !== null && draft.sampleCount > 0 && <button type="button" className={css.secondaryButton} disabled={busy} onClick={() => void save()}><CheckIcon size={14} />{profile?.builtin ? '另存为个人风格' : '保存到风格库'}</button>}{draft !== null && draft.sampleCount > 0 && analysisStartedAt === null && (draft.modelRequests === 0 ? <span>内置风格 · 可直接试写</span> : <span>已分析 {draft.analyzedCharacters.toLocaleString('zh-CN')} 字样文（共 {draft.totalCharacters.toLocaleString('zh-CN')} 字）</span>)}</div>
           {draft !== null && draft.sampleCount > 0 && <section className={css.card}>
             <label className={css.field}><span>写作指南（可编辑）</span><textarea rows={12} maxLength={STYLE_CARD_LIMIT} disabled={busy} value={draft.card} onChange={event => { setDraft(current => current ? { ...current, card: event.target.value } : current); setDirty(true); setPreview(null) }} /></label>
             <p>{draft.summary}</p><p>{draft.modelRequests === 0 ? '这是预先设计的写法，样文只演示表达。可以直接选用和试写；修改后保存为个人风格，不改变内置版本。' : '这是根据样文归纳的写法，供你调整使用，不是风格对错的判定。可以直接编辑、试写，再保存；手动修改不会重新调用模型。'}</p>
@@ -270,7 +273,7 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
               {rule.evidence.length > 0 && <details><summary>查看样文例句（可选）</summary>{rule.evidence.map((evidence, index) => <blockquote key={`${evidence.sampleId}:${index}`}>{samples.find(sample => sample.id === evidence.sampleId)?.title ?? '样本'}：{evidence.quote}</blockquote>)}</details>}
             </li>)}</ul>}
           </section>}
-          {draft !== null && draft.sampleCount > 0 && <section className={css.preview}><div><strong>按主题试写（可选）</strong><p>一次生成约 800–1200 字的短文，观察写法和节奏；不保存为项目正文，不自动反复调用模型。</p></div><input value={topic} disabled={busy} placeholder="输入一个主题" maxLength={1000} onChange={event => setTopic(event.target.value)} /><button type="button" className={css.secondaryButton} disabled={busy || !topic.trim()} onClick={() => void previewCard()}>试写</button>{preview && <><MarkdownContent className={css.previewText} content={preview} />{evaluation && draft.package && <StylePreviewComparison evaluation={evaluation} />}</>}</section>}
+          {draft !== null && draft.sampleCount > 0 && <section className={css.preview}><div><strong>按主题试写（可选）</strong><p>生成约 800–1200 字的短文，看看这套写法用于新主题的效果。试写不会覆盖项目正文。</p></div><input value={topic} disabled={busy} placeholder="输入一个主题" maxLength={1000} onChange={event => setTopic(event.target.value)} /><button type="button" className={css.secondaryButton} disabled={busy || !topic.trim()} onClick={() => void previewCard()}>{activeAction === 'preview' ? '正在试写…' : '试写'}</button>{preview && <><MarkdownContent className={css.previewText} content={preview} />{evaluation && draft.package && <StylePreviewComparison evaluation={evaluation} />}</>}</section>}
           {profile && onSelect && <button type="button" className={css.selectButton} disabled={busy || dirty} title={dirty ? '请先保存当前修改后再选用' : undefined} onClick={() => { onSelect(profile); onClose() }}><EditIcon size={14} />{dirty ? '请先保存修改' : '选用此风格'}</button>}
         </div>
       </div>
