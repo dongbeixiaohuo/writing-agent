@@ -1,7 +1,7 @@
 import type { AgentRequestPolicy } from "../../runtime/agent/src/index.js";
 import { createReaderTextTasks } from './reader-simulation.js';
 import { projectStyleSelection } from './style-selection.js';
-import { styleContext } from '../../writing-core/src/style-package.js';
+import { STYLE_APPLICATION_POLICY, styleContext } from '../../writing-core/src/style-package.js';
 import { isPublicStageOutput } from '../../writing-core/src/public-stage-output.js';
 import type { SessionStore } from "../../runtime/session/src/index.js";
 import { ToolExecutionFault, type ToolDefinition } from "../../runtime/tools/src/index.js";
@@ -399,7 +399,7 @@ export function createWritingCollaboration(options: {
         ...summary, savedSourceRecords: undefined, searchBudget: undefined, researchSearchBudget: undefined }),
       systemPrompt: finishing ? '你是写作导演。当前文章所有阶段均已完成，已保存的正文和选定标题已通过程序事实门禁。只用一至两句中文告诉作者可以查看当前稿件，后续想调整可以继续提出。不要重写文章、重新审校、索要确认或发起新任务；不输出JSON、阶段名或工具参数。程序会再次校验当前版本与完成条件并记录收尾。'
         : isFactCheck ? factReviewPrompt(prepared ? 'verify' : 'extract', factSearch.enabled())
-        : `${commonPrompt}\nACTOR=${actor}\n${buildExpertInstructions(actor)}\n${rolePrompt}\n${sharedStateRules}`,
+        : `${commonPrompt}\nACTOR=${actor}\n${buildExpertInstructions(actor)}\n${rolePrompt}\n${sharedStateRules}${selectedStyle && !['research', 'review_reader'].includes(actor) ? `\n${STYLE_APPLICATION_POLICY}` : ''}`,
       userMessage: isFactCheck ? `核对当前文章的重要事实，不重新审稿。\nCOLLABORATION_STATE=${JSON.stringify({
         actor, stage: 'fact_check', ready: current.ready, finished: current.finished, nextStage: current.nextStage, inputVersionIds: inputs,
         artifacts: summary.artifacts, selectedPublication: summary.selectedPublication,

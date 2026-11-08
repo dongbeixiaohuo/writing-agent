@@ -32,12 +32,13 @@ function renderDialog() {
   } finally { rmSync(directory, { recursive: true, force: true }) }
 }
 
-test('saved style reference preserves a stable profile identity within the brief limit', () => {
+test('saved style reference preserves identity and the entire long editable guide', () => {
+  const card = '短句。避免营销腔。'.repeat(600) + '完整末尾条件';
   const reference = styleReferenceForProfile({
-    id: 'style-1', version: 3, name: '克制观察', card: '短句。避免营销腔。'.repeat(100),
+    id: 'style-1', version: 3, name: '克制观察', card,
   })
   assert.match(reference, /^个人风格卡 · 克制观察 · style-1 · v3/u)
-  assert.ok(reference.length <= 2_100)
+  assert.ok(reference.includes(card))
   assert.match(reference, /短句。避免营销腔。/u)
 })
 

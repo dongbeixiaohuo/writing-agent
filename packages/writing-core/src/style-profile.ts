@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StylePackageSchema, StyleSelectionInputSchema, StyleSelectionSnapshotSchema, StylePreviewEvaluationSchema } from './style-package.js';
+import { STYLE_CARD_LIMIT, StylePackageSchema, StyleSelectionInputSchema, StyleSelectionSnapshotSchema, StylePreviewEvaluationSchema } from './style-package.js';
 
 const BoundedText = (limit: number) => z.string().trim().min(1).max(limit);
 
@@ -61,13 +61,13 @@ export const StyleRuleEvidenceSchema = z.object({
 }).strict();
 export const StyleRuleSchema = z.object({
   dimension: BoundedText(80),
-  instruction: BoundedText(500),
+  instruction: BoundedText(1_200),
   evidence: z.array(StyleRuleEvidenceSchema).max(STYLE_SAMPLE_LIMIT).default([]),
   confidence: z.enum(["sample", "recurring"]).default('sample'),
 }).strict();
 export const StyleDraftSchema = z.object({
   name: BoundedText(160),
-  card: BoundedText(1_800),
+  card: BoundedText(STYLE_CARD_LIMIT),
   summary: BoundedText(800),
   rules: z.array(StyleRuleSchema).max(20),
   notes: z.array(BoundedText(300)).max(6).optional(),
@@ -109,7 +109,7 @@ export const StyleLibraryCommandSchema = z.discriminatedUnion("action", [
   // The host opens a native picker; this command intentionally carries no file
   // contents or profile payload across the application boundary.
   z.object({ action: z.literal("import"), remainingSlots: z.number().int().min(0).max(STYLE_SAMPLE_LIMIT).optional() }).strict(),
-  z.object({ action: z.literal("preview"), card: BoundedText(1_800), topic: BoundedText(1_000), package: StylePackageSchema.optional() }).strict(),
+  z.object({ action: z.literal("preview"), card: BoundedText(STYLE_CARD_LIMIT), topic: BoundedText(1_000), package: StylePackageSchema.optional() }).strict(),
   z.object({ action: z.literal("cancel") }).strict(),
 ]);
 export type StyleLibraryCommand = z.infer<typeof StyleLibraryCommandSchema>;
@@ -135,9 +135,9 @@ export function styleReferenceForProfile(profile: StyleProfileReferenceInput): s
   const id = BoundedText(120).parse(profile.id);
   const version = z.number().int().positive().parse(profile.version);
   const name = BoundedText(160).parse(profile.name);
-  const card = BoundedText(1_800).parse(profile.card);
+  const card = BoundedText(STYLE_CARD_LIMIT).parse(profile.card);
   const prefix = `个人风格卡 · ${name} · ${id} · v${version}\n`;
-  return `${prefix}${card.slice(0, Math.max(0, 2_100 - prefix.length))}`;
+  return `${prefix}${card}`;
 }
 
 /** Normalize only transport noise; source text remains untrusted data. */

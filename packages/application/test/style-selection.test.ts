@@ -40,8 +40,7 @@ test('each bundled style selects independently and reaches writing roles without
       for (const role of ['outline', 'writer', 'title', 'review_editor']) {
         const context = styleContext(selection, role);
         assert.ok(context.includes(profile.card));
-        assert.ok(context.length <= 4000);
-        assert.ok(context.includes('句式片段'), `${role} retains examples`);
+        assert.ok(context.includes('原文示范'), `${role} retains examples`);
         assert.ok(!context.includes(profiles.find(p => p.id !== profile.id)!.name));
       }
       for (const role of ['research', 'fact_check', 'review_reader']) assert.equal(styleContext(selection, role), '');

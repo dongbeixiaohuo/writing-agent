@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { JsonValue } from "../../writing-core/src/index.js";
+import { STYLE_CARD_LIMIT } from '../../writing-core/src/style-package.js';
 import {
   WritingBriefSchema,
   canonicalJson,
@@ -713,7 +714,7 @@ export function extractExplicitStyleCard(message: string): string | null {
   const [, name, id, version, card] = header;
   if (name === undefined || id === undefined || version === undefined || card === undefined ||
       name.trim() !== name || id.trim() !== id || card.trim() !== card ||
-      name.length > 160 || id.length > 120 || card.length > 1_800 || reference.length > 2_100) return null;
+      name.length > 160 || id.length > 120 || card.length > STYLE_CARD_LIMIT || reference.length > STYLE_CARD_LIMIT + 400) return null;
   return reference;
 }
 

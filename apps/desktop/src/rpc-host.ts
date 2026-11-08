@@ -34,6 +34,8 @@ const publicMessages: Readonly<Record<string, string>> = {
   STYLE_ANALYSIS_TIMEOUT: '模型未在 120 秒内完成风格任务，本次已停止。样文仍保留，可以稍后重试。',
   STYLE_ANALYSIS_CANCELLED: '风格任务已取消，未保存新的结果。',
   STYLE_MODEL_RESPONSE_INVALID: '模型未返回可读取的风格描述（内容为空或格式损坏）。样文已保留，请重试提取；这不是样文风格不合格。',
+  STYLE_ANALYSIS_INCOMPLETE: '模型未完整返回具体写法、适用条件和原文示范，尚未生成新版写作指南。样文和原风格仍保留，可以重试提取。',
+  STYLE_ANALYSIS_EXAMPLES_MISSING: '模型选出的示范未能对应本次提供的连续完整原文，未将通用描述当作完成结果。样文和原风格仍保留，可以重试或补充有清楚分段的样文。',
   STYLE_PREVIEW_RESPONSE_INVALID: '模型试写格式不完整，可稍后重试；已保存的风格不变。',
   STYLE_MODEL_INCOMPLETE: '模型连接结束但未完成输出，请稍后重试；样文仍保留。',
   STYLE_MODEL_OUTPUT_TRUNCATED: '模型输出被截断，本次未保存；请稍后重试或减少样文。',

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { StyleDraftSchema, StyleProfileSchema, STYLE_PERSONAL_PROFILE_LIMIT, validateStyleSamples, type StyleDraft, type StyleProfile, type StyleProfileSummary } from '../../writing-core/src/style-profile.js';
 import { builtinStyleProfile, builtinStyleProfiles } from '../../writing-core/src/builtin-styles.js';
-import { styleParagraphs, styleStatistics } from '../../writing-core/src/style-package.js';
+import { styleExampleText, styleParagraphs, styleStatistics } from '../../writing-core/src/style-package.js';
 
 /** Workspace-local library. Applied briefs keep their own immutable card snapshot. */
 export class StyleProfileStore {
@@ -39,6 +39,8 @@ export class StyleProfileStore {
     if (id === null && this.list().filter(profile => !profile.builtin).length >= STYLE_PERSONAL_PROFILE_LIMIT) throw new Error('STYLE_LIBRARY_FULL');
     const pack = draft.package && { ...draft.package, statistics: styleStatistics(samples), snippets: draft.package.snippets.filter(item => {
       const sample = samples.find(sample => sample.id === item.sampleId);
+      if (draft.package!.version === 3) return !!sample && !!item.paragraphIds && item.paragraphId === item.paragraphIds[0]
+        && styleExampleText(sample.text, item.paragraphIds) === item.quote;
       const paragraph = sample && styleParagraphs(sample.text).find(paragraph => paragraph.id === item.paragraphId.split(':')[0]);
       return paragraph?.text.includes(item.quote) === true;
     }) };

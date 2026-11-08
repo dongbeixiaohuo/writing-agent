@@ -12,6 +12,7 @@ import {
 import { CheckIcon, CloseIcon, EditIcon, PlusIcon, TrashIcon } from './Icons.tsx'
 import css from './StyleLibraryDialog.module.css'
 import { StylePackageDetails, StylePreviewComparison } from './StylePackageDetails.tsx'
+import { STYLE_CARD_LIMIT } from '../../../writing-core/src/style-package.js'
 import { MarkdownContent } from './MarkdownContent.tsx'
 
 export interface StyleLibraryHost { styleLibrary?(command: StyleLibraryCommand): Promise<StyleLibraryResult> }
@@ -260,14 +261,14 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
           </section>
           <div className={css.actions}><button type="button" className={css.primaryButton} disabled={busy || samples.length === 0} onClick={() => void analyze()}>{analysisStartedAt === null ? '提取风格' : `正在提取… ${Math.floor((analysisNow - analysisStartedAt) / 1000)} 秒`}</button>{draft !== null && draft.sampleCount > 0 && <button type="button" className={css.secondaryButton} disabled={busy} onClick={() => void save()}><CheckIcon size={14} />{profile?.builtin ? '另存为个人风格' : '保存到风格库'}</button>}{draft !== null && draft.sampleCount > 0 && analysisStartedAt === null && (draft.modelRequests === 0 ? <span>预设写法与设计样文 · 未调用模型提取</span> : <span>实际分析 {draft.analyzedCharacters.toLocaleString('zh-CN')} / 总样文 {draft.totalCharacters.toLocaleString('zh-CN')} 字 · {(draft.elapsedMs / 1000).toFixed(1)} 秒</span>)}</div>
           {draft !== null && draft.sampleCount > 0 && <section className={css.card}>
-            <label className={css.field}><span>风格卡（可编辑）</span><textarea rows={6} maxLength={1800} disabled={busy} value={draft.card} onChange={event => { setDraft(current => current ? { ...current, card: event.target.value } : current); setDirty(true); setPreview(null) }} /></label>
+            <label className={css.field}><span>写作指南（可编辑）</span><textarea rows={12} maxLength={STYLE_CARD_LIMIT} disabled={busy} value={draft.card} onChange={event => { setDraft(current => current ? { ...current, card: event.target.value } : current); setDirty(true); setPreview(null) }} /></label>
             <p>{draft.summary}</p><p>{draft.modelRequests === 0 ? '这是预先设计的写法，样文只演示表达。可以直接选用和试写；修改后保存为个人风格，不改变内置版本。' : '这是根据样文归纳的写法，供你调整使用，不是风格对错的判定。可以直接编辑、试写，再保存；手动修改不会重新调用模型。'}</p>
             {!!draft.notes?.length && <div className={css.analysisNotes} role="note" aria-label="提取提示"><strong>提取提示</strong><ul>{draft.notes.map((note, index) => <li key={index}>{note}</li>)}</ul></div>}
             {draft.package ? <StylePackageDetails pack={draft.package} samples={samples} /> : <p>这是旧版风格卡，可以继续选用；点击“提取风格”可用已有样文重新分析，保存后升级。</p>}
-            <ul className={css.rules}>{draft.rules.map((rule, ruleIndex) => <li key={`${rule.dimension}:${ruleIndex}`}>
+            {draft.package?.version !== 3 && <ul className={css.rules}>{draft.rules.map((rule, ruleIndex) => <li key={`${rule.dimension}:${ruleIndex}`}>
               <div><strong>{rule.dimension}</strong>：{rule.instruction}</div>
               {rule.evidence.length > 0 && <details><summary>查看样文例句（可选）</summary>{rule.evidence.map((evidence, index) => <blockquote key={`${evidence.sampleId}:${index}`}>{samples.find(sample => sample.id === evidence.sampleId)?.title ?? '样本'}：{evidence.quote}</blockquote>)}</details>}
-            </li>)}</ul>
+            </li>)}</ul>}
           </section>}
           {draft !== null && draft.sampleCount > 0 && <section className={css.preview}><div><strong>按主题试写（可选）</strong><p>一次生成约 800–1200 字的短文，观察写法和节奏；不保存为项目正文，不自动反复调用模型。</p></div><input value={topic} disabled={busy} placeholder="输入一个主题" maxLength={1000} onChange={event => setTopic(event.target.value)} /><button type="button" className={css.secondaryButton} disabled={busy || !topic.trim()} onClick={() => void previewCard()}>试写</button>{preview && <><MarkdownContent className={css.previewText} content={preview} />{evaluation && draft.package && <StylePreviewComparison evaluation={evaluation} />}</>}</section>}
           {profile && onSelect && <button type="button" className={css.selectButton} disabled={busy || dirty} title={dirty ? '请先保存当前修改后再选用' : undefined} onClick={() => { onSelect(profile); onClose() }}><EditIcon size={14} />{dirty ? '请先保存修改' : '选用此风格'}</button>}

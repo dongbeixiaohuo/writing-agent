@@ -29,6 +29,7 @@ import { openWorkspaceStorage, migrateWorkspaceStorage } from '../../../packages
 import { StyleLibraryResultSchema, styleReferenceForProfile, type StyleDraft } from '../../../packages/writing-core/src/style-profile.js';
 import { buildWritingPrompt } from '../../../packages/writing-pack/src/index.js';
 import { safeDesktopFailure } from '../src/rpc-host.js';
+import { styleAnalysisResponse } from '../../../packages/application/test/style-analysis-fixture.js';
 
 const sample = { id: 'sample-a', title: '窗边', kind: 'text' as const, sourceReference: null, text: '清晨的窗很亮。人群慢慢散开。样文事实标记，不该进入新文章。' };
 const rules = ['语气', '节奏', '开头', '推进', '结尾'].map(dimension => ({ dimension, instruction: '从可观察的细节开始，用短句推进。', evidence: [{ sampleId: sample.id, quote: '清晨的窗很亮。' }], confidence: 'sample' as const }));
@@ -36,7 +37,7 @@ const fixture: StyleDraft = { name: '克制观察', card: '用具体细节与长
 class Provider extends ModelProviderBase {
   requests: ModelRequest[] = [];
   never = false;
-  constructor(private readonly response = JSON.stringify({ summary: fixture.summary, rules })) { super('style-host-test', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+  constructor(private readonly response = JSON.stringify(styleAnalysisResponse(sample.id))) { super('style-host-test', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
   protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
     this.requests.push(request);
     if (this.never) { await new Promise<void>(() => {}); return; }
@@ -99,58 +100,61 @@ test('built-in styles do not consume the fifty personal style slots', () => {
   } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('typographic quote recovery survives save; invalid optional examples are never persisted', async () => {
+test('continuous original examples survive save and reopen; forged quotations are never persisted', async () => {
   const original = '他说“先观察，再表达”。\n\n不要急着解释。';
   const input = { ...sample, text: original };
-  const provider = new Provider(JSON.stringify({ summary: fixture.summary, rules: rules.map(rule => ({ ...rule, evidence: [{ sampleId: sample.id, quote: '他说"先观察，再表达"。不要急着解释。' }] })) }));
+  const provider = new Provider(JSON.stringify(styleAnalysisResponse(sample.id, ['p1:0.0', 'p2:0.1'])));
   const root = mkdtempSync(join(tmpdir(), 'wa-style-quotes-')); let host = createHost(root, provider);
   try {
     await configure(host);
     const analysis = await host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [input] });
     assert.equal(provider.requests.length, 1);
-    assert.equal(analysis.draft!.rules[0]!.evidence[0]!.quote, original);
+    assert.equal(analysis.draft!.package!.snippets[0]!.quote, original);
     const saved = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: analysis.draft })).profile!;
     host.close(); host = createHost(root);
     const reopened = (await host.styleLibrary({ action: 'get', id: saved.id })).profile!;
-    assert.equal(reopened.rules[0]!.evidence[0]!.quote, original);
-    const forged = { ...analysis.draft!, rules: analysis.draft!.rules.map(rule => ({ ...rule, evidence: [{ sampleId: sample.id, quote: '不观察，直接编造。' }] })) };
+    assert.equal(reopened.package!.snippets[0]!.quote, original);
+    assert.deepEqual(reopened.package, analysis.draft!.package);
+    const forged = { ...analysis.draft!, package: { ...analysis.draft!.package!, snippets: analysis.draft!.package!.snippets.map(s => ({ ...s, quote: '不观察，直接编造。' })) } };
     const cleaned = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: forged })).profile!;
-    assert.ok(cleaned.rules.every(rule => rule.evidence.length === 0));
+    assert.equal(cleaned.package!.snippets.length, 0);
     assert.equal(cleaned.card, analysis.draft!.card);
   } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test('an unmatched optional example does not block analysis or overwrite an earlier profile', async () => {
   const privateQuote = '私有样文绝不能进入诊断报错';
-  const invalidRules = rules.map((rule, index) => index === 2 ? { ...rule, evidence: [{ sampleId: sample.id, quote: privateQuote }] } : rule);
-  const provider = new Provider(JSON.stringify({ summary: fixture.summary, rules: invalidRules }));
+  const response = styleAnalysisResponse(sample.id);
+  response.snippets.push({ ...response.snippets[0]!, sampleId: privateQuote });
+  const provider = new Provider(JSON.stringify(response));
   const root = mkdtempSync(join(tmpdir(), 'wa-style-error-')); const host = createHost(root, provider);
   try {
     await configure(host);
     const saved = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: fixture })).profile!;
     const result = await host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [sample] });
-    assert.equal(result.draft!.rules.length, 5);
-    assert.deepEqual(result.draft!.rules[2]!.evidence, []);
+    assert.equal(result.draft!.package!.snippets.length, 1);
+    assert.ok(result.draft!.notes!.some(note => note.includes('示范')));
     assert.equal(JSON.stringify(result).includes(privateQuote), false);
     assert.equal((await host.styleLibrary({ action: 'get', id: saved.id })).profile!.version, 1);
     assert.equal(provider.requests.length, 1);
   } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('description-only style can be saved, reopened, selected and previewed while preserving its notes', async () => {
+test('old description-only profiles remain usable; incomplete new extraction cannot replace them', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-style-description-'));
   const provider = new Provider(JSON.stringify({ summary: '语气平实，直接表达观察，不急于总结。', notes: ['几份样文存在不同语气，建议试写后调整。'] }));
   let host = createHost(root, provider);
   try {
     await configure(host);
-    const result = await host.styleLibrary({ action: 'analyze', name: '描述型风格', samples: [sample] });
-    assert.deepEqual(result.draft!.rules, []);
-    const saved = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: result.draft })).profile!;
+    const legacy = { ...fixture, card: '语气平实，直接表达观察，不急于总结。', rules: [], notes: ['旧版描述，保留用户编辑。'] };
+    const saved = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: legacy })).profile!;
+    await assert.rejects(host.styleLibrary({ action: 'analyze', name: '描述型风格', samples: [sample] }), /STYLE_ANALYSIS_INCOMPLETE/);
+    assert.equal((await host.styleLibrary({ action: 'get', id: saved.id })).profile!.version, 1);
     const preview = '风格试写，非事实稿：' + '窗边的光落在桌面上。人群慢慢走过。这个下午没有结论，只有几次停顿。'.repeat(4);
     host.close(); host = createHost(root, new Provider(JSON.stringify({ preview })));
     await configure(host);
     const opened = (await host.styleLibrary({ action: 'get', id: saved.id })).profile!;
-    assert.deepEqual(opened.notes, result.draft!.notes);
+    assert.deepEqual(opened.notes, legacy.notes);
     assert.match(styleReferenceForProfile(opened), /语气平实/);
     const tried = await host.styleLibrary({ action: 'preview', card: opened.card, topic: '午后' });
     assert.equal(tried.preview, preview);
@@ -226,7 +230,7 @@ test('schema 8 migration installs a persistent library; readonly storage refuses
   } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('writing gets only chosen compact rules as data, not samples, source identity or analysis evidence', () => {
+test('legacy brief writing gets the full chosen guide without sending entire samples', () => {
   const ref = styleReferenceForProfile({ ...fixture, id: 'style-1', version: 1 });
   const prompt = buildWritingPrompt({ mode: 'quick', materials: [], brief: {
     schemaVersion: 1, topic: '城市散步', genre: 'narrative_observation', audience: '上班族', lengthTarget: { targetCharacters: 1200 }, materialIds: [], constraints: [], interactionMode: 'co_creation', confirmationStatus: 'confirmed',
