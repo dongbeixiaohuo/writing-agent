@@ -26,7 +26,7 @@ import { decodeStyleDocument, readStyleBatch } from '../src/style-source.js';
 import { CredentialBroker } from '../../../packages/runtime/credentials/src/index.js';
 import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '../../../packages/runtime/llm/src/index.js';
 import { openWorkspaceStorage, migrateWorkspaceStorage } from '../../../packages/storage/src/index.js';
-import { styleReferenceForProfile, type StyleDraft } from '../../../packages/writing-core/src/style-profile.js';
+import { StyleLibraryResultSchema, styleReferenceForProfile, type StyleDraft } from '../../../packages/writing-core/src/style-profile.js';
 import { buildWritingPrompt } from '../../../packages/writing-pack/src/index.js';
 import { safeDesktopFailure } from '../src/rpc-host.js';
 
@@ -53,6 +53,51 @@ function createHost(root: string, provider = new Provider()) {
 async function configure(host: DesktopApplicationHost) {
   await host.configureProvider({ kind: 'openai_compatible', providerId: 'test', baseURL: 'https://example.test/v1', model: 'm', tools: 'supported', usage: 'unknown', apiKey: 'test-only', persistence: 'session' });
 }
+
+test('bundled trial styles are available without analysis or database seeding and can be copied without changing the originals', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-builtin-styles-'));
+  const provider = new Provider(); let host = createHost(root, provider);
+  try {
+    const listed = StyleLibraryResultSchema.parse(await host.styleLibrary({ action: 'list' }));
+    assert.deepEqual(listed.profiles.map(p => p.name), ['瘦仙人', '胖仙人']);
+    assert.ok(listed.profiles.every(p => p.builtin));
+    assert.equal(provider.requests.length, 0);
+    const original = (await host.styleLibrary({ action: 'get', id: listed.profiles[0]!.id })).profile!;
+    assert.equal(original.modelRequests, 0);
+    assert.equal(original.analyzedCharacters, 0);
+    const { id, version, updatedAt: _time, builtin: _builtin, ...draft } = original;
+    await assert.rejects(host.styleLibrary({ action: 'save', id, expectedVersion: version, draft }), /STYLE_BUILTIN_READ_ONLY/);
+    await assert.rejects(host.styleLibrary({ action: 'delete', id, expectedVersion: version }), /STYLE_BUILTIN_READ_ONLY/);
+    const copy = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: { ...draft, name: '我的副本', card: '自己的节奏与表达。' } })).profile!;
+    assert.equal(copy.builtin, undefined);
+    assert.notEqual(copy.id, id);
+    host.close(); host = createHost(root, provider);
+    assert.deepEqual((await host.styleLibrary({ action: 'get', id })).profile, original);
+    assert.equal((await host.styleLibrary({ action: 'get', id: copy.id })).profile!.card, '自己的节奏与表达。');
+    await host.styleLibrary({ action: 'delete', id: copy.id, expectedVersion: copy.version });
+    assert.equal((await host.styleLibrary({ action: 'list' })).profiles.length, 2);
+    const storage = openWorkspaceStorage({ workspacePath: root, readOnly: true });
+    try {
+      assert.equal(storage.styleProfiles().get(id).name, '瘦仙人');
+      const db = new DatabaseSync(storage.databasePath, { readOnly: true });
+      try { assert.equal(db.prepare("SELECT COUNT(*) AS n FROM style_profiles WHERE id LIKE 'builtin-%'").get()!.n, 0); }
+      finally { db.close(); }
+    } finally { storage.close(); }
+    assert.equal(provider.requests.length, 0);
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('built-in styles do not consume the fifty personal style slots', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-style-capacity-'));
+  const storage = openWorkspaceStorage({ workspacePath: root });
+  try {
+    const store = storage.styleProfiles();
+    for (let i = 0; i < 50; i++) store.save(null, null, { ...fixture, name: `个人风格 ${i}` });
+    assert.equal(store.list().length, 52);
+    StyleLibraryResultSchema.parse({ profiles: store.list() });
+    assert.throws(() => store.save(null, null, fixture), /STYLE_LIBRARY_FULL/);
+  } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
+});
 
 test('typographic quote recovery survives save; invalid optional examples are never persisted', async () => {
   const original = '他说“先观察，再表达”。\n\n不要急着解释。';
@@ -117,7 +162,7 @@ test('desktop library analyzes once, saves explicitly, versions edits, survives 
   try {
     await configure(host);
     const analysis = await host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [sample] });
-    assert.equal(provider.requests.length, 1); assert.deepEqual((await host.styleLibrary({ action: 'list' })).profiles, []);
+    assert.equal(provider.requests.length, 1); assert.deepEqual((await host.styleLibrary({ action: 'list' })).profiles.filter(p => !p.builtin), []);
     const created = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: analysis.draft })).profile!;
     const frozen = styleReferenceForProfile(created);
     assert.equal(created.version, 1);
@@ -128,9 +173,9 @@ test('desktop library analyzes once, saves explicitly, versions edits, survives 
     const saved = (await host.styleLibrary({ action: 'get', id: created.id })).profile!;
     assert.equal(saved.version, 2); assert.notEqual(frozen, styleReferenceForProfile(saved));
     const listing = await host.styleLibrary({ action: 'list' });
-    assert.equal(listing.profiles.length, 1); assert.equal(JSON.stringify(listing).includes('样文事实标记'), false);
+    assert.equal(listing.profiles.filter(p => !p.builtin).length, 1); assert.equal(JSON.stringify(listing).includes('样文事实标记'), false);
     await host.styleLibrary({ action: 'delete', id: saved.id, expectedVersion: saved.version });
-    assert.deepEqual((await host.styleLibrary({ action: 'list' })).profiles, []);
+    assert.deepEqual((await host.styleLibrary({ action: 'list' })).profiles.filter(p => !p.builtin), []);
     assert.match(frozen, /v1/);
   } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
 });
@@ -161,7 +206,7 @@ test('cancels a model ignoring AbortSignal, blocks concurrent analysis and never
     await assert.rejects(host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [sample] }), /STYLE_LIBRARY_BUSY/);
     await host.styleLibrary({ action: 'cancel' });
     await assert.rejects(pending, /STYLE_ANALYSIS_CANCELLED/);
-    assert.deepEqual((await host.styleLibrary({ action: 'list' })).profiles, []);
+    assert.deepEqual((await host.styleLibrary({ action: 'list' })).profiles.filter(p => !p.builtin), []);
   } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
 });
 

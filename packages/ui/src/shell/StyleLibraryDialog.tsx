@@ -212,12 +212,12 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
   const save = async (): Promise<void> => {
     if (!draft) { setError('请先提取风格。'); return }
     const input: StyleDraft = {
-      name: name.trim() || draft.name, card: draft.card, summary: draft.summary, rules: draft.rules, notes: draft.notes,
+      name: profile?.builtin && name.trim() === profile.name ? `${profile.name}（副本）` : name.trim() || draft.name, card: draft.card, summary: draft.summary, rules: draft.rules, notes: draft.notes,
       samples: draft.samples, sampleCount: draft.sampleCount, analyzedCharacters: draft.analyzedCharacters,
       totalCharacters: draft.totalCharacters, elapsedMs: draft.elapsedMs, modelRequests: draft.modelRequests,
       ...(draft.package ? { package: draft.package } : {}),
     }
-    const result = await invoke({ action: 'save', id: profile?.id ?? null, expectedVersion: profile?.version ?? null, draft: input })
+    const result = await invoke({ action: 'save', id: profile?.builtin ? null : profile?.id ?? null, expectedVersion: profile?.builtin ? null : profile?.version ?? null, draft: input })
     if (!result?.profile) return
     setProfile(result.profile); setDraft(result.profile); setName(result.profile.name); setDirty(false)
   }
@@ -242,10 +242,10 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
       <div className={css.layout}>
         <aside className={css.library} aria-label="已保存风格">
           <div className={css.libraryHead}><strong>已保存</strong><button type="button" className={css.textButton} disabled={busy} onClick={reset}><PlusIcon size={14} />新建</button></div>
-          {profiles.length === 0 ? <p className={css.empty}>还没有保存的风格。</p> : profiles.map(item => <button type="button" key={item.id} disabled={busy} className={css.profileRow} aria-current={profile?.id === item.id ? 'true' : undefined} onClick={() => void openProfile(item.id)}><strong>{item.name}</strong><span>{item.sampleCount} 份样本 · {formatTime(item.updatedAt)}</span><small>{item.summary}</small></button>)}
+          {profiles.length === 0 ? <p className={css.empty}>还没有保存的风格。</p> : profiles.map(item => <button type="button" key={item.id} disabled={busy} className={css.profileRow} aria-current={profile?.id === item.id ? 'true' : undefined} onClick={() => void openProfile(item.id)}><strong>{item.name}</strong><span>{item.builtin ? '内置风格' : `${item.sampleCount} 份样本`} · {formatTime(item.updatedAt)}</span><small>{item.summary}</small></button>)}
         </aside>
         <div className={css.editor}>
-          <div className={css.editorTitle}><div><h3>{profile ? `编辑：${profile.name}` : '新建风格'}</h3><p>{profile ? `版本 v${profile.version} · ${formatTime(profile.updatedAt)}` : '添加样文后提取，不强制固定分析维度。'}</p></div>{profile && <button type="button" className={css.dangerButton} disabled={busy} onClick={() => void deleteProfile()}><TrashIcon size={14} />删除</button>}</div>
+          <div className={css.editorTitle}><div><h3>{profile ? `${profile.builtin ? '内置' : '编辑'}：${profile.name}` : '新建风格'}</h3><p>{profile ? `版本 v${profile.version} · ${formatTime(profile.updatedAt)}${profile.builtin ? ' · 修改后另存为个人副本' : ''}` : '添加样文后提取，不强制固定分析维度。'}</p></div>{profile && !profile.builtin && <button type="button" className={css.dangerButton} disabled={busy} onClick={() => void deleteProfile()}><TrashIcon size={14} />删除</button>}</div>
           <label className={css.field}><span>风格名称</span><input value={name} maxLength={160} disabled={busy} placeholder="例如：克制的商业观察" onChange={event => { setName(event.target.value); setDirty(true) }} /></label>
           <section className={css.samples} aria-label="样本文本"><div className={css.sectionHead}><strong>样本（{samples.length}/{STYLE_SAMPLE_LIMIT} · {sampleCharacters.toLocaleString('zh-CN')} 字）</strong><span>支持粘贴、TXT/MD/DOCX 和 HTTP(S) 网页；单篇仅形成初步观察，多篇尽量来自同一作者和相近场景</span></div>
             <p className={css.importHelp}>联合分析最多 {STYLE_SAMPLE_LIMIT} 份，文档、网页和粘贴文字合计；超出后请减少或分组，不会自动截取前十份。文档可一次多选，链接每行一个。</p>
@@ -258,10 +258,10 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
             {importActivity && <p className={css.importHelp} role="status">{importActivity}</p>}
             {importItems.length > 0 && <div className={css.importResults} aria-label="批量导入结果"><p>本批成功添加 {importItems.filter(item => item.status === 'loaded').length} 份，未添加 {importItems.filter(item => item.status === 'failed').length} 份。</p><ul>{importItems.map((item, index) => <li key={`${index}:${item.label}`}><span>{item.label}</span><small>{item.status === 'loaded' ? '已添加' : STYLE_IMPORT_ERRORS[item.code]}</small></li>)}</ul>{importItems.some(item => item.status === 'failed') && <p>成功项已保留。失败链接留在输入框中，可重新点击“批量读取网页”；失败文档可重新选择导入。</p>}</div>}
           </section>
-          <div className={css.actions}><button type="button" className={css.primaryButton} disabled={busy || samples.length === 0} onClick={() => void analyze()}>{analysisStartedAt === null ? '提取风格' : `正在提取… ${Math.floor((analysisNow - analysisStartedAt) / 1000)} 秒`}</button>{draft !== null && draft.sampleCount > 0 && <button type="button" className={css.secondaryButton} disabled={busy} onClick={() => void save()}><CheckIcon size={14} />保存到风格库</button>}{draft !== null && draft.sampleCount > 0 && analysisStartedAt === null && <span>实际分析 {draft.analyzedCharacters.toLocaleString('zh-CN')} / 总样文 {draft.totalCharacters.toLocaleString('zh-CN')} 字 · {(draft.elapsedMs / 1000).toFixed(1)} 秒</span>}</div>
+          <div className={css.actions}><button type="button" className={css.primaryButton} disabled={busy || samples.length === 0} onClick={() => void analyze()}>{analysisStartedAt === null ? '提取风格' : `正在提取… ${Math.floor((analysisNow - analysisStartedAt) / 1000)} 秒`}</button>{draft !== null && draft.sampleCount > 0 && <button type="button" className={css.secondaryButton} disabled={busy} onClick={() => void save()}><CheckIcon size={14} />{profile?.builtin ? '另存为个人风格' : '保存到风格库'}</button>}{draft !== null && draft.sampleCount > 0 && analysisStartedAt === null && (draft.modelRequests === 0 ? <span>预设写法与设计样文 · 未调用模型提取</span> : <span>实际分析 {draft.analyzedCharacters.toLocaleString('zh-CN')} / 总样文 {draft.totalCharacters.toLocaleString('zh-CN')} 字 · {(draft.elapsedMs / 1000).toFixed(1)} 秒</span>)}</div>
           {draft !== null && draft.sampleCount > 0 && <section className={css.card}>
             <label className={css.field}><span>风格卡（可编辑）</span><textarea rows={6} maxLength={1800} disabled={busy} value={draft.card} onChange={event => { setDraft(current => current ? { ...current, card: event.target.value } : current); setDirty(true); setPreview(null) }} /></label>
-            <p>{draft.summary}</p><p>这是根据样文归纳的写法，供你调整使用，不是风格对错的判定。可以直接编辑、试写，再保存；手动修改不会重新调用模型。</p>
+            <p>{draft.summary}</p><p>{draft.modelRequests === 0 ? '这是预先设计的写法，样文只演示表达。可以直接选用和试写；修改后保存为个人风格，不改变内置版本。' : '这是根据样文归纳的写法，供你调整使用，不是风格对错的判定。可以直接编辑、试写，再保存；手动修改不会重新调用模型。'}</p>
             {!!draft.notes?.length && <div className={css.analysisNotes} role="note" aria-label="提取提示"><strong>提取提示</strong><ul>{draft.notes.map((note, index) => <li key={index}>{note}</li>)}</ul></div>}
             {draft.package ? <StylePackageDetails pack={draft.package} samples={samples} /> : <p>这是旧版风格卡，可以继续选用；点击“提取风格”可用已有样文重新分析，保存后升级。</p>}
             <ul className={css.rules}>{draft.rules.map((rule, ruleIndex) => <li key={`${rule.dimension}:${ruleIndex}`}>

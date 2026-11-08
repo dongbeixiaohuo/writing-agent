@@ -28,6 +28,7 @@ const publicMessages: Readonly<Record<string, string>> = {
   STYLE_SOURCE_FAILED: '网页读取未完成，可能是网络或网站访问限制。请稍后重试，或复制正文粘贴到样文中。',
   STYLE_PROFILE_NOT_FOUND: '风格已被删除或变化，请刷新风格库。',
   STYLE_VERSION_CONFLICT: '风格已被其他操作修改，请重新打开最新版本后编辑；当前文章的风格快照不受影响。',
+  STYLE_BUILTIN_READ_ONLY: '内置风格随 App 提供；可以另存为个人风格后修改。',
   STYLE_LIBRARY_FULL: '风格库已达 50 项，请先移除不再需要的风格。',
   STYLE_LIBRARY_BUSY: '风格任务正在处理，请等待完成或先取消。',
   STYLE_ANALYSIS_TIMEOUT: '模型未在 120 秒内完成风格任务，本次已停止。样文仍保留，可以稍后重试。',

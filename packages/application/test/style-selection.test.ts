@@ -7,7 +7,7 @@ import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { WritingApplicationService } from '../src/index.js';
 import { createApplicationBridge } from '../../client-bridge/src/application-bridge.js';
 import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '../../runtime/llm/src/index.js';
-import { styleStatistics } from '../../writing-core/src/style-package.js';
+import { styleContext, styleStatistics } from '../../writing-core/src/style-package.js';
 import { intentFixtureEvents } from './intent-fixture.js';
 
 class Provider extends ModelProviderBase {
@@ -21,6 +21,37 @@ class Provider extends ModelProviderBase {
   }
 }
 const samples = [{ id: 'a', title: '窗口', kind: 'text' as const, sourceReference: null, text: '片段原文。\n不应全篇外发的样文余下内容。' }];
+
+test('each bundled style selects independently and reaches writing roles without biasing research or reader review', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-builtin-selection-'));
+  let storage = openWorkspaceStorage({ workspacePath: root });
+  try {
+    const service = new WritingApplicationService({ storage });
+    const profiles = storage.styleProfiles().list().filter(p => p.builtin);
+    for (const [i, metadata] of profiles.entries()) {
+      const projectId = `trial-${i}`;
+      service.createProject({ projectId, operationId: `create-${i}`, name: projectId, mode: 'quick', actor: { kind: 'user', id: 'test' } });
+      assert.equal(service.getProjectStyleSelection(projectId), undefined, 'neither candidate is chosen by default');
+      assert.throws(() => service.selectProjectStyle(projectId, { id: metadata.id, version: metadata.version + 1 }, `stale-${i}`), /STYLE_VERSION_CONFLICT/);
+      service.selectProjectStyle(projectId, { id: metadata.id, version: metadata.version }, `select-${i}`);
+      const selection = service.getProjectStyleSelection(projectId)!;
+      const profile = storage.styleProfiles().get(metadata.id);
+      assert.equal(selection.card, profile.card);
+      for (const role of ['outline', 'writer', 'title', 'review_editor']) {
+        const context = styleContext(selection, role);
+        assert.ok(context.includes(profile.card));
+        assert.ok(context.length <= 4000);
+        assert.ok(context.includes('句式片段'), `${role} retains examples`);
+        assert.ok(!context.includes(profiles.find(p => p.id !== profile.id)!.name));
+      }
+      for (const role of ['research', 'fact_check', 'review_reader']) assert.equal(styleContext(selection, role), '');
+      assert.ok(!styleContext(selection, 'intake').includes(profile.card));
+    }
+    storage.close(); storage = openWorkspaceStorage({ workspacePath: root });
+    const reopened = new WritingApplicationService({ storage });
+    for (const [i, p] of profiles.entries()) assert.equal(reopened.getProjectStyleSelection(`trial-${i}`)!.name, p.name);
+  } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
+});
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'wa-style-selection-'));
   const storage = openWorkspaceStorage({ workspacePath: root });
