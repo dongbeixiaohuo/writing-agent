@@ -240,6 +240,9 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   const reply = safePreview(result?.reply)
   if (reply) return `回复：${reply}`
   const artifactVersionId = safeId(result?.artifactVersionId)
+  if (toolName === 'submit_writing_stage' && object(result?.handoff)?.kind === 'revision_required') {
+    return '终审 Agent 发现仍需修正的内容，正在交回主笔继续修订；当前稿件已保留。'
+  }
   if (toolName.startsWith('submit_') || toolName.startsWith('respond_') || toolName.startsWith('propose_')) {
     return artifactVersionId ? `已保存 · 版本 ${artifactVersionId.slice(0, 12)}` : '已保存'
   }

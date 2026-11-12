@@ -9,7 +9,12 @@ import type { JsonValue, StoragePort } from "../../writing-core/src/index.js";
 import { FactClaimStatusSchema, FactClaimTypeSchema } from "../../writing-core/src/index.js";
 import { workflowStageSequence, type WritingWorkflowStage } from "../../writing-pack/src/index.js";
 import { buildExpertInstructions, LANGUAGE_REVIEW_SEMANTIC_CONTRACT } from '../../writing-pack/src/expert-instructions.js';
-import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, type WritingWorkflowTools } from "./workflow-tools.js";
+import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, stageArtifact, type WritingWorkflowTools } from "./workflow-tools.js";
+import { EDITORIAL_PLAN_INSTRUCTIONS } from './editorial-plan.js';
+import { REVISION_COMPARISON_INSTRUCTIONS } from './revision-comparison.js';
+import { PUBLICATION_REVIEW_INSTRUCTIONS, publicationReviewEvidence, publicationReviewSourceSlices } from './publication-review-context.js';
+import { FINDINGS_SUBMISSION, RESOLUTION_SUBMISSION, FINAL_REVISION_AUDIT } from './review-closure-prompts.js';
+import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA } from './review-closure.js';
 import { getPublicationCandidates, savePublicationCandidates, isPublicationSelectionCurrent, isUsablePublicationTitle,
   PUBLICATION_SELECTION_WAIT_REASON, selectedPublicationContext, type PublicationCandidate } from './publication-choice.js';
 import { createFactSourceTool, factToolFailureLoopKey } from './fact-web.js';
@@ -25,6 +30,9 @@ type CollaborationStage = WritingWorkflowStage | "title";
 type ArtifactExpectation = { kind: "evidence" | "outline" | "body" | "review" | "fact_assessment" | "publication_candidates"; mayCommitBody: boolean };
 type Assignment = { actor: string; stage: CollaborationStage | null; decisionId: string; inputVersionIds: string[]; reason: string; status: string; invalidatedStages: readonly string[]; expectedArtifact: ArtifactExpectation | null; expectedBodyVersionId?: string | null };
 
+const reviewOutputSchema = { type: 'object', properties: { content: { type: 'string' }, findings: REVIEW_FINDINGS_SCHEMA },
+  required: ['content', 'findings'], additionalProperties: false };
+
 function expectedArtifact(stage: CollaborationStage): ArtifactExpectation {
   if (stage === 'title') return { kind: 'publication_candidates', mayCommitBody: false };
   if (stage === "research") return { kind: "evidence", mayCommitBody: false };
@@ -34,12 +42,12 @@ function expectedArtifact(stage: CollaborationStage): ArtifactExpectation {
   return { kind: "body", mayCommitBody: true };
 }
 
-function stageInstruction(stage: WritingWorkflowStage, basePrompt: string, researchSearchEnabled = false): string {
+function stageInstruction(stage: WritingWorkflowStage, basePrompt: string, researchSearchEnabled = false, editorialPlanRequired = false): string {
   if (stage === 'review_reader') return '三个隔离模拟读者只给口语感受，不是编辑审校，不给修改建议；程序合并为一个成果和一次作者确认。';
   if (stage === "research") return (researchSearchEnabled
     ? '已配置可选前置搜索search_research_sources：先整理授权材料，只有关键公开事实缺口影响文章前提时才搜索，最多2条简短查询（不占末尾事实核查额度），不要每篇强行搜索或发整篇材料。优先搜索摘录，保留实际URL与引句，不把摘录写成读过原文。失败/额度用尽后不自动重试，说明限制；必要信息仍缺再向作者问。'
     : '当前为材料整理模式，没有外部搜索工具：从本次授权材料提取正文所需证据；多来源矛盾只对照实际提供的内容，不臆造检索或核验结果。')
-    + '只提交研究账本，content直接用对象{sources,claims,notes}，不要转成带转义的JSON字符串。sources按来源列一次source_id、source_title、source_publisher、accessed_at及可选source_url；每条claim用source_id引用，填写claim_type、claim_text、source_quote、reliability、use_boundary、verification_status。evidence_id可省略，由程序编号；确需保留旧编号时明确填写。仅illustrative允许空引句，其余必须引用连续原文；用户材料不能自动标为已外部核实。无事实时sources和claims用空数组，notes说明原因。关键前提存在必要证据缺口时暂停提问，不用猜测补足；成稿后仍须独立事实核查。不要设计开头、结尾、标题或提纲；明确排除的材料只在notes简记理由和必要风险，不另造完整证据条目。';
+    + '只提交研究账本，content直接用对象' + (editorialPlanRequired ? '{sources,claims,notes,editorialPlan}' : '{sources,claims,notes}') + '，不要转成带转义的JSON字符串。sources按来源列一次source_id、source_title、source_publisher、accessed_at及可选source_url；每条claim用source_id引用，填写claim_type、claim_text、source_quote、reliability、use_boundary、verification_status。evidence_id可省略，由程序编号；确需保留旧编号时明确填写。仅illustrative允许空引句，其余必须引用连续原文；用户材料不能自动标为已外部核实。无事实时sources和claims用空数组，notes说明原因。关键前提存在必要证据缺口时暂停提问，不用猜测补足；成稿后仍须独立事实核查。不要设计开头、结尾、标题或提纲；明确排除的材料只在notes简记理由和必要风险，不另造完整证据条目。';
   if (stage === "outline") return "只提交可供确认的文体化提纲，体现用户要求和材料边界，不要提前写正文。提纲是写给作者看的确认稿：禁止出现 E001/E002 这类证据编号和 use_boundary、illustrative 等内部字段名；证据与观点的对应关系由研究账本承担，不在提纲里标注；需要说明来源性质时用自然语言（如「这是作者的亲历观察」「这一点按既有事实写」）。";
   if (stage.startsWith("review_")) return "你是只读独立评审。只审阅绑定的同一初稿，不得读取其他初审意见，不得提交正文或重写文章。面向普通作者交流，不交一份冗长内部报告：先用1—2句给结论，再按‘优先讨论的问题’‘可选优化’‘建议保留’分段；优先列最多3个最重要的讨论点，每点用短句说明位置、影响和建议。确有更多重要风险不能省略，但不要为凑条目逐段复述全文、重复夸赞或展开后台检查清单。不得显示正文UUID、review_publish等内部字段。不要声称已交接下一位；共创模式会由程序在你保存后等待作者讨论和确认。";
   if (stage === "language_review") return "你是主笔的最终语言润色环节，不是撰写评审报告的审稿人。只对绑定的集中修订稿作有收益的最小语言润色，不做第二次结构重写，不增删事实或改变文意。submit_writing_stage.content必须是可直接交付的完整文章正文；无修改也须逐字提交原文。禁止交付‘本稿语言良好、修改建议、建议优先处理、整体可保留’等评审意见或过程说明。保留真实标题（Markdown或纯文本均可）及全部正文。";
@@ -71,6 +79,10 @@ export function createWritingCollaboration(options: {
   const state = (runId: string) => {
     const confirmedBodyVersionId = workflow.recoverConfirmedBody(runId);
     const events = storage.listRunEvents(runId);
+    const recoveredRevisionMarker = workflow.recoverCentralRevision(runId, events);
+    const recoveredLanguageMarker = workflow.recoverLanguageReview(runId, events);
+    const nextStage = workflow.progress(runId).nextStage;
+    const revisionReturn = workflow.pendingRevisionReturn(runId);
     const resume = events.findLastIndex((event) => event.type === "run.resumed");
     const segment = events.slice(Math.max(0, resume));
     // A transport-only retry does not revoke an already issued task. A real
@@ -82,11 +94,15 @@ export function createWritingCollaboration(options: {
       (event.payload.result as any)?.toolName === "director_decide");
     const latest = decisions.at(-1);
     const assignment = (latest?.payload.result as any)?.result?.collaboration as Assignment | undefined;
-    const completedAfter = latest !== undefined && events.some((event) => event.projectSeq > latest.projectSeq && event.type === "tool.completed" &&
+    const completedAfter = latest !== undefined && ((assignment?.stage === 'central_revision' &&
+      recoveredRevisionMarker !== null && recoveredRevisionMarker.createdEventSeq > latest.projectSeq) ||
+      (assignment?.stage === 'language_review' && workflow.hasRevisionReturnForAssignment(runId, latest.projectSeq, assignment.expectedBodyVersionId ?? null, events)) ||
+      (assignment?.stage === 'language_review' &&
+      recoveredLanguageMarker !== null && recoveredLanguageMarker.createdEventSeq > latest.projectSeq) ||
+      events.some((event) => event.projectSeq > latest.projectSeq && event.type === "tool.completed" &&
       ["submit_writing_stage", "submit_fact_check", "submit_publication_candidates"].includes((event.payload.result as any)?.toolName) &&
-      (event.payload.result as any)?.result?.stage === assignment?.stage);
+      (event.payload.result as any)?.result?.stage === assignment?.stage));
     const current = assignment !== undefined && assignment.status === "dispatched" && !completedAfter ? assignment : null;
-    const nextStage = workflow.progress(runId).nextStage;
     const inputs = workflow.continuationContext(runId).artifacts.map((item) => item.artifactVersionId);
     const ready = workflow.isReady(runId);
     const finished = assignment?.status === "finished" && workflow.completion(runId).publicationReady;
@@ -100,7 +116,7 @@ export function createWritingCollaboration(options: {
     const expectedBodyVersionId = storage.listArtifactVersions(projectId, "body", "main")
       .filter((version) => (version.actor.kind === "agent" && version.actor.runId === runId) || version.id === confirmedBodyVersionId)
       .sort((left, right) => left.createdEventSeq - right.createdEventSeq).at(-1)?.id ?? initialBody;
-    return { events, segment, resume, latest, current, nextStage, inputs, ready, finished, expectedBodyVersionId };
+    return { events, segment, resume, latest, current, nextStage, inputs, ready, finished, expectedBodyVersionId, revisionReturn };
   };
   const factBinding = (runId: string): FactBinding | null => {
     const assignment = state(runId).current;
@@ -128,6 +144,9 @@ export function createWritingCollaboration(options: {
     execute(args, context) {
       const current = state(context.runId);
       if (current.current !== null) throw new ToolExecutionFault("DIRECTOR_NOT_ACTIVE", "The assigned expert must return before the director can decide");
+      if (current.revisionReturn && !(args.action === 'rework' && args.stage === 'central_revision')) {
+        throw new ToolExecutionFault('REVISION_REPAIR_REQUIRED', 'Final review found unresolved issues. Use the existing rework central_revision path; do not repeat final review, proceed to facts, finish, or ask the author to repair agent errors.');
+      }
       if (args.reason.trim().length === 0) throw new ToolExecutionFault("DIRECTOR_REASON_REQUIRED", "A concise decision summary is required");
       if (args.inputVersionIds !== undefined && JSON.stringify([...args.inputVersionIds].sort()) !== JSON.stringify([...current.inputs].sort())) throw new ToolExecutionFault("DIRECTOR_INPUT_VERSION_MISMATCH", "Omit inputVersionIds: runtime will bind current artifact inputs automatically. Material IDs are not artifact IDs; an empty research list is valid.");
       let invalidatedStages: readonly string[] = [];
@@ -150,7 +169,7 @@ export function createWritingCollaboration(options: {
           const reason = "正文已在本次运行之外更新，无法确认旧任务对新正文的修改或核查授权，已保留当前稿件。";
           return { collaboration: { actor: "director", stage: args.stage, decisionId: context.operationId, inputVersionIds: current.inputs, reason, status: "waiting_user", invalidatedStages: [], expectedArtifact: null, expectedBodyVersionId: current.expectedBodyVersionId }, awaitingUserInput: { reason, questions: ["是否要基于当前保存的稿件重新开始写作？请结束旧任务后，从当前稿件发起新任务。"], nextStage: args.stage, requiredArtifactVersionIds: current.inputs } };
         }
-        if (!current.ready && !(args.action === 'dispatch' && args.readinessReason?.trim())) throw new ToolExecutionFault("WRITING_READINESS_REQUIRED", "Read authorized inputs, then assess readiness or supply readinessReason with dispatch for the current next stage");
+        if (!current.ready && !current.revisionReturn && !(args.action === 'dispatch' && args.readinessReason?.trim())) throw new ToolExecutionFault("WRITING_READINESS_REQUIRED", "Read authorized inputs, then assess readiness or supply readinessReason with dispatch for the current next stage");
       }
       if (args.action === "dispatch") {
         if (args.stage === null || args.stage !== current.nextStage) throw new ToolExecutionFault("DIRECTOR_STAGE_INVALID", `dispatch only accepts nextStage=${current.nextStage ?? "finished"}. Only if central_revision is already completed in THIS run, change that article with director_decide action=rework stage=central_revision, then dispatch central_revision, language_review, fact_check. Otherwise continue nextStage: a new run editing a pre-existing project body starts from research, not rework. Do not replace authorized editing with rechecking the unchanged body. language_review is only minimal polishing, not content deletion or restructuring.`);
@@ -246,6 +265,96 @@ export function createWritingCollaboration(options: {
     const assignment = current.ready ? current.current : null;
     const actor = assignment?.actor ?? "director";
     const inputs = assignment?.inputVersionIds ?? current.inputs;
+    const findingsRequired = workflow.reviewFindingsRequired(runId);
+    if (assignment?.stage === 'review_editor') {
+      const body = stageArtifact(storage, projectId, runId, 'draft');
+      if (!body || !inputs.includes(body.id)) throw new ToolExecutionFault('REVIEW_DRAFT_MISSING', 'Cold reading requires the exact workflow draft');
+      const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
+      const brief = briefId ? storage.getWritingBriefVersion(briefId)?.brief : null;
+      const scopeId = `review_editor:${assignment.decisionId}:${body.id}`;
+      return { scopeId, actor: 'review_editor', expectedBodyVersionId: body.id,
+        systemPrompt: '你是第一次读到本文的编辑。只凭文章本身和目标读者判断阅读效果，不猜作者的写作计划。先判断读完后比只看题目多知道了什么；如果结论早能猜到、材料只是装饰，直说没有新收获。再定位最早会停止阅读的原句，以及核心判断最站不住的一步，说明阅读损失和最小修复；只把真正有内容的观察列为值得保留。优先处理最多三处真正影响阅读的问题，没有就如实保留。先查论证再查措辞：句子前后是否换了讨论对象，数字是否真能推出紧随的判断，是否把未测量的原因或变化说成已知。标明“推演”不能补上缺的一步；需要缩小判断或换掉例子，不建议加免责声明。不因没有故事、反方、金句或短段而扣分。不替代事实核查，不编造经历，不重写正文，不输出过程备注或内部编号。' + (findingsRequired ? `\n${FINDINGS_SUBMISSION}` : ''),
+        userMessage: `请直接给作者简洁的审稿意见。\nCOLLABORATION_STATE=${JSON.stringify({ actor: 'review_editor', stage: 'review_editor',
+          nextStage: current.nextStage, ready: true, finished: false, inputVersionIds: [body.id], unreadArtifactVersionIds: [], completedStages: [], materials: [],
+          reviewFindingsRequired: findingsRequired, ...(findingsRequired ? { reviewOutputSchema } : {}),
+          writingRequirements: { audience: brief?.audience, platform: brief?.platform, genre: brief?.genre },
+          artifacts: [{ id: body.id, kind: 'body', content: body.content }] })}`,
+        allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
+        ...(findingsRequired ? { roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'findings'], required: ['findings'], stringFields: ['content'] } } } : {}),
+        ...(findingsRequired ? { textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'review_editor' }, format: 'json_object' } } : {}),
+        ...(!findingsRequired ? { outputPreview: { id: `${runId}:preview:${scopeId}`, stage: 'review_editor' as const },
+          textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'review_editor' }, contentArgument: 'content' } } : {}),
+        authorizeTool: call => call.name === 'submit_writing_stage' && (call.arguments as { stage?: string }).stage === 'review_editor',
+      };
+    }
+    if (assignment?.stage === 'review_publish') {
+      const body = stageArtifact(storage, projectId, runId, 'draft');
+      if (!body || !inputs.includes(body.id)) throw new ToolExecutionFault('REVIEW_DRAFT_MISSING', 'Publication review requires the exact workflow draft');
+      const research = stageArtifact(storage, projectId, runId, 'research');
+      const evidence = research && inputs.includes(research.id) ? research : null;
+      const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
+      const brief = briefId ? storage.getWritingBriefVersion(briefId)?.brief : null;
+      const sources = storage.listMaterials(projectId).filter(material => options.materialIds.includes(material.id) &&
+        (material.role === 'source_verified' || material.role === 'user_firsthand' || material.trustLabel === 'external_untrusted' || material.sourceKind === 'web_snapshot'));
+      const modelTools = ['assess_writing_readiness', ...(sources.length > 0 ? ['read_material'] : [])];
+      const scopeId = `review_publish:${assignment.decisionId}:${body.id}:${evidence?.id ?? 'none'}`;
+      return { scopeId, actor: 'review_publish', expectedBodyVersionId: body.id,
+        systemPrompt: PUBLICATION_REVIEW_INSTRUCTIONS + (findingsRequired ? `\n${FINDINGS_SUBMISSION}` : ''),
+        userMessage: `请给出发布前的独立审校意见。\nCOLLABORATION_STATE=${JSON.stringify({ actor: 'review_publish', stage: 'review_publish',
+          nextStage: current.nextStage, ready: true, finished: false, inputVersionIds: [body.id, ...(evidence ? [evidence.id] : [])],
+          reviewFindingsRequired: findingsRequired, ...(findingsRequired ? { reviewOutputSchema } : {}),
+          unreadArtifactVersionIds: [], completedStages: [], materials: [], writingRequirements: { audience: brief?.audience, platform: brief?.platform, genre: brief?.genre },
+          firsthandMaterialIds: brief?.authorAuthorization.firsthandMaterialIds.filter(id => sources.some(source => source.id === id && source.role === 'user_firsthand')) ?? [],
+          artifacts: [{ id: body.id, kind: 'body', content: body.content },
+            ...(evidence ? [{ id: evidence.id, kind: 'evidence', content: publicationReviewEvidence(evidence.content) }] : [])],
+          materialCatalog: factMaterialContext(sources).materialCatalog })}`,
+        allowedTools: [...new Set(['submit_writing_stage', ...modelTools])], modelTools, toolChoice: 'auto',
+        ...(findingsRequired ? { roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'findings'], required: ['findings'], stringFields: ['content'] } } } : {}),
+        ...(findingsRequired ? { textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'review_publish' }, format: 'json_object' } } : {}),
+        ...(!findingsRequired ? { outputPreview: { id: `${runId}:preview:${scopeId}`, stage: 'review_publish' as const },
+          textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'review_publish' }, contentArgument: 'content' } } : {}),
+        authorizeTool(call) {
+          const args = call.arguments as Record<string, unknown>;
+          if (call.name === 'submit_writing_stage') return args.stage === 'review_publish';
+          if (call.name === 'read_material') return sources.some(source => source.id === args.materialId && source.contentVersionId === args.contentVersionId);
+          return call.name === 'assess_writing_readiness' && args.status === 'needs_input';
+        },
+      };
+    }
+    const reviewClosure = workflow.reviewClosure(runId);
+    const auditCandidates = assignment?.stage === 'language_review' ? workflow.revisionCandidates(runId) : null;
+    if (assignment?.stage === 'language_review' && reviewClosure && auditCandidates) {
+      const { original, revised, allowOriginal } = auditCandidates;
+      const research = stageArtifact(storage, projectId, runId, 'research');
+      const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
+      const brief = briefId ? storage.getWritingBriefVersion(briefId)?.brief : null;
+      const authorized = storage.listMaterials(projectId).filter(material => options.materialIds.includes(material.id));
+      const authorInputs = authorized.filter(material => material.role === 'user_firsthand' || material.id.startsWith('intake-user-'));
+      const sourceSlices = publicationReviewSourceSlices(storage, projectId, stageArtifact(storage, projectId, runId, 'review_publish'), authorized);
+      return {
+        scopeId: `language-audit:${assignment.decisionId}:${revised.id}`, actor: 'language_review', expectedBodyVersionId: revised.id,
+        systemPrompt: `${FINAL_REVISION_AUDIT}\n${REVISION_COMPARISON_INSTRUCTIONS}`,
+        userMessage: `请独立核对修订后的实际文章。\nCOLLABORATION_STATE=${JSON.stringify({
+          actor: 'language_review', stage: 'language_review', nextStage: current.nextStage, ready: true, finished: false,
+          inputVersionIds: inputs, unreadArtifactVersionIds: [], completedStages: [], materials: inlineMaterialContext(authorInputs), sourceSlices,
+          writingRequirements: { audience: brief?.audience, platform: brief?.platform, genre: brief?.genre },
+          authorDecisions: Array.isArray(options.authorReviewDiscussion) ? options.authorReviewDiscussion.filter(item =>
+            item && typeof item === 'object' && !Array.isArray(item) && item.role === 'user') : [],
+          reviewClosure: { ...reviewClosure, findings: reviewClosure.findings.map(({ id, quote, kind, severity, evidenceIds, bodyVersionId, reviewVersionId }) =>
+            ({ id, quote, kind, severity, evidenceIds, bodyVersionId, reviewVersionId })) },
+          revisionComparison: { originalVersionId: original.id, revisedVersionId: revised.id,
+            allowedSelectionIds: allowOriginal ? [original.id, revised.id] : [revised.id] },
+          artifacts: [{ id: original.id, kind: 'body', content: original.content }, { id: revised.id, kind: 'body', content: revised.content },
+            ...(research ? [{ id: research.id, kind: 'evidence', content: publicationReviewEvidence(research.content) }] : [])],
+          bodyOutputContract: { versions: [original, revised].map(version => ({ versionId: version.id,
+            requiredHeadings: bodyArticleBaseline(version.content).split(/\r?\n/u).filter(line => /^#{1,6}\s/u.test(line)),
+            articleCharacters: bodyArticleBaseline(version.content).length })), output: 'complete_article_only' },
+        })}`,
+        allowedTools: ['submit_writing_stage'], modelTools: ['submit_writing_stage'], toolChoice: 'required',
+        roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'audit', 'comparison'], required: ['audit'], stringFields: ['content'] } },
+        authorizeTool: call => call.name === 'submit_writing_stage' && (call.arguments as { stage?: string }).stage === 'language_review',
+      };
+    }
     const artifacts = inputs.map((id) => storage.getArtifactVersion(id)).filter((item) => item !== null).map((item) => ({ id: item.id, kind: item.kind, content: item.content }));
     if (assignment?.stage === 'review_reader') {
       const body = artifacts.find(item => item.kind === 'body');
@@ -281,13 +390,15 @@ export function createWritingCollaboration(options: {
     const cachedIds = new Set([...materialSlices.values()].map(slice => (slice as {materialId: string}).materialId));
     const materials = [...inlineMaterialContext(authorizedMaterials.filter(material => !cachedIds.has(material.id))), ...materialSlices.values()];
     const downstream = actor !== 'research' && artifacts.some(item => item.kind === 'evidence');
-    const artifactContext = stageArtifactContext(actor, artifacts);
-    // Non-web author inputs can include fictional scenes, style examples or
-    // requirements. Keep them; only external source articles become on-demand.
-    const authorMaterialIds = new Set(authorizedMaterials.filter(m => m.sourceKind !== 'web_snapshot' || m.role === 'user_firsthand' || m.id.startsWith('intake-user-')).map(m => m.id));
+    const artifactContext = stageArtifactContext(actor, artifacts, { directorStage: current.nextStage });
+    // Selection must not be undone by reinjecting an external source as pasted
+    // text. Keep author experience/requirements; source originals stay readable.
+    const authorMaterialIds = new Set(authorizedMaterials.filter(m => m.role === 'user_firsthand' || m.id.startsWith('intake-user-') ||
+      m.sourceKind !== 'web_snapshot' && m.trustLabel !== 'external_untrusted' && m.role !== 'source_verified').map(m => m.id));
     const suppliedMaterials = actor === 'title' ? [] : downstream
       ? materials.filter(m => authorMaterialIds.has(String((m as { materialId: string }).materialId))) : materials;
-    const boundBody = artifacts.find(item => item.kind === 'body')?.content;
+    const comparisonCandidates = assignment?.stage === 'language_review' ? workflow.revisionCandidates(runId) : null;
+    const boundBody = comparisonCandidates?.revised.content ?? artifacts.find(item => item.kind === 'body')?.content;
     const articleBaseline = boundBody === undefined ? undefined : bodyArticleBaseline(boundBody);
     const selectedStyle = projectStyleSelection(storage, projectId);
     const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
@@ -303,8 +414,17 @@ export function createWritingCollaboration(options: {
       delegationTargetCharacters: 200,
     };
     const summary = { actor, stage: assignment?.stage ?? null, nextStage: current.nextStage, inputVersionIds: inputs, ready: current.ready, finished: current.finished,
+      ...(actor === 'director' && current.revisionReturn ? { revisionReturn: {
+        reportId: current.revisionReturn.id, bodyVersionId: JSON.parse(current.revisionReturn.content).bodyVersionId } } : {}),
+      ...(assignment?.stage === 'central_revision' && reviewClosure ? { reviewClosure } : {}),
       writingRequirements: briefId ? (() => { const brief = storage.getWritingBriefVersion(briefId)?.brief; return { audience: brief?.audience, platform: brief?.platform }; })() : undefined,
       outputGuidance,
+      ...(assignment?.stage === 'research' && workflow.requireEditorialPlan ? { editorialPlanRequired: true } : {}),
+      ...(comparisonCandidates ? { revisionComparison: {
+        originalVersionId: comparisonCandidates.original.id, revisedVersionId: comparisonCandidates.revised.id,
+        allowedSelectionIds: comparisonCandidates.allowOriginal ? [comparisonCandidates.original.id, comparisonCandidates.revised.id] : [comparisonCandidates.revised.id],
+        instruction: comparisonCandidates.allowOriginal ? '选择阅读效果更好的版本再作最小润色；允许保留初稿。' : '原稿只供比较；保留作者已确认或返工修正的内容，不回退旧稿。',
+      } } : {}),
       ...(assignment?.stage === 'research' ? { researchSearchBudget: researchSearch.budget(runId), externalSearchEnabled: researchSearch.enabled() } : {}),
       unreadArtifactVersionIds: workflow.unreadReadinessArtifactIds(runId),
       ...(assignment?.stage === "fact_check" ? { currentBodyVersionId: storage.inspectProject(projectId)?.latestBodyVersionId ?? null,
@@ -319,8 +439,11 @@ export function createWritingCollaboration(options: {
           savedSourceRecords: factRecordCatalog(storage, runId, prepared.preparationId) } : {}),
         authorAuthorization: briefId ? storage.getWritingBriefVersion(briefId)?.brief.authorAuthorization : null } : {}),
       ...(assignment?.stage === 'language_review' && articleBaseline !== undefined ? { bodyOutputContract: {
-        requiredHeadings: articleBaseline.split(/\r?\n/u).filter(line => /^#{1,6}\s/u.test(line)),
-        articleCharacters: articleBaseline.length, legacyProcessPostscript: articleBaseline !== boundBody?.trim(),
+        ...(comparisonCandidates ? { versions: [comparisonCandidates.original, comparisonCandidates.revised].map(version => ({
+          versionId: version.id, requiredHeadings: bodyArticleBaseline(version.content).split(/\r?\n/u).filter(line => /^#{1,6}\s/u.test(line)),
+          articleCharacters: bodyArticleBaseline(version.content).length,
+        })) } : { requiredHeadings: articleBaseline.split(/\r?\n/u).filter(line => /^#{1,6}\s/u.test(line)), articleCharacters: articleBaseline.length }),
+        legacyProcessPostscript: articleBaseline !== boundBody?.trim(),
         preserveMeaning: LANGUAGE_REVIEW_SEMANTIC_CONTRACT,
         output: 'complete_article_only',
       } } : {}),
@@ -344,7 +467,7 @@ export function createWritingCollaboration(options: {
       ? "你是写作导演，只能调度独立专家、提问、返工或结束，不得直接写正文。director_decide.reason是传给专家的任务说明：明确本次解决什么、范围和预期输出。汇总评审分歧后给修订主笔取舍依据。nextStage仅约束普通dispatch，不覆盖用户当前修改要求；已完成正文需删改时先 rework central_revision，再dispatch central_revision→language_review→fact_check。不要直接dispatch已完成的language_review；它只能最小润色，不承担内容删改。事实blocked后若用户已授权删改，必须先实际修改当前被核查正文，再独立核查新版本，不能反复核查旧稿或再次索要同一授权；若只补充来源而无正文改动，可重新核查。提纲改向先rework outline再重新确认。全部阶段保存且当前事实门禁passed才finish，之后用一句话结束。"
       : actor === 'title'
         ? '你是独立标题专家。只基于绑定的当前最终正文生成少量真实且有差异的标题候选；调用 submit_publication_candidates 保存。不得改写正文，不得自行选择或声称用户已确认。'
-        : stageInstruction(assignment!.stage as WritingWorkflowStage, options.systemPrompt, researchSearch.enabled());
+        : stageInstruction(assignment!.stage as WritingWorkflowStage, options.systemPrompt, researchSearch.enabled(), workflow.requireEditorialPlan);
     if (actor === "director") rolePrompt += "\n区分新任务编辑现稿与同run返工：项目已有正文或旧run事实blocked，不代表本run完成过阶段。rework只能选择本run completedStages中且前置均完成的阶段。新run即使要求修改已有稿件，也应读取现稿、评估ready，从nextStage=research按原流程推进；只有本run已完成central_revision后再次收到删改授权，才使用rework central_revision。项目历史factCheck不是新run的阶段完成凭据。例外：若本run的completedStages非空，说明程序已把同会话上一中断run的连续完成阶段连同其有效产物承接进本run，它们就是本run自己的完成记录——直接从当前nextStage继续，不要再从research重来，也不要重新生成已承接的产物。";
     if (assignment?.stage === "fact_check") rolePrompt += `\n唯一事实核查对象是 CURRENT_BODY_VERSION=${storage.inspectProject(projectId)?.latestBodyVersionId ?? "missing"}。extract阶段artifacts提供正文全文；verify阶段preparedClaims提供其中待核实条目及原句，正文仅留目录，必要时按需读取。不得核查历史正文、评审报告、用户解释中的旧稿或版本技术说明。证据只从绑定的evidence和授权材料取。`;
     const drafted = storage.listArtifactVersions(projectId, "report", `workflow:${runId}:draft`).length > 0;
@@ -357,7 +480,10 @@ export function createWritingCollaboration(options: {
       ...(actor === 'director' ? ['director_decide省略inputVersionIds，程序自动绑定；research的空产物列表合法，不向作者索取内部ID。每阶段保存或输入变化后重新判断充分性；已有完整材料直接使用，不机械沿用上阶段结论。'] : []),
     ].join('\n');
     if (actor === 'director') rolePrompt += `\n精简交接：reason建议在${outputGuidance.delegationTargetCharacters}字内，只说明本阶段的关键目标、作者最新取舍与必要边界。专家已收到完整的当前方向、材料与产物，不要重复粘贴它们、逐条重述证据、写一份提纲再让提纲专家重写；不得要求提纲展示证据编号。保留确有必要的复杂要求，不以精简为由丢掉作者约束。`;
-    if (assignment?.stage === 'research') rolePrompt += `\n证据取舍：围绕约${articleTargetCharacters}字的正文实际需要，优先收录会进入正文的关键事实、必要引文与风险边界，不为原材料每一句话另建证据条目。同一主张不重复建条；直接引句只取足以支持主张的连续原文，保留出处和适用范围，禁止以精简为由伪造、截掉限定条件或漏掉重要医疗等风险。notes建议约${outputGuidance.researchNotesTargetCharacters}字，只列未解决缺口和共同边界，不重复claims、长篇分析或提前拟提纲。这是篇幅目标，不是保存硬上限；程序不截断内容。`;
+    if (assignment?.stage === 'research') rolePrompt += workflow.requireEditorialPlan ? `\n${EDITORIAL_PLAN_INSTRUCTIONS}\n本次比较2–3个切口；作者明确指定方向时选中它，其他候选只说明取舍，不改变授权。只入账与候选相关的材料，字数目标约${articleTargetCharacters}字；不用数字点缀观点，保留能解释原因、呈现差异或限制结论的材料。notes只写共同边界，不重复计划。` : '';
+    if (assignment?.stage === 'outline' || assignment?.stage === 'draft') rolePrompt += '\n有editorialPlan时围绕选中的切口与读者收获写作，只使用use材料支撑主张，不重新拼成候选切口大合集。gaps决定能说到哪里；无法支撑的判断缩小或不写。内部计划不是文章结构模板，不能把字段、选材理由、证据编号或自检说明写进正文。';
+    if (assignment?.stage === 'central_revision') rolePrompt += reviewClosure ? `\n${RESOLUTION_SUBMISSION}`
+      : '\n沿用已经选定的切口和读者收获。完整证据仍可核对反例、事实和适用范围，避免把淘汰的切口和选材重新扩成正文。';
     if (assignment?.stage === 'outline') rolePrompt += `\n提纲篇幅目标：正文约${articleTargetCharacters}字，提纲建议约${outputGuidance.outlineTargetCharacters}字。只给各部分作用、少量关键要点、篇幅分配和开头结尾方向；不要扩写成小文章，不重复词汇表、证据账本、禁写清单或自检报告，不标注内部证据编号。作者明确要求详细提纲时可相应展开，重要约束不能省略。这是篇幅目标，不是保存硬上限，程序不截断正文或提纲。`;
     if (actor === 'director') rolePrompt += '\n核查问题归属：factCheck未通过是专家反馈，不等于作者缺材料。先核对主张是否真的在当前正文/选定标题中、是否为可核实事实、是否属于作者明确要求。Agent自行加入的无来源细节或误引，由你安排rework central_revision纠正并独立重查，不要求作者为Agent的错误补材料；不得改变作者立场、核心事实或已确认范围。若核查把修辞/创作性化用当成事实、核查了旧稿或正文不存在的句子，应安排fact_check重新审查并给出依据，不为凑passed删掉真正事实。只有确实依赖作者独有经历、来源或重要取舍时才needs_input/ask，直接说清需要哪一点及为何需要，不输出系统阻断通知。已知缺口必须在进入依赖它的阶段前解决；终审只能发现新增问题，不能替代前置沟通。';
     if (assignment?.stage === 'fact_check') rolePrompt += '\n先辨别可核实事实与作者表达：普通比喻、感受、明确虚构场景以及不冒充原文的创作性化用，不因缺少事实来源就列为UNSUPPORTED。涉及古籍原句、作者归属、具体出处、历史或科学论断则仍须核实；不能因为文体是散文而放行错误引文。每条claimText必须对应当前正文或选定标题中的真实主张，不把评审意见、建议改写或不存在的句子作为核查对象。第一人称亲历叙事的现场、动作、对白与感受属于作者本人的来源，不因合理加工、细节补写或语感润色被判为超范围，也不要求作者为记忆提供更逐字的证据；用词一致与文风对齐建议归语言终审，不生成核查编号。没有外部事实主张时直接给空 claims，不为显得尽责制造咬文嚼字。';
@@ -370,13 +496,18 @@ export function createWritingCollaboration(options: {
     if (actor === 'director') rolePrompt += '\n读者审校是三个独立模拟身份的口语反应，不是编辑意见或真实调研，不得投票或把最激烈反应自动升级为必须修改。进入集中修订时，在reason中用“导演解读（非读者原话）”区分你的解读：结合写作目标、初稿具体段落和作者已确认的取舍，将值得处理的困惑翻译为具体修订项；也可以明确保留原文并说明理由。不能让读者给修改建议，不声称作者同意尚未确认的选择。';
     if (assignment?.stage === 'central_revision') rolePrompt += '\n绑定的authorReviewDiscussion是作者与审校专家公开交流的数据。作者最新明确保留、拒绝或调整的意见优先于旧审校报告；专家提议不等于作者同意，不能把作者已拒绝的可选修改重新应用。真正事实问题仍须处理或继续沟通，作者认可不能替代事实依据。';
     if (actor === 'director') rolePrompt += '\n给主笔和润色专家的任务要区分两件事：保留真实人物/来源的具体归属、事实限定与必要的不确定性；清除程序自己加进正文的重复材料说明。不要把“整理稿”“未经独立核实”这类通用工作声明锁成不可改的事实，不要命令主笔加总免责声明或在完整正文后附修改报告。内部核查状态由独立记录和界面告知作者。';
+    if (actor === 'director' && current.revisionReturn) rolePrompt += '\n终审已返回必须修正的问题，revisionReturn绑定当前稿件。现在调用现有的rework central_revision，再交主笔逐项处理。不要重复终审或把Agent的可修正问题交给作者；沿用已有返工预算。';
     const stage = assignment?.stage;
-    const outputPreview = isPublicStageOutput(stage)
+    const stageFields = stage === 'central_revision' && reviewClosure ? { allowed: ['stage', 'content', 'resolutions'], required: ['resolutions'], stringFields: ['content'] }
+      : stage === 'language_review' && comparisonCandidates ? { allowed: ['stage', 'content', 'comparison'], required: ['comparison'], stringFields: ['content'] }
+      : stage === 'research' ? { allowed: ['stage', 'content'] } : undefined;
+    const outputPreview = isPublicStageOutput(stage) && !comparisonCandidates && !(stage === 'central_revision' && reviewClosure)
       ? { id: `${runId}:preview:${scopeId}`, stage } : undefined;
     if (outputPreview) rolePrompt += '\n本次是纯文本成果生成：以普通回复逐步输出本阶段完整的 Markdown 提纲、文章或审校建议，不把全文包装为 JSON，不先写“正在整理”等开场说明。成果输出前仅在必要时调用已提供的读取工具补读目录中的原文，不重读本次已完整提供的内容。不输出私有推理、调度指令或内部字段。审校建议说明问题、阅读影响和修改建议，使用简短分段。程序会在完整响应结束后把这份原文交给 submit_writing_stage 校验保存，不需要你再次复制、调用或宣称保存成功。预览不代表已保存，也不代表作者已确认或事实核查已通过。';
     if (outputPreview) rolePrompt += '\n确实发现任务依赖的必要作者信息缺口时，不写成果或缺料说明，调用 assess_writing_readiness(status=needs_input) 提出最多两个具体问题并等待回答。当前 ready 已由程序按输入版本确认，不要重复提交 ready。';
     if (stage === 'language_review') rolePrompt += '\n最小润色包括消除旧稿中的工作备注、注释式真假标签和解释写作步骤的文字，这不等于删改文章事实。假设保留“如果/设想”等自然语气，不重复加“说明性假设，不是真事”；将内部材料标签改为材料确实支持的自然来源归属，不虚构来源、不移除实质限定。审校称赞过这些标签或提纲要求每节重复同一动作，不构成作者锁定要求；根据实际阅读效果修复，不按公式补齐。若确需改变核心论点或事实，交回主笔。任务说明中要求保留全部工作声明或附改动清单时，以本条与正文交付契约为准。';
-    if (assignment?.stage && ['draft', 'central_revision', 'language_review'].includes(assignment.stage)) rolePrompt += '\n正文交付契约由程序规定，优先于任务说明中的输出格式建议：只输出完整文章，不附改动说明、审校结论、版本号或“无需修改”等状态。没有修改时返回完整原文。语言润色必须保留 bodyOutputContract.requiredHeadings 的 Markdown 标题；不要因标题已确认而省略它。旧稿末尾如带明确的改动说明，说明不是文章，不复制进新正文，不把其字数算进正文基线。';
+    if (comparisonCandidates) rolePrompt += `\n${REVISION_COMPARISON_INSTRUCTIONS}\n本次必须调用submit_writing_stage，一次提交content和comparison；不另写正文外的普通回复。bodyOutputContract的标题和篇幅以选中版本为准。比较不意味着自动认可修订稿；事实、观点、作者明确取舍和有辨识度的表达优先于句子整齐。`;
+    if (assignment?.stage && ['draft', 'central_revision', 'language_review'].includes(assignment.stage)) rolePrompt += '\n正文交付契约由程序规定，优先于任务说明中的输出格式建议：正文只含完整文章，不附改动说明、审校结论、版本号或“无需修改”等状态。没有修改时返回完整原文。语言润色必须保留所选版本在bodyOutputContract中对应的Markdown标题；不要因标题已确认而省略它。旧稿末尾如带明确的改动说明，说明不是文章，不复制进新正文，不把其字数算进正文基线。';
     if (actor === 'director' && !current.ready) rolePrompt += '\n先根据实际提供的材料判断本阶段是否充分。充分时优先一次调用 director_decide(action=dispatch, stage=nextStage, readinessReason=简短的充分性判断, reason=简短任务说明, questions=[])，程序会同时校验读取和阶段权限，无需先单独提交 ready。材料未完整提供时先补读；确有作者信息缺口时用 ask 或 assess_writing_readiness needs_input，不强行推进。';
     if (downstream && !isFactCheck) rolePrompt += '\n上下文按职责提供：evidence_table的claimFields是列名，claimRows每行按列对应一条完整主张，source_id对应sources。仅omittedFields列出的字段未提供；需要精确引语或事实依据时用read_artifact_version读取绑定证据版本，不猜省略内容。目录projection=evidence_catalog/artifact_catalog不等于全文，导演通常据阶段状态交接，不为调度重读全部产物。materialCatalog只是授权目录，不代表读过原文；需要上下文时用read_material读取。factCheck为状态与未解决主张，不改变门禁。';
     if (discussionReadTools.length) rolePrompt += '\nauthorReviewDiscussion保留作者每条决定及其顺序。contentFromMaterial指向本次materials中相同版本的完整原话，contentFromArtifactId指向本次完整产物；它们仍是原角色的发言，不代表同意。旧助手说明按sequence索引，遇到“这一条/第二处”等指代不清时，用read_review_discussion读取该sequence恢复上下文，不能根据目录猜测或忽略作者的否定。';
@@ -409,6 +540,7 @@ export function createWritingCollaboration(options: {
           savedSourceRecords: factRecordCatalog(storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.budget(runId),
       })}` : `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material") && !(selectedStyle !== undefined && line.startsWith('风格参考档案'))).join("\n")}\n${styleContext(selectedStyle, actor)}\nCOLLABORATION_STATE=${JSON.stringify(summary)}`,
       allowedTools: finishing ? ['director_decide'] : isFactCheck ? factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled()) : allowedTools,
+      ...(stageFields ? { roleToolFields: { submit_writing_stage: stageFields } } : {}),
       ...(isFactCheck ? { projectHistory: projectFactHistory, toolFailureLoopKey: factToolFailureLoopKey } : {}),
       projectToolResult: (message, context) => isFactCheck ? projectFactToolResult(message, context, prepared ? {
         versionId: prepared.evidenceVersionId, evidenceIds: prepared.claims.flatMap(c => c.matchedEvidenceIds) } : undefined) : projectInlineRead(message, artifactContext.completeArtifacts, summary.materials, artifacts),
@@ -448,8 +580,22 @@ export function createWritingCollaboration(options: {
       return { item, instructionAuthority: 'none' };
     },
   };
+  const reviewPause = (runId: string) => {
+    const nextStage = workflow.progress(runId).nextStage;
+    if (!nextStage?.startsWith('review_')) return null;
+    const draft = stageArtifact(storage, projectId, runId, 'draft');
+    if (!draft || storage.inspectProject(projectId)?.latestBodyVersionId === draft.id) return null;
+    const confirmed = workflow.recoverConfirmedBody(runId);
+    if (confirmed && storage.inspectProject(projectId)?.latestBodyVersionId === confirmed &&
+        stageArtifact(storage, projectId, runId, 'draft')?.id === confirmed) return null;
+    return { reason: 'WRITING_INPUT_REQUIRED', payload: {
+      reason: '正文已在本次运行之外更新，原稿的审校已暂停，当前稿件已保留。',
+      questions: ['是否要基于当前保存的稿件重新开始写作？请结束旧任务后，从当前稿件发起新任务。'],
+      nextStage, requiredArtifactVersionIds: [],
+    } };
+  };
   return { definitions: [definition as unknown as ToolDefinition<never, JsonValue>, publicationCandidatesDefinition as unknown as ToolDefinition<never, JsonValue>, discussionReader as unknown as ToolDefinition<never, JsonValue>,
       ...createFactContextTools(storage, projectId, factBinding),
       createFactSourceTool({ storage, projectId, searchEnabled: factSearch.enabled, isDiscoveredSource: factSearch.isDiscoveredSource }) as unknown as ToolDefinition<never, JsonValue>, ...factSearch.definitions, ...researchSearch.definitions],
-    requestPolicy, searchPause: factSearch.pause, finished: (runId: string) => state(runId).finished };
+    requestPolicy, reviewPause, searchPause: factSearch.pause, finished: (runId: string) => state(runId).finished };
 }

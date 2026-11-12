@@ -61,6 +61,22 @@ function fixture() {
   return { storage, bridge, event, model, tool, input: { projectId: 'p', sessionId: 's', runId: 'r' }, close() { bridge.dispose(); storage.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
+test('a revision return does not mark language review complete in the visible workflow', () => {
+  const f = fixture();
+  let observer: ReturnType<typeof createApplicationBridge> | undefined;
+  try {
+    f.event('tool.requested', 'audit-return', { toolName: 'submit_writing_stage', arguments: { stage: 'language_review' } });
+    f.event('tool.completed', 'audit-return', { result: { ok: true, toolName: 'submit_writing_stage', result: {
+      handoff: { kind: 'revision_required', reportId: 'return', bodyVersionId: 'body' } } } });
+    observer = createApplicationBridge({ service: new WritingApplicationService({ storage: f.storage }), workspaceId: 'test',
+      initialProjectId: 'p', initialSessionId: 's', model: { model: 'test', providerLabel: 'test', credentialReference: 'TEST_ONLY', parameters: {} } });
+    const record = observer.getSnapshot().runRecords.find(item => item.id === 'r');
+    assert.ok(record);
+    assert.equal(record.stages.find(stage => stage.id === 'language_review')?.status, 'pending');
+    assert.equal(record.publicationReady, false);
+  } finally { observer?.dispose(); f.close(); }
+});
+
 test('search details retain timestamped dispatch and failure history even before a final result', async () => {
   const f = fixture();
   try {

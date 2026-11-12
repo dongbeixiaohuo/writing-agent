@@ -96,6 +96,16 @@ export interface AgentRuntimeOptions {
   ) => Promise<void>;
 }
 
+interface RoleToolFields {
+  readonly allowed?: readonly string[];
+  readonly required?: readonly string[];
+  readonly stringFields?: readonly string[];
+}
+
+type TextOutputTool = { readonly name: string; readonly arguments: Readonly<Record<string, JsonValue>> } & (
+  { readonly format?: 'text'; readonly contentArgument: string } | { readonly format: 'json_object' }
+);
+
 export interface AgentRequestPolicy {
   /** Runtime-owned diagnostic identity; never taken from tool arguments. */
   readonly actor?: string;
@@ -104,7 +114,7 @@ export interface AgentRequestPolicy {
   readonly outputPreview?: StageOutputPreview;
   /** Application-owned binding: save a complete text response through the normal
    * tool pipeline, without asking the model to reproduce it as JSON. */
-  readonly textOutputTool?: { readonly name: string; readonly arguments: Readonly<Record<string, JsonValue>>; readonly contentArgument: string };
+  readonly textOutputTool?: TextOutputTool;
   readonly expectedBodyVersionId?: string | null;
   readonly scopeId: string;
   /** Optional application-owned semantic task state for progress detection.
@@ -116,6 +126,8 @@ export interface AgentRequestPolicy {
   readonly allowedTools: readonly string[];
   /** Tools offered to the model may be narrower than local harness save authority. */
   readonly modelTools?: readonly string[];
+  /** Role-specific subsets of registered fields. Tool permissions still apply. */
+  readonly roleToolFields?: Readonly<Record<string, RoleToolFields>>;
   readonly toolChoice?: ModelParameters['toolChoice'];
   readonly authorizeTool?: (call: CompletedToolCall) => boolean;
   /** Business preconditions are not role permissions; return precise correction details. */
@@ -230,12 +242,49 @@ function requireText(value: string, field: string): string {
   return normalized;
 }
 
-function modelTools(tools: ToolRegistry): NonNullable<ModelRequest["tools"]> {
-  return tools.schemaSnapshots().map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-  }));
+function projectRoleToolSchema(schema: Readonly<Record<string, unknown>>, fields: RoleToolFields): Readonly<Record<string, unknown>> | null {
+  const registered = schema.properties;
+  if (!registered || typeof registered !== 'object' || Array.isArray(registered)) return null;
+  const allowed = fields.allowed;
+  const required = [...new Set([...(Array.isArray(schema.required) ? schema.required as string[] : []), ...(fields.required ?? [])])];
+  const stringFields = fields.stringFields ?? [];
+  const properties = Object.fromEntries(Object.entries(registered).filter(([field]) => !allowed || allowed.includes(field)));
+  if (allowed?.some(field => !Object.hasOwn(registered, field)) ||
+      [...required, ...stringFields].some(field => !Object.hasOwn(properties, field))) return null;
+  for (const field of stringFields) {
+    const definition = properties[field];
+    if (!definition || typeof definition !== 'object' || Array.isArray(definition)) return null;
+    const { anyOf, description: _description, ...constraints } = definition as Readonly<Record<string, unknown>>;
+    if (constraints.type === 'string') continue;
+    if (!Array.isArray(anyOf)) return null;
+    const branches = anyOf.filter(branch => branch && typeof branch === 'object' && branch.type === 'string');
+    if (branches.length !== 1) return null;
+    properties[field] = { ...constraints, anyOf: branches };
+  }
+  return { ...schema, required, properties, ...(allowed ? { additionalProperties: false } : {}) };
+}
+
+function textOutputCall(tool: TextOutputTool, text: string, requestId: string): CompletedToolCall | 'STAGE_OUTPUT_JSON_INVALID' | 'STAGE_OUTPUT_FIXED_ARGUMENT_CHANGED' {
+  try {
+    let args: Readonly<Record<string, JsonValue>>;
+    if (tool.format === 'json_object') {
+      const parsed: unknown = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'STAGE_OUTPUT_JSON_INVALID';
+      const submitted = parsed as Readonly<Record<string, JsonValue>>;
+      for (const [field, value] of Object.entries(tool.arguments)) {
+        if (Object.hasOwn(submitted, field) && canonicalJson(submitted[field]) !== canonicalJson(value)) {
+          return 'STAGE_OUTPUT_FIXED_ARGUMENT_CHANGED';
+        }
+      }
+      args = { ...submitted, ...tool.arguments };
+    } else {
+      args = { ...tool.arguments, [tool.contentArgument]: text };
+    }
+    return { id: `text-output:${requestId}`, name: tool.name, rawArguments: canonicalJson(args), arguments: args };
+  } catch (error) {
+    if (tool.format !== 'json_object') throw error;
+    return 'STAGE_OUTPUT_JSON_INVALID';
+  }
 }
 
 function contentReferences(
@@ -828,6 +877,18 @@ export class AgentRuntime {
     let pendingOutputTokenLimit: number | null = null;
     let textSaveFailures = 0;
     const rejectedTextHashes = new Set<string>();
+    const rejectTextOutput = (actor: string | undefined, code: string, text: string): AgentRunResult | null => {
+      textSaveFailures++;
+      const failureKey = `${code}:${contentHash(text.trim())}`;
+      const repeated = rejectedTextHashes.has(failureKey);
+      rejectedTextHashes.add(failureKey);
+      // Local validation feedback is not a provider retry. Bound it per expert assignment.
+      if (!repeated && textSaveFailures < 3) return null;
+      this.#sessions.pauseRun({ projectId, runId, operationId: this.#idFactory(), reason: 'STAGE_OUTPUT_NOT_SAVED',
+        payload: { actor, validationCode: code, rejectedAttempts: textSaveFailures } });
+      return { ok: false, ...this.#facts(active), error: { code: 'STAGE_OUTPUT_NOT_SAVED',
+        message: 'Automatic regeneration stopped after repeated local save rejection; the saved manuscript is unchanged', retryable: true } };
+    };
     const toolFailureCounts = new Map<string, number>();
     const successfulReadCounts = new Map<string, { count: number; requestId: string }>();
     let remindProgress = false;
@@ -843,6 +904,8 @@ export class AgentRuntime {
       }
       let requestId = this.#idFactory();
       const policy = this.#requestPolicy?.(runId);
+      const jsonTextOutput = policy?.textOutputTool?.format === 'json_object';
+      const outputPreview = jsonTextOutput ? undefined : policy?.outputPreview;
       let binding: { readonly provider: ModelProvider; readonly model: string };
       try {
         binding = this.#modelBinding(input, policy?.actor);
@@ -885,7 +948,15 @@ export class AgentRuntime {
       }
       const offeredTools = policy?.modelTools ?? policy?.allowedTools;
       const toolSchemas = this.#tools.schemaSnapshots().filter((tool) => offeredTools === undefined || offeredTools.includes(tool.name));
-      const tools = modelTools(this.#tools).filter((tool) => offeredTools === undefined || offeredTools.includes(tool.name));
+      for (const [index, tool] of toolSchemas.entries()) {
+        const fields = policy?.roleToolFields?.[tool.name];
+        if (!fields) continue;
+        const inputSchema = projectRoleToolSchema(tool.inputSchema, fields);
+        if (!inputSchema) return this.#failRun(active, 'TOOL_SCHEMA_POLICY_INVALID', 'The role cannot narrow its registered tool fields as configured.', false);
+        const projected = { name: tool.name, version: tool.version, description: tool.description, inputSchema };
+        toolSchemas[index] = { ...projected, schemaHash: contentHash(canonicalJson(projected)) };
+      }
+      const tools = toolSchemas.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
       // Application preflight may not know which role will execute next. Check
       // the binding actually selected for this request so routed profiles cannot
       // bypass the tool-calling requirement, while text-only reader children
@@ -989,7 +1060,7 @@ export class AgentRuntime {
           });
           if (!dispatched.dispatched) return this.#budgetResult(active);
 
-          attempt = await this.#collectModelAttempt(request, binding.provider, active, policy?.textAudience, policy?.actor, policy?.outputPreview);
+          attempt = await this.#collectModelAttempt(request, binding.provider, active, jsonTextOutput ? undefined : policy?.textAudience, policy?.actor, outputPreview);
           if (this.#sessions.getRun(runId)?.status === "cancelled") {
             return this.#cancelledResult(active);
           }
@@ -1164,12 +1235,18 @@ export class AgentRuntime {
         );
       }
       const textOutputTool = policy?.textOutputTool;
-      const harnessTextOutput = attempt.finishReason === 'stop' && textOutputTool !== undefined;
-      const calls: readonly CompletedToolCall[] = harnessTextOutput
-        ? [{ id: `text-output:${requestId}`, name: textOutputTool.name,
-            rawArguments: canonicalJson({ ...textOutputTool.arguments, [textOutputTool.contentArgument]: attempt.text }),
-            arguments: { ...textOutputTool.arguments, [textOutputTool.contentArgument]: attempt.text } }]
-        : attempt.completedToolCalls;
+      const localCall = attempt.finishReason === 'stop' && textOutputTool !== undefined ? textOutputCall(textOutputTool, attempt.text, requestId) : null;
+      if (typeof localCall === 'string') {
+        if (this.#sessions.getRun(runId)?.status === 'cancelled') return this.#cancelledResult(active);
+        const stopped = rejectTextOutput(policy?.actor, localCall, attempt.text);
+        if (stopped) return stopped;
+        messages.push({ role: 'user', content: localCall === 'STAGE_OUTPUT_FIXED_ARGUMENT_CHANGED'
+          ? '程序未保存本次结果。不要更改程序绑定的字段。请用普通回复重新输出一个完整的 JSON 对象。'
+          : '程序未保存本次结果。请用普通回复重新输出一个完整、合法的 JSON 对象，不加 Markdown 代码围栏、前后说明或工具调用。' });
+        continue executionLoop;
+      }
+      const harnessTextOutput = localCall !== null;
+      const calls = localCall ? [localCall] : attempt.completedToolCalls;
       if (attempt.finishReason === "tool_calls" || harnessTextOutput) {
         messages.push({
           role: "assistant",
@@ -1203,7 +1280,7 @@ export class AgentRuntime {
             eventType: "tool.requested",
             eventPayload: {
               ...(policy?.actor ? { actor: policy.actor } : {}),
-              ...(policy?.outputPreview ? { previewId: policy.outputPreview.id } : {}),
+              ...(outputPreview ? { previewId: outputPreview.id } : {}),
               requestId,
               callId: call.id,
               toolName: call.name,
@@ -1218,7 +1295,17 @@ export class AgentRuntime {
             policy.scopeId === currentPolicy?.scopeId && policy.allowedTools.includes(call.name) &&
             (policy.authorizeTool?.(call) ?? true)
           );
-          const validationError = allowed ? policy?.toolValidationError?.(call) : null;
+          const fields = policy?.roleToolFields?.[call.name];
+          const allowedFields = fields?.allowed;
+          const argumentsByField = fields && call.arguments && typeof call.arguments === 'object' && !Array.isArray(call.arguments)
+            ? call.arguments as Readonly<Record<string, JsonValue>> : {};
+          const suppliedFields = Object.keys(argumentsByField);
+          const missingFields = (fields?.required ?? []).filter(field => !suppliedFields.includes(field));
+          const unexpectedFields = allowedFields ? suppliedFields.filter(field => !allowedFields.includes(field)) : [];
+          const invalidStringFields = (fields?.stringFields ?? []).filter(field => Object.hasOwn(argumentsByField, field) && typeof argumentsByField[field] !== 'string');
+          const validationError = !allowed ? null : missingFields.length || unexpectedFields.length || invalidStringFields.length ? { code: 'TOOL_INPUT_INVALID',
+            message: 'Resubmit complete tool arguments using this role’s fields and required value types.',
+            retryable: true, details: { missingFields, unexpectedFields, invalidStringFields } } : policy?.toolValidationError?.(call);
           const result: ToolExecutionResult = allowed && validationError ? { ok: false, operationId, runId, toolName: call.name, callId: call.id, error: validationError } : allowed ? await this.#tools.execute(call, {
             projectId,
             runId,
@@ -1257,18 +1344,8 @@ export class AgentRuntime {
               : { error: jsonValue(result) }),
           });
           if (harnessTextOutput && !result.ok) {
-            textSaveFailures++;
-            const failureKey = `${result.error.code}:${contentHash(attempt.text.trim())}`;
-            const repeated = rejectedTextHashes.has(failureKey);
-            rejectedTextHashes.add(failureKey);
-            // Local validation feedback is not a provider retry. Bound it per
-            // expert assignment, independently of the much larger run budget.
-            if (repeated || textSaveFailures >= 3) {
-              this.#sessions.pauseRun({ projectId, runId, operationId: this.#idFactory(), reason: 'STAGE_OUTPUT_NOT_SAVED',
-                payload: { actor: policy?.actor, validationCode: result.error.code, rejectedAttempts: textSaveFailures } });
-              return { ok: false, ...this.#facts(active), error: { code: 'STAGE_OUTPUT_NOT_SAVED',
-                message: 'Automatic regeneration stopped after repeated local save rejection; the saved manuscript is unchanged', retryable: true } };
-            }
+            const stopped = rejectTextOutput(policy?.actor, result.error.code, attempt.text);
+            if (stopped) return stopped;
           }
           if (!harnessTextOutput && !result.ok) {
             const failureKey = policy?.toolFailureLoopKey?.(call, result.error) ?? `${call.name}:${result.error.code}`;
@@ -1335,7 +1412,9 @@ export class AgentRuntime {
           }
           // Do not invent a model tool call in the conversation. A failed local
           // save is feedback to this same expert; successful stages change scope.
-          if (harnessTextOutput) messages.push({ role: 'user', content: `程序保存结果（不是作者确认）：${canonicalJson(result)}。失败时根据校验反馈重新完整输出本阶段文本，不输出工具参数。` });
+          if (harnessTextOutput) messages.push({ role: 'user', content: `程序保存结果（不是作者确认）：${canonicalJson(result)}。${jsonTextOutput
+            ? '失败时按校验反馈，用普通回复重新输出一个完整 JSON 对象，不调用保存工具。'
+            : '失败时根据校验反馈重新完整输出本阶段文本，不输出工具参数。'}` });
           else messages.push({
             role: "tool",
             toolCallId: call.id,
@@ -1372,7 +1451,7 @@ export class AgentRuntime {
           artifactVersionId = committed.artifactVersionId;
         } catch (error) {
           if (error instanceof FinalOutputContinuationRequiredError) {
-            requireToolOnContinuation = policy?.outputPreview !== undefined;
+            requireToolOnContinuation = outputPreview !== undefined;
             messages.push({ role: "assistant", content: attempt.text });
             messages.push({ role: "user", content: error.instruction });
             continue;

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { authorContext, compactReworkReport, deduplicateReviewDiscussion, factStatusContext, projectInlineRead, stageArtifactContext } from '../src/agent-context.js';
+import { editorialPlanFixture } from './collaboration-fixture.js';
 
 const longBody = '正文中段。'.repeat(800) + '尾部事实限定：不是因果，也不适用于儿童。';
 const status: any = { status: 'stale', currentSnapshotId: 's', snapshot: { bodyVersionId: 'old-body' }, invalidations: [{ reason: 'body_version_changed', changedVersionId: 'new-body' }],
@@ -123,6 +124,56 @@ test('fact checker receives the whole article and evidence index, not unrelated 
   assert.equal(catalog.claimFields.includes('source_quote'), false);
   assert.equal(view.artifacts[1]!.content, fullBody.content);
   assert.deepEqual(view.completeArtifacts, [fullBody]);
+});
+
+test('outlining and drafting see only the selected angle and selected claims, with the full ledger still readable', () => {
+  const claims = ledger.claims.slice(0, 2).map((claim, i) => ({ ...claim, evidence_id: i === 0 ? 'E001' : 'E002' }));
+  const editorialPlan = editorialPlanFixture(['E001', 'E002'], ['E002']);
+  const plannedEvidence = { ...evidence, content: JSON.stringify({ ...ledger, claims, editorialPlan }) };
+  for (const actor of ['outline', 'draft']) {
+    const view = stageArtifactContext(actor, [plannedEvidence, fullBody]);
+    const table = view.artifacts[0]!.content as { claimFields: string[]; claimRows: string[][]; editorialPlan: unknown; omittedEvidenceCount: number };
+    assert.deepEqual(table.claimRows.map(row => row[table.claimFields.indexOf('evidence_id')]), ['E001']);
+    assert.deepEqual(table.editorialPlan, { ...editorialPlan, angles: [editorialPlan.angles[0]] });
+    assert.equal(table.omittedEvidenceCount, 1);
+    assert.deepEqual(view.completeArtifacts, [fullBody], 'filtered projection must not impersonate a complete read');
+    assert.ok(!JSON.stringify(table).includes(claims[1]!.claim_text));
+    assert.ok(!JSON.stringify(table).includes(editorialPlan.angles[1]!.angle));
+    assert.ok(!JSON.stringify(table).includes(editorialPlan.angles[1]!.readerGain));
+    const read = { role: 'tool' as const, name: 'read_artifact_version', toolCallId: 'read-selected-evidence',
+      content: JSON.stringify({ ok: true, result: { versionId: plannedEvidence.id, content: plannedEvidence.content } }) };
+    const complete = JSON.parse(projectInlineRead(read, view.completeArtifacts, [], [plannedEvidence])).result.content;
+    assert.deepEqual(complete.claimRows.map((row: string[]) => row[complete.claimFields.indexOf('evidence_id')]), ['E001', 'E002']);
+    assert.equal(complete.editorialPlan, undefined, 'reading evidence must not restore internal plans');
+  }
+  for (const actor of ['central_revision', 'language_review', 'fact_check']) {
+    const table = stageArtifactContext(actor, [plannedEvidence]).artifacts[0]!.content as { claimFields: string[]; claimRows: string[][]; editorialPlan?: unknown };
+    assert.deepEqual(table.claimRows.map(row => row[table.claimFields.indexOf('evidence_id')]), ['E001', 'E002'], actor);
+    assert.deepEqual(table.editorialPlan, actor === 'central_revision'
+      ? { ...editorialPlan, angles: [editorialPlan.angles[0]], materialDecisions: [editorialPlan.materialDecisions[0]] }
+      : undefined, actor);
+  }
+  const revisionDirector = stageArtifactContext('director', [plannedEvidence], { directorStage: 'central_revision' }).artifacts[0]!.content as { editorialPlan: unknown };
+  const languageDirector = stageArtifactContext('director', [plannedEvidence], { directorStage: 'language_review' }).artifacts[0]!.content as { editorialPlan?: unknown };
+  assert.deepEqual(revisionDirector.editorialPlan, { ...editorialPlan, angles: [editorialPlan.angles[0]], materialDecisions: [editorialPlan.materialDecisions[0]] });
+  assert.equal(languageDirector.editorialPlan, undefined);
+  const revision = stageArtifactContext('central_revision', [plannedEvidence]);
+  assert.deepEqual(revision.completeArtifacts, [], 'a projected plan is not equivalent to the original evidence artifact');
+  assert.deepEqual(JSON.parse(plannedEvidence.content).claims, claims);
+});
+
+test('legacy flat evidence keeps verbatim quotes without restoring internal plans through an exact read', () => {
+  const editorialPlan = editorialPlanFixture(['E001']);
+  const claim = { ...ledger.claims[0]!, evidence_id: 'E001', source_id: 'legacy-extra' };
+  const legacy = { ...evidence, content: JSON.stringify({ claims: [claim], notes: ledger.notes, editorialPlan }) };
+  const review = stageArtifactContext('language_review', [legacy]);
+  assert.doesNotMatch(JSON.stringify(review.artifacts), /editorialPlan/u);
+  const read = { role: 'tool' as const, name: 'read_artifact_version', toolCallId: 'read-legacy-evidence',
+    content: JSON.stringify({ ok: true, result: { versionId: legacy.id, content: legacy.content } }) };
+  const result = JSON.parse(projectInlineRead(read, review.completeArtifacts, [], [legacy])).result;
+  assert.equal(result.content.editorialPlan, undefined);
+  assert.equal(result.content.claimRows[0][result.content.claimFields.indexOf('source_quote')], claim.source_quote);
+  assert.equal(result.content.claimRows[0][result.content.claimFields.indexOf('source_title')], claim.source_title);
 });
 
 test('review and language scopes keep EVERY claim and boundary but expose exact quotes on demand', () => {

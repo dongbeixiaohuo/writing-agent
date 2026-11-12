@@ -106,8 +106,38 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
     const collaboration = raw === undefined ? null : JSON.parse(raw) as {
       actor: string; stage: string | null; nextStage: string | null; ready: boolean; finished: boolean;
       inputVersionIds: string[]; materials?: Array<{ content: string }>;
+      editorialPlanRequired?: boolean;
+      reviewFindingsRequired?: boolean;
+      reviewClosure?: { findings: readonly unknown[] };
+      revisionReturn?: { reportId: string; bodyVersionId: string };
+      revisionComparison?: { originalVersionId: string; revisedVersionId: string };
+      artifacts?: Array<{ id: string; content: string }>;
     };
     const expert = collaboration !== null && collaboration.actor !== "director";
+    if (collaboration?.stage === 'research' && collaboration.editorialPlanRequired) {
+      yield { type: 'tool_call_delta', index: 0, id: `mock-research-${request.requestId}`, name: 'submit_writing_stage',
+        argumentsDelta: JSON.stringify({ stage: 'research', content: { sources: [], claims: [], notes: '离线合成材料，仅测试流程。',
+          editorialPlan: { angles: [
+            { id: 'a', readerProblem: '如何理解安静', readerGain: '辨认日常安静', angle: '从日常感受写安静', supportingEvidenceIds: [] },
+            { id: 'b', readerProblem: '如何留意环境', readerGain: '看见周围细节', angle: '从环境变化写观察', supportingEvidenceIds: [] },
+          ], selectedAngleId: 'a', selectionReason: '与合成材料一致', materialDecisions: [], gaps: ['仅用于离线流程测试，不声称真实写作改善。'] } } }) };
+      yield { type: 'completed', finishReason: 'tool_calls' }; return;
+    }
+    if ((collaboration?.stage === 'central_revision' || collaboration?.stage === 'language_review') && collaboration.reviewClosure?.findings.length) {
+      throw new Error('The offline CLI mock cannot decide whether real editorial findings have been resolved');
+    }
+    if (collaboration?.stage === 'language_review' && collaboration.revisionComparison) {
+      const binding = collaboration.revisionComparison;
+      const original = collaboration.artifacts?.find(a => a.id === binding.originalVersionId)?.content ?? '';
+      const revised = collaboration.artifacts?.find(a => a.id === binding.revisedVersionId)?.content ?? '';
+      yield { type: 'tool_call_delta', index: 0, id: `mock-comparison-${request.requestId}`, name: 'submit_writing_stage',
+        argumentsDelta: JSON.stringify({ stage: 'language_review', content: revised, comparison: {
+          selectedVersionId: binding.revisedVersionId, reason: '保留当前合成稿，离线测试不评估文采。',
+          gains: original === revised ? [] : [{ before: original.slice(0, 500), after: revised.slice(0, 500), why: '离线合成版本差异' }],
+          losses: [], retainedQuotes: [],
+        }, ...(collaboration.reviewClosure ? { audit: { checks: [], newFindings: [] } } : {}) }) };
+      yield { type: 'completed', finishReason: 'tool_calls' }; return;
+    }
     const toolMessages = request.messages.filter((message) => message.role === "tool");
     if (collaboration?.stage === 'fact_check') {
       // Fact verification deliberately omits raw materials. This offline fixture
@@ -121,6 +151,12 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
       return;
     }
     if (collaboration?.actor === "director") {
+      if (collaboration.revisionReturn) {
+        yield { type: 'tool_call_delta', index: 0, id: `mock-rework-${request.requestId}`, name: 'director_decide',
+          argumentsDelta: JSON.stringify({ action: 'rework', stage: 'central_revision', reason: '处理终审返回的修订问题。', questions: [] }) };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+        return;
+      }
       if (collaboration.finished || collaboration.nextStage === null && request.parameters.toolChoice === 'none') {
         yield { type: "text_delta", delta: "完整写作工作流和事实门禁已通过。" };
         yield { type: "completed", finishReason: "stop" }; return;
@@ -204,7 +240,8 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
     const next = expert ? stages.find(([stage]) => stage === collaboration.stage) : stages[submittedStages.length];
     if (next !== undefined) {
       if (expert && next[0] !== 'research' && !request.tools?.some(t => t.name === 'submit_writing_stage')) {
-        yield { type: 'text_delta', delta: next[1] };
+        yield { type: 'text_delta', delta: (next[0] === 'review_editor' || next[0] === 'review_publish') && collaboration?.reviewFindingsRequired
+          ? JSON.stringify({ content: next[1], findings: [] }) : next[1] };
         yield { type: 'completed', finishReason: 'stop' }; return;
       }
       yield {
@@ -212,7 +249,11 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
         index: 0,
         id: `mock-stage-${next[0]}`,
         name: "submit_writing_stage",
-        argumentsDelta: JSON.stringify({ stage: next[0], content: next[1] }),
+        argumentsDelta: JSON.stringify({ stage: next[0], content: next[1],
+          ...((next[0] === 'review_editor' || next[0] === 'review_publish') && collaboration?.reviewFindingsRequired ? { findings: [] } : {}),
+          ...(next[0] === 'central_revision' && collaboration?.reviewClosure ? { resolutions: [] } : {}),
+          ...(next[0] === 'language_review' && collaboration?.reviewClosure ? { audit: { checks: [], newFindings: [] } } : {}),
+        }),
       };
       yield { type: "completed", finishReason: "tool_calls" };
       return;
