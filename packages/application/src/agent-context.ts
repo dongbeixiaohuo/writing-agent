@@ -80,20 +80,40 @@ type ContextArtifact = { id: string; kind: string; content: string };
 
 /** Request-only projection. The persisted artifact, evidence IDs, confirmation
  * receipts and fact gate never change. Unknown/legacy ledgers stay intact. */
-export function stageArtifactContext(actor: string, artifacts: readonly ContextArtifact[]) {
+export function stageArtifactContext(actor: string, artifacts: readonly ContextArtifact[], options: {
+  readonly directorStage?: string | null;
+  readonly omitEditorialPlan?: boolean;
+} = {}) {
   const completeArtifactIds = new Set<string>();
   const projected = artifacts.map(artifact => {
     let content: JsonValue = artifact.content;
     if (artifact.kind === 'evidence') {
       if (actor === 'fact_check') return { ...artifact, content: factEvidenceCatalog(artifact.content) };
       content = compactFactEvidence(artifact.content);
+      if (typeof content === 'string') {
+        try {
+          const legacy = JSON.parse(content) as JsonValue;
+          if (legacy && typeof legacy === 'object' && !Array.isArray(legacy) && Object.hasOwn(legacy, 'editorialPlan')) content = legacy;
+        } catch { /* Unstructured historical evidence remains readable. */ }
+      }
       if (content && typeof content === 'object' && !Array.isArray(content) && Array.isArray(content.claims) &&
           content.claims.every(c => c && typeof c === 'object' && !Array.isArray(c))) {
-        const { claims, ...ledger } = content;
-        const rows = claims as Record<string, JsonValue>[];
+        const { claims, editorialPlan, ...ledger } = content;
+        const allRows = claims as Record<string, JsonValue>[];
+        const plan = editorialPlan as { angles?: { id: string }[]; selectedAngleId?: string; materialDecisions?: { evidenceId: string; decision: string }[] } | undefined;
+        const selectedIds = (actor === 'outline' || actor === 'draft') && Array.isArray(plan?.materialDecisions)
+          ? new Set(plan.materialDecisions.filter(item => item.decision === 'use').map(item => item.evidenceId)) : null;
+        const rows = selectedIds ? allRows.filter(row => selectedIds.has(String(row.evidence_id))) : allRows;
+        const revisionStage = actor === 'director' ? options.directorStage : actor;
+        const revision = revisionStage === 'central_revision';
+        const planProjection = options.omitEditorialPlan || revisionStage === 'language_review' ? undefined
+          : plan && (selectedIds || revision) ? { ...plan, angles: Array.isArray(plan.angles) ? plan.angles.filter(angle => angle.id === plan.selectedAngleId) : [],
+            ...(revision && Array.isArray(plan.materialDecisions) ? { materialDecisions: plan.materialDecisions.filter(item => item.decision === 'use') } : {}) }
+            : editorialPlan;
         if (actor === 'director') {
           content = { projection: 'evidence_catalog', contentAvailableVia: 'read_artifact_version',
             claimCount: rows.length, evidenceIds: rows.map(c => c.evidence_id ?? null), notes: ledger.notes ?? null,
+            ...(planProjection ? { editorialPlan: planProjection } : {}),
             instruction: '目录不含主张与引文；不据此作事实判断。需要具体事实时读取本版本，专家会独立接收所需证据。' };
         } else {
           const omitQuotes = actor === 'language_review' || actor.startsWith('review_') || actor === 'title';
@@ -101,9 +121,12 @@ export function stageArtifactContext(actor: string, artifacts: readonly ContextA
           // Columns remove repeated JSON keys, not claims or limitations. Missing
           // optional values map to null; all supplied values remain unchanged.
           content = { ...ledger, projection: 'evidence_table', claimFields: fields,
+            ...(planProjection ? { editorialPlan: planProjection } : {}),
             claimRows: rows.map(c => fields.map(key => c[key] ?? null)),
+            ...(selectedIds ? { materialSelectionApplied: true, omittedEvidenceCount: allRows.length - rows.length,
+              contentAvailableVia: 'read_artifact_version' } : {}),
             ...(omitQuotes ? { omittedFields: ['source_quote'], contentAvailableVia: 'read_artifact_version' } : {}) };
-          if (!omitQuotes) completeArtifactIds.add(artifact.id);
+          if (!omitQuotes && !selectedIds && editorialPlan === planProjection) completeArtifactIds.add(artifact.id);
         }
       } else completeArtifactIds.add(artifact.id);
     } else if (actor === 'director' && (artifact.kind === 'body' || artifact.kind === 'outline')) {
@@ -152,13 +175,12 @@ export function projectInlineRead(message: ModelMessage, artifacts: readonly Con
       if (match) reference = `COLLABORATION_STATE.materials[materialId=${result.materialId},offset=${result.offset}]`;
     }
     if (!reference) {
-      // A deliberately requested full read cannot point to a director/review
-      // catalogue. Supply ALL evidence values, using the same lossless table
-      // as the checker, without repeating canonical source/field keys.
+      // A full read cannot point to a filtered projection. Supply all evidence
+      // rows and provenance without reintroducing the internal editorial plan.
       const evidence = message.name === 'read_artifact_version' ? readableArtifacts.find(a =>
         a.kind === 'evidence' && a.id === result.versionId && a.content === result.content) : undefined;
       if (evidence) {
-        const content = stageArtifactContext('research', [evidence]).artifacts[0]!.content;
+        const content = stageArtifactContext('research', [evidence], { omitEditorialPlan: true }).artifacts[0]!.content;
         if (typeof content !== 'string') return JSON.stringify({ ...envelope,
           result: { ...result, content, requestProjection: 'lossless_evidence_table' } });
       }

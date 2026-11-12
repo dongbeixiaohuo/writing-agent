@@ -175,7 +175,7 @@ class MaterialThenDraftProvider extends ModelProviderBase {
       (message) => message.role === "system" && message.content.includes("review_publish"),
     );
     const stages: readonly (readonly [string, string])[] = [
-      ["research", "# 研究与证据\n\n仅使用授权材料；未发现需要外部补证的数据。"],
+      ["research", JSON.stringify({ claims: [], notes: "仅使用授权材料，未发现需要外部补证的数据。" })],
       ["outline", "# 结构\n\n1. 下班后的环境\n2. 身体重新感知\n3. 留给读者的方法"],
       ["draft", "# 一次安静的下班散步\n\n我沿着河边走了二十分钟，终于听见鞋底与路面的摩擦声。"],
       ["review_editor", "结构清楚；第二段需要更具体，禁止补造经历。"],
@@ -1460,9 +1460,10 @@ describe("WritingApplicationService draft closure", () => {
       provider: new MaterialThenDraftProvider("unused", "unused"),
     });
     const seeded = seedWritingInputs(bootstrap, brief, "deep");
+    const provider = new MaterialThenDraftProvider("material-1", seeded.contentVersionId);
     const service = new WritingApplicationService({
       storage,
-      provider: new MaterialThenDraftProvider("material-1", seeded.contentVersionId),
+      provider,
     });
     try {
       const result = await service.runDraft({
@@ -1485,6 +1486,12 @@ describe("WritingApplicationService draft closure", () => {
         storage.listArtifactVersions("project-1", "review", `review_publish:${result.runId}`).length,
         1,
       );
+      const review = provider.requests.find(request => collaborationState(request)?.stage === 'review_publish')!;
+      const context = JSON.parse(review.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
+      assert.equal(context.writingRequirements.genre, brief.genre);
+      assert.deepEqual(context.firsthandMaterialIds, ['material-1']);
+      assert.deepEqual(context.artifacts.find((artifact: { kind: string }) => artifact.kind === 'evidence').content, { claims: [] });
+      assert.match(review.messages[0]!.content, /个人感受无需外部研究引句/u);
     } finally {
       storage.close();
       rmSync(workspacePath, { recursive: true, force: true });
@@ -1585,7 +1592,7 @@ describe("WritingApplicationService draft closure", () => {
         return typeof execution === "object" && execution !== null && !Array.isArray(execution) &&
           (execution as Readonly<Record<string, unknown>>).toolName === "read_artifact_version";
       });
-      assert.equal(restoredContextReads.length, 16, 'each review/revision/language confirmation restores only its currently bound inputs');
+      assert.equal(restoredContextReads.length, 15, 'each confirmation restores currently bound inputs; the cold editor only needs its draft');
       const repeatedMaterialReads = storage.listRunEvents(first.runId).filter((event) => {
         if (event.type !== "tool.completed") return false;
         const execution = event.payload.result;

@@ -21,6 +21,16 @@ function projection(events: Array<{ type: string; operationId: string; payload: 
   } as unknown as WritingProjectProjection
 }
 
+test('final review return describes repair work without claiming the article was saved', () => {
+  const step = runDiagnostics(projection([
+    { type: 'tool.requested', operationId: 'audit', payload: { toolName: 'submit_writing_stage', arguments: { stage: 'language_review' } } },
+    { type: 'tool.completed', operationId: 'audit', payload: { result: { ok: true, toolName: 'submit_writing_stage',
+      result: { handoff: { kind: 'revision_required', bodyVersionId: 'body', reportId: 'report' } } } } },
+  ]), run).trace!.find(item => item.kind === 'tool')!;
+  assert.match(step.outputPreview!, /终审 Agent.*交回主笔.*当前稿件已保留/u);
+  assert.doesNotMatch(step.outputPreview!, /已保存|已完成|body|report/u);
+});
+
 test('DeepSeek and same-run source-cache diagnostics identify service and avoided network work', () => {
   const steps = runDiagnostics(projection([
     {type:'tool.requested',operationId:'s',payload:{toolName:'search_fact_sources',arguments:{query:'公开事实'}}},

@@ -12,6 +12,7 @@ import { recoveryInterruption, runDiagnostics } from './run-diagnostics.js';
 import { stageActiveDurations } from './stage-timing.js';
 import { runTraceDetail } from './run-trace-detail.js';
 import { factCheckCompletionSummary } from './fact-summary.js';
+import { revisionComparisonMessage } from './revision-comparison-message.js';
 import { isPublicationSelectionWait, isUsablePublicationTitle } from '../../application/src/publication-choice.js';
 import {
   workflowStageSequence,
@@ -485,7 +486,45 @@ function timelineForSession(
   const deliveryReady = (versionId: string | null): boolean => versionId !== null &&
     projection.currentBody?.id === versionId && projection.factCheck.status === 'passed';
 
+
+  const comparisonByOperation = new Map((projection.revisionComparisons ?? []).map(item => [item.operationId, item]));
+  const displayedComparisonOperations = new Set<string>();
+  const completedComparisons = new Set(projection.events.flatMap(event => {
+    const comparison = comparisonByOperation.get(event.operationId);
+    if (event.type !== 'tool.completed' || !comparison || event.runId !== comparison.runId) return [];
+    const result = successfulToolResult(event.payload);
+    return result?.stage === 'language_review' && result.artifactVersionId === comparison.finalVersionId ? [event.operationId] : [];
+  }));
+  const recoveredComparisons = new Map((projection.revisionComparisons ?? [])
+    .filter(item => !completedComparisons.has(item.operationId)).map(item => [item.markerEventSeq, item]));
+  const appendSavedStage = (event: WritingProjectProjection['events'][number], runId: string, stage: WritingWorkflowStage,
+    artifactId: string, createdAt: string, operationId = event.operationId) => {
+    const artifact = [...projection.workflowArtifacts, ...projection.bodyVersions].find(version => version.id === artifactId);
+    if (artifact === undefined || artifact.kind === 'evidence') return;
+    const stageArtifactKey = runId + ':' + stage + ':' + artifactId;
+    const comparison = stage === 'language_review' ? comparisonByOperation.get(operationId) : undefined;
+    if (!displayedStageArtifacts.has(stageArtifactKey)) {
+      stageMessageRows.set(runId + ':' + stage, items.length);
+      items.push({ id: outputPreviewIds.get(operationId) ?? (comparison ? 'saved-language:' + operationId : event.id + ':artifact'), kind: 'message', role: 'assistant', createdAt,
+        stage, ...savedTiming(runId, stage),
+        body: '**' + WORKFLOW_STAGE_LABELS[stage] + ' · 已保存**\n\n' + (workflowArtifactView(artifact)?.content ?? artifact.content) });
+      displayedArtifactIds.add(artifactId);
+      displayedStageArtifacts.add(stageArtifactKey);
+      modelRows.delete(runId);
+    }
+    if (comparison?.runId === runId && comparison.finalVersionId === artifactId && !displayedComparisonOperations.has(operationId)) {
+      displayedComparisonOperations.add(operationId);
+      items.push({ id: 'revision-comparison:' + operationId, kind: 'message', role: 'assistant', createdAt,
+        body: revisionComparisonMessage(comparison) });
+    }
+  };
+
   for (const event of projection.events) {
+    const recoveredComparison = recoveredComparisons.get(event.projectSeq);
+    if (recoveredComparison && runIds.has(recoveredComparison.runId)) {
+      appendSavedStage(event, recoveredComparison.runId, 'language_review', recoveredComparison.finalVersionId,
+        timeLabel(event.occurredAt), recoveredComparison.operationId);
+    }
     if (event.runId === undefined || !runIds.has(event.runId)) continue;
     const recorded = timingEvents.get(event.runId) ?? [];
     recorded.push(event);
@@ -529,20 +568,7 @@ function timelineForSession(
           modelRows.delete(event.runId);
         }
       }
-      const stageArtifactKey = `${event.runId}:${stage}:${artifactId}`;
-      if (stage !== null && artifactId !== null && !displayedStageArtifacts.has(stageArtifactKey)) {
-        const artifact = [...projection.workflowArtifacts, ...projection.bodyVersions].find(version => version.id === artifactId);
-        if (artifact !== undefined && artifact.kind !== 'evidence') {
-          stageMessageRows.set(`${event.runId}:${stage}`, items.length);
-          items.push({ id: outputPreviewIds.get(event.operationId) ?? `${event.id}:artifact`, kind: 'message', role: 'assistant', createdAt,
-            stage,
-            ...savedTiming(event.runId, stage),
-            body: `**${WORKFLOW_STAGE_LABELS[stage]} · 已保存**\n\n${workflowArtifactView(artifact)?.content ?? artifact.content}` });
-          displayedArtifactIds.add(artifactId);
-          displayedStageArtifacts.add(stageArtifactKey);
-          modelRows.delete(event.runId);
-        }
-      }
+      if (stage !== null && artifactId !== null) appendSavedStage(event, event.runId, stage, artifactId, createdAt);
     }
     if (event.type === "run.started" || event.type === "run.resumed") {
       // Each resumed segment needs visible activity below the user's new answer.
@@ -703,8 +729,8 @@ function timelineForSession(
           : stage === 'review_editor' ? `编辑审校的建议你认可吗？可以先讨论、调整；确认后才交给${textPayload(event.payload, 'nextStage') === 'review_publish' ? '发布' : '读者'}审校专家。`
           : stage === 'review_publish' ? '发布审校的建议你认可吗？可以先讨论、调整；确认后才交给读者审校专家。'
           : stage === 'review_reader' ? '这三个模拟读者的感受，你怎么看？可以先讨论；确认后写作导演会结合你的取舍解读，再交给修订主笔，不会按票数改稿。'
-          : stage === 'central_revision' ? '集中修订后的全文这样可以吗？确认后才交给去 AI 味与语言润色专家；也可以直接提出修改。'
-          : stage === 'language_review' ? '润色后的这一版你认可吗？确认后再继续标题与事实核查；需要调整可以直接说。'
+          : stage === 'central_revision' ? '集中修订后的全文这样可以吗？确认后交给终审 Agent 复核问题是否解决，并打磨文字；也可以直接提出修改。'
+          : stage === 'language_review' ? '终审后的这一版你认可吗？确认后再继续标题与事实核查；需要调整可以直接说。'
           : '这一阶段的结果可以吗？确认后我继续下一步，也可以直接告诉我怎么改。';
         const row = stageMessageRows.get(`${event.runId}:${stage}`);
         const message = row === undefined ? undefined : items[row];
@@ -813,6 +839,12 @@ function runRecordView(
     const stage = operationStages.get(event.operationId);
     if (stage === undefined) continue;
     if (event.type === "tool.completed") {
+      const result = successfulToolResult(event.payload);
+      const handoff = result?.handoff as { kind?: string } | undefined;
+      if (handoff?.kind === 'revision_required') {
+        state.set(stage, 'pending');
+        continue;
+      }
       state.set(stage, stage === 'fact_check' && successfulToolResult(event.payload)?.status !== 'passed'
         ? 'failed'
         : mergeWorkflowStageStatus(state.get(stage), "completed"));

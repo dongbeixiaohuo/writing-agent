@@ -7,6 +7,90 @@ import { openWorkspaceStorage } from "../../../storage/src/index.js";
 import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from "../../llm/src/index.js";
 import { ToolRegistry, ToolExecutionFault } from "../../tools/src/index.js";
 import { AgentRuntime } from "../src/index.js";
+import { canonicalJson, contentHash } from "../../../writing-core/src/index.js";
+
+it('restricts role fields in the offered schema and durable snapshot without changing the registry', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'role-schema-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  const requests: ModelRequest[] = [];
+  let writes = 0;
+  class Provider extends ModelProviderBase {
+    constructor() { super('role-schema', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push(request);
+      assert.deepEqual(request.tools?.map(tool => tool.name), ['submit']);
+      const schema = request.tools![0]!.inputSchema;
+      assert.deepEqual(schema.required, writes ? ['content'] : ['content', 'findings']);
+      assert.deepEqual(Object.keys(schema.properties as object).sort(), writes ? ['audit', 'content', 'findings'] : ['content', 'findings']);
+      assert.equal(schema.additionalProperties, writes ? undefined : false);
+      const properties = schema.properties as { content: { anyOf: unknown[] } };
+      assert.deepEqual(properties.content.anyOf, writes ? [{ type: 'string', minLength: 1 }, { type: 'object' }] : [{ type: 'string', minLength: 1 }]);
+      if (writes) { yield { type: 'text_delta', delta: 'done' }; yield { type: 'completed', finishReason: 'stop' }; return; }
+      if (requests.length === 2) assert.match(JSON.stringify(request.messages), /findings/);
+      if (requests.length === 3) assert.match(JSON.stringify(request.messages), /audit/);
+      yield { type: 'tool_call_delta', index: 0, id: `call-${requests.length}`, name: 'submit',
+        argumentsDelta: JSON.stringify({ content: 'review', ...(requests.length > 1 ? { findings: [] } : {}),
+          ...(requests.length === 2 ? { audit: {} } : {}) }) };
+      yield { type: 'completed', finishReason: 'tool_calls' };
+    }
+  }
+  try {
+    storage.createProject({ operationId: 'p', projectId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    const registry = ToolRegistry.create([
+      { name: 'submit', version: '1.0.0', description: 'submit', effect: 'local_idempotent', permissions: [],
+        inputSchema: { type: 'object', properties: { content: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'object' }] },
+          findings: { type: 'array' }, audit: { type: 'object' } }, required: ['content'] },
+        execute() { writes++; return {}; } },
+      { name: 'outside', version: '1.0.0', description: 'outside', effect: 'read_only', permissions: [],
+        inputSchema: { type: 'object', properties: {} }, execute() { assert.fail('not authorized'); } },
+    ]);
+    const before = structuredClone(registry.schemaSnapshots());
+    const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage, tools: registry,
+      requestPolicy: () => ({ scopeId: writes ? 'next-role' : 'review', allowedTools: ['submit'], systemPrompt: 'review', userMessage: 'review',
+        ...(!writes ? { roleToolFields: { submit: { allowed: ['content', 'findings'], required: ['findings'], stringFields: ['content'] } } } : {}) }) });
+    const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'm', parameters: {}, systemPrompt: 'test', userMessage: 'test',
+      grantedPermissions: [], expectedBodyVersionId: null });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(writes, 1, 'submissions with missing or unexpected fields must never execute');
+    assert.equal(requests.length, 4);
+    assert.deepEqual(registry.schemaSnapshots(), before, 'the next role must not inherit required fields');
+    const dispatched = storage.listRunEvents(result.runId).filter(e => e.type === 'request.dispatch_attempted');
+    assert.equal(dispatched.length, requests.length);
+    for (const [index, event] of dispatched.entries()) {
+      const snapshot = storage.getRequestSnapshot(event.payload.snapshotId as string)!;
+      const schema = snapshot.toolSchemas[0]!;
+      assert.deepEqual(snapshot.request.tools, requests[index]!.tools);
+      assert.deepEqual(schema.inputSchema, requests[index]!.tools![0]!.inputSchema);
+      assert.equal(schema.schemaHash, contentHash(canonicalJson({ name: schema.name, version: schema.version,
+        description: schema.description, inputSchema: schema.inputSchema })));
+    }
+  } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+for (const invalidFields of [{ allowed: ['invented'] }, { allowed: [] }, { stringFields: ['content'] }]) {
+it(`rejects an invalid role schema before dispatch (${JSON.stringify(invalidFields)})`, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'invalid-role-schema-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  let requests = 0;
+  class Provider extends ModelProviderBase {
+    constructor() { super('invalid-schema', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(): AsyncIterable<ProviderStreamEvent> { requests++; yield { type: 'completed', finishReason: 'stop' }; }
+  }
+  try {
+    storage.createProject({ operationId: 'p', projectId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    const registry = ToolRegistry.create([{ name: 'submit', version: '1.0.0', description: 'submit', effect: 'read_only', permissions: [],
+      inputSchema: { type: 'object', properties: { content: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'string', maxLength: 2 }] } },
+        required: ['content'] }, execute() { assert.fail('invalid schema must not execute'); } }]);
+    const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage, tools: registry,
+      requestPolicy: () => ({ scopeId: 'review', allowedTools: ['submit'], roleToolFields: { submit: invalidFields }, systemPrompt: 'review', userMessage: 'review' }) });
+    const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'm', parameters: {}, systemPrompt: 'test', userMessage: 'test',
+      grantedPermissions: [], expectedBodyVersionId: null });
+    assert.equal(result.ok, false);
+    assert.equal(storage.getRun(result.runId)!.stopReason, 'TOOL_SCHEMA_POLICY_INVALID');
+    assert.equal(requests, 0);
+  } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+}
 
 it('specific tool validation feeds one correction back without weakening role authorization', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'tool-specific-validation-'));
@@ -243,8 +327,11 @@ it(`counts source read failures by target without weakening submission gates: sa
 });
 }
 
-for (const scenario of ['save', 'cancel', 'truncated', 'timeout', 'revoked', 'permission', 'empty'] as const) {
-it(`harness text save retains tool safety boundaries: ${scenario}`, async () => {
+for (const [format, scenario] of [
+  ['text', 'save'], ['text', 'cancel'], ['text', 'truncated'], ['text', 'timeout'], ['text', 'revoked'], ['text', 'permission'], ['text', 'empty'],
+  ['json_object', 'save'], ['json_object', 'cancel'], ['json_object', 'revoked'], ['json_object', 'permission'],
+] as const) {
+it(`harness text save retains tool safety boundaries: ${format}/${scenario}`, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'text-save-policy-'));
   const storage = openWorkspaceStorage({ workspacePath: dir });
   const controller = new AbortController();
@@ -254,7 +341,8 @@ it(`harness text save retains tool safety boundaries: ${scenario}`, async () => 
     protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       requests++;
       assert.equal(request.tools, undefined, 'local save authority must not be offered to the model');
-      yield { type: 'text_delta', delta: scenario === 'empty' ? '' : '# 提纲\n\n开篇，观察，收束。' };
+      const content = '# 提纲\n\n开篇，观察，收束。';
+      yield { type: 'text_delta', delta: scenario === 'empty' ? '' : format === 'json_object' ? JSON.stringify({ stage: 'outline', content }) : content };
       if (scenario === 'cancel') controller.abort();
       if (scenario === 'revoked') scope = 'changed';
       if (scenario === 'timeout') { yield { type: 'error', error: { code: 'TIMEOUT', message: 'test', retryable: true } }; return; }
@@ -268,7 +356,8 @@ it(`harness text save retains tool safety boundaries: ${scenario}`, async () => 
       execute(args: any) { assert.equal(args.stage, 'outline'); assert.equal(args.content, '# 提纲\n\n开篇，观察，收束。'); writes++; return { id: 'saved' }; } }]);
     const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage, tools,
       requestPolicy: () => ({ scopeId: scope, actor: 'outline', systemPrompt: 'write', userMessage: 'outline', allowedTools: ['save'], modelTools: [],
-        textOutputTool: { name: 'save', arguments: { stage: 'outline' }, contentArgument: 'content' } }),
+        textOutputTool: format === 'json_object' ? { name: 'save', arguments: { stage: 'outline' }, format }
+          : { name: 'save', arguments: { stage: 'outline' }, contentArgument: 'content' } }),
       completeAfterTool: result => result.ok ? { artifactVersionId: 'saved', content: 'saved' } : null,
     });
     const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'm', parameters: {}, systemPrompt: 'root', userMessage: 'root',
@@ -282,6 +371,60 @@ it(`harness text save retains tool safety boundaries: ${scenario}`, async () => 
       assert.deepEqual(events.find(e => e.type === 'request.completed')?.payload.toolCallIds, []);
       assert.equal(events.find(e => e.type === 'tool.requested')?.payload.origin, 'harness_text_output');
     }
+  } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+}
+
+const validReviewJson = JSON.stringify({ content: '原句把具体测量对象误写成总体信任。', findings: [] });
+for (const [name, responses, succeeds] of [
+  ['repairs invalid JSON', ['{"content":', validReviewJson], true],
+  ['stops repeated malformed JSON', ['{"content":', '{"content":'], false],
+  ['bounds invalid JSON objects', ['[]', 'null', '{"number":1e1000}'], false],
+  ['rejects a conflicting fixed stage', ['{"stage":"draft","content":"wrong actor","findings":[]}', validReviewJson], true],
+  ['applies local role field constraints', ['{"content":"missing findings"}', validReviewJson], true],
+] as const) {
+it(`JSON text output ${name}`, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'json-text-save-'));
+  const storage = openWorkspaceStorage({ workspacePath: dir });
+  const requests: ModelRequest[] = [];
+  let saves = 0;
+  class Provider extends ModelProviderBase {
+    constructor() { super('json-text-save', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      assert.equal(request.tools, undefined);
+      const response = responses[requests.length]!;
+      requests.push(request);
+      yield { type: 'text_delta', delta: response };
+      yield { type: 'completed', finishReason: 'stop' };
+    }
+  }
+  try {
+    storage.createProject({ operationId: 'p', projectId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
+    const tools = ToolRegistry.create([{ name: 'save', version: '1.0.0', description: 'save', effect: 'local_idempotent', permissions: [],
+      inputSchema: { type: 'object', properties: { stage: { type: 'string' }, content: { type: 'string' }, findings: { type: 'array' } },
+        required: ['stage', 'content'], additionalProperties: false },
+      execute(args) { assert.deepEqual(args, { stage: 'review_editor', ...JSON.parse(validReviewJson) }); saves++; return {}; } }]);
+    const previews: unknown[] = [];
+    const runtime = new AgentRuntime({ provider: new Provider(), sessions: storage, tools,
+      requestPolicy: () => ({ scopeId: 'review', actor: 'review_editor', allowedTools: ['save'], modelTools: [], systemPrompt: 'review', userMessage: 'review',
+        outputPreview: { id: 'must-not-preview', stage: 'review_editor' }, textAudience: 'conversation',
+        textOutputTool: { name: 'save', arguments: { stage: 'review_editor' }, format: 'json_object' },
+        roleToolFields: { save: { allowed: ['stage', 'content', 'findings'], required: ['findings'] } },
+        authorizeTool: call => (call.arguments as { stage?: string }).stage === 'review_editor' }),
+      onModelStream: event => { if (event.textAudience || event.outputPreview) previews.push(event); },
+      completeAfterTool: result => result.ok ? { artifactVersionId: 'saved', content: 'saved' } : null,
+    });
+    const result = await runtime.run({ projectId: 'p', purpose: 'test', model: 'm', parameters: {}, systemPrompt: 'root', userMessage: 'root',
+      grantedPermissions: [], expectedBodyVersionId: null, budget: { maxModelRequests: 8, maxToolCalls: 8, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+    assert.equal(result.ok, succeeds, JSON.stringify(result));
+    assert.equal(requests.length, responses.length);
+    assert.equal(saves, succeeds ? 1 : 0);
+    assert.deepEqual(previews, [], 'JSON text is never exposed as a conversation or stage preview');
+    const localCalls = storage.listRunEvents(result.runId).filter(event => event.type === 'tool.requested');
+    assert.equal(localCalls.length, name === 'applies local role field constraints' ? 2 : succeeds ? 1 : 0);
+    assert.ok(localCalls.every(event => (event.payload.arguments as { stage?: string }).stage === 'review_editor' && event.payload.previewId === undefined));
+    assert.match(JSON.stringify(requests[1]!.messages), /完整.*JSON/u);
+    if (!succeeds) assert.equal(storage.getRun(result.runId)?.stopReason, 'STAGE_OUTPUT_NOT_SAVED');
   } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 }

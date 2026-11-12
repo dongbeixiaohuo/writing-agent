@@ -43,6 +43,35 @@ test('compact research streams only public notes, including partial escaped text
   assert.equal(view.get('p','s','r'), null);
 });
 
+test('structured final review reports activity without previewing provisional article text or a return status', () => {
+  const view = new ConversationStreamPreview();
+  for (const [index, content] of ['需要修订', '# 尚未保存的终稿'].entries()) {
+    const base = { projectId: 'p', sessionId: 's', runId: 'r', requestId: `review-${index}`, actor: 'language_review' };
+    view.observe({ ...base, lifecycle: 'started', event: null });
+    view.observe({ ...base, event: { type: 'tool_call_delta', sequence: 1, index: 0, name: 'submit_writing_stage', id: 'review',
+      argumentsDelta: `{"content":${JSON.stringify(content)}` } });
+    assert.equal(view.get('p', 's', 'r'), null);
+    view.observe({ ...base, event: { type: 'tool_call_delta', sequence: 2, index: 0, id: 'review',
+      argumentsDelta: ',"stage":"language_review","audit":{"checks":[],"newFindings":[]}}' } });
+    assert.equal(view.get('p', 's', 'r'), null);
+    assert.equal(view.getActivity('p', 's', 'r')?.phase, 'receiving');
+    assert.equal(view.getActivity('p', 's', 'r')?.lastEventKind, 'tool_arguments');
+    view.observe({ ...base, lifecycle: 'finished', event: null });
+    assert.equal(view.get('p', 's', 'r'), null);
+  }
+});
+
+test('final review with an explicit legacy output preview keeps the article visible through saving', () => {
+  const view = new ConversationStreamPreview();
+  const base = { projectId: 'p', sessionId: 's', runId: 'r', requestId: 'legacy', actor: 'language_review',
+    outputPreview: { id: 'legacy-language', stage: 'language_review' as const } };
+  view.observe({ ...base, event: { type: 'tool_call_delta', sequence: 1, index: 0, name: 'submit_writing_stage', id: 'review',
+    argumentsDelta: '{"stage":"language_review","content":"# 正文"}' } });
+  assert.equal(view.get('p', 's', 'r')?.text, '# 正文');
+  view.observe({ ...base, lifecycle: 'finished', event: null });
+  assert.equal(view.get('p', 's', 'r')?.phase, 'saving');
+});
+
 test('material previews omit bare links and duplicate excerpts without discarding real article text', () => {
   const previews = requestMaterialPreviews([{role:'user',content:JSON.stringify({materials:[
     {contentVersionId:'link1',content:'https://example.com/article'},

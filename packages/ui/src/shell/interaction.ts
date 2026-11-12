@@ -17,7 +17,7 @@ export function conversationWorkingCopy(activity: BridgeSnapshot['liveActivity']
     review_publish: { title: '发布审校 Agent 正在检查发布风险', detail: '结合发布平台，检查容易引起误解或需要调整的内容。' },
     review_reader: { title: '模拟读者 Agent 正在独立阅读', detail: '三位模拟读者会分别说出阅读感受，完成后放在一起供你参考。' },
     central_revision: { title: '内容主笔 Agent 正在修改文章', detail: '结合审校意见和你的取舍，完善这一版正文。' },
-    language_review: { title: '语言润色 Agent 正在打磨文字', detail: '调整生硬的句子和套话，保留文章的语气与个性。' },
+    language_review: { title: '终审 Agent 正在复核修订稿', detail: '检查审校发现的问题是否真正解决，清理工作备注和生硬表达，保留文章的语气与个性。' },
     title: { title: '标题策划 Agent 正在构思标题', detail: '结合正文拟定标题候选，完成后请你选择或提出修改意见。' },
     fact_check: { title: '事实核查 Agent 正在核对文章', detail: '对照正文、标题和参考来源，检查重要事实是否可靠。' },
     fact_extract: { title: '事实核查 Agent 正在整理待核对的内容', detail: '从文章中找出需要确认的事实，准备逐一核查。' },
@@ -55,7 +55,7 @@ const STAGE_ROLE_COPY: Readonly<Record<WritingWorkflowStageId, StageRoleCopy>> =
   review_publish: { role: '发布审校', action: '检查平台与发布风险' },
   review_reader: { role: '模拟读者', action: '分别阅读文章，分享各自的感受' },
   central_revision: { role: '内容主笔', action: '集中处理审校意见' },
-  language_review: { role: '去 AI 味与语言润色', action: '消除套话和机械表达，保留作者声音，不编造亲历' },
+  language_review: { role: '终审与文字打磨', action: '复核修订结果，清理工作备注和机械表达，保留作者声音' },
   fact_check: { role: '事实核查', action: '核对文章中的重要事实' },
 }
 

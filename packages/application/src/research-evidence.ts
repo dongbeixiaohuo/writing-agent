@@ -1,5 +1,6 @@
 import { Ajv } from 'ajv';
 import type { JsonValue } from '../../writing-core/src/index.js';
+import { EDITORIAL_PLAN_JSON_SCHEMA } from './editorial-plan.js';
 
 const text = { type: 'string', minLength: 1 } as const;
 
@@ -7,6 +8,7 @@ const text = { type: 'string', minLength: 1 } as const;
 export const COMPACT_RESEARCH_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
+    editorialPlan: EDITORIAL_PLAN_JSON_SCHEMA,
     notes: { type: 'string', description: 'Concise public gaps, exclusions and shared boundaries, not private reasoning.' },
     sources: { type: 'array', items: {
       type: 'object', additionalProperties: false,
@@ -18,7 +20,8 @@ export const COMPACT_RESEARCH_SCHEMA = {
       type: 'object', additionalProperties: false,
       properties: { source_id: text, evidence_id: { ...text, pattern: '^E[0-9]{3,}$' },
         claim_type: text, claim_text: text, source_quote: { type: 'string' },
-        reliability: { type: 'string', enum: ['high', 'medium', 'low'] }, use_boundary: text, verification_status: text },
+        reliability: { type: 'string', enum: ['high', 'medium', 'low'] }, use_boundary: text,
+        verification_status: { ...text, description: "Use exactly illustrative for an explicitly hypothetical example with an empty source_quote. Other entries require an actual quote; never relabel unsupported facts as illustrative." } },
       required: ['source_id', 'claim_type', 'claim_text', 'source_quote', 'reliability', 'use_boundary', 'verification_status'],
     } },
   },
@@ -55,5 +58,5 @@ export function expandResearchEvidence(input: unknown): unknown {
     if (expandedCharacters > 1_000_000) throw new Error('Expanded research exceeds the supported size');
     return expanded;
   });
-  return { claims, notes: ledger.notes };
+  return { claims, notes: ledger.notes, ...('editorialPlan' in input ? { editorialPlan: input.editorialPlan } : {}) };
 }

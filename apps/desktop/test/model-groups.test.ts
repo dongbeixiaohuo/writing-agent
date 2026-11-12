@@ -37,6 +37,10 @@ test('model groups inherit by default and only accept verification for the exact
     assert.equal(groupProviderConfig(saved, config, 'draft')?.model, 'writer');
     assert.equal(groupProviderConfig(saved, config, 'director')?.model, 'fast');
     assert.equal(groupProviderConfig(saved, config, 'fact_check')?.model, 'fast');
+    assert.equal(groupProviderConfig(saved, config, 'central_revision')?.model, 'fast');
+    assert.equal(groupProviderConfig(saved, config, 'language_review')?.model, 'fast');
+    assert.equal(groupProviderConfig({ ...saved, modelGroups: { ...groups, review: { profileId: id, model: 'writer' } } }, config, 'language_review')?.model, 'writer');
+    assert.equal(groupProviderConfig({ ...saved, modelGroups: { ...groups, review: { profileId: id, model: 'writer' } } }, config, 'central_revision')?.model, 'writer');
     await saveDesktopProviderProfile(path, credentials, { ...input, profileId: id, apiKey: '', displayName: '改名', models: ['fast', 'writer', 'new-model'] });
     assert.deepEqual(Object.keys(verifiedProviderModels(loadDesktopProviderCatalog(path).profiles[0]!)).sort(), ['fast', 'writer']);
     markDesktopProviderVerified(path, id, { ...config, model: 'writer' }, false);
@@ -53,8 +57,8 @@ test('model groups inherit by default and only accept verification for the exact
 
 test('group mapping covers creative, orchestration, reader children and lightweight fact phases', () => {
   for (const actor of ['intake', 'director', 'outline', 'topic_generator', 'topic_research', 'position', 'fact_extract']) assert.equal(modelGroupForActor(actor), 'planning');
-  for (const actor of ['draft', 'central_revision', 'language_review', 'title', 'opening', 'style_modeler', 'concretizer', 'empathy']) assert.equal(modelGroupForActor(actor), 'writing');
-  for (const actor of ['research', 'review_editor', 'review_publish', 'review_reader', 'review_reader_a', 'review_reader_b', 'review_reader_c', 'fact_check', 'illustrator', 'memory', 'retrospective']) assert.equal(modelGroupForActor(actor), 'review');
+  for (const actor of ['draft', 'title', 'opening', 'style_modeler', 'concretizer', 'empathy']) assert.equal(modelGroupForActor(actor), 'writing');
+  for (const actor of ['research', 'review_editor', 'review_publish', 'central_revision', 'language_review', 'review_reader', 'review_reader_a', 'review_reader_b', 'review_reader_c', 'fact_check', 'illustrator', 'memory', 'retrospective']) assert.equal(modelGroupForActor(actor), 'review');
 });
 
 test('desktop verifies a non-default model without switching default, persists groups and routes style generation', async () => {

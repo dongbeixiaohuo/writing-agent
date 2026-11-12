@@ -15,12 +15,15 @@ export function collaborationTurn(request: ModelRequest, content: Readonly<Recor
   const director = directorFixtureTurn(request);
   if (director !== null) return director;
   if (state.actor === 'director') {
-    const results = request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content).result);
+    const envelopes = request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content));
+    const results = envelopes.map(envelope => envelope.result);
     const unread = state.unreadArtifactVersionIds.find(id => !results.some(result => result?.versionId === id));
     if (unread !== undefined) return call('read_artifact_version', { versionId: unread });
     const userMessage = request.messages.find(message => message.role === 'user')?.content ?? '';
     const materials = JSON.parse(userMessage.match(/授权材料目录：(\[[^\n]+\])/u)?.[1] ?? '[]') as Array<{ id: string; contentVersionId: string }>;
-    const material = materials.find(item => !state.materials.some(m => m.materialId === item.id) && !results.some(result => result?.materialId === item.id));
+    const unreadMaterials = envelopes.flatMap(envelope => envelope.error?.details?.unreadMaterialIds ?? []);
+    const material = materials.find(item => (state.nextStage === 'research' || unreadMaterials.includes(item.id)) &&
+      !state.materials.some(m => m.materialId === item.id) && !results.some(result => result?.materialId === item.id));
     if (material !== undefined) return call('read_material', { materialId: material.id, contentVersionId: material.contentVersionId, offset: 0, maxChars: 20_000 });
     return call('assess_writing_readiness', { status: 'ready', reason: '合成测试材料及绑定上下文充分。', questions: [] });
   }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ConversationStreamPreview, requestMaterialPreviews, type MaterialPreview } from './conversation-stream.js';
 import { deliveredInlineMaterialIds } from './material-context.js';
+import { projectRevisionComparisons, type RevisionComparisonView } from './revision-comparison.js';
 import { factReviewPrompt, factReviewTools, projectFactHistory, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionError, factRecordCatalog } from './fact-context.js';
 import { validateFactSearchDecision, FACT_SEARCH_DECISION_REQUIRED, type FactSearchDecision } from './fact-search-recovery.js';
 import { pendingWorkflowHandoffs, recordHandoffFailure, isWorkflowHandoffSourceCommitted } from './workflow-handoff.js';
@@ -266,6 +267,7 @@ export interface WritingProjectProjection {
   readonly bodyVersions: readonly ArtifactVersion[];
   readonly bodyVersionCount: number;
   readonly workflowArtifacts: readonly ArtifactVersion[];
+  readonly revisionComparisons?: readonly RevisionComparisonView[];
   readonly revisionProposals: readonly RevisionProposal[];
   readonly blockLocks: readonly BodyBlockLock[];
   readonly factCheck: FactCheckStatusView;
@@ -1182,6 +1184,7 @@ export class WritingApplicationService {
       bodyVersions,
       bodyVersionCount: bodyVersions.length,
       workflowArtifacts,
+      revisionComparisons: projectRevisionComparisons(this.#storage, projectId, events, bodyVersions),
       revisionProposals: this.#storage.listRevisionProposals(projectId),
       blockLocks: this.#storage.listBodyBlockLocks(projectId),
       factCheck: this.#storage.getFactCheckStatus(projectId),
@@ -1319,6 +1322,7 @@ export class WritingApplicationService {
       storage: this.#storage,
       projectId,
       mode: project.mode,
+      requireEditorialPlan: true,
       interactionMode: briefVersion.brief.interactionMode,
       requiredMaterialIds: briefVersion.brief.materialIds,
       completedMaterialIds: (runId) =>
@@ -1526,7 +1530,7 @@ export class WritingApplicationService {
         const searchPause = collaboration.searchPause(runId);
         if (searchPause) return searchPause;
         const checkpoint = workflow.pendingCheckpoint(runId);
-        return checkpoint ? { reason: 'CO_CREATION_CHECKPOINT', payload: checkpoint } : null;
+        return checkpoint ? { reason: 'CO_CREATION_CHECKPOINT', payload: checkpoint } : collaboration.reviewPause(runId);
       },
       finalOutputCommitter: {
         commit: async (output) => {

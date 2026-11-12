@@ -7,9 +7,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { stageRoleCopy } from '../src/shell/interaction.js';
 
-test('reader simulation and humanizer responsibilities are explicit', () => {
+test('reader simulation and final review responsibilities are explicit', () => {
   assert.match(stageRoleCopy('review_reader').action, /分别阅读文章/);
-  assert.match(stageRoleCopy('language_review').role, /去 AI 味/);
+  assert.match(stageRoleCopy('language_review').role, /终审/);
+  assert.match(stageRoleCopy('language_review').action, /复核修订结果/);
+  assert.match(stageRoleCopy('language_review').action, /清理工作备注和机械表达，保留作者声音/);
 });
 
 test('program generated confirmation summaries render Markdown in the actual user bubble', () => {

@@ -319,13 +319,14 @@ class BridgeWritingProvider extends ModelProviderBase {
 class MissingInputProvider extends BridgeWritingProvider {
   readonly prompts: string[] = [];
   protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
-    // Isolated readers cannot see the earlier material-answer conversation;
-    // missing-input behavior belongs only to the writing/director fixture.
+    // Independent reviewers and the completion message need not carry the
+    // earlier material answer. Only readiness can open this fixture's wait.
     const reader = readerSimulationFixtureEvents(request);
     if (reader) { yield* reader; return; }
     const prompt = request.messages.filter(message => message.role === 'user').map(message => message.content).join('\n');
     this.prompts.push(prompt);
-    if (!request.tools?.some(tool => tool.name === 'submit_fact_check' || tool.name === 'prepare_fact_check') &&
+    const state = collaborationState(request);
+    if (state?.actor === 'director' && !state.ready && request.tools?.some(tool => tool.name === 'assess_writing_readiness') &&
         !prompt.includes('写给新入职同事，介绍我们三步报修流程')) {
       yield { type: 'tool_call_delta', index: 0, id: `ask-${request.requestId}`,
         name: 'assess_writing_readiness', argumentsDelta: JSON.stringify({ status: 'needs_input', reason: '目前只有占位材料，无法判断文章内容。', questions: ['具体想写什么主题？', '有哪些可以使用的事实材料？'] }) };
