@@ -108,6 +108,7 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
       inputVersionIds: string[]; materials?: Array<{ content: string }>;
       editorialPlanRequired?: boolean;
       reviewFindingsRequired?: boolean;
+      prewritingRequired?: boolean;
       reviewClosure?: { findings: readonly unknown[] };
       revisionReturn?: { reportId: string; bodyVersionId: string };
       revisionComparison?: { originalVersionId: string; revisedVersionId: string };
@@ -130,13 +131,15 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
       const binding = collaboration.revisionComparison;
       const original = collaboration.artifacts?.find(a => a.id === binding.originalVersionId)?.content ?? '';
       const revised = collaboration.artifacts?.find(a => a.id === binding.revisedVersionId)?.content ?? '';
-      yield { type: 'tool_call_delta', index: 0, id: `mock-comparison-${request.requestId}`, name: 'submit_writing_stage',
-        argumentsDelta: JSON.stringify({ stage: 'language_review', content: revised, comparison: {
+      const output = { content: revised, comparison: {
           selectedVersionId: binding.revisedVersionId, reason: '保留当前合成稿，离线测试不评估文采。',
           gains: original === revised ? [] : [{ before: original.slice(0, 500), after: revised.slice(0, 500), why: '离线合成版本差异' }],
           losses: [], retainedQuotes: [],
-        }, ...(collaboration.reviewClosure ? { audit: { checks: [], newFindings: [] } } : {}) }) };
-      yield { type: 'completed', finishReason: 'tool_calls' }; return;
+        }, ...(collaboration.reviewClosure ? { audit: { checks: [], newFindings: [] } } : {}) };
+      const native = request.tools?.some(t => t.name === 'submit_writing_stage');
+      yield native ? { type: 'tool_call_delta', index: 0, id: `mock-comparison-${request.requestId}`, name: 'submit_writing_stage',
+        argumentsDelta: JSON.stringify({ stage: 'language_review', ...output }) } : { type: 'text_delta', delta: JSON.stringify(output) };
+      yield { type: 'completed', finishReason: native ? 'tool_calls' : 'stop' }; return;
     }
     const toolMessages = request.messages.filter((message) => message.role === "tool");
     if (collaboration?.stage === 'fact_check') {
@@ -241,7 +244,9 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
     if (next !== undefined) {
       if (expert && next[0] !== 'research' && !request.tools?.some(t => t.name === 'submit_writing_stage')) {
         yield { type: 'text_delta', delta: (next[0] === 'review_editor' || next[0] === 'review_publish') && collaboration?.reviewFindingsRequired
-          ? JSON.stringify({ content: next[1], findings: [] }) : next[1] };
+          ? JSON.stringify({ content: next[1], findings: [] })
+          : next[0] === 'central_revision' && collaboration?.reviewClosure ? JSON.stringify({ content: next[1], resolutions: [] })
+          : next[0] === 'language_review' && collaboration?.reviewClosure ? JSON.stringify({ content: next[1], audit: { checks: [], newFindings: [] } }) : next[1] };
         yield { type: 'completed', finishReason: 'stop' }; return;
       }
       yield {
@@ -250,6 +255,12 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
         id: `mock-stage-${next[0]}`,
         name: "submit_writing_stage",
         argumentsDelta: JSON.stringify({ stage: next[0], content: next[1],
+          ...(next[0] === 'outline' && collaboration?.prewritingRequired ? { prewriting: {
+            decision: 'ready', promise: '整理作者给出的散步感受。', readerPayoff: '理解这次观察。',
+            premises: [{ claim: '作者表达自己的感受。', basis: 'author', evidenceIds: [], explanation: '离线演示仅使用授权的个人材料。' }],
+            sections: [{ heading: '结构', readerGain: '按材料展开观察。', evidenceIds: [] }],
+            reason: '离线确定性演示，不代表真实语义评估。', queries: [], questions: [],
+          } } : {}),
           ...((next[0] === 'review_editor' || next[0] === 'review_publish') && collaboration?.reviewFindingsRequired ? { findings: [] } : {}),
           ...(next[0] === 'central_revision' && collaboration?.reviewClosure ? { resolutions: [] } : {}),
           ...(next[0] === 'language_review' && collaboration?.reviewClosure ? { audit: { checks: [], newFindings: [] } } : {}),

@@ -6,7 +6,7 @@ export const FINDINGS_SUBMISSION = [
 
 export const RESOLUTION_SUBMISSION = [
   '逐项处理 reviewClosure.findings。对照实际来源修正归属、测量对象和判断范围；不能靠加免责声明保留原来的过度断言，也不能把审校过程写进正文。作者的立场和有辨识度的表达应保留，立场本身不是外部事实的证明。',
-  '用 submit_writing_stage 一次提交完整 content 和 resolutions。每个 findingId 恰有一条：rewrite 给出新稿实际引句 afterQuote，remove 将 afterQuote 设为 null，retain 给出原句及有根据的保留理由。处置理由只写在 resolutions。审校也可能判断错，可说明不采纳依据，不为凑修改扭曲作者意思。',
+  '按revisionOutputSchema输出一个完整JSON对象，含content和resolutions，不加代码围栏或对象外文字；程序会绑定当前阶段并校验保存。每个findingId逐字复制reviewClosure.findings里的id且恰有一条：rewrite给出新稿实际引句afterQuote，remove将afterQuote设为null，retain给出原句及有根据的保留理由。处置理由只写在resolutions。审校也可能判断错，可说明不采纳依据，不为凑修改扭曲作者意思。',
   '若有上次终审的返工问题，一并处理；先让问题在正文里真正消失，再检查句子是否顺畅。',
 ].join('\n');
 
@@ -17,5 +17,5 @@ export const FINAL_REVISION_AUDIT = [
   '先将通读当前文章发现的实质残留问题放入 audit.newFindings；必改才用 required，可选偏好不阻断。再在 audit.checks 对 reviewClosure.findings 的每个 findingId 给出 resolved、unresolved 或 not_applicable，引用拟交正文真实连续原句并说明判断；确已删去的问题可 quote=null。若审校本身不成立，用 not_applicable 并给依据，不强迫作者换掉自己的立场。',
   '存在必须返工的问题时，content 只写“需要修订”，无需重抄全文；所有引句必须来自绑定的当前修订稿，问题与修复目标写在 audit。程序只保存问题并交回原主笔，保留当前正文，不把这次 content 当成文章。这种返回无需 comparison，不要求作者替 Agent 修错。',
   '没有必改问题时，可作有收益的最小语言修整并清理工作备注，保留事实和标题；content 是完整可交付正文。audit 的引句必须来自这份实际 content。另提交 comparison 对比初稿与修订稿的真实得失，不把添加解释标签或表面降语气自动算作收益。所有内部判断只放在 audit/comparison，绝不出现在正文。',
-  '只调用 submit_writing_stage，stage=language_review。语义核对仍不替代后续独立事实核查。',
+  '按finalOutputSchema输出一个完整JSON对象，包含content、audit及通过时的comparison，不加代码围栏或对象外文字；程序绑定阶段并校验保存。语义核对仍不替代后续独立事实核查。',
 ].join('\n');

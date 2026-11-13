@@ -219,9 +219,9 @@ export class ConversationStreamPreview {
       }
     }
     if (call.name === 'submit_writing_stage') {
-      // Structured final review may return the article for repair. Only an
+      // Prewriting/final review may return the task for repair. Only an
       // explicitly authorized legacy preview may show its uncommitted text.
-      if (input.actor === 'language_review' && !input.outputPreview) return;
+      if ((input.actor === 'language_review' || input.actor === 'outline') && !input.outputPreview) return;
       const stage = topLevelString(call.raw, 'stage');
       // The assigned stage is trusted application policy. JSON property order is
       // not a reason to buffer an already authorized public deliverable.

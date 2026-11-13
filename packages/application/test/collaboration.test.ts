@@ -223,7 +223,7 @@ for (const version of [2, 3] as const) it(`uses v${version} project style across
       assert.ok(requests.length > 0, stage);
       assert.ok(requests.every(r => r.messages.some(m => m.content.includes(card) && m.content.includes(quote) && m.content.includes('换题迁移标记'))), stage);
       assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes(STYLE_APPLICATION_POLICY))), stage);
-      assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes('面向读者的解释与向作者汇报写作过程'))), stage);
+      assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes(stage === 'outline' ? '内部评估不进提纲' : '面向读者的解释与向作者汇报写作过程'))), stage);
     }
     const audit = provider.requests.filter(r => collaborationState(r)?.stage === 'language_review');
     assert.ok(audit.length > 0);
@@ -528,7 +528,8 @@ it('projects evidence and original sources for non-blind downstream experts, wit
     const language = provider.requests.find(request => collaborationState(request)?.actor === 'language_review')!;
     const auditEvidence = collaborationState(language)!.artifacts?.find(artifact => artifact.kind === 'evidence')?.content as { claims: { source_quote: string }[] };
     assert.equal(auditEvidence.claims[0]!.source_quote, research.claims[0]!.source_quote);
-    assert.deepEqual(language.tools?.map(tool => tool.name), ['submit_writing_stage']);
+    assert.deepEqual(language.tools ?? [], []);
+    assert.equal(language.parameters.toolChoice, 'none');
     assert.doesNotMatch(language.messages[1]!.content, /外部资料原文|editorialPlan/u);
     const revisionRead = provider.requests.find(request => collaborationState(request)?.actor === 'central_revision' &&
       request.messages.some(message => message.role === 'tool' && message.name === 'read_artifact_version'))!;
@@ -901,8 +902,9 @@ class ClosureScenarioProvider extends CompactResearchProvider {
       args = { stage: state.stage, content, audit: { checks, newFindings } };
       if (returnRevision) {
         this.requests.push(structuredClone(request));
-        yield { type: 'tool_call_delta', index: 0, id: `return-${request.requestId}`, name: 'submit_writing_stage', argumentsDelta: JSON.stringify(args) };
-        yield { type: 'completed', finishReason: 'tool_calls' };
+        const { stage: _stage, ...output } = args;
+        yield { type: 'text_delta', delta: JSON.stringify(output) };
+        yield { type: 'completed', finishReason: 'stop' };
         return;
       }
     }
@@ -1450,6 +1452,29 @@ it('omits only an exact generated brief echo and keeps additional author instruc
   }
 });
 
+it('checks original author words without inheriting research scaffolding or intake-generated constraints', async () => {
+  const ledger = compactResearch();
+  ledger.claims = ledger.claims.slice(0, 1);
+  const plan = editorialPlanFixture(['E001']);
+  plan.angles[0]!.angle = 'RESEARCH_SCAFFOLD_SENTINEL';
+  const provider = new CompactResearchProvider({ ...ledger, editorialPlan: plan });
+  const f = setup(provider, 'co_creation', 1, 'quick', '作者原话：比较两个人物的区别。');
+  try {
+    const before = f.storage.inspectProject('p')!;
+    const brief = f.storage.getWritingBriefVersion(before.currentBriefVersionId!)!.brief;
+    assert.ok(f.app.saveWritingBrief({ projectId: 'p', operationId: 'generated-brief', expectedProjectRevision: before.revision,
+      baseVersionId: before.currentBriefVersionId, actor: { kind: 'user', id: 'conversation-user' },
+      brief: { ...brief, constraints: ['INTAKE_SCAFFOLD_SENTINEL'] } }).ok);
+    const project = f.storage.inspectProject('p')!;
+    await f.app.runDraft({ ...f.input, expectedProjectRevision: project.revision, expectedBriefVersionId: project.currentBriefVersionId! });
+    const request = provider.requests.find(r => collaborationState(r)?.actor === 'outline')!;
+    assert.match(request.messages[1]!.content, /作者原话：比较两个人物的区别/u);
+    assert.doesNotMatch(request.messages[1]!.content, /RESEARCH_SCAFFOLD_SENTINEL|INTAKE_SCAFFOLD_SENTINEL|taskInstruction/u);
+    assert.ok((collaborationState(request) as any).artifacts[0].content);
+    assert.ok(request.tools?.find(t => t.name === 'submit_writing_stage')?.inputSchema);
+  } finally { f.close(); }
+});
+
 it('scales outline and research guidance to the article without imposing a truncating save limit', async () => {
   const provider=new CollaborationProvider(); const f=setup(provider,'co_creation');
   try {
@@ -1766,7 +1791,7 @@ it('does not carry stages from a completed run or into another session', async (
   } finally { f.close(); }
 });
 
-it('saves a streamed outline verbatim through the harness without a second model request', async () => {
+it('saves the approved outline verbatim in one request without streaming its internal assessment', async () => {
   const parts = ['# 安静的提纲\n\n', '一、窗边的观察。\n\n', '二、收回目光，留一点余味。'];
   let inspect = () => {};
   class TextOutline extends CollaborationProvider {
@@ -1774,7 +1799,13 @@ it('saves a streamed outline verbatim through the harness without a second model
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       if (collaborationState(request)?.stage !== 'outline') { yield* super.providerStream(request); return; }
       this.requests.push(request); this.outlineRequests++;
-      for (const delta of parts) { yield { type: 'text_delta', delta }; inspect(); }
+      const response = publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: parts.join('') })![0]!;
+      assert.equal(response.type, 'tool_call_delta');
+      if (response.type !== 'tool_call_delta') return;
+      const { stage: _stage, ...payload } = JSON.parse(response.argumentsDelta!);
+      const output = JSON.stringify(payload);
+      const midpoint = Math.floor(output.length / 2);
+      for (const delta of [output.slice(0, midpoint), output.slice(midpoint)]) { yield { type: 'text_delta', delta }; inspect(); }
       yield { type: 'completed', finishReason: 'stop' };
     }
   }
@@ -1782,7 +1813,9 @@ it('saves a streamed outline verbatim through the harness without a second model
   const samples: string[] = [];
   inspect = () => {
     const run = f.storage.listRuns('p')[0]!;
-    samples.push(f.app.getLiveReply('p', run.sessionId, run.id)!.text);
+    const preview = f.app.getLiveReply('p', run.sessionId, run.id);
+    assert.equal(preview, null);
+    samples.push('hidden');
     assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main').length, 0);
   };
   try {
@@ -1791,8 +1824,8 @@ it('saves a streamed outline verbatim through the harness without a second model
     assert.equal(provider.outlineRequests, 1);
     const request = provider.requests.find(r => collaborationState(r)?.stage === 'outline')!;
     assert.equal(request.parameters.toolChoice, 'auto');
-    assert.deepEqual(request.tools?.map(t => t.name).sort(), ['assess_writing_readiness', 'read_artifact_version']);
-    assert.deepEqual(samples, parts.map((_, i) => parts.slice(0, i + 1).join('')));
+    assert.deepEqual(request.tools?.map(t => t.name).sort(), ['read_artifact_version', 'submit_writing_stage']);
+    assert.deepEqual(samples, ['hidden', 'hidden']);
     assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main')[0]?.content, parts.join(''));
     assert.equal(f.storage.listArtifactVersions('p', 'body', 'main').length, 0);
     const save = f.storage.listRunEvents(result.runId).find(e => e.type === 'tool.requested' && e.payload.actor === 'outline');
@@ -1813,6 +1846,68 @@ it('does not confuse a short first-person article with a generation status messa
   }
   const f = setup(new PersonalText());
   try { assert.equal((await f.app.runDraft(f.input)).ok, true); } finally { f.close(); }
+});
+
+for (const canSearch of [false, true]) it(`returns an unsupported premise before drafting and routes its exact gap (search=${canSearch})`, async () => {
+  const assessment = { decision: 'research', promise: '证明家庭规模服务商业布局', readerPayoff: '理解人物的商业安排',
+    premises: [{ claim: '家庭安排具有商业功能', basis: 'missing', evidenceIds: [], explanation: '人数不能证明商业意图。' }],
+    sections: [], reason: '现有材料只能说明规模，不能说明商业功能。', queries: ['家庭安排 商业功能 原始材料'],
+    questions: ['补查仍没有支持的话，是否改为比较家庭安排本身？'] };
+  class GapProvider extends CollaborationProvider {
+    returned = false;
+    bypassed = false;
+    unavailableRework = false;
+    sawResearchGap = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request) as any;
+      if (state?.stage === 'outline' && !this.returned) {
+        this.returned = true;
+        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: '需要先补查。', prewriting: { ...assessment, stage_note: '供应商附加的内部备注。' } })!;
+        return;
+      }
+      if (state?.actor === 'director' && state.prewritingReturn) {
+        const args = !this.bypassed ? { action: 'dispatch', stage: 'outline', reason: '认可继续，直接出提纲。', questions: [], readinessReason: '继续。' }
+          : canSearch || !this.unavailableRework ? { action: 'rework', stage: 'research', reason: '补查家庭安排的商业功能。', questions: [] }
+          : { action: 'ask', stage: null, reason: assessment.reason, questions: assessment.questions };
+        if (this.bypassed && !canSearch) this.unavailableRework = true;
+        this.bypassed = true;
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'director_decide', argumentsDelta: JSON.stringify(args) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      }
+      if (state?.stage === 'research' && this.returned) {
+        assert.match(request.messages[1]!.content, /家庭安排具有商业功能/u);
+        assert.match(request.messages[1]!.content, /人数不能证明商业意图/u);
+        this.sawResearchGap = true;
+        const unread = state.unreadArtifactVersionIds.find((id: string) => !request.messages.some(m => m.role === 'tool' && m.name === 'read_artifact_version' && JSON.parse(m.content).result?.versionId === id));
+        if (unread) {
+          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'read_artifact_version', argumentsDelta: JSON.stringify({ versionId: unread }) };
+          yield { type: 'completed', finishReason: 'tool_calls' }; return;
+        }
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new GapProvider(); const f = setup(provider);
+  const app = new WritingApplicationService({ storage: f.storage, provider: withIntentFixture(provider),
+    factSearchConfiguration: () => ({ parallelEnabled: canSearch, tavilyEnabled: false }) });
+  try {
+    const result = await app.runDraft(f.input);
+    const codes = f.storage.listRunEvents(result.runId).filter(e => e.type === 'tool.failed').map(e => (e.payload.result as any).error.code);
+    assert.ok(f.storage.listArtifactVersions('p', 'report', 'prewriting-assessment').every(v => !v.content.includes('stage_note')));
+    assert.ok(codes.includes('PREWRITING_REPAIR_REQUIRED'));
+    if (canSearch) {
+      assert.equal(provider.sawResearchGap, true);
+      assert.equal(result.ok, true, JSON.stringify({ result, codes, recent: f.storage.listRunEvents(result.runId).filter(e => e.type === 'tool.completed').slice(-6).map(e => e.payload) }));
+      assert.equal(f.storage.getRun(result.runId)?.usage.majorRevisions, 1);
+      assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main').length, 1, 'only the reassessed outline is saved');
+    } else {
+      assert.ok(codes.includes('PREWRITING_DISCUSSION_REQUIRED'));
+      assert.equal(f.storage.getRun(result.runId)?.stopReason, 'WRITING_INPUT_REQUIRED');
+      assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main').length, 0);
+      assert.equal(f.storage.listArtifactVersions('p', 'body', 'main').length, 0);
+      assert.equal(f.storage.getRun(result.runId)?.usage.majorRevisions, 0);
+    }
+  } finally { f.close(); }
 });
 
 it('reassesses the next stage before dispatch and asks about a newly discovered research gap', async () => {
@@ -1948,8 +2043,8 @@ it('repairs an agent-introduced unsupported detail internally and rechecks the n
 });
 
 for (const targetStage of ['outline', 'draft', 'review_editor', 'review_publish', 'central_revision', 'language_review']) {
-const jsonReviewOutput = targetStage === 'review_editor' || targetStage === 'review_publish';
-const savedOnly = jsonReviewOutput || targetStage === 'language_review';
+const jsonReviewOutput = targetStage === 'review_editor' || targetStage === 'review_publish' || targetStage === 'central_revision' || targetStage === 'language_review';
+const savedOnly = jsonReviewOutput || targetStage === 'outline' || targetStage === 'language_review';
 it(savedOnly ? `shows only the saved public ${targetStage} without exposing structured text` : 'streams public ' + targetStage + ' before saving without exposing private payloads', async () => {
   // Language review must preserve the previous body, not replace it with a test outline.
   const partial = targetStage === 'language_review' ? '# 安静\n\n我喜欢' : '# 大纲\n\n第一段';
@@ -1971,6 +2066,7 @@ it(savedOnly ? `shows only the saved public ${targetStage} without exposing stru
         const response = publicStageFixtureEvents(request, 'submit_writing_stage', { stage: targetStage, content: full })?.[0];
         if (jsonReviewOutput && response?.type === 'text_delta') {
           structuredOutput = true;
+          if (targetStage === 'language_review') inspect(request, 'waiting');
           const midpoint = Math.floor(response.delta.length / 2);
           yield { type: 'text_delta', delta: response.delta.slice(0, midpoint) };
           inspect(request, 'metadata-only');
@@ -2167,7 +2263,8 @@ it('reuses version-bound material reads across confirmations without exhausting 
     const finalReviews = provider.requests.filter(r => collaborationState(r)?.actor === 'language_review');
     assert.ok(finalReviews.length > 0);
     for (const review of finalReviews) {
-      assert.deepEqual(review.tools?.map(tool => tool.name), ['submit_writing_stage']);
+      assert.deepEqual(review.tools ?? [], []);
+      assert.equal(review.parameters.toolChoice, 'none');
       assert.equal(review.messages.some(message => message.role === 'tool' && message.name === 'read_material'), false);
     }
     for (const request of provider.requests) {
@@ -2288,7 +2385,7 @@ for (const cancel of [false, true]) it(`desktop recovers a protected expert with
   } finally { bridge.dispose(); f.close(); }
 });
 
-it('stops repeated invalid language submissions and explicitly retries only that expert, keeping saved stages', async () => {
+it('stops invalid language JSON after bounded recovery and retries only that expert, keeping saved stages', async () => {
   class RejectedLanguage extends CollaborationProvider {
     reject = true; actors: string[] = [];
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
@@ -2304,13 +2401,13 @@ it('stops repeated invalid language submissions and explicitly retries only that
   const bridge = createApplicationBridge({ service:f.app, workspaceId:'text-save-retry', model:{model:'mock',providerLabel:'test',credentialReference:null,parameters:{},budget:f.input.budget} });
   try {
     const first = await f.app.runDraft(f.input);
-    assert.equal(f.storage.getRun(first.runId)?.stopReason, 'TOOL_FAILURE_LOOP');
-    assert.equal(provider.actors.filter(a => a === 'language_review').length, 3);
+    assert.equal(f.storage.getRun(first.runId)?.stopReason, 'STAGE_OUTPUT_NOT_SAVED');
+    assert.equal(provider.actors.filter(a => a === 'language_review').length, 2);
     const body = f.storage.inspectProject('p')!.latestBodyVersionId;
     await bridge.selectSession('p',first.sessionId);
-    assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason,'TOOL_FAILURE_LOOP');
+    assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason,'STAGE_OUTPUT_NOT_SAVED');
     const rows = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
-    assert.ok(rows.some(row=>row.kind==='tool' && row.label==='这一步未能完成'));
+    assert.ok(rows.some(row=>row.kind==='tool' && row.detail.includes('没有保存')));
     assert.ok(!rows.some(row=>row.kind==='tool' && row.detail.includes('存在结果未知的外部请求')));
     const resumedAt = provider.actors.length; provider.reject = false;
     await bridge.resumeRun(first.runId,'resume',{operationId:'retry-text-save'});
@@ -2534,6 +2631,7 @@ it("uses real director decisions and independent same-draft reviews before compl
       else if (role === 'review_editor') assert.match(request.messages[0]!.content, /第一次读到本文.*原句/u);
       else if (role === 'language_review') assert.match(request.messages[0]!.content, /独立语言终审.*原始引文/u);
       else if (role === 'fact_check') assert.match(request.messages[0]!.content, /事实核查专员|写作助手.*提取/u);
+      else if (role === 'outline') assert.match(request.messages[0]!.content, /作者原话.*实际引文/u);
       else if (role === 'director' && request.parameters.toolChoice === 'none') {
         assert.equal(collaborationState(request)?.nextStage, null);
         assert.match(request.messages[0]!.content, /所有阶段均已完成/u);
@@ -2544,7 +2642,7 @@ it("uses real director decisions and independent same-draft reviews before compl
     const revision = provider.requests.find((request) => request.messages[0]?.content.includes("ACTOR=central_revision"))!;
     assert.match(revision.messages[1]!.content, /taskInstruction.*综合独立意见/u);
     assert.equal(reader.tools?.some((tool) => tool.name === "director_decide") ?? false, false);
-    for (const request of provider.requests.filter((request) => !['director', 'fact_check', 'review_editor', 'review_reader', 'language_review'].includes(collaborationState(request)?.actor ?? ''))) {
+    for (const request of provider.requests.filter((request) => !['director', 'outline', 'fact_check', 'review_editor', 'review_reader', 'language_review'].includes(collaborationState(request)?.actor ?? ''))) {
       assert.match(request.messages[1]!.content, /taskInstruction/u);
       assert.match(request.messages[1]!.content, /expectedArtifact/u);
       assert.doesNotMatch(request.messages[0]!.content, /你是 Writing Agent 的主笔|并非已隔离|每个新开始或恢复的执行段/u);

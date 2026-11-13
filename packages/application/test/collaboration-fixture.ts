@@ -78,7 +78,7 @@ export function publicStageFixtureEvents(request: ModelRequest, name: string, ar
   }
   if (name === 'submit_writing_stage' && state && state.stage === args.stage) {
     const structured = structuredStageFixtureArgs(state, args);
-    if (structured && (state.stage === 'review_editor' || state.stage === 'review_publish') && !request.tools?.some(t => t.name === name)) {
+    if (structured && !request.tools?.some(t => t.name === name)) {
       const { stage: _stage, ...output } = structured as Record<string, unknown>;
       return [{ type: 'text_delta', delta: JSON.stringify(output) }, { type: 'completed', finishReason: 'stop' }];
     }
@@ -91,6 +91,12 @@ export function publicStageFixtureEvents(request: ModelRequest, name: string, ar
 }
 
 function structuredStageFixtureArgs(state: CollaborationFixtureState, args: Record<string, unknown>) {
+  if (state.stage === 'outline' && state.prewritingRequired) return { ...args, prewriting: args.prewriting ?? {
+    decision: 'ready', promise: '按作者已给出的材料表达观察。', readerPayoff: '理解作者的观察。',
+    premises: [{ claim: '作者表达自己的感受。', basis: 'author', evidenceIds: [], explanation: '测试中的作者已提供感受。' }],
+    sections: [{ heading: String(args.content).split('\n').find(line => line.trim())!, readerGain: '展开作者的观察。', evidenceIds: [] }],
+    reason: '此夹具仅测试流程，语义由真实模型对照另验。', queries: [], questions: [],
+  } };
   if (state.stage === 'research' && state.editorialPlanRequired) return { ...args, content: plannedResearchContent(args.content) };
   if ((state.stage === 'review_editor' || state.stage === 'review_publish') && state.reviewFindingsRequired) {
     return { ...args, findings: args.findings === undefined ? [] : args.findings };
@@ -120,6 +126,7 @@ export interface CollaborationFixtureState {
   materials: { materialId: string }[];
   artifacts?: { id: string; kind: string; content: unknown }[];
   editorialPlanRequired?: boolean;
+  prewritingRequired?: boolean;
   reviewFindingsRequired?: boolean;
   reviewClosure?: { findings: BoundReviewFinding[]; reviewVersionIds: string[]; reportVersionIds: string[]; evidenceIds: string[] };
   revisionReturn?: { reportId: string; bodyVersionId: string };
