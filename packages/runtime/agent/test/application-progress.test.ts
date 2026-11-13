@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { it } from 'node:test';
 import { WritingApplicationService } from '../../../application/src/index.js';
-import { editorialPlanFixture } from '../../../application/test/collaboration-fixture.js';
+import { editorialPlanFixture, publicStageFixtureEvents } from '../../../application/test/collaboration-fixture.js';
 import { openWorkspaceStorage } from '../../../storage/src/index.js';
 import { contentHash } from '../../../writing-core/src/index.js';
 import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '../../llm/src/index.js';
@@ -79,8 +79,8 @@ for (const stopReason of ['TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED'] as cons
         } else if (state.actor === 'research') {
           name = 'submit_writing_stage'; args = { stage: 'research', content: { sources: [], claims: [], notes: '只有合成的个人感受，无外部事实。', editorialPlan: editorialPlanFixture([]) } };
         } else if (state.actor === 'outline' && recovering) {
-          yield { type: 'text_delta', delta: '# 安静\n\n- 开头：从眼前的安静场景进入。\n- 主体：展开个人观察与感受，不增加外部事实。\n- 结尾：回到开头的场景，保留安静的余韵。' };
-          yield { type: 'completed', finishReason: 'stop' }; return;
+          yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: '# 安静\n\n- 开头：从眼前的安静场景进入。\n- 主体：展开个人观察与感受，不增加外部事实。\n- 结尾：回到开头的场景，保留安静的余韵。' })!;
+          return;
         } else if (state.actor === 'outline' && stopReason === 'PROVIDER_RETRY_DEFERRED') {
           yield { type: 'error', error: { code: 'RATE_LIMITED', message: 'synthetic cooldown', retryable: true, retryAfterMs: 3_600_000 } }; return;
         } else { name = 'read_material'; args = { materialId: 'material', contentVersionId, offset: 0, maxChars: 1000 }; }

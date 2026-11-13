@@ -83,6 +83,7 @@ type ContextArtifact = { id: string; kind: string; content: string };
 export function stageArtifactContext(actor: string, artifacts: readonly ContextArtifact[], options: {
   readonly directorStage?: string | null;
   readonly omitEditorialPlan?: boolean;
+  readonly writingEvidenceIds?: readonly string[];
 } = {}) {
   const completeArtifactIds = new Set<string>();
   const projected = artifacts.map(artifact => {
@@ -101,12 +102,12 @@ export function stageArtifactContext(actor: string, artifacts: readonly ContextA
         const { claims, editorialPlan, ...ledger } = content;
         const allRows = claims as Record<string, JsonValue>[];
         const plan = editorialPlan as { angles?: { id: string }[]; selectedAngleId?: string; materialDecisions?: { evidenceId: string; decision: string }[] } | undefined;
-        const selectedIds = (actor === 'outline' || actor === 'draft') && Array.isArray(plan?.materialDecisions)
+        const selectedIds = options.writingEvidenceIds ? new Set(options.writingEvidenceIds) : (actor === 'outline' || actor === 'draft') && Array.isArray(plan?.materialDecisions)
           ? new Set(plan.materialDecisions.filter(item => item.decision === 'use').map(item => item.evidenceId)) : null;
         const rows = selectedIds ? allRows.filter(row => selectedIds.has(String(row.evidence_id))) : allRows;
         const revisionStage = actor === 'director' ? options.directorStage : actor;
         const revision = revisionStage === 'central_revision';
-        const planProjection = options.omitEditorialPlan || revisionStage === 'language_review' ? undefined
+        const planProjection = options.omitEditorialPlan || options.writingEvidenceIds || revisionStage === 'language_review' ? undefined
           : plan && (selectedIds || revision) ? { ...plan, angles: Array.isArray(plan.angles) ? plan.angles.filter(angle => angle.id === plan.selectedAngleId) : [],
             ...(revision && Array.isArray(plan.materialDecisions) ? { materialDecisions: plan.materialDecisions.filter(item => item.decision === 'use') } : {}) }
             : editorialPlan;
@@ -120,7 +121,8 @@ export function stageArtifactContext(actor: string, artifacts: readonly ContextA
           const fields = [...new Set(rows.flatMap(c => Object.keys(c)))].filter(key => !omitQuotes || key !== 'source_quote');
           // Columns remove repeated JSON keys, not claims or limitations. Missing
           // optional values map to null; all supplied values remain unchanged.
-          content = { ...ledger, projection: 'evidence_table', claimFields: fields,
+          const { notes: _notes, ...sourceMetadata } = ledger;
+          content = { ...(options.writingEvidenceIds ? sourceMetadata : ledger), projection: 'evidence_table', claimFields: fields,
             ...(planProjection ? { editorialPlan: planProjection } : {}),
             claimRows: rows.map(c => fields.map(key => c[key] ?? null)),
             ...(selectedIds ? { materialSelectionApplied: true, omittedEvidenceCount: allRows.length - rows.length,

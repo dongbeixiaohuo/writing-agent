@@ -32,6 +32,7 @@ import { COMPACT_RESEARCH_SCHEMA, expandResearchEvidence } from './research-evid
 import { normalizeFactVerification } from './fact-context.js';
 import { factSearchLimitations } from './fact-search-recovery.js';
 import { parseEditorialPlan } from './editorial-plan.js';
+import { PREWRITING_JSON_SCHEMA, parsePrewriting, type PrewritingAssessment } from './prewriting.js';
 import { JSON_SCHEMA as REVISION_COMPARISON_SCHEMA, parseRevisionComparison } from './revision-comparison.js';
 import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA,
   validateReviewFindings, parseReviewResolutions, parseRevisionAudit, type ReviewFinding, type BoundReviewFinding } from './review-closure.js';
@@ -44,6 +45,7 @@ interface SubmitWritingStageArgs {
   readonly findings?: JsonValue;
   readonly resolutions?: JsonValue;
   readonly audit?: JsonValue;
+  readonly prewriting?: JsonValue;
 }
 
 interface SubmitFactCheckArgs {
@@ -72,6 +74,9 @@ export interface WritingWorkflowCompletion {
 
 export interface WritingWorkflowTools {
   readonly requireEditorialPlan: boolean;
+  prewritingRequired(runId: string): boolean;
+  prewritingApproval(runId: string): PrewritingAssessment | null;
+  pendingPrewritingReturn(runId: string): ArtifactVersion | null;
   revisionCandidates(runId: string): { original: ArtifactVersion; revised: ArtifactVersion; allowOriginal: boolean } | null;
   pendingCheckpoint(runId: string): { stage: string; nextStage: string; markerId: string; requiredArtifactVersionIds: string[] } | null;
   recoverConfirmedBody(runId: string): string | null;
@@ -591,6 +596,7 @@ function markStage(
   if (expectedBodyVersionId !== undefined && project.latestBodyVersionId !== expectedBodyVersionId) {
     throw new ToolExecutionFault('BASE_VERSION_CONFLICT', 'The body changed before the language review could be reconciled.');
   }
+  const rework = storage.listArtifactVersions(context.projectId, 'report', `workflow-invalidated:${context.runId}`).at(-1);
   value(storage.commitArtifactVersion({
     operationId: `${context.operationId}:marker`,
     projectId: context.projectId,
@@ -603,6 +609,9 @@ function markStage(
       runId: context.runId,
       stage,
       artifactVersionId,
+      // A completed rework can legitimately keep the same artifact. Its marker
+      // must not deduplicate to the earlier, invalidated completion record.
+      ...(rework ? { reworkVersionId: rework.id } : {}),
       ...(carriedDecision ? { carriedDecision } : {}),
       ...metadata,
     }),
@@ -818,6 +827,7 @@ function seedCarriedStageMarkers(
 const WRITING_STAGE_SCHEMA = {
   type: "object",
   properties: {
+    prewriting: PREWRITING_JSON_SCHEMA,
     comparison: REVISION_COMPARISON_SCHEMA,
     findings: REVIEW_FINDINGS_SCHEMA,
     resolutions: RESOLUTIONS_JSON_SCHEMA,
@@ -956,6 +966,53 @@ export function createWritingWorkflowTools(options: {
   } = options;
   const continuationEntryStageByRun = new Map<string, WritingWorkflowStage | null>();
   const readyInputsByRun = new Map<string, string>();
+  const prewritingRequired = (runId: string) => stageMarkerLineage(storage, stageMarker(storage, projectId, runId, 'research'))
+    .some(marker => JSON.parse(marker.content).prewritingRequired === true);
+  const prewritingReports = () => storage.listArtifactVersions(projectId, 'report', 'prewriting-assessment');
+  const boundPrewriting = (runId: string) => {
+    const research = stageArtifact(storage, projectId, runId, 'research');
+    const markers = stageMarkerLineage(storage, stageMarker(storage, projectId, runId, 'research')).map(marker => marker.id);
+    const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
+    return prewritingReports().filter(report => { const data = JSON.parse(report.content); return data.schemaVersion === 'prewriting-v1' &&
+      markers.includes(data.researchMarkerId) && data.researchVersionId === research?.id && data.briefVersionId === briefId; });
+  };
+  const prewritingApproval = (runId: string): PrewritingAssessment | null => {
+    const outline = stageArtifact(storage, projectId, runId, 'outline');
+    const report = boundPrewriting(runId).findLast(report => { const data = JSON.parse(report.content); return data.outlineVersionId === outline?.id && data.assessment.decision === 'ready'; });
+    return report ? JSON.parse(report.content).assessment : null;
+  };
+  const pendingPrewritingReturn = (runId: string): ArtifactVersion | null => {
+    if (!prewritingRequired(runId) || prewritingApproval(runId)) return null;
+    const report = boundPrewriting(runId).filter(report => JSON.parse(report.content).assessment.decision !== 'ready').at(-1);
+    if (!report) return null;
+    // A reply permits a new assessment, never a draft or a fabricated approval.
+    if (storage.listRunEvents(runId).some(e => e.type === 'run.resumed' && e.projectSeq > report.createdEventSeq &&
+      e.payload.decision !== 'retry_unknown' && e.payload.preservePendingAssignment !== true)) return null;
+    return report;
+  };
+  const savePrewriting = (context: ToolExecutionContext, assessment: PrewritingAssessment, outlineVersionId: string | null) => {
+    const project = storage.inspectProject(projectId)!;
+    const key = 'prewriting-assessment';
+    const prior = prewritingReports().find(report => report.operationId === `${context.operationId}:prewriting`);
+    if (prior) {
+      const saved = JSON.parse(prior.content);
+      if (saved.outlineVersionId !== outlineVersionId || saved.briefVersionId !== project.currentBriefVersionId ||
+          saved.researchMarkerId !== stageMarker(storage, projectId, context.runId, 'research')?.id ||
+          saved.researchVersionId !== stageArtifact(storage, projectId, context.runId, 'research')?.id || canonicalJson(saved.assessment) !== canonicalJson(assessment)) {
+        throw new ToolExecutionFault('PREWRITING_CONFLICT', 'Prewriting inputs changed; assess the current inputs again.');
+      }
+      return prior;
+    }
+    const saved = value(storage.commitArtifactVersion({ operationId: `${context.operationId}:prewriting`, projectId,
+      expectedProjectRevision: project.revision, kind: 'report', logicalKey: key,
+      baseVersionId: prewritingReports().at(-1)?.id ?? null,
+      content: JSON.stringify({ schemaVersion: 'prewriting-v1', assessmentOperationId: context.operationId,
+        researchVersionId: stageArtifact(storage, projectId, context.runId, 'research')?.id,
+        researchMarkerId: stageMarker(storage, projectId, context.runId, 'research')?.id,
+        briefVersionId: project.currentBriefVersionId, outlineVersionId, assessment }), reason: 'prewriting-assessment',
+      requestSnapshotId: null, actor: actor('outline', context.runId) }));
+    return storage.getArtifactVersion(saved.versionId)!;
+  };
   const reviewFindingsRequired = (runId: string) => Boolean(options.requireEditorialPlan &&
     JSON.parse(stageArtifact(storage, projectId, runId, 'research')?.content ?? '{}').editorialPlan);
   function revisionReturnOwners(runId: string): Set<string> {
@@ -1449,8 +1506,24 @@ export function createWritingWorkflowTools(options: {
           parseEditorialPlan(ledger.editorialPlan, new Set(evidenceIdsFromLedger(JSON.stringify(ledger))));
         } catch (error) {
           throw new ToolExecutionFault('EDITORIAL_PLAN_INVALID', error instanceof Error ? error.message : 'A grounded editorial plan is required', true,
-            { correction: 'Include editorialPlan with 2–3 different angles, selectedAngleId, selectionReason, materialDecisions for every evidence ID, and gaps. Keep an author-fixed direction as the selected angle; alternatives never override it.' });
+            { correction: 'Include editorialPlan with 2–3 different angles, selectedAngleId, selectionReason, materialDecisions for every evidence ID, and gaps. An author-selected hypothesis is not established fact. Record unsupported core premises instead of turning them into a source-criticism article.' });
         }
+      }
+      if (args.prewriting !== undefined && args.stage !== 'outline') throw new ToolExecutionFault('PREWRITING_UNEXPECTED', 'Only the outline editor submits prewriting.');
+      let prewriting: PrewritingAssessment | undefined;
+      if (args.stage === 'outline' && prewritingRequired(context.runId)) {
+        const research = stageArtifact(storage, projectId, context.runId, 'research')!;
+        try { prewriting = parsePrewriting(args.prewriting, research.content, content); }
+        catch (error) { throw new ToolExecutionFault('PREWRITING_INVALID', error instanceof Error ? error.message : 'Prewriting assessment required', true); }
+        if (prewriting.decision !== 'ready') {
+          const report = savePrewriting(context, prewriting, null);
+          readyInputsByRun.delete(context.runId);
+          return { handoff: { kind: 'prewriting_required', reportId: report.id },
+            message: '提纲 Agent 发现当前材料还不能支撑选题，正在安排补查或讨论新的切口。' };
+        }
+      }
+      if (args.stage === 'draft' && prewritingRequired(context.runId) && !prewritingApproval(context.runId)) {
+        throw new ToolExecutionFault('PREWRITING_REQUIRED', 'The bound research and outline must pass the prewriting assessment before drafting. Author confirmation is not evidence.');
       }
       if (args.stage === "central_revision") {
         assertReviewsBoundToDraft(storage, context, mode);
@@ -1491,12 +1564,14 @@ export function createWritingWorkflowTools(options: {
         assertCleanBodyStageContent(args.stage, content, selected?.content ?? (languageSource === null ? undefined : storage.getArtifactVersion(languageSource.artifactVersionId)?.content));
       }
       const artifact = commitStageArtifact(storage, context, args.stage, content, findings);
+      if (prewriting) savePrewriting(context, prewriting, artifact.id);
       if (comparison && candidates) {
         commitRevisionComparison(storage, context, artifact.id, revisionComparisonContent(context.runId, candidates, artifact.id, comparison,
           audit && closure ? { ...audit, reviewVersionIds: closure.reviewVersionIds } : undefined));
       }
       markStage(storage, context, args.stage, artifact.id, undefined, undefined, comparison || resolutions ? artifact.id : undefined,
-        resolutions && closure ? { resolutions, reviewVersionIds: closure.reviewVersionIds } : undefined);
+        { ...(resolutions && closure ? { resolutions, reviewVersionIds: closure.reviewVersionIds } : {}),
+          ...(args.stage === 'research' && options.requireEditorialPlan ? { prewritingRequired: true } : {}) });
       const nextStage = expectedStage(storage, context.projectId, context.runId, mode);
       const awaitingUserConfirmation =
         interactionMode === "co_creation" &&
@@ -1777,6 +1852,9 @@ export function createWritingWorkflowTools(options: {
 
   return {
     requireEditorialPlan: options.requireEditorialPlan ?? false,
+    prewritingRequired,
+    prewritingApproval,
+    pendingPrewritingReturn,
     revisionCandidates,
     reviewClosure,
     reviewFindingsRequired,
@@ -1797,6 +1875,7 @@ export function createWritingWorkflowTools(options: {
     unreadReadinessArtifactIds,
     invalidate(context, stage) {
       const revisionReturn = stage === 'central_revision' ? pendingRevisionReturn(context.runId) : null;
+      const prewritingReturn = stage === 'research' ? pendingPrewritingReturn(context.runId) : null;
       const sequence = workflowStageSequence(mode);
       const affected = sequence.slice(sequence.indexOf(stage));
       const markerIds = affected.flatMap((item) => {
@@ -1809,6 +1888,7 @@ export function createWritingWorkflowTools(options: {
         expectedProjectRevision: project.revision, kind: "report", logicalKey: key,
         baseVersionId: storage.listArtifactVersions(projectId, "report", key).at(-1)?.id ?? null,
         content: JSON.stringify({ markerIds, invalidatedStages: affected,
+          ...(prewritingReturn ? { prewritingReturnId: prewritingReturn.id } : {}),
           ...(revisionReturn ? { revisionReturnId: revisionReturn.id } : {}),
           ...(stage === "central_revision" && project.latestBodyVersionId !== null ? { revisionInput: { bodyVersionId: project.latestBodyVersionId, factCheck: storage.getFactCheckStatus(projectId) } } : {}) }), reason: `workflow-rework:${stage}`,
         requestSnapshotId: null, actor: { kind: "agent", id: "writing-pack/director", runId: context.runId } }));
@@ -1839,6 +1919,11 @@ export function createWritingWorkflowTools(options: {
       return {
         nextStage,
         artifacts: [
+          ...(nextStage === 'research' ? (() => {
+            const invalidation = storage.listArtifactVersions(projectId, 'report', `workflow-invalidated:${runId}`).at(-1);
+            const id = invalidation ? JSON.parse(invalidation.content).prewritingReturnId : null;
+            return typeof id === 'string' ? [{ stage: 'research' as const, artifactVersionId: id }] : [];
+          })() : []),
           ...continuationContextArtifacts(storage, projectId, runId, mode, nextStage, carriedRevisionRepair(runId, nextStage)),
           ...(['central_revision', 'language_review'].includes(nextStage ?? '') ? (() => {
             const closure = reviewClosure(runId);

@@ -31,7 +31,7 @@ export const EDITORIAL_PLAN_INSTRUCTIONS = [
   '随研究台账提交 editorialPlan。在作者立场内比较2–3个具体切口：readerProblem是读者面临的实际困惑或取舍，readerGain是比题目能猜到的常识多知道什么，angle只承诺本文能讲透的一件事。分类、赞成反对各说一遍不自动构成新收获；作者的价值立场不等于有关效果、趋势或机制已经得到证明。',
   '先用实际引文重建claim_text与use_boundary。材料附带的解读、历史台账的适用范围也可能推错，不能照抄当证据。同期比例不能说明前后变化，相关不能确定原因，研究没有测的机制不能补成结论；作者评论和假设只提供思考，不能作事实证明。',
   'selectedAngleId只选择材料真正撑得住的切口。selectionReason说明它比泛谈题目多了什么，以及哪个具体材料使这个判断成立。为每条证据显式填写evidence_id，在materialDecisions逐条use/omit；reason写这条材料实际支持的最小判断，缺哪一步也说明。数字仅与话题相关、却不能推进所选判断时舍弃，不为开头垫数据或凑权威。supportingEvidenceIds只引用存在且use的证据。',
-  '关键支持缺失就直接缩小angle与readerGain，或转为能自洽的概念辨析，不先许下大结论再用免责声明兜底。gaps记录缩小后的边界；无事实材料的个人随笔允许空证据并说明范围。计划仅作内部选题和选材，正文不复制这些字段、边界检查或真假标签。',
+  '用户选中的是待研究方向，不能把助手提出的动机、因果和功能解释当作已证结论。gaps明确写出原题哪些关键前提仍缺支持；有检索能力时围绕它补查。补查仍不支持，就提出待作者选择的新切口，不保留原题承诺却改写成考证、材料分级或查证教程。不要为原题凑满引用：数量、同现、传说流传不能替代功能与因果证据。个人随笔允许空证据，不把个人判断装成外部事实。内部计划和选材说明不进入正文。',
 ].join('\n');
 
 /** Validate references against the actual IDs in the already-expanded research ledger. */

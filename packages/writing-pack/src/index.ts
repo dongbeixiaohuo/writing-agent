@@ -154,7 +154,7 @@ const DEEP_TASKS = Object.freeze([
 
 const GENRE_RULES: Readonly<Record<WritingGenre, string>> = Object.freeze({
   argument_commentary:
-    "争议评论：明确核心判断，认真处理最强反方与适用边界，不把不同意见写成稻草人。",
+    "争议评论：围绕真实分歧形成判断，需要时回应影响结论的异议；人物比较与解释分析按实际问题推进，不预设必须有反方段或分辨方法。",
   explanatory_analysis:
     "解释分析：说明机制、因果边界和读者能带走的新理解，不强行制造敌人。",
   narrative_observation:

@@ -298,7 +298,7 @@ describe("conversation intake", () => {
       const prompt = buildConversationIntakePrompt(
         f.service.getConversationIntake('project-1'), '我看见了，我还在里面。按你的理解走就可以了。',
       );
-      assert.match(prompt.systemPrompt, /用户原话.*创作建议.*推测.*分开/u);
+      assert.match(prompt.systemPrompt, /用户原话.*创作建议.*待查判断.*分开/u);
       assert.match(prompt.systemPrompt, /不能.*一句自述.*额外禁令/u);
       assert.match(prompt.systemPrompt, /不虚构亲历.*不等于.*禁止具体表达/u);
       assert.match(prompt.systemPrompt, /少量观点.*更短/u);
