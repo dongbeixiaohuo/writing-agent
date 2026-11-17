@@ -49,7 +49,8 @@ export function withIntentFixture(provider: ModelProvider, override?: [AuthorInt
 }
 
 /** Existing workflow unit tests issue explicit typed confirmations; they do not test NLP. */
-export function withCheckpointIntent(storage: WritingApplicationStorage, input: ResumeDraftInput): ResumeDraftInput {
+export function withCheckpointIntent(storage: WritingApplicationStorage, input: ResumeDraftInput,
+  decision?: 'approve_checkpoint' | 'revise_checkpoint'): ResumeDraftInput {
   const run = storage.getRun(input.runId)!;
   if (run.stopReason !== 'CO_CREATION_CHECKPOINT') return input;
   input = { ...input, userInstruction: input.userInstruction ?? '继续' };
@@ -57,7 +58,7 @@ export function withCheckpointIntent(storage: WritingApplicationStorage, input: 
   storage.startRun({ projectId: input.projectId, sessionId: run.sessionId, runId: id, planVersion: 'test-semantic-decision', displayInstruction: input.userInstruction! });
   const intent = createConversationIntent({ storage, projectId: input.projectId, sessionId: run.sessionId, userMessage: input.userInstruction!,
     context: {}, allowedIntents: ['approve_checkpoint', 'revise_checkpoint'] });
-  intent.definition.execute({ intent: input.userInstruction === '提纲改成对比结构' ? 'revise_checkpoint' : 'approve_checkpoint',
+  intent.definition.execute({ intent: decision ?? (input.userInstruction === '提纲改成对比结构' ? 'revise_checkpoint' : 'approve_checkpoint'),
     sourceQuote: input.userInstruction!, selectionIndex: null, reason: 'Explicit decision fixture for workflow unit test' }, {
     projectId: input.projectId, runId: id, operationId: `${id}:intent`, abortSignal: new AbortController().signal,
     expectedBodyVersionId: storage.inspectProject(input.projectId)!.latestBodyVersionId, permissionGrant: { permissions: ['author:intent'] } as any,

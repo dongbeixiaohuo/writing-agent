@@ -157,6 +157,18 @@ describe("built-in material and version tools", () => {
     });
   });
 
+  it('keeps a public citation URL beside a retrieved passage', async () => {
+    const sourceReference = 'https://example.org/interview';
+    const registry = ToolRegistry.create(createBuiltinReadTools({ materials: {
+      listMaterials: () => [{ ...material, sourceReference }], getMaterial: () => ({ ...material, sourceReference }),
+    }, versions: { getArtifactVersion: () => null } }));
+    const result = await registry.execute(invocation('public-read', 'read_material', {
+      materialId: material.id, contentVersionId: material.contentVersionId, offset: 0, maxChars: 20,
+    }), executionContext(['material:read']));
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal((result.result as { sourceReference: string }).sourceReference, sourceReference);
+  });
+
   it("does not reveal whether a material belongs to another project", async () => {
     const otherProjectMaterialPort: MaterialReadPort = {
       listMaterials: () => [],

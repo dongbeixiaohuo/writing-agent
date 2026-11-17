@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib';
 import {
   lstatSync,
   mkdirSync,
@@ -411,6 +412,25 @@ describe("web and untrusted-content boundary", () => {
         return true;
       });
     }
+  });
+
+  it('reads publishers that ignore identity encoding without weakening extraction or expanded-byte limits', async () => {
+    const policy = new NetworkAccessPolicy({ resolveHost: async () => ['93.184.216.34'] });
+    const html = '<html><body><script>secret_script()</script><p>可读的中文来源原文。</p></body></html>';
+    for (const [encoding, compress] of [['gzip', gzipSync], ['br', brotliCompressSync], ['deflate', deflateSync]] as const) {
+      const fetcher = new SecureWebFetcher({ policy, maxBytes: 2048,
+        request: async () => ({ status: 200, headers: { 'content-type': 'text/html; charset=utf8', 'content-encoding': encoding }, body: compress(Buffer.from(html)) }) });
+      const result = await fetcher.fetchText('https://public.example/article');
+      assert.match(result.content.text, /可读的中文来源原文/u);
+      assert.doesNotMatch(result.content.text, /secret_script/u);
+      assert.equal(result.content.instructionAuthority, 'none');
+      const oversized = new SecureWebFetcher({ policy, maxBytes: 1024,
+        request: async () => ({ status: 200, headers: { 'content-type': 'text/plain', 'content-encoding': encoding }, body: compress(Buffer.from('x'.repeat(100_000))) }) });
+      await assert.rejects(() => oversized.fetchText('https://public.example/large'), { code: 'WEB_RESPONSE_TOO_LARGE' });
+    }
+    const invalid = new SecureWebFetcher({ policy, request: async () => ({ status: 200,
+      headers: { 'content-type': 'text/html', 'content-encoding': 'gzip' }, body: Buffer.from('not compressed') }) });
+    await assert.rejects(() => invalid.fetchText('https://public.example/broken'), { code: 'WEB_ENCODING_INVALID' });
   });
 
   it("rejects oversized and non-text responses before exposing their bodies", async () => {

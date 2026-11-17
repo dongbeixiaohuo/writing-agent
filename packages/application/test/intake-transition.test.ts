@@ -84,7 +84,7 @@ it('does not manufacture a proposal or approval for a discussion-only semantic d
     const intent = requests.find(request => request.tools?.[0]?.name === 'interpret_author_reply')!;
     const policy = JSON.parse(intent.messages.find(message => message.role === 'user')!.content).intakeTransitionPolicy;
     assert.match(policy, /启发.*开放讨论/u);
-    assert.match(policy, /推荐.*不.*(?:propose_direction|confirm_direction)/u);
+    assert.match(policy, /只要求你推荐一个.*仍用discuss/u);
   });
 });
 

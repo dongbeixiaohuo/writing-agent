@@ -2,7 +2,21 @@ import assert from 'node:assert/strict';
 import { it } from 'node:test';
 import type { ArtifactVersion, MaterialRecord } from '../../writing-core/src/index.js';
 import type { RuntimeEvent } from '../../runtime/session/src/index.js';
-import { publicationReviewSourceSlices } from '../src/publication-review-context.js';
+import { publicationReviewEvidence, publicationReviewSourceSlices } from '../src/publication-review-context.js';
+
+it('keeps provenance and labels analyst caveats without inheriting their claim or editorial plan', () => {
+  const claim = { evidence_id: 'E001', source_quote: '报道仅记录有人提议共同居住，另一方拒绝。',
+    source_title: '当事人采访', source_url: 'https://example.test/source', claim_type: 'interview', reliability: 'medium',
+    verification_status: 'reported', claim_text: '已经实现了统一安排。',
+    use_boundary: '只要注明是报道，就可以用来说明已经实现统一安排。' };
+  const input = JSON.stringify({ claims: [claim], notes: '沿用这个核心解释。', editorialPlan: { angle: '已经统一安排' } });
+  const view = publicationReviewEvidence(input);
+  assert.equal(view.claims[0]!.source_quote, claim.source_quote);
+  assert.equal(view.claims[0]!.reliability, 'medium');
+  assert.equal(view.claims[0]!.analystCaveat, claim.use_boundary);
+  assert.doesNotMatch(JSON.stringify(view), /沿用|editorialPlan|claim_text|use_boundary/u);
+  assert.equal(JSON.parse(input).claims[0].use_boundary, claim.use_boundary, 'the original record remains available in storage');
+});
 
 const runId = 'source-run';
 const reviewContent = '实验只比较特定场景下的采信判断。';

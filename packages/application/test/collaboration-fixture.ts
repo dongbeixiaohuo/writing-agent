@@ -96,10 +96,15 @@ function structuredStageFixtureArgs(state: CollaborationFixtureState, args: Reco
     premises: [{ claim: '作者表达自己的感受。', basis: 'author', evidenceIds: [], explanation: '测试中的作者已提供感受。' }],
     sections: [{ heading: String(args.content).split('\n').find(line => line.trim())!, readerGain: '展开作者的观察。', evidenceIds: [] }],
     reason: '此夹具仅测试流程，语义由真实模型对照另验。', queries: [], questions: [],
+    readerValue: { status: 'substantive', question: '作者看到了什么？', discovery: '作者表达了具体感受。',
+      development: '作者从自己的生活经验出发，说明这个选择为什么让自己感到安静。', evidenceIds: [] },
   } };
   if (state.stage === 'research' && state.editorialPlanRequired) return { ...args, content: plannedResearchContent(args.content) };
   if ((state.stage === 'review_editor' || state.stage === 'review_publish') && state.reviewFindingsRequired) {
-    return { ...args, findings: args.findings === undefined ? [] : args.findings };
+    const body = state.artifacts?.find(a => a.kind === 'body')?.content;
+    return { ...args, findings: args.findings === undefined ? [] : args.findings,
+      ...(state.stage === 'review_editor' && state.readerValueRequired && args.reading === undefined
+        ? { reading: readingFixture(String(body)) } : {}) };
   }
   if (state.stage === 'central_revision' && state.reviewClosure) {
     if (args.resolutions === undefined && state.reviewClosure.findings.length > 0) {
@@ -111,12 +116,20 @@ function structuredStageFixtureArgs(state: CollaborationFixtureState, args: Reco
     if (args.audit === undefined && state.reviewClosure?.findings.length) {
       throw new Error('Fixture with findings must explicitly supply a terminal audit');
     }
+    const audit = args.audit as Record<string, unknown> | undefined;
     return { ...args,
       ...(state.revisionComparison && args.comparison === undefined ? { comparison: revisionComparisonFixture(state, args.content as string) } : {}),
-      ...(state.reviewClosure && args.audit === undefined ? { audit: { checks: [], newFindings: [] } } : {}),
+      ...(state.reviewClosure ? { audit: { ...(audit ?? { checks: [], newFindings: [] }),
+        ...(state.readerValueRequired && audit?.reading === undefined ? { reading: readingFixture(args.content as string) } : {}) } } : {}),
     };
   }
   return null;
+}
+
+export function readingFixture(content: string) {
+  return { verdict: 'delivered', takeaway: '理解作者的选择及其理由。',
+    quote: content.trim().slice(0, 200), reason: '测试夹具只验证判断的传递，不评价真实阅读质量。',
+    repairTarget: '保留现有表达。', queries: [], questions: [] };
 }
 
 export interface CollaborationFixtureState {
@@ -127,6 +140,7 @@ export interface CollaborationFixtureState {
   artifacts?: { id: string; kind: string; content: unknown }[];
   editorialPlanRequired?: boolean;
   prewritingRequired?: boolean;
+  readerValueRequired?: boolean;
   reviewFindingsRequired?: boolean;
   reviewClosure?: { findings: BoundReviewFinding[]; reviewVersionIds: string[]; reportVersionIds: string[]; evidenceIds: string[] };
   revisionReturn?: { reportId: string; bodyVersionId: string };

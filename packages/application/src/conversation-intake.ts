@@ -9,13 +9,14 @@ import {
   type MutationResult,
   type StoragePort,
   type WritingBrief,
+  type WritingBriefVersion,
 } from "../../writing-core/src/index.js";
 import {
   ToolExecutionFault,
   type ToolDefinition,
   type ToolExecutionContext,
 } from "../../runtime/tools/src/index.js";
-import { IDEATION_TOOL_SCHEMA, INTAKE_IDEATION_GUIDANCE, mergeConversationIdeation, readConversationIdeation,
+import { IDEATION_TOOL_SCHEMA, INTAKE_IDEATION_GUIDANCE, mergeConversationIdeation, readConversationIdeation, isDirectionAcknowledgment, selectedDirection,
   type ConversationIdeation, type IdeationInput } from './conversation-ideation.js';
 
 export const CONVERSATION_INTAKE_LOGICAL_KEY = "conversation-intake" as const;
@@ -33,7 +34,7 @@ export interface ConversationSourceTurn {
 export const SELF_MEDIA_LENGTH_GUIDANCE = '主要服务公众号、今日头条等互联网自媒体文章，先考虑平台和普通读者的阅读负担。作者没有特殊篇幅要求时，建议通常1200–3000字，复杂主题也最多5000字左右；素材再长也要收敛核心论点与取舍，不上来推荐8000字或把完整素材改写成长文。篇幅是建议，不冒充用户已确认。作者明确要求更长时尊重其要求，proposal.brief.targetCharactersSourceQuote引用真实长文要求的连续原话；素材原文或你此前的建议不能充当这个授权。';
 
 export const WRITING_DIRECTION_GUIDANCE = [
-  "把用户原话、创作建议和待查判断分开。选题先说要探讨的问题、读者会得到什么、需找什么材料，不把尚未核实的人物动机或因果当成已成立的卖点。用户选中方向只确认探讨意图，不替助手的事实判断背书；材料不支持时应补查或重新讨论切口。constraints只写用户明确要求、真实材料边界及本题必要约束；建议的语气、结构、结尾放在assumptions，不累加禁令。不能从一句自述或一般认可推导额外禁令，已明确确认的具体创作取舍仍须尊重。",
+  "把用户原话、创作建议和待查判断分开。方向未定时先提供3–5个不同切口，等作者选择或明确提出自己的方向。作者选中候选后沿用该方向的原句；自述方向使用topicSourceQuote逐字引用，不加入动机或因果判断。材料不足就在已选方向内补查或换素材。constraints只写用户明确提出的要求，沿用原话；建议的语气、结构、结尾放在assumptions。不能从一句自述或一般认可推导额外禁令。",
   "不虚构亲历不等于禁止具体表达：用户真实表达的判断和感受可以保留；没有具体经历时可用清楚的概念区分、可辨认的行为描述或假设情境，不把示例冒充作者经历或现实事实。假设用‘如果’‘设想’等句式自然表达即可，不生成要求在正文加‘说明性假设，不是真事’括注的约束。来源类型和核查方法属于内部记录，不升级为作者要求逐段写免责声明。不强迫每篇都有故事、方法论或积极结尾。",
   "少量观点只够支撑一篇短文时，建议更短，不为通常篇幅下限补同义句、比喻和反复自剖。约多少字是目标，不是填满配额；没有新材料、新分析或新的阅读收获就不扩写。用户明确要求的硬性篇幅仍须尊重，确实无法兼顾时说明冲突，不悄悄改要求。",
 ].join('\n');
@@ -170,6 +171,7 @@ const PROPOSAL_PREFERENCES_TOOL_SCHEMA = {
   type: "object",
   properties: {
     topic: { type: "string", minLength: 1 },
+    topicSourceQuote: { type: "string", minLength: 1, description: "作者自述方向时，填写作者原消息中逐字连续的方向短句。选择给出的候选时由程序绑定候选原文，省略此字段。" },
     genre: {
       type: "string",
       enum: [
@@ -577,6 +579,20 @@ export function getConversationIntakeState(
     sessionId: persisted?.sessionId ?? null,
     stateArtifactVersionId: stateVersion?.id ?? null,
   };
+}
+
+/** Keep older conversation briefs usable without treating assistant expansions as author wording. */
+export function confirmedWritingDirection(storage: StoragePort, projectId: string, version: WritingBriefVersion | null) {
+  if (version?.brief.confirmationStatus !== 'confirmed') return undefined;
+  const { topic, materialIds } = version.brief;
+  if (!['conversation-user', 'conversation-intake'].includes(version.actor.id)) return topic;
+  const originals = storage.listMaterials(projectId)
+    .filter(material => materialIds.includes(material.id) && material.id.startsWith('intake-user-') && !isDirectionAcknowledgment(material.content))
+    .map(material => material.content);
+  if (!originals.length || originals.some(text => text.includes(topic))) return topic;
+  const intake = getConversationIntakeState(storage, projectId);
+  if (intake.proposalVersionId === version.id && intake.ideation?.directions.includes(topic)) return topic;
+  return originals.findLast(text => topic.includes(text)) ?? originals.join('\n');
 }
 
 export function saveConversationUserTurn(input: {
@@ -990,6 +1006,7 @@ export function createConversationIntakeTool(input: {
   readonly expectedStateArtifactVersionId: string | null;
   readonly expectedProposalVersionId: string | null;
   readonly interpretedIntent?: () => string | null;
+  readonly directionSelectionIndex?: () => number | null | undefined;
   readonly proposalSourceDisclosure?: () => string;
 }): ConversationIntakeTool {
   const responses = new Map<string, IntakeToolResponse>();
@@ -1113,6 +1130,15 @@ export function createConversationIntakeTool(input: {
       const ideation = args.ideation
         ? mergeConversationIdeation(previous.ideation, args.ideation, ideationSource!.materialId)
         : previous.ideation ?? null;
+      if (args.ideation?.directions.length) {
+        const directions = ideation!.directions;
+        if (directions.length < 3 || directions.length > 5 || args.ideation.directions.some(direction => !direction.trim())
+          || args.proposal != null || args.confirmation != null) {
+          throw new ToolExecutionFault('INTAKE_DIRECTION_OPTIONS_INVALID', '方向未定时请单独给出3–5个不同的方向，等作者选择后再保存方案。');
+        }
+        reply += '\n\n' + directions.map((direction, index) => `${index + 1}. ${direction}`).join('\n') +
+          '\n\n你可以选一个编号，也可以直接说想写哪个方向。';
+      }
       let phase = previous.phase;
       let proposalVersionId = previous.proposalVersionId;
       let invalidatedProposalVersionId = previous.invalidatedProposalVersionId;
@@ -1154,6 +1180,23 @@ export function createConversationIntakeTool(input: {
           throw new ToolExecutionFault("INTAKE_BRIEF_INVALID", "Proposed writing preferences are invalid");
         }
         const fields = preferences as Record<string, unknown>;
+        const choices = previous.phase === 'collecting' && previous.sessionId === input.sessionId ? previous.ideation?.directions ?? [] : [];
+        const chosenIndex = input.directionSelectionIndex?.();
+        const choice = selectedDirection(input.currentUserMessage, choices) ??
+          (chosenIndex == null ? undefined : choices[chosenIndex - 1]);
+        const proposedTopic = typeof fields.topic === 'string' ? fields.topic.trim() : '';
+        const topicQuote = typeof fields.topicSourceQuote === 'string' ? fields.topicSourceQuote.trim() : proposedTopic;
+        const authorDirection = choice ?? (topicQuote && (choices.length
+          ? input.currentUserMessage.includes(topicQuote) : turns.some(turn => turn.quote.includes(topicQuote))) ? topicQuote : undefined);
+        if ((choices.length && isDirectionAcknowledgment(input.currentUserMessage)) ||
+            (!authorDirection && (choices.length > 0 || fields.topicSourceQuote !== undefined))) {
+          throw new ToolExecutionFault('INTAKE_DIRECTION_NOT_SELECTED',
+            '请按作者明确选中的方向保存。若作者另提了方向，用topicSourceQuote逐字引用作者的话。');
+        }
+        const constraints = authorDirection && Array.isArray(fields.constraints)
+          ? fields.constraints.filter((value): value is string =>
+            typeof value === 'string' && Boolean(value.trim()) && turns.some(turn => turn.quote.includes(value.trim())))
+          : fields.constraints;
         // Normalize only representation, never infer facts, permissions, or confirmation.
         const target = typeof fields.targetCharacters === "string" && /^[1-9][0-9]{0,6}$/u.test(fields.targetCharacters)
           ? Number(fields.targetCharacters) : fields.targetCharacters;
@@ -1197,8 +1240,8 @@ export function createConversationIntakeTool(input: {
           proposedStyleReference,
         );
         const parsed = WritingBriefSchema.safeParse({
-          schemaVersion: 1, topic: fields.topic, genre: fields.genre, audience: fields.audience,
-          lengthTarget: { targetCharacters: target }, constraints: fields.constraints,
+          schemaVersion: 1, topic: authorDirection ?? fields.topic, genre: fields.genre, audience: fields.audience,
+          lengthTarget: { targetCharacters: target }, constraints,
           materialIds: [], interactionMode: "co_creation", confirmationStatus: "tentative",
           authorAuthorization: { voice: optionalPreference(fields.voice), styleReference: proposedStyleReference,
             styleDecision: "unspecified", directionDecision: "tentative", firsthandMaterialIds: [] },
@@ -1263,6 +1306,9 @@ export function createConversationIntakeTool(input: {
           args.proposal.assumptions,
           proposedAuthorization,
         );
+        if (authorDirection) {
+          reply = `待你确认的写作方案（尚未开始写作）：\n\n${effectiveSummary}${sourceDisclosure ? `\n\n${sourceDisclosure}` : ''}`;
+        }
       } else if (args.confirmation != null) {
         if (
           previous.phase !== "proposal" ||

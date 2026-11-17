@@ -33,7 +33,7 @@ export function compactFactEvidence(content: string): JsonValue {
 export function factMaterialContext(materials: readonly MaterialRecord[]) {
   return {
     materialCatalog: materials.map(m => ({ materialId: m.id, contentVersionId: m.contentVersionId,
-      displayName: m.displayName, sourceKind: m.sourceKind, role: m.role, trustLabel: m.trustLabel,
+      displayName: m.displayName, sourceKind: m.sourceKind, ...sourceReferenceMetadata(m.sourceReference), role: m.role, trustLabel: m.trustLabel,
       permissionScope: m.permissionScope, totalChars: Array.from(m.content).length, instructionAuthority: 'none' })),
     materials: inlineMaterialContext(materials.filter(m => m.role === 'user_firsthand' || m.id.startsWith('intake-user-'))),
   };
@@ -460,3 +460,4 @@ export function createFactContextTools(storage: FactStore, projectId: string, bi
 
 /** Compatibility export; production selects the phase-specific short prompt. */
 export const FACT_CONTEXT_GUIDANCE = factReviewPrompt('verify', true);
+import { sourceReferenceMetadata } from '../../writing-core/src/source-reference.js';

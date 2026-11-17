@@ -149,13 +149,11 @@ test('outlining and drafting see only the selected angle and selected claims, wi
   for (const actor of ['central_revision', 'language_review', 'fact_check']) {
     const table = stageArtifactContext(actor, [plannedEvidence]).artifacts[0]!.content as { claimFields: string[]; claimRows: string[][]; editorialPlan?: unknown };
     assert.deepEqual(table.claimRows.map(row => row[table.claimFields.indexOf('evidence_id')]), ['E001', 'E002'], actor);
-    assert.deepEqual(table.editorialPlan, actor === 'central_revision'
-      ? { ...editorialPlan, angles: [editorialPlan.angles[0]], materialDecisions: [editorialPlan.materialDecisions[0]] }
-      : undefined, actor);
+    assert.equal(table.editorialPlan, undefined, actor);
   }
   const revisionDirector = stageArtifactContext('director', [plannedEvidence], { directorStage: 'central_revision' }).artifacts[0]!.content as { editorialPlan: unknown };
   const languageDirector = stageArtifactContext('director', [plannedEvidence], { directorStage: 'language_review' }).artifacts[0]!.content as { editorialPlan?: unknown };
-  assert.deepEqual(revisionDirector.editorialPlan, { ...editorialPlan, angles: [editorialPlan.angles[0]], materialDecisions: [editorialPlan.materialDecisions[0]] });
+  assert.equal(revisionDirector.editorialPlan, undefined, 'do not reissue the old research interpretation as a revision requirement');
   assert.equal(languageDirector.editorialPlan, undefined);
   const revision = stageArtifactContext('central_revision', [plannedEvidence]);
   assert.deepEqual(revision.completeArtifacts, [], 'a projected plan is not equivalent to the original evidence artifact');

@@ -28,6 +28,32 @@ import { getPublicationCandidates, choosePublicationCandidate } from '../src/pub
 const user = { kind: "user", id: "user-1" } as const;
 
 describe("workflow body output contract", () => {
+  it("rejects editorial source caveats in reading-first prose while retaining factual attribution and useful analysis", () => {
+    const caveats = [
+      '这是一则后人记述，细节未必都能核实，尤其不能据此猜测那位女子的想法。',
+      '这是一则后人转述的轶事，细节很难逐一核实。女子本人如何想，记述里没有留下。',
+      '这个细节不能告诉我们每位姨太太当时的感受。',
+      '这段回忆不能直接用来判断胡雪岩的妻妾当年各自过得如何。',
+      '至于参与者当时如何感受，材料没有给出可靠答案。',
+      '这个数字是否完全属实，很难仅凭这一条材料断定。',
+      '马斯克公开谈论生育，但不能据此说，胡雪岩也把多生孩子表述为人口目标。',
+      '不能把她经历的所有家庭矛盾都算在曾祖父头上。',
+      '不能把后代遭遇的每一次困难都算到他的妻妾生活头上。',
+      '胡雪岩的大家庭处在另一种社会秩序里，但不能因此认定他纳妾就是为了执行一套生育计划。',
+      '这些经历发生在胡雪岩去世多年之后，不能把后辈遭遇的每一处困难都算作他个人选择的结果。',
+    ];
+    for (const caveat of caveats) assert.throws(() => assertCleanBodyStageContent('draft', `# 标题\n\n${caveat}`, undefined, true),
+      (error: any) => error.code === 'BODY_STAGE_CONTAINS_EDITORIAL_CAVEATS');
+    assert.throws(() => assertCleanBodyStageContent('draft', `# 标题\n\n${caveats.at(-2)}\n\n${caveats.at(-1)}`, undefined, true),
+      (error: any) => error.details.quotes.length === 2 && error.details.quotes.some((quote: string) => quote.includes('不能因此认定'))
+        && error.details.quotes.some((quote: string) => quote.includes('算作')));
+    const article = '# 标题\n\n马叙伦在《石屋续沈》中记载，胡雪岩留下银两，此后每月供给。\n\n双方讨论的是同一个孩子，却未必在解决同一个问题。';
+    assert.doesNotThrow(() => assertCleanBodyStageContent('draft', article, undefined, true));
+    assert.doesNotThrow(() => assertCleanBodyStageContent('draft',
+      '# 标题\n\n原有的经济来源难以维持，胡筱梅的母亲为子女学费发愁，曾告诉她，如果有人必须停学，只能是她。', undefined, true),
+    'ordinary narrative difficulty and speech are not editorial caveats');
+    assert.doesNotThrow(() => assertCleanBodyStageContent('draft', `# 标题\n\n${caveats[0]}`), 'legacy workflows retain their existing contract');
+  });
   it("preserves the bound article structure during minimal language polishing", () => {
     const baseline = "# 安静\n\n## 清晨\n\n窗边的光缓慢移动。".repeat(12);
     assert.throws(() => assertCleanBodyStageContent("language_review", "# 安静\n\n这篇文章很好。", baseline), /complete article/u);

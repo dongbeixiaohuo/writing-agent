@@ -807,7 +807,9 @@ export class WritingApplicationService {
     // At most five 20k-character reads cover one saved article's 100k text cap.
     const materialReadBudget = authorizedUrls.length || materialCatalogue().length ? 5 : 0;
     const intent = state.phase === 'proposal' || state.assistantTurns.length > 0 ? createConversationIntent({ storage: this.#storage, projectId, sessionId,
-      userMessage: userInstruction, context: state, allowedIntents: state.phase === 'proposal'
+      userMessage: userInstruction, context: state,
+      directionCandidates: state.phase === 'collecting' && state.sessionId === sessionId ? state.ideation?.directions ?? [] : [],
+      allowedIntents: state.phase === 'proposal'
         ? ['confirm_direction', 'revise_direction', 'discuss'] : ['propose_direction', 'discuss'] }) : null;
     const intake = createConversationIntakeTool({
       storage: this.#storage,
@@ -817,6 +819,7 @@ export class WritingApplicationService {
       get expectedStateArtifactVersionId() { return state.stateArtifactVersionId; },
       get expectedProposalVersionId() { return state.proposalVersionId; },
       interpretedIntent: () => intent?.result()?.intent ?? null,
+      directionSelectionIndex: () => intent?.result()?.selectionIndex,
       proposalSourceDisclosure: () => {
         const pending = authorizedUrls.filter(url => !sourceOutcomes.has(url));
         const batchFull = sourceOutcomes.size >= 3 || [...sourceOutcomes.values()].includes('deferred');

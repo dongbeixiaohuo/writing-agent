@@ -27,7 +27,7 @@ class ConversationalProvider extends ImmediateWorkflowProvider {
     const intent = intentFixtureEvents(request);
     if (intent) { yield* intent; return; }
     this.requests.push(request);
-    if (request.tools.some(tool => tool.name === 'respond_writing_intake')) {
+    if (request.tools?.some(tool => tool.name === 'respond_writing_intake')) {
       if (request.messages.some(message => message.role === 'tool')) {
         yield { type: 'text_delta', delta: '这轮交流已保存。' };
         yield { type: 'completed', finishReason: 'stop' };

@@ -109,12 +109,15 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
       editorialPlanRequired?: boolean;
       reviewFindingsRequired?: boolean;
       prewritingRequired?: boolean;
+      readerValueRequired?: boolean;
       reviewClosure?: { findings: readonly unknown[] };
       revisionReturn?: { reportId: string; bodyVersionId: string };
       revisionComparison?: { originalVersionId: string; revisedVersionId: string };
       artifacts?: Array<{ id: string; content: string }>;
     };
     const expert = collaboration !== null && collaboration.actor !== "director";
+    const reading = (article: string) => ({ verdict: 'delivered', takeaway: '理解作者的散步感受。',
+      quote: article.trim().slice(0, 200), reason: '离线流程演示，不评价真实文章质量。', repairTarget: '保留当前合成文本。', queries: [], questions: [] });
     if (collaboration?.stage === 'research' && collaboration.editorialPlanRequired) {
       yield { type: 'tool_call_delta', index: 0, id: `mock-research-${request.requestId}`, name: 'submit_writing_stage',
         argumentsDelta: JSON.stringify({ stage: 'research', content: { sources: [], claims: [], notes: '离线合成材料，仅测试流程。',
@@ -135,7 +138,8 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
           selectedVersionId: binding.revisedVersionId, reason: '保留当前合成稿，离线测试不评估文采。',
           gains: original === revised ? [] : [{ before: original.slice(0, 500), after: revised.slice(0, 500), why: '离线合成版本差异' }],
           losses: [], retainedQuotes: [],
-        }, ...(collaboration.reviewClosure ? { audit: { checks: [], newFindings: [] } } : {}) };
+        }, ...(collaboration.reviewClosure ? { audit: { checks: [], newFindings: [],
+          ...(collaboration.readerValueRequired ? { reading: reading(revised) } : {}) } } : {}) };
       const native = request.tools?.some(t => t.name === 'submit_writing_stage');
       yield native ? { type: 'tool_call_delta', index: 0, id: `mock-comparison-${request.requestId}`, name: 'submit_writing_stage',
         argumentsDelta: JSON.stringify({ stage: 'language_review', ...output }) } : { type: 'text_delta', delta: JSON.stringify(output) };
@@ -242,9 +246,19 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
     ];
     const next = expert ? stages.find(([stage]) => stage === collaboration.stage) : stages[submittedStages.length];
     if (next !== undefined) {
+      const prewriting = next[0] === 'outline' && collaboration?.prewritingRequired ? {
+        decision: 'ready', promise: '整理作者给出的散步感受。', readerPayoff: '理解这次观察。',
+        readerValue: { status: 'substantive', question: '散步带来什么感受？', discovery: '日常散步可以让人注意到环境。',
+          development: '散步放慢了节奏，让作者听见平时没有留意的声音，获得片刻安静。', evidenceIds: [] },
+        premises: [{ claim: '作者表达自己的感受。', basis: 'author', evidenceIds: [], explanation: '离线演示仅使用授权的个人材料。' }],
+        sections: [{ heading: '结构', readerGain: '按材料展开观察。', evidenceIds: [] }],
+        reason: '离线确定性演示，不代表真实语义评估。', queries: [], questions: [],
+      } : undefined;
       if (expert && next[0] !== 'research' && !request.tools?.some(t => t.name === 'submit_writing_stage')) {
-        yield { type: 'text_delta', delta: (next[0] === 'review_editor' || next[0] === 'review_publish') && collaboration?.reviewFindingsRequired
-          ? JSON.stringify({ content: next[1], findings: [] })
+        yield { type: 'text_delta', delta: prewriting ? JSON.stringify({ content: next[1], prewriting })
+          : (next[0] === 'review_editor' || next[0] === 'review_publish') && collaboration?.reviewFindingsRequired
+          ? JSON.stringify({ content: next[1], findings: [], ...(next[0] === 'review_editor' && collaboration.readerValueRequired
+            ? { reading: reading(this.draftTemplate.replaceAll("{{material}}", materialContent)) } : {}) })
           : next[0] === 'central_revision' && collaboration?.reviewClosure ? JSON.stringify({ content: next[1], resolutions: [] })
           : next[0] === 'language_review' && collaboration?.reviewClosure ? JSON.stringify({ content: next[1], audit: { checks: [], newFindings: [] } }) : next[1] };
         yield { type: 'completed', finishReason: 'stop' }; return;
@@ -255,13 +269,10 @@ class DeterministicWritingMockProvider extends ModelProviderBase {
         id: `mock-stage-${next[0]}`,
         name: "submit_writing_stage",
         argumentsDelta: JSON.stringify({ stage: next[0], content: next[1],
-          ...(next[0] === 'outline' && collaboration?.prewritingRequired ? { prewriting: {
-            decision: 'ready', promise: '整理作者给出的散步感受。', readerPayoff: '理解这次观察。',
-            premises: [{ claim: '作者表达自己的感受。', basis: 'author', evidenceIds: [], explanation: '离线演示仅使用授权的个人材料。' }],
-            sections: [{ heading: '结构', readerGain: '按材料展开观察。', evidenceIds: [] }],
-            reason: '离线确定性演示，不代表真实语义评估。', queries: [], questions: [],
-          } } : {}),
+          ...(prewriting ? { prewriting } : {}),
           ...((next[0] === 'review_editor' || next[0] === 'review_publish') && collaboration?.reviewFindingsRequired ? { findings: [] } : {}),
+          ...(next[0] === 'review_editor' && collaboration?.readerValueRequired
+            ? { reading: reading(this.draftTemplate.replaceAll("{{material}}", materialContent)) } : {}),
           ...(next[0] === 'central_revision' && collaboration?.reviewClosure ? { resolutions: [] } : {}),
           ...(next[0] === 'language_review' && collaboration?.reviewClosure ? { audit: { checks: [], newFindings: [] } } : {}),
         }),

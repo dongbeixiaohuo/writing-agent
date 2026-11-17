@@ -11,6 +11,7 @@ import { buildExpertInstructions } from '../../writing-pack/src/expert-instructi
 import { savePublicationCandidates, choosePublicationCandidate, publicationSelectionIndex } from '../src/publication-choice.js';
 import { withIntentFixture } from './intent-fixture.js';
 import { getApprovedAuthorPreferences } from '../src/author-preferences.js';
+import { authorConversationHistory } from '../src/author-conversation.js';
 
 class AuthorProvider extends ModelProviderBase {
   requests: ModelRequest[] = [];
@@ -61,6 +62,27 @@ function setup(provider: AuthorProvider) {
   return { storage, service, close() { storage.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 const input = (userInstruction: string) => ({ projectId: 'p', sessionId: 'conversation', model: 'mock', parameters: {}, userInstruction });
+
+it('keeps the clarification question with its answer without borrowing questions from another session', () => {
+  const f = setup(new AuthorProvider([]));
+  try {
+    for (const sessionId of ['conversation', 'other']) {
+      f.storage.createSession({ projectId: 'p', sessionId, purpose: 'writing-pack:author-conversation' });
+      f.storage.startRun({ projectId: 'p', sessionId, runId: `ask-${sessionId}`, planVersion: 'test', purpose: 'writing-pack:draft' });
+      f.storage.pauseRun({ projectId: 'p', runId: `ask-${sessionId}`, operationId: `pause-${sessionId}`, reason: 'WRITING_INPUT_REQUIRED', payload: {
+        questions: [sessionId === 'conversation' ? '比较具体安排，还是推断商业动机？' : '另一篇是否采用第二个标题？'] } });
+    }
+    f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'answer', planVersion: 'test',
+      purpose: 'writing-pack:author-conversation', displayInstruction: '看具体安排和代价。' });
+    f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'later', planVersion: 'test',
+      purpose: 'writing-pack:author-conversation', displayInstruction: '继续。' });
+    const history = authorConversationHistory(f.storage, 'p', 'conversation');
+    assert.deepEqual(history.find(h => h.content === '看具体安排和代价。'), {
+      sequence: history[0]!.sequence, role: 'user', content: '看具体安排和代价。', inReplyTo: ['比较具体安排，还是推断商业动机？'] });
+    assert.equal('inReplyTo' in history.at(-1)!, false, 'a question belongs only to the actual reply');
+    assert.doesNotMatch(JSON.stringify(history), /另一篇/u);
+  } finally { f.close(); }
+});
 
 it('keeps inspiration for a stuck ending scoped to the saved article, without restarting topic selection or writing', async () => {
   const provider = new AuthorProvider([{ name: 'respond_author', args: { reply: '结尾可以回到开头那份安静，也可以停在一个观察上。你更想留哪种余味？' } }]);

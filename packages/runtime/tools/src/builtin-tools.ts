@@ -4,6 +4,7 @@ import type {
   MaterialRecord,
   MaterialTrustLabel,
 } from "../../../writing-core/src/index.js";
+import { sourceReferenceMetadata } from '../../../writing-core/src/source-reference.js';
 import {
   ToolExecutionFault,
   type ToolDefinition,
@@ -171,6 +172,7 @@ export function createBuiltinReadTools(
         materialId: material.id,
         contentVersionId: material.contentVersionId,
         content,
+        ...sourceReferenceMetadata(material.sourceReference),
         offset: args.offset,
         nextOffset,
         totalChars: characters.length,
