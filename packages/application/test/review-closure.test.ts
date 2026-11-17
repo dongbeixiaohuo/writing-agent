@@ -3,7 +3,7 @@ import test from 'node:test';
 import { Ajv } from 'ajv';
 import {
   JSON_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA,
-  parseReviewResolutions, parseRevisionAudit, validateReviewFindings, type ReviewFinding,
+  parseReadingAssessment, parseReviewResolutions, parseRevisionAudit, validateReviewFindings, validateColdReviewFindings, type ReviewFinding,
 } from '../src/review-closure.js';
 
 const oldAttribution = '用了 AI 的员工普遍更难被主管信任。';
@@ -22,6 +22,14 @@ const findings: ReviewFinding[] = [
   { quote: authorView, kind: 'reader_value', severity: 'suggestion', issue: '可能和下一段重复。', repairTarget: '确认这句话是否有独立作用。', evidenceIds: [] },
 ];
 const bound = findings.map((finding, index) => ({ ...finding, id: `review-a:${index + 1}`, bodyVersionId: 'draft-v1', reviewVersionId: 'review-a' }));
+test('blind reading cannot declare the unseen research insufficient or silently discard its reading objection', () => {
+  const reading = { verdict: 'revise', takeaway: '还没有具体收获。', quote: authorView, reason: '此段只重复题目。',
+    repairTarget: '展开一个具体安排及它与读者判断的联系。', queries: [], questions: [] };
+  const parsed = parseReadingAssessment(reading, draft, 'REVIEW_FINDINGS_INVALID', true);
+  assert.equal(validateColdReviewFindings([], draft, parsed)[0]!.severity, 'required');
+  assert.throws(() => parseReadingAssessment({ ...reading, verdict: 'research', queries: ['补查'], questions: ['改题？'] }, draft, 'REVIEW_FINDINGS_INVALID', true));
+  assert.throws(() => validateColdReviewFindings([{ ...findings[2], recovery: { route: 'research', queries: ['补查'], questions: ['改题？'] } }], draft));
+});
 const resolutions = [
   { findingId: 'review-a:1', action: 'rewrite', afterQuote: newAttribution, reason: '恢复实验测量对象。' },
   { findingId: 'review-a:2', action: 'rewrite', afterQuote: newInference, reason: '保留同期观察，删除时间变化推论。' },
@@ -34,6 +42,47 @@ const checks = [
   { findingId: 'review-a:3', verdict: 'resolved', quote: null, reason: '备注已删除。' },
   { findingId: 'review-a:4', verdict: 'not_applicable', quote: authorView, reason: '同意修订者保留作者自己的判断。' },
 ];
+
+test('a negative cold-reading verdict becomes a required repair even when the editor omitted findings', () => {
+  const reading = parseReadingAssessment({ verdict: 'revise', takeaway: '只是重复题目，没有解释原因。',
+    quote: authorView, reason: '正文没有展开为什么担责能影响信任。', repairTarget: '展开一个有依据的具体区别。', queries: [], questions: [] }, draft);
+  const actual = validateReviewFindings([], draft, evidenceIds, reading);
+  assert.equal(actual.length, 1);
+  assert.equal(actual[0]!.severity, 'required');
+  assert.equal(actual[0]!.kind, 'reader_value');
+  const boundValue = [{ ...actual[0]!, id: 'value:1', bodyVersionId: 'draft', reviewVersionId: 'value' }];
+  const trimmed = '没有观点的正文';
+  assert.equal(parseReviewResolutions([{ findingId: 'value:1', action: 'remove', afterQuote: null, reason: '删掉重复句。' }], boundValue, trimmed).length, 1);
+  const audit = parseRevisionAudit({ checks: [{ findingId: 'value:1', verdict: 'resolved', quote: null, reason: '旧句已删除。' }],
+    newFindings: [], reading: { ...reading, quote: trimmed } }, boundValue, trimmed, evidenceIds, trimmed, true);
+  assert.equal(audit.requiresRevision, true, 'deleting an anchor cannot overrule the final assessment of the whole article');
+  assert.throws(() => parseReadingAssessment({ ...reading, quote: '不存在的好句子' }, draft), /actual article/);
+  assert.throws(() => parseReadingAssessment({ ...reading, verdict: 'research' }, draft), /focused research/);
+});
+
+test('a failed whole-article reading carries its unmet objective even when the quoted moment is praised', () => {
+  const reading = { verdict: 'revise', takeaway: '第一段有吸引力，后面只是重复。', quote: oldAttribution,
+    reason: '这一句让我愿意继续读。', repairTarget: '后续段落要展开具体材料，使读者获得开头没有的认识。', queries: [], questions: [] };
+  const assessment = parseReadingAssessment(reading, draft);
+  const [finding] = validateReviewFindings([], draft, evidenceIds, assessment);
+  assert.equal(finding!.issue, reading.repairTarget);
+  assert.equal(finding!.kind, 'reader_value');
+  assert.equal(finding!.severity, 'required');
+  assert.notEqual(finding!.issue, reading.reason);
+});
+
+test('terminal review cannot pass a factually repaired article with no reading payoff', () => {
+  assert.throws(() => parseRevisionAudit({ checks, newFindings: [] }, bound, revision, evidenceIds, revision, true), /reading payoff/);
+  const reading = { verdict: 'research', takeaway: '纠正了口径，但没有回答作者原问题。', quote: newInference,
+    reason: '关于关系价值的核心判断仍无材料。', repairTarget: '补查可解释关系作用的事实。',
+    queries: ['关系 职业机会 原始研究'], questions: ['如果补查仍不支持，原问题中你最想保留哪一层？'] };
+  const result = parseRevisionAudit({ checks, newFindings: [], reading }, bound, revision, evidenceIds, revision, true);
+  assert.equal(result.requiresRevision, true);
+  assert.equal(result.newFindings[0]!.recovery?.route, 'research');
+  assert.deepEqual(result.newFindings[0]!.recovery?.queries, reading.queries);
+  assert.throws(() => parseRevisionAudit({ checks, newFindings: [], reading: { ...reading, verdict: 'delivered' } },
+    bound, revision, evidenceIds, revision, true), /Unresolved research/);
+});
 
 test('the tool schema accepts bound attribution, inference and process-note reports without model-assigned IDs', () => {
   const ajv = new Ajv();

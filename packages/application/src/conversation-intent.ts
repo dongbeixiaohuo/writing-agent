@@ -4,6 +4,7 @@ import type { JsonValue, StoragePort } from '../../writing-core/src/index.js';
 import type { SessionStore } from '../../runtime/session/src/index.js';
 import { stageMarker } from './workflow-tools.js';
 import type { WritingWorkflowStage } from '../../writing-pack/src/index.js';
+import { isDirectionAcknowledgment, selectedDirection } from './conversation-ideation.js';
 
 export const AUTHOR_INTENTS = ['approve_checkpoint', 'revise_checkpoint', 'confirm_direction', 'revise_direction', 'propose_direction',
   'select_title', 'clarify_title_selection', 'generate_titles', 'plan_illustrations', 'confirm_illustrations', 'fact_check', 'defer_fact_check', 'full_writing', 'remember_preference', 'forget_preferences', 'discuss'] as const;
@@ -33,11 +34,14 @@ export function pendingCheckpoint(storage: IntentStorage, projectId: string, ses
 /** Language interpretation is model-owned; identity, scope, versions and single-use handoff are runtime-owned. */
 export function createConversationIntent(options: {
   storage: IntentStorage; projectId: string; sessionId: string | undefined; userMessage: string;
-  context: unknown; allowedIntents: readonly AuthorIntent[]; decisionSource?: 'explicit_checkpoint_button';
+  context: unknown; allowedIntents: readonly AuthorIntent[]; directionCandidates?: readonly string[];
+  decisionSource?: 'explicit_checkpoint_button';
 }) {
   const { storage, projectId, userMessage } = options;
   const project = storage.inspectProject(projectId)!;
   const checkpoint = pendingCheckpoint(storage, projectId, options.sessionId);
+  const directions = options.directionCandidates ?? [];
+  const exactDirection = selectedDirection(userMessage, directions);
   let resolved: (ReplyIntent & { artifactVersionId: string }) | null = null;
   const definition = {
     name: 'interpret_author_reply', version: '1.0.0', effect: 'local_idempotent', permissions: ['author:intent'],
@@ -45,17 +49,23 @@ export function createConversationIntent(options: {
     inputSchema: { type: 'object', properties: {
       intent: { type: 'string', enum: [...options.allowedIntents] },
       sourceQuote: { type: 'string', minLength: 1, description: 'Legacy optional echo. The application binds the complete current author message.' },
-      selectionIndex: { type: ['integer', 'null'], minimum: 1, maximum: 6, description: 'Only select_title needs the 1-based candidate index. Omit for all other intents; do not invent a default index.' }, reason: { type: 'string', minLength: 1, maxLength: 1200 },
+      selectionIndex: { type: ['integer', 'null'], minimum: 1, maximum: 6, description: '选标题或明确选中一个现有写作方向时填写从1开始的编号。自述方向或没有明确选择时省略。' }, reason: { type: 'string', minLength: 1, maxLength: 1200 },
     }, required: ['intent', 'reason'], additionalProperties: false },
     execute(args, context) {
       // The model decides semantics only. Provenance is always the exact input
       // already held by the application, never a model-repeated quotation.
       args = { ...args, sourceQuote: userMessage, selectionIndex: args.selectionIndex ?? null };
+      if (exactDirection && options.allowedIntents.includes('propose_direction')) {
+        args = { ...args, intent: 'propose_direction', selectionIndex: directions.indexOf(exactDirection) + 1 };
+      } else if (directions.length && isDirectionAcknowledgment(userMessage)) {
+        args = { ...args, intent: 'discuss', selectionIndex: null };
+      }
       if (resolved) throw new ToolExecutionFault('INTENT_ALREADY_RESOLVED', 'One interpretation per author reply');
       if (!options.allowedIntents.includes(args.intent))
         throw new ToolExecutionFault('INTENT_NOT_ALLOWED', 'The interpreted intent is not allowed in the current conversation state');
-      if ((args.intent === 'select_title') !== (args.selectionIndex !== null))
-        throw new ToolExecutionFault('INTENT_SELECTION_INVALID', 'Only an unambiguous selection of one displayed title may have selectionIndex');
+      if (args.intent === 'select_title' ? args.selectionIndex === null
+        : args.selectionIndex !== null && (args.intent !== 'propose_direction' || !directions[args.selectionIndex! - 1]))
+        throw new ToolExecutionFault('INTENT_SELECTION_INVALID', '只有明确选中一条已显示的标题或方向时才填写对应编号。');
       const current = storage.inspectProject(projectId)!;
       if (current.latestBodyVersionId !== project.latestBodyVersionId || current.currentBriefVersionId !== project.currentBriefVersionId ||
         JSON.stringify(pendingCheckpoint(storage, projectId, options.sessionId)) !== JSON.stringify(checkpoint))
@@ -79,8 +89,10 @@ export function createConversationIntent(options: {
       userMessage: JSON.stringify({ currentUserMessage: userMessage, checkpoint, context: options.context,
         factCheckControlPolicy: 'defer_fact_check 仅表示作者明确要求跳过、暂缓或不再继续本次事实核查，程序保留未核查工作稿，不把它算作核查通过。不要求固定句式。只关闭外部搜索但继续模型复核不等于暂缓核查；询问能否跳过、否定跳过、要求跳过且另改稿等复合指令用discuss先处理完整要求。',
         intakeTransitionPolicy: options.allowedIntents.includes('propose_direction')
-          ? '当前尚无已保存的待确认方案，但不能因此反复收集信息。启发找线索、试角度仍是开放讨论，用discuss；还不知道、否定之前建议、只要求你推荐一个，不单凭这些就选propose_direction，更不是confirm_direction。结合全部作者消息和最近助手回复判断：已有明确线索且信息足以提出可执行方案，或作者正在认可/微调前面已经谈妥的具体方案时，选择propose_direction，程序要求实际保存方案；尚有真正缺口或作者仍在开放讨论则discuss。不要仅因数据库阶段是collecting就选discuss，也不要靠固定词路由。不能把首次建议、模糊的想法或对局部建议的认可当作完整写作授权。'
+          ? '当前尚无已保存的待确认方案。启发找线索仍是开放讨论；作者给出两个待比较的人、素材或模糊想法，仍可没有选定切口，用discuss并提供3–5个不同方向。作者明确提出可写的方向，或选中已有候选，可用propose_direction保存待确认方案。还不知道、否定之前建议、只要求你推荐一个或仅认可局部，仍用discuss。不要只按关键词判断，也不要把助手自己的解释当作作者所选的方向。'
           : undefined,
+        ...(directions.length ? { directionCandidates: directions,
+          directionSelectionPolicy: '有多个方向时，作者明确选中某一项才按该项填propose_direction和selectionIndex。作者明确另提方向可用propose_direction并省略编号。仅说继续、认可或问哪项好，用discuss，不代选。若附加写作要求，选择与完整的作者原话会一起交给方案阶段。' } : {}),
         preferencePolicy: 'remember_preference 只用于作者明确要求今后跨文章记住写作偏好；普通改稿意见不是长期授权。forget_preferences 只用于明确忘记本项目保存的长期偏好；不含糊推断、不删除稿件。不需要指定格式或前缀。' }),
     }),
   };

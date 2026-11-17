@@ -26,12 +26,24 @@ function value<T>(result: MutationResult<T>): T {
 }
 
 export function authorConversationHistory(storage: WritingApplicationStorage, projectId: string, sessionId?: string) {
-  const runs = new Set(storage.listRuns(projectId, sessionId).map(run => run.id));
+  const runs = new Map(storage.listRuns(projectId, sessionId).map(run => [run.id, run.sessionId]));
+  const pendingQuestions = new Map<string, string[]>();
   return storage.listEvents(projectId).flatMap(event => {
     if (!event.runId || !runs.has(event.runId)) return [];
+    const session = runs.get(event.runId);
+    if (event.type === 'run.waiting_user' && session && event.payload.stopReason === 'WRITING_INPUT_REQUIRED') {
+      const questions = event.payload.questions;
+      if (Array.isArray(questions) && questions.every(q => typeof q === 'string') && questions.length) {
+        pendingQuestions.set(session, questions as string[]);
+      }
+      return [];
+    }
     if (event.type === 'run.started' || event.type === 'run.resumed') {
       const content = event.payload.displayInstruction;
-      return typeof content === 'string' ? [{ sequence: event.projectSeq, role: 'user', content }] : [];
+      if (typeof content !== 'string' || event.payload.preservePendingAssignment === true || event.payload.decision === 'retry_unknown') return [];
+      const inReplyTo = session ? pendingQuestions.get(session) : undefined;
+      if (session) pendingQuestions.delete(session);
+      return [{ sequence: event.projectSeq, role: 'user', content, ...(inReplyTo ? { inReplyTo } : {}) }];
     }
     if (event.type !== 'tool.completed') return [];
     const envelope = event.payload.result as { toolName?: string; result?: { reply?: string; stage?: string; artifactVersionId?: string } } | undefined;

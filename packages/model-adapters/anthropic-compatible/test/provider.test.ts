@@ -122,6 +122,32 @@ describe("Anthropic-compatible provider", () => {
     assert.equal(payload.stream, true);
   });
 
+  it('disables configured thinking only for the audit request, on the actual wire', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    await withLocalServer((request, response) => {
+      void readJson(request).then(body => {
+        bodies.push(body);
+        sendEvents(response, [{ event: 'message_delta', data: { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } } },
+          { event: 'message_stop', data: { type: 'message_stop' } }]);
+      });
+    }, async baseURL => {
+      const extraBody = { thinking: { type: 'enabled', budget_tokens: 8192 } };
+      const provider = new AnthropicCompatibleProvider({ id: 'thinking-scope', baseURL, allowInsecureHttp: true, credentialRef: 'test/key',
+        resolveCredential: async () => fakeApiKey, models: {}, extraBody });
+      const request: ModelRequest = { requestId: 'audit', model: 'fixture', messages: [{ role: 'user', content: 'test' }],
+        parameters: { disableConfiguredThinking: true } };
+      const snapshot = provider.snapshotRequest(request);
+      for await (const _event of provider.stream(request)) { /* collect wire only */ }
+      for await (const _event of provider.stream({ ...request, requestId: 'writer', parameters: {} })) { /* next role */ }
+      assert.deepEqual(bodies[0], snapshot.normalizedPayload);
+      assert.deepEqual(bodies[0]!.thinking, { type: 'disabled' });
+      assert.deepEqual(bodies[1]!.thinking, { type: 'enabled', budget_tokens: 8192 });
+      assert.deepEqual(extraBody.thinking, { type: 'enabled', budget_tokens: 8192 });
+      const plain = new AnthropicCompatibleProvider({ id: 'plain', baseURL, allowInsecureHttp: true, credentialRef: 'test/key', resolveCredential: async () => fakeApiKey, models: {} });
+      assert.equal(Object.hasOwn(plain.snapshotRequest(request).normalizedPayload as object, 'thinking'), false);
+    });
+  });
+
   it("round-trips streamed tool use/results without putting the key in snapshots", async () => {
     const bodies: Record<string, unknown>[] = [];
     const apiKeyHeaders: Array<string | undefined> = [];

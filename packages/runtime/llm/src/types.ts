@@ -38,6 +38,9 @@ export interface ModelToolSchema {
 }
 
 export interface ModelParameters {
+  /** Suppress an explicitly configured extended-thinking mode for this request.
+   * Adapters without that configured capability leave their wire format alone. */
+  readonly disableConfiguredThinking?: boolean;
   readonly temperature?: number;
   readonly maxOutputTokens?: number;
   readonly stop?: readonly string[];

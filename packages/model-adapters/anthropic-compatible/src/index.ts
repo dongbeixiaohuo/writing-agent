@@ -698,7 +698,12 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
 
   private wireBody(request: ModelRequest, outputTokenLimit: number): WireRequest {
     const body = serializeRequest(request, outputTokenLimit);
-    return this.extraBody === undefined ? body : { ...this.extraBody, ...body } as WireRequest;
+    const thinking = this.extraBody?.thinking;
+    const disableThinking = request.parameters.disableConfiguredThinking && thinking &&
+      typeof thinking === 'object' && !Array.isArray(thinking) && 'type' in thinking &&
+      (thinking.type === 'enabled' || thinking.type === 'adaptive');
+    return this.extraBody === undefined ? body : { ...this.extraBody, ...body,
+      ...(disableThinking ? { thinking: { type: 'disabled' } } : {}) } as WireRequest;
   }
 
   private outputTokenLimit(request: ModelRequest): NonNullable<ProviderRequestSnapshot["outputTokenLimit"]> {

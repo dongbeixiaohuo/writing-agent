@@ -129,6 +129,8 @@ export interface AgentRequestPolicy {
   /** Role-specific subsets of registered fields. Tool permissions still apply. */
   readonly roleToolFields?: Readonly<Record<string, RoleToolFields>>;
   readonly toolChoice?: ModelParameters['toolChoice'];
+  /** Per-stage override; never mutates the run or the stored provider profile. */
+  readonly disableConfiguredThinking?: boolean;
   readonly authorizeTool?: (call: CompletedToolCall) => boolean;
   /** Business preconditions are not role permissions; return precise correction details. */
   readonly toolValidationError?: (call: CompletedToolCall) => Extract<ToolExecutionResult, { ok: false }>['error'] | null;
@@ -977,6 +979,7 @@ export class AgentRuntime {
           ? { ...message, content: policy.projectToolResult(message, { messages: requestHistory, index }) } : message),
         ...(tools.length === 0 ? {} : { tools }),
         parameters: { ...structuredClone(input.parameters),
+          ...(policy?.disableConfiguredThinking === undefined ? {} : { disableConfiguredThinking: policy.disableConfiguredThinking }),
           ...(escalatedOutputTokens === null ? {} : { maxOutputTokens: escalatedOutputTokens }),
           ...(policy?.toolChoice === undefined ? {} : { toolChoice: policy.toolChoice }),
           ...(requireToolOnContinuation && tools.length > 0 ? { toolChoice: 'required' as const } : {}),

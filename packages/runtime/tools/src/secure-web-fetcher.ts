@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
+import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 
 import {
   type AllowedNetworkTarget,
@@ -364,9 +365,24 @@ export class SecureWebFetcher {
       }
 
       const contentType = contentTypeOf(response.headers);
+      // Some publishers send compression even when Accept-Encoding is identity.
+      // Bound expanded bytes as well as wire bytes before text extraction.
+      let body = response.body;
+      const encoding = headerValue(response.headers, 'content-encoding')?.trim().toLowerCase();
+      if (encoding && encoding !== 'identity') {
+        const decompress = encoding === 'gzip' ? gunzipSync : encoding === 'br' ? brotliDecompressSync : encoding === 'deflate' ? inflateSync : null;
+        if (!decompress) throw new SecureWebFetchError('WEB_ENCODING_INVALID', 'Unsupported source content encoding');
+        try { body = decompress(body, { maxOutputLength: this.#maxBytes }); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') {
+            throw new SecureWebFetchError('WEB_RESPONSE_TOO_LARGE', 'The expanded response exceeds the configured byte limit');
+          }
+          throw new SecureWebFetchError('WEB_ENCODING_INVALID', 'The compressed source response is invalid');
+        }
+      }
       let decoded: string;
       try {
-        decoded = new TextDecoder("utf-8", { fatal: true }).decode(response.body);
+        decoded = new TextDecoder("utf-8", { fatal: true }).decode(body);
       } catch {
         throw new SecureWebFetchError(
           "WEB_ENCODING_INVALID",

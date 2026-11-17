@@ -10,9 +10,10 @@ import { WritingApplicationService } from "../src/index.js";
 import { collaborationState } from "./collaboration-fixture.js";
 import { getPublicationCandidates, choosePublicationCandidate } from '../src/publication-choice.js';
 import { createApplicationBridge } from '../../client-bridge/src/application-bridge.js';
-import { directorFixtureTurn, editorialPlanFixture, factPreparationFixtureEvents, publicStageFixtureEvents, readerSimulationFixtureEvents, revisionComparisonFixture } from './collaboration-fixture.js';
+import { directorFixtureTurn, editorialPlanFixture, factPreparationFixtureEvents, publicStageFixtureEvents, readerSimulationFixtureEvents, revisionComparisonFixture, readingFixture } from './collaboration-fixture.js';
 import type { ReviewFinding } from '../src/review-closure.js';
 import { withCheckpointIntent, withIntentFixture } from './intent-fixture.js';
+import { createWritingWorkflowTools } from '../src/workflow-tools.js';
 import { deliveredInlineMaterialIds, inlineMaterialContext } from '../src/material-context.js';
 import { getConversationIntakeState } from '../src/conversation-intake.js';
 import { parseEvidenceLedger, type ArtifactVersion } from '../../writing-core/src/index.js';
@@ -136,7 +137,7 @@ for (const interruptedCommit of [false, true]) for (const action of ['resume_che
   } finally { bridge?.dispose(); f.close(); }
 });
 
-for (const parallelEnabled of [false, true]) it(`full workflow scopes external fact tools to checker only (enabled=${parallelEnabled})`, async () => {
+for (const parallelEnabled of [false, true]) it(`full workflow separates search quotas and scopes source reading (enabled=${parallelEnabled})`, async () => {
   const provider = new CollaborationProvider();
   const f = setup(provider);
   try {
@@ -149,7 +150,8 @@ for (const parallelEnabled of [false, true]) it(`full workflow scopes external f
     for (const request of provider.requests) {
       const expected = parallelEnabled && collaborationState(request)?.stage === 'fact_check' && !request.tools?.some(t => t.name === 'prepare_fact_check');
       assert.equal(request.tools?.some(tool => tool.name === 'search_fact_sources') ?? false, expected);
-      assert.equal(request.tools?.some(tool => tool.name === 'read_fact_source') ?? false, expected);
+      assert.equal(request.tools?.some(tool => tool.name === 'read_fact_source') ?? false,
+        expected || parallelEnabled && collaborationState(request)?.stage === 'research');
       assert.equal(request.tools?.some(tool => tool.name === 'search_research_sources') ?? false,
         parallelEnabled && collaborationState(request)?.stage === 'research');
     }
@@ -190,7 +192,7 @@ it('optional front research uses configured Tavily before the outline and keeps 
   } finally { globalThis.fetch = original; f.close(); }
 });
 
-function setup(provider: CollaborationProvider, interactionMode: "autonomous" | "co_creation" = "autonomous", materialCount = 0, mode: 'quick' | 'deep' = 'quick', materialContent?: string, sourceKind: 'pasted_text' | 'web_snapshot' = 'pasted_text') {
+function setup(provider: CollaborationProvider, interactionMode: "autonomous" | "co_creation" = "autonomous", materialCount = 0, mode: 'quick' | 'deep' = 'quick', materialContent?: string, sourceKind: 'pasted_text' | 'web_snapshot' = 'pasted_text', sourceReference: string | null = 'conversation') {
   const path = mkdtempSync(join(tmpdir(), "writing-collaboration-"));
   const storage = openWorkspaceStorage({ workspacePath: path });
   const app = new WritingApplicationService({ storage, provider: withIntentFixture(provider) });
@@ -198,7 +200,7 @@ function setup(provider: CollaborationProvider, interactionMode: "autonomous" | 
   app.createProject({ operationId: "project", projectId: "p", name: "test", mode, actor });
   for (let i = 0; i < materialCount; i++) {
     const imported = app.importMaterial({ operationId: `material-${i}`, projectId: 'p', expectedProjectRevision: storage.inspectProject('p')!.revision,
-      materialId: `m-${i}`, displayName: `需求对话 ${i + 1}`, sourceKind, sourceReference: 'conversation', role: 'illustrative', trustLabel: 'user_provided_untrusted', permissionScope: 'project_only', content: materialContent ?? `写安静的观察，要求 ${i}`, actor });
+      materialId: `m-${i}`, displayName: `需求对话 ${i + 1}`, sourceKind, sourceReference, role: 'illustrative', trustLabel: 'user_provided_untrusted', permissionScope: 'project_only', content: materialContent ?? `写安静的观察，要求 ${i}`, actor });
     assert.equal(imported.ok, true, JSON.stringify(imported));
   }
   const saved = app.saveWritingBrief({ operationId: "brief", projectId: "p", expectedProjectRevision: storage.inspectProject("p")!.revision, baseVersionId: null, actor, brief: { schemaVersion: 1, topic: "安静", genre: "narrative_observation", audience: "读者", lengthTarget: { targetCharacters: 800 }, materialIds: Array.from({ length: materialCount }, (_, i) => `m-${i}`), constraints: [], interactionMode, authorAuthorization: { voice: "克制", styleReference: null, styleDecision: "user_confirmed", directionDecision: "user_confirmed", firsthandMaterialIds: [] }, platform: null, publicationGoal: "not_applicable", confirmationStatus: "confirmed" } });
@@ -223,7 +225,6 @@ for (const version of [2, 3] as const) it(`uses v${version} project style across
       assert.ok(requests.length > 0, stage);
       assert.ok(requests.every(r => r.messages.some(m => m.content.includes(card) && m.content.includes(quote) && m.content.includes('换题迁移标记'))), stage);
       assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes(STYLE_APPLICATION_POLICY))), stage);
-      assert.ok(requests.every(r => r.messages.some(m => m.role === 'system' && m.content.includes(stage === 'outline' ? '内部评估不进提纲' : '面向读者的解释与向作者汇报写作过程'))), stage);
     }
     const audit = provider.requests.filter(r => collaborationState(r)?.stage === 'language_review');
     assert.ok(audit.length > 0);
@@ -411,7 +412,8 @@ for (const asString of [false, true]) it(`expands compact research without losin
     assert.match(JSON.stringify(research.tools?.find(t => t.name === 'submit_writing_stage')?.inputSchema), /source_id/);
     assert.ok(JSON.stringify({ stage: 'research', content: compact }).length < JSON.stringify({ stage: 'research', content: JSON.stringify(expected) }).length * 0.8);
     const next = provider.requests.find(r => collaborationState(r)?.actor === 'outline')!;
-    assert.ok(next.messages.some(m => m.content.includes('E020')), 'downstream receives canonical evidence IDs');
+    assert.deepEqual((collaborationState(next) as any).artifacts, [], 'new selection receives original passages instead of the canonical claim table; the full table stays saved above');
+    assert.ok(Array.isArray((collaborationState(next) as any).sourceReadings));
   } finally { f.close(); }
 });
 
@@ -460,7 +462,8 @@ it('scopes research to supplied evidence without demanding unavailable searches 
     const system = request.messages[0]!.content;
     assert.match(system, /材料整理模式/);
     assert.match(system, /没有外部搜索工具/);
-    assert.match(system, /关键.*缺口.*(?:暂停|提问)/);
+    assert.match(system, /缺依据就在原方向内补查或换素材/);
+    assert.ok(!request.tools?.some(tool => tool.name === 'assess_writing_readiness'), 'research cannot pause a confirmed direction over a material gap');
     assert.match(system, /排除.*notes/);
     assert.match(system, /不.*(?:开头|结尾).*提纲/);
     assert.doesNotMatch(system, /主动寻找最强反证|对准备进入正文的外部事实逐项核查|director_decide省略inputVersionIds/);
@@ -496,6 +499,34 @@ it('fact check uses selected facts and evidence, without repeating writing instr
   } finally { f.close(); }
 });
 
+it('lets research inspect source pages while retaining URL authorization and the existing search budget', async () => {
+  class SourceReader extends CollaborationProvider {
+    attempted = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      if (collaborationState(request)?.actor === 'research' && !this.attempted) {
+        this.attempted = true;
+        assert.ok(request.tools?.some(t => t.name === 'read_fact_source'));
+        assert.ok(request.tools?.some(t => t.name === 'search_research_sources'));
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'read_fact_source',
+          argumentsDelta: JSON.stringify({ url: 'https://example.com/not-in-sources' }) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new SourceReader(), f = setup(provider, 'co_creation');
+  try {
+    const app = new WritingApplicationService({ storage: f.storage, provider: withIntentFixture(provider),
+      factSearchConfiguration: () => ({ parallelEnabled: true, tavilyEnabled: false }) });
+    const result = await app.runDraft(f.input);
+    assert.equal(f.storage.getRun(result.runId)?.stopReason, 'CO_CREATION_CHECKPOINT', JSON.stringify(result));
+    assert.ok(f.storage.listRunEvents(result.runId).some(e => e.type === 'tool.failed' &&
+      (e.payload.result as any).error.code === 'FACT_SOURCE_NOT_IN_LEDGER'), 'unknown URLs must be rejected before network access');
+    const research = provider.requests.find(r => collaborationState(r)?.stage === 'research')!;
+    assert.equal((collaborationState(research) as any).researchSearchBudget.limit, 2);
+  } finally { f.close(); }
+});
+
 it('projects evidence and original sources for non-blind downstream experts, with on-demand source access', async () => {
   class RevisionReadProvider extends CompactResearchProvider {
     readEvidence = false;
@@ -520,10 +551,14 @@ it('projects evidence and original sources for non-blind downstream experts, wit
     for (const actor of ['outline', 'draft', 'central_revision']) {
       const request = provider.requests.find(r => collaborationState(r)?.actor === actor)!;
       const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
-      assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object', actor);
+      if (actor === 'outline') assert.deepEqual(state.artifacts, [], 'reading selection does not inherit analyst conclusions');
+      else assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object', actor);
       assert.ok(Array.isArray(state.materialCatalog), actor);
-      assert.ok(request.tools?.some(t => t.name === 'read_material'), `${actor} can read omitted material if needed`);
-      assert.ok(request.tools?.some(t => t.name === 'read_artifact_version'), `${actor}: projected evidence remains readable on demand`);
+      if (actor === 'outline') {
+        assert.ok(state.sourceReadings.some((entry: any) => entry.text === '外部资料原文'));
+        assert.ok(!request.tools?.some(t => t.name === 'read_material'), 'outline already receives the authorized source');
+      } else assert.ok(request.tools?.some(t => t.name === 'read_material'), `${actor} can read omitted material if needed`);
+      assert.equal(request.tools?.some(t => t.name === 'read_artifact_version') ?? false, actor !== 'outline', `${actor}: outline already receives the complete source projection`);
     }
     const language = provider.requests.find(request => collaborationState(request)?.actor === 'language_review')!;
     const auditEvidence = collaborationState(language)!.artifacts?.find(artifact => artifact.kind === 'evidence')?.content as { claims: { source_quote: string }[] };
@@ -535,9 +570,9 @@ it('projects evidence and original sources for non-blind downstream experts, wit
       request.messages.some(message => message.role === 'tool' && message.name === 'read_artifact_version'))!;
     const response = revisionRead.messages.find(message => message.role === 'tool' && message.name === 'read_artifact_version')!;
     const evidence = JSON.parse(response.content).result;
-    assert.equal(evidence.requestProjection, 'lossless_evidence_table', 'a narrowed plan must not be counted as a complete read');
+    assert.equal(evidence.requestProjection, 'source_quotes_for_revision', 'a complete read must not restore the research interpretation');
     assert.equal(evidence.content.editorialPlan, undefined, 'reading evidence must not restore internal plans');
-    assert.equal(evidence.content.claimRows[0][evidence.content.claimFields.indexOf('source_quote')], research.claims[0]!.source_quote);
+    assert.equal(evidence.content.claims[0].source_quote, research.claims[0]!.source_quote);
     const editor = provider.requests.find(r => collaborationState(r)?.actor === 'review_editor')!;
     assert.equal(editor.tools, undefined);
     assert.deepEqual(collaborationState(editor)?.artifacts?.map(a => a.kind), ['body']);
@@ -654,7 +689,16 @@ it('cold editor receives the bound draft and reader fields without assignment, s
     saveProjectStyleSelection(f.storage, 'p', { id: 'cold-style', version: 1, name: '风格名称哨兵', card: '风格内容哨兵',
       package: { version: 3, statistics: styleStatistics([{ id: 'sample', title: '样文', text: '样文内容哨兵' }]), patterns: [],
         snippets: [{ sampleId: 'sample', paragraphId: 'p1', kind: 'opening', quote: '样文内容哨兵', explanation: '样文解释哨兵', application: '样文用法哨兵' }] } }, 'cold-style');
-    const result = await f.app.runDraft({ ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, userInstruction: '原始用户消息哨兵' });
+    const actor = { kind: 'user', id: 'conversation-user' } as const;
+    assert.ok(f.app.importMaterial({ projectId: 'p', operationId: 'original-author-question', expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+      actor, materialId: 'intake-user-question', displayName: '作者的问题', sourceKind: 'pasted_text', sourceReference: 'conversation',
+      role: 'illustrative', trustLabel: 'user_provided_untrusted', permissionScope: 'project_only', content: '两个人物的亲密关系安排有何共同点？' }).ok);
+    const project = f.storage.inspectProject('p')!, brief = f.storage.getWritingBriefVersion(project.currentBriefVersionId!)!.brief;
+    assert.ok(f.app.saveWritingBrief({ projectId: 'p', operationId: 'intake-expanded-question', expectedProjectRevision: project.revision,
+      baseVersionId: project.currentBriefVersionId, actor, brief: { ...brief, topic: '助手额外推导的商业目的',
+        materialIds: [...brief.materialIds, 'intake-user-question'], constraints: ['助手推导的前提已得到证明'] } }).ok);
+    const result = await f.app.runDraft({ ...f.input, expectedBriefVersionId: f.storage.inspectProject('p')!.currentBriefVersionId!,
+      expectedProjectRevision: f.storage.inspectProject('p')!.revision, userInstruction: '比较具体安排与代价，不要推断商业目的。' });
     assert.equal(result.ok, true, JSON.stringify(result));
     const events = f.storage.listRunEvents(result.runId);
     assert.ok(events.some(event => event.type === 'tool.completed' && (event.payload.result as any)?.toolName === 'read_artifact_version'));
@@ -667,6 +711,15 @@ it('cold editor receives the bound draft and reader fields without assignment, s
     assert.equal(editor.tools, undefined);
     assert.equal(editor.parameters.toolChoice, 'none');
     assert.match(editor.messages[1]!.content, /"audience":"读者"/u);
+    assert.equal((state as any).reviewOutputSchema.properties.findings.items.properties.evidenceIds.maxItems, 0);
+    assert.match(editor.messages[1]!.content, /两个人物的亲密关系安排有何共同点/u);
+    assert.deepEqual((state as any).writingRequirements.authorReplies, ['比较具体安排与代价，不要推断商业目的。']);
+    for (const role of ['research', 'draft', 'central_revision', 'language_review']) {
+      const request = provider.requests.find(r => collaborationState(r)?.actor === role)!;
+      assert.match(request.messages[1]!.content, /比较具体安排与代价，不要推断商业目的/u, role);
+      assert.doesNotMatch(request.messages[1]!.content, /助手额外推导的商业目的|助手推导的前提已得到证明/u, role);
+    }
+    assert.doesNotMatch(editor.messages[1]!.content, /助手额外推导的商业目的|助手推导的前提已得到证明/u);
     assert.doesNotMatch(JSON.stringify(editor.messages), /哨兵|按输入版本推进|editorialPlan|read_artifact_version|"kind":"outline"/u);
     const review = f.storage.listArtifactVersions('p', 'review', `review_editor:${result.runId}`)[0]!;
     assert.equal(JSON.parse(review.content).bodyVersionId, draft.id);
@@ -720,6 +773,8 @@ it('publication reviewer receives the same draft and exact source quotes without
     assert.equal(reviews.length, 2);
     const first = reviews[0]!;
     const state = collaborationState(first)!;
+    assert.equal((state as any).reviewOutputSchema.properties.reading, undefined);
+    assert.doesNotMatch(first.messages[0]!.content, /takeaway/u, 'the publication reviewer must not receive the cold reader output contract');
     const draft = f.storage.listArtifactVersions('p', 'body', 'main')[0]!;
     assert.deepEqual(state.artifacts?.find(artifact => artifact.kind === 'body'), { id: draft.id, kind: 'body', content: draft.content });
     const evidence = state.artifacts?.find(artifact => artifact.kind === 'evidence')!.content as { claims: Record<string, string>[] };
@@ -727,7 +782,7 @@ it('publication reviewer receives the same draft and exact source quotes without
     assert.equal(evidence.claims[0]!.source_title, base.sources[0]!.source_title);
     assert.equal(evidence.claims[0]!.source_publisher, base.sources[0]!.source_publisher);
     assert.equal(evidence.claims[0]!.source_url, base.sources[0]!.source_url);
-    assert.match(evidence.claims[0]!.use_boundary!, /自报工时/u);
+    assert.equal(evidence.claims[0]!.use_boundary, undefined, 'an analyst interpretation must not pre-decide the independent review');
     assert.deepEqual(first.messages.map(message => message.role), ['system', 'user']);
     assert.match(first.messages[1]!.content, /普通职场读者.*微信公众号/u);
     assert.doesNotMatch(JSON.stringify(first.messages), /私有哨兵|按输入版本推进|SECRET_OPINION_review_editor|editorialPlan|claim_text|全文哨兵|unbound-publication-source/u);
@@ -736,7 +791,13 @@ it('publication reviewer receives the same draft and exact source quotes without
     const read = reviews[1]!.messages.find(message => message.role === 'tool' && message.name === 'read_material')!;
     assert.equal(JSON.parse(read.content).result.content, sourceText);
     const finalReview = provider.requests.find(request => collaborationState(request)?.actor === 'language_review')!;
+    const revision = provider.requests.find(request => collaborationState(request)?.actor === 'central_revision')!;
+    const revisionEvidence = (collaborationState(revision) as any).artifacts.find((a: any) => a.kind === 'evidence').content;
+    assert.equal(revisionEvidence.claims[0].source_quote, quote);
+    assert.doesNotMatch(JSON.stringify(revisionEvidence), /use_boundary|claim_text|editorialPlan|notes/u);
     const finalState = JSON.parse(finalReview.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
+    assert.match(finalState.preserveMeaning.removeProcessCommentary, /删除向作者汇报写作步骤/u);
+    assert.match(finalState.preserveMeaning.factualLimits, /不得改变证据强弱/u);
     assert.ok(finalState.sourceSlices.some((slice: { content: string }) => slice.content.includes(sourceText)), 'terminal review receives the exact source excerpt actually read by publication review');
     assert.doesNotMatch(JSON.stringify(finalState), /选题计划私有哨兵|淘汰切口私有哨兵|SECRET_OPINION_review_editor/u);
     for (const stage of ['review_editor', 'review_publish']) {
@@ -750,7 +811,7 @@ it('publication reviewer receives the same draft and exact source quotes without
       })) {
         const message = request.messages[1]!.content;
         assert.doesNotMatch(message, /淘汰切口私有哨兵/u);
-        assert.equal(message.includes('选题计划私有哨兵'), stage === 'central_revision');
+        assert.equal(message.includes('选题计划私有哨兵'), false, 'a revision must not inherit the rejected research plan');
       }
     }
   } finally { f.close(); }
@@ -831,6 +892,7 @@ const closureNewError = '研究团队同时测量了员工的晋升速度。';
 class ClosureScenarioProvider extends CompactResearchProvider {
   revisions = 0;
   audits = 0;
+  acceptUnchanged = false;
   returnedFindingId: string | undefined;
   prematureDispatch = false;
   deferReturn = false;
@@ -864,6 +926,17 @@ class ClosureScenarioProvider extends CompactResearchProvider {
       return;
     }
     let args: Record<string, unknown> | undefined;
+    if ((state as any)?.revisionMode === 'paragraphs') {
+      this.revisions++;
+      this.requests.push(structuredClone(request));
+      const scoped = state as any;
+      for (const finding of scoped.revisionFeedback.findings) if (finding.quote === closureNewError) this.returnedFindingId = finding.id;
+      yield { type: 'text_delta', delta: JSON.stringify({ paragraphEdits: { baseBodyVersionId: scoped.baseBodyVersionId,
+        edits: scoped.paragraphScope.paragraphs.filter((p: any) => p.editable && [closureOriginal, closureIncomplete, closureNewError, closureNote].includes(p.text))
+          .map((p: any) => ({ paragraphId: p.id, replacement: [closureOriginal, closureIncomplete].includes(p.text) ? closureFixed : '' })) } }) };
+      yield { type: 'completed', finishReason: 'stop' };
+      return;
+    }
     if (state?.stage === 'draft') {
       args = { stage: state.stage, content: `# 安静\n\n${closureOriginal}\n\n${closureNote}` };
     } else if (state?.stage === 'review_editor') {
@@ -889,7 +962,7 @@ class ClosureScenarioProvider extends CompactResearchProvider {
       const returnRevision = initial && this.scenario !== 'accept';
       const revised = state.artifacts!.find(artifact => artifact.id === state.revisionComparison!.revisedVersionId)!.content as string;
       const content = returnRevision ? this.scenario === 'existing' ? '需要修订' : revised.replace('# 安静', '# 安靖')
-        : `${revised}\n\n说清研究问的是什么，读者才知道该相信到哪一步。`;
+        : this.acceptUnchanged || (state as any).auditOnly ? revised : `${revised}\n\n说清研究问的是什么，读者才知道该相信到哪一步。`;
       const checks = state.reviewClosure!.findings.map(finding => {
         const unresolved = initial && this.scenario === 'existing' && finding.quote === closureOriginal;
         return { findingId: finding.id, verdict: unresolved ? 'unresolved' : 'resolved',
@@ -899,7 +972,8 @@ class ClosureScenarioProvider extends CompactResearchProvider {
       const newFindings: ReviewFinding[] = initial && this.scenario === 'new' ? [
         { quote: closureNewError, kind: 'attribution', severity: 'required', issue: '来源没有测晋升速度。', repairTarget: '删除凭空加入的测量指标。', evidenceIds: ['E001'] },
       ] : [];
-      args = { stage: state.stage, content, audit: { checks, newFindings } };
+      args = { stage: state.stage, content, audit: { checks, newFindings,
+        ...(state.readerValueRequired ? { reading: readingFixture(returnRevision ? revised : content) } : {}) } };
       if (returnRevision) {
         this.requests.push(structuredClone(request));
         const { stage: _stage, ...output } = args;
@@ -917,6 +991,37 @@ class ClosureScenarioProvider extends CompactResearchProvider {
   }
 }
 
+it('preserves repair targets across finding kinds for a local edit', async () => {
+  class ReaderRepair extends ClosureScenarioProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      if (collaborationState(request)?.stage === 'review_editor') {
+        this.requests.push(structuredClone(request));
+        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'review_editor', content: 'REVIEW_WORDING_SENTINEL',
+          reading: readingFixture(closureOriginal),
+          findings: [{ quote: closureNote, kind: 'process_note', severity: 'required', issue: '内部备注进入正文。',
+            repairTarget: 'REPAIR_TARGET_SENTINEL', evidenceIds: [] },
+          { quote: closureOriginal, kind: 'inference', severity: 'required', issue: '例子反复证明同一句判断，没有递进。',
+            repairTarget: '让例子承担不同功能，使后续段落带来新收获。', evidenceIds: [] }] })!;
+        return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new ReaderRepair('accept'), f = setup(provider);
+  try {
+    const result = await f.app.runDraft(f.input);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const request = provider.requests.find(r => collaborationState(r)?.actor === 'central_revision')!;
+    const state = collaborationState(request) as any;
+    assert.equal(state.revisionMode, 'edit');
+    assert.ok(state.artifacts.some((a: any) => a.kind === 'body' && a.content.includes(closureOriginal)), 'keep the actual original to respect author wording');
+    assert.equal(state.reviewClosure.findings.find((f: any) => f.kind === 'process_note').repairTarget, 'REPAIR_TARGET_SENTINEL');
+    assert.equal(state.reviewClosure.findings.find((f: any) => f.kind === 'inference').repairTarget, '让例子承担不同功能，使后续段落带来新收获。');
+    assert.doesNotMatch(JSON.stringify(state), /REVIEW_WORDING_SENTINEL/u, 'the free-form review is not a second draft');
+    assert.ok(f.storage.getArtifactVersion(state.reviewClosure.findings[0].reviewVersionId)!.content.includes('REPAIR_TARGET_SENTINEL'));
+  } finally { f.close(); }
+});
+
 for (const scenario of ['existing', 'new'] as const) {
 it(`returns ${scenario} editorial blockers to central revision before saving or fact-checking`, async () => {
   const provider = new ClosureScenarioProvider(scenario);
@@ -931,7 +1036,7 @@ it(`returns ${scenario} editorial blockers to central revision before saving or 
     const report = f.storage.listArtifactVersions('p', 'report', `revision-return:${result.runId}`)[0]!;
     const marker = f.storage.listArtifactVersions('p', 'report', `workflow:${result.runId}:language_review`)[0]!;
     const bodies = f.storage.listArtifactVersions('p', 'body', 'main');
-    assert.equal(bodies.length, 4, 'draft, first revision, reworked revision, and final only');
+    assert.equal(bodies.length, 3, 'draft, first revision, paragraph repair; read-only audit preserves the repaired version');
     assert.equal(JSON.parse(report.content).bodyVersionId, bodies[1]!.id);
     const returnArgs = events.find(event => event.type === 'tool.requested' && event.payload.actor === 'language_review')?.payload.arguments as Record<string, unknown>;
     assert.equal(returnArgs.content, scenario === 'existing' ? '需要修订' : bodies[1]!.content.replace('# 安静', '# 安靖'));
@@ -946,19 +1051,209 @@ it(`returns ${scenario} editorial blockers to central revision before saving or 
     if (scenario === 'existing') assert.ok(events.some(event => event.type === 'tool.failed' && JSON.stringify(event.payload).includes('REVISION_REPAIR_REQUIRED')));
     if (scenario === 'new') assert.equal(provider.returnedFindingId, `${report.id}:1`);
     const comparison = f.storage.listArtifactVersions('p', 'report', `revision-comparison:${result.runId}`);
+    const finalAuditRequest = provider.requests.findLast(request => collaborationState(request)?.actor === 'language_review')!;
+    const changedContext = (collaborationState(finalAuditRequest) as any).paragraphRevision;
+    assert.equal(changedContext.baseBodyVersionId, bodies[1]!.id);
+    assert.ok(changedContext.changedParagraphs.length > 0);
+    for (const change of changedContext.changedParagraphs) {
+      assert.ok(bodies[1]!.content.includes(change.before));
+      assert.ok(bodies[2]!.content.includes(change.after));
+    }
     const auditRequest = provider.requests.find(request => collaborationState(request)?.actor === 'language_review')!;
     const auditFindings = collaborationState(auditRequest)!.reviewClosure!.findings;
     assert.ok(auditFindings.length > 0);
-    assert.ok(auditFindings.every(finding => !Object.hasOwn(finding, 'issue') && !Object.hasOwn(finding, 'repairTarget')), 'independent final audit receives locations, not prior reviewers repair answers');
+    const revisionFindings = collaborationState(provider.requests.find(request => collaborationState(request)?.actor === 'central_revision')!)!.reviewClosure!.findings;
+    assert.deepEqual(auditFindings, revisionFindings.map(({ id, quote, kind, severity, issue, evidenceIds, bodyVersionId, reviewVersionId }) =>
+      ({ id, quote, kind, severity, issue, evidenceIds, bodyVersionId, reviewVersionId })), 'audit keeps each problem and its source binding, without reviewer repair answers');
     assert.equal(comparison.length, 1);
     assert.equal(JSON.parse(comparison[0]!.content).audit.requiresRevision, false);
-    assert.equal(f.storage.getFactCheckStatus('p').snapshot?.bodyVersionId, bodies[3]!.id);
-    assert.doesNotMatch(bodies[3]!.content, /总体更难|晋升速度|内部核查说明/u);
+    assert.equal(f.storage.getFactCheckStatus('p').snapshot?.bodyVersionId, bodies[2]!.id);
+    assert.doesNotMatch(bodies[2]!.content, /总体更难|晋升速度|内部核查说明/u);
     const projected = f.app.getProjectProjection('p').revisionComparisons!;
     assert.equal(projected.length, 1, 'the unresolved return has no comparison');
-    assert.equal(projected[0]!.finalVersionId, bodies[3]!.id);
+    assert.equal(projected[0]!.finalVersionId, bodies[2]!.id);
     assert.equal(Object.hasOwn(projected[0]!, 'audit'), false);
 
+  } finally { f.close(); }
+});
+}
+
+it('accepts an already repaired revision unchanged when every finding is resolved and no new issue remains', async () => {
+  const provider = new ClosureScenarioProvider('accept');
+  provider.acceptUnchanged = true;
+  const f = setup(provider);
+  try {
+    const result = await f.app.runDraft(f.input);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(provider.revisions, 1);
+    assert.equal(provider.audits, 1);
+    const request = provider.requests.find(request => collaborationState(request)?.actor === 'language_review')!;
+    const state = collaborationState(request)!;
+    const revised = state.artifacts!.find(a => a.id === state.revisionComparison!.revisedVersionId)!;
+    const original = state.artifacts!.find(a => a.id === state.revisionComparison!.originalVersionId)!;
+    assert.notEqual(revised.content, original.content);
+    const comparison = JSON.parse(f.storage.listArtifactVersions('p', 'report', `revision-comparison:${result.runId}`)[0]!.content);
+    assert.equal(f.storage.getArtifactVersion(comparison.finalVersionId)!.content, revised.content);
+    assert.equal(comparison.audit.requiresRevision, false);
+    assert.ok(comparison.audit.checks.every((check: any) => check.verdict === 'resolved'));
+    assert.deepEqual(comparison.audit.newFindings, []);
+    assert.equal(f.storage.listArtifactVersions('p', 'report', `revision-return:${result.runId}`).length, 0);
+    assert.equal(f.storage.getFactCheckStatus('p').snapshot?.bodyVersionId, comparison.finalVersionId);
+  } finally { f.close(); }
+});
+
+for (const interrupted of ['none', 'body', 'marker', 'audit-write', 'return', 'return-local', 'restart'] as const) {
+it(`redevelops the article without a writer resolution checklist and preserves audit binding (${interrupted})`, async () => {
+  class Redevelop extends ClosureScenarioProvider {
+    attemptedAuditWrite = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request);
+      if (state?.stage === 'language_review' && interrupted === 'audit-write' && !this.attemptedAuditWrite) {
+        this.attemptedAuditWrite = true;
+        this.requests.push(structuredClone(request));
+        yield { type: 'text_delta', delta: JSON.stringify({ content: '# 安静\n\n终审擅自重写了文章。' }) };
+        yield { type: 'completed', finishReason: 'stop' };
+        return;
+      }
+      if (state?.stage === 'review_editor') {
+        this.requests.push(structuredClone(request));
+        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: state.stage, content: '开头有效，但后文没有展开。', findings: [
+          { quote: closureOriginal, kind: 'inference', severity: 'required', issue: '后面只重复开头判断。',
+            repairTarget: '用后续材料展开差异，而不是更换判断的标签。', evidenceIds: [] },
+        ],
+          reading: { ...readingFixture(closureOriginal), verdict: 'revise', reason: '开头让我愿意继续读。', repairTarget: '让后续材料解释这个变化，而不是重复开头判断。' } })!;
+        return;
+      }
+      if (state?.stage === 'central_revision') {
+        if ((state as any).revisionMode === 'paragraphs') {
+          const scoped = state as any;
+          assert.ok(scoped.paragraphScope.paragraphs.some((p: any) => p.text.includes(interrupted === 'return' ? closureIncomplete : closureFixed)));
+          assert.ok(scoped.paragraphScope.paragraphs.find((p: any) => p.text === '# 安静').editable === false);
+          if (interrupted === 'return-local') {
+            assert.equal(scoped.revisionFeedback.findings.length, 1);
+            assert.ok(!scoped.paragraphScope.paragraphs.find((p: any) => p.text === closureFixed).editable);
+          }
+          yield* super.providerStream(request); return;
+        }
+        this.requests.push(structuredClone(request));
+        this.revisions++;
+        assert.equal(request.parameters.disableConfiguredThinking, undefined, 'audit setting does not leak into writing');
+        if (interrupted === 'return-local' && this.revisions === 2) {
+          assert.equal((state as any).revisionMode, 'edit', 'closed reader-value issues must not trigger another full rewrite');
+          assert.equal(state.reviewClosure!.findings.length, 1);
+          assert.equal(state.reviewClosure!.findings[0]!.quote, closureNewError);
+          assert.ok(state.artifacts?.some(a => String(a.content).includes(closureFixed)), 'repair receives the current improved body');
+          assert.ok(!state.artifacts?.some(a => state.reviewClosure!.reviewVersionIds.includes(a.id)), 'resolved reviews cannot leak back as free-form prose');
+          yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: state.stage, content: `# 安静\n\n${closureFixed}`,
+            resolutions: [{ findingId: state.reviewClosure!.findings[0]!.id, action: 'remove', afterQuote: null, reason: '删除未测量的指标，保留已经修好的观察。' }] })!;
+          return;
+        }
+        if (this.revisions === 1) {
+          const feedback = (state as any).revisionFeedback;
+          assert.ok(feedback.bodyVersionId);
+          assert.ok(feedback.findings.some((f: any) => f.kind === 'reader_value' && f.repairTarget === '让后续材料解释这个变化，而不是重复开头判断。'));
+          assert.ok(feedback.findings.some((f: any) => f.kind === 'inference' && f.issue === '后面只重复开头判断。' &&
+            f.repairTarget === '用后续材料展开差异，而不是更换判断的标签。'), 'a reading objective is not discarded because its category is inference');
+          assert.ok(feedback.findings.every((f: any) => !Object.hasOwn(f, 'quote')), 'diagnosis does not reintroduce old prose as a template');
+        }
+        if (interrupted === 'return' && this.revisions === 2) {
+          assert.equal((state as any).currentArticle.content, `# 安静\n\n${closureIncomplete}`, 'structural follow-up repairs the current article, not a fresh blank page');
+          assert.ok((state as any).revisionFeedback.bodyVersionId);
+          assert.ok((state as any).revisionFeedback.findings.some((f: any) => f.repairTarget === '终审要求回到实验实际观察对象，不能只换同义词。'));
+          assert.ok((state as any).revisionFeedback.findings.some((f: any) => f.repairTarget === '让后续材料解释这个变化，而不是重复开头判断。'));
+        }
+        assert.equal(Object.hasOwn(state, 'revisionOutputSchema'), false, 'prose-only redevelopment does not require a JSON wrapper');
+        assert.match(request.messages[0]!.content, /直接输出完整Markdown文章/u);
+        assert.equal(state.reviewClosure, undefined, 'old review conclusions do not become the new article outline');
+        assert.equal(state.artifacts, undefined, 'the old draft belongs to the comparison audit');
+        assert.equal((state as any).articleReference.requiredTitle, '# 安静');
+        assert.equal((state as any).referenceArticles, undefined);
+        assert.equal((state as any).reviewReferences, undefined);
+        assert.deepEqual(state.inputVersionIds, []);
+        assert.ok(!request.tools?.some(t => ['read_artifact_version', 'read_review_discussion'].includes(t.name)));
+        assert.ok(!request.messages.some(m => m.content.includes(closureNote)), 'a flagged process note cannot return through another input path');
+        yield { type: 'text_delta', delta: `# 安静\n\n${interrupted === 'return' && this.revisions === 1 ? closureIncomplete : closureFixed}${interrupted === 'return-local' && this.revisions === 1 ? `\n\n${closureNewError}` : ''}` };
+        yield { type: 'completed', finishReason: 'stop' };
+        return;
+      }
+      if (state?.stage === 'language_review' && interrupted === 'return-local' && this.audits === 0) {
+        this.audits++;
+        this.requests.push(structuredClone(request));
+        yield { type: 'text_delta', delta: JSON.stringify({ audit: {
+          checks: state.reviewClosure!.findings.map(f => ({ findingId: f.id, verdict: 'resolved', quote: null, reason: '原有推理与重复问题已经处理。' })),
+          newFindings: [{ quote: closureNewError, kind: 'inference', severity: 'required', issue: '增加了来源未测量的指标。', repairTarget: '删去晋升速度，不改已修好的段落。', evidenceIds: ['E001'] }],
+          reading: readingFixture(closureFixed),
+        } }) };
+        yield { type: 'completed', finishReason: 'stop' };
+        return;
+      }
+      if (state?.stage === 'language_review' && interrupted === 'return' && this.audits === 0) {
+        this.audits++;
+        this.requests.push(structuredClone(request));
+        yield { type: 'text_delta', delta: JSON.stringify({ audit: {
+          checks: state.reviewClosure!.findings.map(f => ({ findingId: f.id, verdict: 'unresolved', quote: closureIncomplete, reason: '只是改了措辞，没有修好推断。' })),
+          newFindings: [], reading: { ...readingFixture(closureIncomplete), verdict: 'revise', reason: '结论只是换词。',
+            repairTarget: '终审要求回到实验实际观察对象，不能只换同义词。' },
+        } }) };
+        yield { type: 'completed', finishReason: 'stop' };
+        return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new Redevelop('accept'), f = setup(provider);
+  if (interrupted === 'restart') provider.deferStage = 'language_review';
+  provider.acceptUnchanged = true;
+  try {
+    const commit = f.storage.commitArtifactVersion.bind(f.storage);
+    let injected = false;
+    f.storage.commitArtifactVersion = command => {
+      const result = commit(command);
+      if (result.ok && !injected && command.reason === (interrupted === 'body' ? 'workflow:central_revision' : interrupted === 'marker' ? 'workflow-stage-complete:central_revision' : 'never')) {
+        injected = true;
+        throw new Error('interrupt after persisted redevelopment');
+      }
+      return result;
+    };
+    let result = await f.app.runDraft(f.input);
+    if (interrupted === 'restart') {
+      assert.equal(f.storage.getRun(result.runId)?.stopReason, 'PROVIDER_RETRY_DEFERRED');
+      f.app.cancelDraft({ projectId: 'p', runId: result.runId, operationId: 'restart-structural-audit', reason: 'user_stop' });
+      result = await f.app.runDraft({ ...f.input, sessionId: f.storage.getRun(result.runId)!.sessionId,
+        expectedProjectRevision: f.storage.inspectProject('p')!.revision, userInstruction: '继续' });
+    }
+    assert.equal(result.ok, true, JSON.stringify({result,errors:f.storage.listRunEvents(result.runId).filter(e=>e.type==='tool.failed').map(e=>(e.payload.result as any)?.error)}));
+    assert.equal(provider.revisions, interrupted.startsWith('return') ? 2 : 1, 'only a real terminal return regenerates the article');
+    assert.equal(injected, interrupted === 'body' || interrupted === 'marker');
+    const markers = f.storage.listArtifactVersions('p', 'report', `workflow:${result.runId}:central_revision`);
+    assert.equal(markers.length, interrupted.startsWith('return') ? 2 : 1);
+    const saved = JSON.parse(markers.at(-1)!.content);
+    assert.equal(Object.hasOwn(saved, 'resolutions'), false);
+    assert.equal(saved.revisionMode, interrupted === 'restart' ? undefined : interrupted.startsWith('return') ? 'paragraphs' : 'redevelop');
+    if (interrupted !== 'restart') assert.ok(saved.reviewVersionIds.length > 0);
+    const finalRequest = provider.requests.findLast(r => collaborationState(r)?.actor === 'language_review')!;
+    assert.equal(finalRequest.parameters.disableConfiguredThinking, true);
+    const finalState = collaborationState(finalRequest)!;
+    assert.ok(finalState.reviewClosure!.findings.some(f => f.issue === '让后续材料解释这个变化，而不是重复开头判断。'));
+    assert.ok(finalState.artifacts?.some(a => a.kind === 'body' && String(a.content).includes(closureNote)), 'independent audit still gets the complete original');
+    if (interrupted !== 'restart') assert.deepEqual(finalState.reviewClosure!.reviewVersionIds, saved.reviewVersionIds);
+    assert.equal(Object.keys((finalState as any).finalOutputSchema.properties)[0], 'audit');
+    assert.equal((finalState as any).auditOnly, true);
+    assert.equal(Object.hasOwn(finalState, 'preserveMeaning'), false);
+    assert.equal(Object.hasOwn(finalState, 'bodyOutputContract'), false);
+    assert.equal(Object.hasOwn((finalState as any).finalOutputSchema.properties, 'content'), false);
+    const comparison = JSON.parse(f.storage.listArtifactVersions('p', 'report', `revision-comparison:${result.runId}`)[0]!.content);
+    assert.equal(comparison.finalVersionId, saved.artifactVersionId, 'an accepting auditor cannot quietly replace the writer article');
+    const work = createWritingWorkflowTools({ storage: f.storage, projectId: 'p', mode: 'deep' });
+    assert.equal(work.revisionWork(result.runId, comparison.finalVersionId)!.closure.findings.length, 0,
+      'a later author repair cannot revive issues closed by a successful audit');
+    assert.ok(work.reviewClosure(result.runId)!.findings.length > 0, 'independent audit retains the full historical issues');
+    assert.ok(work.revisionWork(result.runId, 'another-body')!.closure.findings.length > 0, 'closure decisions do not leak to another version');
+    if (interrupted === 'audit-write') {
+      assert.equal(provider.attemptedAuditWrite, true);
+      assert.ok(provider.requests.filter(r => collaborationState(r)?.actor === 'language_review').length >= 2);
+      assert.ok(f.storage.listArtifactVersions('p', 'body', 'main').every(body => !body.content.includes('终审擅自重写')));
+    }
   } finally { f.close(); }
 });
 }
@@ -983,6 +1278,32 @@ it('preserves an author edit made during the terminal audit', async () => {
     assert.equal(f.storage.listArtifactVersions('p', 'body', 'main').length, 3);
     assert.equal(f.storage.listArtifactVersions('p', 'report', `revision-return:${result.runId}`).length, 0);
     assert.equal(f.storage.listArtifactVersions('p', 'report', `workflow:${result.runId}:language_review`).length, 0);
+  } finally { f.close(); }
+});
+
+for (const failure of ['body', 'marker'] as const) it(`recovers a paragraph repair interrupted after its durable ${failure}`, async () => {
+  const provider = new ClosureScenarioProvider('existing'), f = setup(provider);
+  try {
+    const commit = f.storage.commitArtifactVersion.bind(f.storage);
+    let count = 0, injected = false;
+    f.storage.commitArtifactVersion = command => {
+      const result = commit(command);
+      if (command.reason === 'workflow:central_revision') count++;
+      const target = failure === 'body' ? command.reason === 'workflow:central_revision' && count === 2
+        : command.reason === 'workflow-stage-complete:central_revision' && JSON.parse(command.content).revisionMode === 'paragraphs';
+      if (result.ok && target && !injected) { injected = true; throw new Error('durable paragraph repair interruption'); }
+      return result;
+    };
+    const result = await f.app.runDraft(f.input);
+    assert.ok(injected);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(provider.revisions, 2, 'do not regenerate after a durable repair');
+    const bodies = f.storage.listArtifactVersions('p', 'body', 'main');
+    assert.equal(bodies.length, 3);
+    assert.ok(bodies.at(-1)!.content.includes(closureFixed));
+    const marker = JSON.parse(f.storage.listArtifactVersions('p', 'report', `workflow:${result.runId}:central_revision`).at(-1)!.content);
+    assert.equal(marker.revisionMode, 'paragraphs');
+    assert.equal(marker.baseBodyVersionId, bodies[1]!.id);
   } finally { f.close(); }
 });
 
@@ -1081,8 +1402,8 @@ for (const carryAgain of [false, true]) it(`continues after durable rework inval
       result = await f.app.runDraft({ ...runInput, expectedProjectRevision: f.storage.inspectProject('p')!.revision });
       assert.equal(f.storage.getRun(result.runId)?.usage.majorRevisions, 0, 'do not charge again for the carried repair');
       const repair = provider.requests.slice(beforeCarry).map(collaborationState).find(state => state?.stage === 'central_revision');
-      assert.ok(repair?.artifacts?.some(artifact => artifact.id === JSON.parse(report.content).bodyVersionId &&
-        typeof artifact.content === 'string' && artifact.content.includes(closureNewError)), 'repair the returned body, not the earlier draft');
+      assert.equal((repair as any).baseBodyVersionId, JSON.parse(report.content).bodyVersionId);
+      assert.ok((repair as any).paragraphScope.paragraphs.some((paragraph: any) => paragraph.text.includes(closureNewError)), 'repair the returned body, not the earlier draft');
     }
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(provider.returnedFindingId, `${report.id}:1`);
@@ -1464,14 +1785,19 @@ it('checks original author words without inheriting research scaffolding or inta
     const brief = f.storage.getWritingBriefVersion(before.currentBriefVersionId!)!.brief;
     assert.ok(f.app.saveWritingBrief({ projectId: 'p', operationId: 'generated-brief', expectedProjectRevision: before.revision,
       baseVersionId: before.currentBriefVersionId, actor: { kind: 'user', id: 'conversation-user' },
-      brief: { ...brief, constraints: ['INTAKE_SCAFFOLD_SENTINEL'] } }).ok);
+       brief: { ...brief, topic: '比较两个人物的区别。', constraints: ['INTAKE_SCAFFOLD_SENTINEL'] } }).ok);
     const project = f.storage.inspectProject('p')!;
     await f.app.runDraft({ ...f.input, expectedProjectRevision: project.revision, expectedBriefVersionId: project.currentBriefVersionId! });
     const request = provider.requests.find(r => collaborationState(r)?.actor === 'outline')!;
     assert.match(request.messages[1]!.content, /作者原话：比较两个人物的区别/u);
     assert.doesNotMatch(request.messages[1]!.content, /RESEARCH_SCAFFOLD_SENTINEL|INTAKE_SCAFFOLD_SENTINEL|taskInstruction/u);
-    assert.ok((collaborationState(request) as any).artifacts[0].content);
-    assert.ok(request.tools?.find(t => t.name === 'submit_writing_stage')?.inputSchema);
+    assert.deepEqual((collaborationState(request) as any).artifacts, [], 'selection reads original passages without the earlier analyst conclusions');
+    assert.equal((collaborationState(request) as any).directionToAssess, '比较两个人物的区别。');
+    assert.equal(request.tools?.some(t => t.name === 'submit_writing_stage') ?? false, false, 'submit the complete assessment through the JSON text channel');
+    assert.ok((collaborationState(request) as any).materials.some((m: any) => m.content === '作者原话：比较两个人物的区别。'), 'complete short author material is already supplied');
+    const schema = (collaborationState(request) as any).outlineOutputSchema;
+    assert.deepEqual(schema.required, ['content', 'prewriting']);
+    assert.ok(!schema.properties.prewriting.required.includes('premises'), 'new writing trials do not need a duplicate premise audit');
   } finally { f.close(); }
 });
 
@@ -1481,14 +1807,73 @@ it('scales outline and research guidance to the article without imposing a trunc
     await f.app.runDraft(f.input);
     const outline=provider.requests.find(r=>collaborationState(r)?.actor==='outline')!;
     const research=provider.requests.find(r=>collaborationState(r)?.actor==='research')!;
-    assert.match(outline.messages[0]!.content,/提纲.*篇幅|篇幅.*提纲/u);
     assert.match(research.messages[0]!.content,/只入账与候选相关的材料.*能解释原因、呈现差异或限制结论/u);
     const state=JSON.parse(outline.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
     assert.equal(state.outputGuidance.articleTargetCharacters,800);
     assert.ok(state.outputGuidance.outlineTargetCharacters<=800);
-    assert.match(outline.messages[0]!.content,/不.*证据编号/);
-    assert.match(outline.messages[0]!.content,/不截断|不是.*硬.*上限/);
+    assert.match(outline.messages[0]!.content,/原文书签/);
+    assert.ok(state.outlineOutputSchema.properties.prewriting.properties.readingRoute,
+      'the existing outline call selects passages without prewriting the article');
+    assert.equal(state.outlineOutputSchema.properties.prewriting.properties.readerValue, undefined);
   } finally {f.close();}
+});
+
+it('keeps prewritten answers, trial and section instructions out of writer inputs without changing selected evidence', async () => {
+  const trial = 'TRIAL_PROSE_SENTINEL：这段预写正文不再交给主笔。';
+  class ReadOutline extends CompactResearchProvider {
+    readRequested = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request);
+      if (state?.actor === 'outline') {
+        this.requests.push(structuredClone(request));
+        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: '试稿完成。', prewriting: {
+          decision: 'ready', promise: '继续作者的原题。', readerPayoff: 'PREWRITTEN_PAYOFF_SENTINEL', premises: [],
+          sections: [{ heading: 'SECTION_HEADING_SENTINEL', readerGain: 'SECTION_GAIN_SENTINEL', evidenceIds: ['E002'] }],
+          reason: '材料充分。', queries: [], questions: [],
+          readerValue: { status: 'substantive', question: '作者如何选择？', discovery: 'PREWRITTEN_DISCOVERY_SENTINEL',
+            development: trial, approaches: ['另一个试写方向。', trial], evidenceIds: [] },
+        } })!;
+        return;
+      }
+      if (state?.actor === 'draft' && !this.readRequested) {
+        this.requests.push(structuredClone(request)); this.readRequested = true;
+        assert.ok(request.tools?.some(t => t.name === 'read_artifact_version'));
+        yield { type: 'tool_call_delta', index: 0, id: 'read-preview-outline', name: 'read_artifact_version',
+          argumentsDelta: JSON.stringify({ versionId: state.artifacts!.find(a => a.kind === 'outline')!.id }) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      }
+      yield* super.providerStream(request);
+    }
+  }
+  const ledger = compactResearch(); ledger.claims = ledger.claims.slice(0, 3);
+  const provider = new ReadOutline(ledger), f = setup(provider);
+  try {
+    assert.equal((await f.app.runDraft(f.input)).ok, true);
+    const requests = provider.requests.filter(r => collaborationState(r)?.actor === 'draft');
+    assert.ok(requests.length >= 2, 'check both initial context and the tool continuation');
+    for (const request of requests) {
+      assert.doesNotMatch(JSON.stringify(request.messages), /TRIAL_PROSE_SENTINEL|另一个试写方向|SECTION_HEADING_SENTINEL|SECTION_GAIN_SENTINEL|PREWRITTEN_PAYOFF_SENTINEL|PREWRITTEN_DISCOVERY_SENTINEL/u);
+      const state: any = collaborationState(request);
+      assert.equal(state.writingPlan.sections, undefined);
+      assert.equal(state.writingPlan.readerPayoff, undefined);
+      assert.equal(state.writingPlan.readerValue.discovery, undefined);
+      assert.equal(state.writingPlan.promise, '继续作者的原题。');
+      assert.equal(state.writingPlan.readerValue.question, '作者如何选择？');
+      const evidence = state.artifacts.find((a: any) => a.kind === 'evidence').content;
+      const idIndex = evidence.claimFields.indexOf('evidence_id');
+      assert.deepEqual(evidence.claimRows.map((r: any[]) => r[idIndex]), ['E002'],
+        'the evidence used only by a hidden section stays selected, and unselected rows stay omitted');
+    }
+    const read = requests.at(-1)!.messages.find(m => m.role === 'tool' && m.name === 'read_artifact_version')!;
+    assert.equal(JSON.parse(read.content).result.requestProjection, 'outline_plan_omitted');
+    assert.equal(JSON.parse(read.content).result.content, '');
+    assert.ok(f.storage.listArtifactVersions('p', 'outline', 'main').some(v =>
+      v.content.includes(trial) && v.content.includes('SECTION_HEADING_SENTINEL') && v.content.includes('SECTION_GAIN_SENTINEL')),
+      'the public preview and section instructions are preserved in storage');
+    assert.ok(f.storage.listArtifactVersions('p', 'report', 'prewriting-assessment').some(v =>
+      v.content.includes('PREWRITTEN_PAYOFF_SENTINEL') && v.content.includes('PREWRITTEN_DISCOVERY_SENTINEL')),
+      'the saved assessment is preserved; only writer inputs change');
+  } finally { f.close(); }
 });
 
 it('delivers anti-filler guidance through real stage requests while retaining explicit author constraints', async () => {
@@ -1507,15 +1892,18 @@ it('delivers anti-filler guidance through real stage requests while retaining ex
     assert.equal(result.ok, true, JSON.stringify(result));
     for (const actor of ['director', 'draft', 'central_revision']) {
       const request = provider.requests.find(r => collaborationState(r)?.actor === actor)!;
-      assert.match(request.messages[0]!.content, /不得为了.*字数.*扩写/u, actor);
+      if (actor === 'director') assert.match(request.messages[0]!.content, /不得为了.*字数.*扩写/u, actor);
       assert.match(request.messages.find(m => m.role === 'user')!.content, /不写操作步骤.*不虚构亲历/u, actor);
     }
     assert.match(provider.requests.find(r => collaborationState(r)?.actor === 'review_editor')!.messages[0]!.content,
-      /不因没有故事、反方、金句或短段而扣分/u);
+      /不代主笔规定句式、段数或编造情节/u);
     assert.match(provider.requests.find(r => collaborationState(r)?.actor === 'review_publish')!.messages[0]!.content,
-      /逐条核对研究究竟测了谁.*免责声明不能代替改准断言/su);
+      /不同做法可以比较.*不靠免责声明保留错误/su);
     const outline = provider.requests.find(r => collaborationState(r)?.actor === 'outline')!;
-    assert.match(outline.messages[0]!.content, /每一部分新增的信息/u);
+    const draft = provider.requests.find(r => collaborationState(r)?.actor === 'draft')!;
+    const draftState = JSON.parse(draft.messages.find(m => m.role === 'user')!.content.split('\nCOLLABORATION_STATE=')[1]!);
+    assert.equal(draftState.writingPlan.readerValue.development, undefined, 'the writer receives the direction without prewritten prose');
+    assert.equal(draftState.writingPlan.readerValue.approaches, undefined, 'rejected openings do not become competing instructions');
     // This is a delivery/contract check, not a claim that a scripted provider writes better prose.
     const bodies = f.storage.listArtifactVersions('p', 'body', 'main');
     assert.equal(bodies.length, 3);
@@ -1800,10 +2188,9 @@ it('saves the approved outline verbatim in one request without streaming its int
       if (collaborationState(request)?.stage !== 'outline') { yield* super.providerStream(request); return; }
       this.requests.push(request); this.outlineRequests++;
       const response = publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: parts.join('') })![0]!;
-      assert.equal(response.type, 'tool_call_delta');
-      if (response.type !== 'tool_call_delta') return;
-      const { stage: _stage, ...payload } = JSON.parse(response.argumentsDelta!);
-      const output = JSON.stringify(payload);
+      assert.equal(response.type, 'text_delta');
+      if (response.type !== 'text_delta') return;
+      const output = response.delta;
       const midpoint = Math.floor(output.length / 2);
       for (const delta of [output.slice(0, midpoint), output.slice(midpoint)]) { yield { type: 'text_delta', delta }; inspect(); }
       yield { type: 'completed', finishReason: 'stop' };
@@ -1823,8 +2210,8 @@ it('saves the approved outline verbatim in one request without streaming its int
     assert.equal(f.storage.getRun(result.runId)?.stopReason, 'CO_CREATION_CHECKPOINT');
     assert.equal(provider.outlineRequests, 1);
     const request = provider.requests.find(r => collaborationState(r)?.stage === 'outline')!;
-    assert.equal(request.parameters.toolChoice, 'auto');
-    assert.deepEqual(request.tools?.map(t => t.name).sort(), ['read_artifact_version', 'submit_writing_stage']);
+    assert.equal(request.parameters.toolChoice, 'none');
+    assert.deepEqual(request.tools ?? [], []);
     assert.deepEqual(samples, ['hidden', 'hidden']);
     assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main')[0]?.content, parts.join(''));
     assert.equal(f.storage.listArtifactVersions('p', 'body', 'main').length, 0);
@@ -1848,64 +2235,157 @@ it('does not confuse a short first-person article with a generation status messa
   try { assert.equal((await f.app.runDraft(f.input)).ok, true); } finally { f.close(); }
 });
 
-for (const canSearch of [false, true]) it(`returns an unsupported premise before drafting and routes its exact gap (search=${canSearch})`, async () => {
-  const assessment = { decision: 'research', promise: '证明家庭规模服务商业布局', readerPayoff: '理解人物的商业安排',
-    premises: [{ claim: '家庭安排具有商业功能', basis: 'missing', evidenceIds: [], explanation: '人数不能证明商业意图。' }],
-    sections: [], reason: '现有材料只能说明规模，不能说明商业功能。', queries: ['家庭安排 商业功能 原始材料'],
-    questions: ['补查仍没有支持的话，是否改为比较家庭安排本身？'] };
-  class GapProvider extends CollaborationProvider {
-    returned = false;
-    bypassed = false;
-    unavailableRework = false;
-    sawResearchGap = false;
+it('returns every reading-first caveat to the writer and saves only the corrected draft', async () => {
+  const stop = new AbortController();
+  class CorrectedDraft extends CollaborationProvider {
+    draftRequests: ModelRequest[] = [];
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
-      const state = collaborationState(request) as any;
-      if (state?.stage === 'outline' && !this.returned) {
-        this.returned = true;
-        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: '需要先补查。', prewriting: { ...assessment, stage_note: '供应商附加的内部备注。' } })!;
+      const state = collaborationState(request);
+      if (state?.stage === 'outline') {
+        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: '# 安静\n\n保留具体动作。', prewriting: {
+          decision: 'ready', promise: '安静', readerPayoff: '理解作者的选择。',
+          premises: [{ claim: '作者表达自己的感受。', basis: 'author', evidenceIds: [], explanation: '作者已提供个人表达。' }],
+          sections: [{ heading: '# 安静', readerGain: '展开具体动作。', evidenceIds: [] }], reason: '个人表达材料充分。', queries: [], questions: [],
+          readerValue: { status: 'substantive', question: '作者看到了什么？', discovery: '动作呈现了作者的选择。',
+            development: '保留动作及其直接后果。', evidenceIds: [] },
+          readingRoute: { question: '作者如何行动？', moments: [] },
+        } })!;
         return;
       }
-      if (state?.actor === 'director' && state.prewritingReturn) {
-        const args = !this.bypassed ? { action: 'dispatch', stage: 'outline', reason: '认可继续，直接出提纲。', questions: [], readinessReason: '继续。' }
-          : canSearch || !this.unavailableRework ? { action: 'rework', stage: 'research', reason: '补查家庭安排的商业功能。', questions: [] }
-          : { action: 'ask', stage: null, reason: assessment.reason, questions: assessment.questions };
-        if (this.bypassed && !canSearch) this.unavailableRework = true;
-        this.bypassed = true;
-        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'director_decide', argumentsDelta: JSON.stringify(args) };
-        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      if (state?.stage === 'draft') {
+        this.draftRequests.push(structuredClone(request));
+        const content = this.draftRequests.length === 1
+          ? '# 安静\n\n不能因此认定他纳妾就是为了执行一套生育计划。\n\n不能把后辈遭遇的每一处困难都算作他个人选择的结果。'
+          : '# 安静\n\n他放下杯子，转身走出房间。';
+        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'draft', content })!;
+        return;
       }
-      if (state?.stage === 'research' && this.returned) {
-        assert.match(request.messages[1]!.content, /家庭安排具有商业功能/u);
-        assert.match(request.messages[1]!.content, /人数不能证明商业意图/u);
-        this.sawResearchGap = true;
-        const unread = state.unreadArtifactVersionIds.find((id: string) => !request.messages.some(m => m.role === 'tool' && m.name === 'read_artifact_version' && JSON.parse(m.content).result?.versionId === id));
-        if (unread) {
-          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'read_artifact_version', argumentsDelta: JSON.stringify({ versionId: unread }) };
-          yield { type: 'completed', finishReason: 'tool_calls' }; return;
-        }
+      if (state?.actor === 'review_editor') { stop.abort(); return; }
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new CorrectedDraft(); const f = setup(provider);
+  try {
+    const result = await f.app.runDraft({ ...f.input, signal: stop.signal });
+    assert.equal(f.storage.getRun(result.runId)?.status, 'cancelled', 'stop after the corrected draft reaches the next stage');
+    assert.equal(provider.draftRequests.length, 2);
+    const correction = provider.draftRequests[1]!.messages.filter(message => message.role === 'user').at(-1)!.content;
+    assert.match(correction, /BODY_STAGE_CONTAINS_EDITORIAL_CAVEATS/u);
+    assert.match(correction, /不能因此认定/u);
+    assert.match(correction, /算作/u);
+    const bodies = f.storage.listArtifactVersions('p', 'body', 'main');
+    assert.equal(bodies.length, 1);
+    assert.doesNotMatch(bodies[0]!.content, /不能因此认定|后辈遭遇.*算作/u);
+    assert.match(bodies[0]!.content, /放下杯子，转身走出房间/u);
+    assert.equal(f.storage.listRunEvents(result.runId).filter(event => event.type === 'tool.failed'
+      && JSON.stringify(event.payload).includes('BODY_STAGE_CONTAINS_EDITORIAL_CAVEATS')).length, 1);
+  } finally { f.close(); }
+});
+
+for (const decision of ['research', 'discuss']) it(`keeps the confirmed direction and reaches the writer after a material gap (${decision})`, async () => {
+  const stop = new AbortController();
+  let draftRequest: ModelRequest | undefined;
+  const assessment = { decision, promise: '助手自行提出的方向', readerPayoff: '理解人物安排',
+    readingRoute: { question: '是否换一个题目？', moments: [{ sourceUrl: 'https://example.org/unbound', quote: '找不到的原句。', interest: '应跳过。' }] },
+    reason: '暂时没有合适的材料书签。', queries: decision === 'research' ? ['补查材料'] : [],
+    questions: ['是否改为只比较家庭规模？'] };
+  class GapProvider extends CollaborationProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request);
+      if (state?.stage === 'outline') {
+        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: '再查材料', prewriting: assessment })!;
+        return;
+      }
+      if (state?.stage === 'draft') {
+        draftRequest = request;
+        stop.abort();
+        return;
       }
       yield* super.providerStream(request);
     }
   }
-  const provider = new GapProvider(); const f = setup(provider);
-  const app = new WritingApplicationService({ storage: f.storage, provider: withIntentFixture(provider),
+  const f = setup(new GapProvider(), 'co_creation');
+  try {
+    const first = await f.app.runDraft({ ...f.input, signal: stop.signal });
+    assert.equal(f.storage.getRun(first.runId)?.stopReason, 'CO_CREATION_CHECKPOINT');
+    await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId, operationId: 'continue-after-selection',
+      decision: 'resume', userInstruction: '继续', signal: stop.signal })).result;
+    assert.ok(draftRequest);
+    const state = JSON.parse(draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
+    assert.equal(state.writingRequirements.topic, '安静');
+    assert.deepEqual(state.writingPlan, { promise: '安静', readingRoute: { question: '安静', moments: [] } });
+    assert.doesNotMatch(draftRequest.messages[1]!.content, /助手自行提出的方向|是否改为只比较家庭规模/u);
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, null);
+  } finally { f.close(); }
+});
+
+for (const stage of ['review_publish', 'language_review'] as const) for (const canSearch of [false, true])
+it(`routes a failed reading payoff back to its cause (${stage}, search=${canSearch})`, async () => {
+  const gap = '核心比较只复述人数，没有解释原作者关心的安排。';
+  class ValueProvider extends CollaborationProvider {
+    returned = false;
+    bypassed = false;
+    receivedGap = false;
+    reassessed = 0;
+    reviewedBeforeRepair = false;
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request) as any;
+      if (state?.stage === stage && !this.returned) {
+        this.returned = true;
+        const article = state.artifacts.find((a: any) => a.kind === 'body' &&
+          (stage === 'review_publish' || a.id === state.revisionComparison.revisedVersionId)).content;
+        const reading = { ...readingFixture(article), verdict: 'research', reason: gap,
+          repairTarget: '找到具体安排及其后果，再回答同一个问题。', queries: ['家庭安排 具体记录'], questions: ['哪一项具体安排最值得继续查？'] };
+        const output = stage === 'review_publish' ? { content: gap, findings: [{ quote: reading.quote, kind: 'reader_value', severity: 'required',
+          issue: gap, repairTarget: reading.repairTarget, evidenceIds: [], recovery: { route: 'research', queries: reading.queries, questions: reading.questions } }] }
+          : { content: '需要补查。', audit: { checks: [], newFindings: [], reading } };
+        yield { type: 'text_delta', delta: JSON.stringify(output) };
+        yield { type: 'completed', finishReason: 'stop' }; return;
+      }
+      if (state?.actor === 'director' && state.editorialRecovery) {
+        const recovery = state.editorialRecovery;
+        const args = !this.bypassed ? { action: 'dispatch', stage: 'central_revision', reason: '错误地只改措辞。', questions: [] }
+          : recovery.route === 'outline' ? { action: 'rework', stage: 'outline', reason: '重新判断原问题，作者回复不等于证据。', questions: [] }
+          : canSearch ? { action: 'rework', stage: 'research', reason: recovery.reason, questions: [] }
+          : { action: 'ask', stage: null, reason: recovery.reason, questions: recovery.questions };
+        this.bypassed = true;
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'director_decide', argumentsDelta: JSON.stringify(args) };
+        yield { type: 'completed', finishReason: 'tool_calls' }; return;
+      }
+      if (this.returned && (state?.stage === 'research' || state?.stage === 'outline')) {
+        this.receivedGap ||= request.messages.some(m => m.content.includes(gap));
+        if (state.stage === 'outline') this.reassessed++;
+      }
+      if (stage === 'review_publish' && this.returned && !this.receivedGap && state?.stage === 'review_reader') this.reviewedBeforeRepair = true;
+      yield* super.providerStream(request);
+    }
+  }
+  const provider = new ValueProvider(), f = setup(provider, 'autonomous', 2, 'deep');
+  const makeApp = () => new WritingApplicationService({ storage: f.storage, provider: withIntentFixture(provider),
     factSearchConfiguration: () => ({ parallelEnabled: canSearch, tavilyEnabled: false }) });
   try {
-    const result = await app.runDraft(f.input);
-    const codes = f.storage.listRunEvents(result.runId).filter(e => e.type === 'tool.failed').map(e => (e.payload.result as any).error.code);
-    assert.ok(f.storage.listArtifactVersions('p', 'report', 'prewriting-assessment').every(v => !v.content.includes('stage_note')));
-    assert.ok(codes.includes('PREWRITING_REPAIR_REQUIRED'));
+    const first = await makeApp().runDraft(f.input);
+    const events = f.storage.listRunEvents(first.runId);
+    assert.equal(provider.reviewedBeforeRepair, false, 'do not spend remaining reviews on a core promise already known to be unsupported');
+    assert.ok(events.some(e => e.type === 'tool.failed' && (e.payload.result as any).error.code === 'EDITORIAL_RECOVERY_REQUIRED'));
     if (canSearch) {
-      assert.equal(provider.sawResearchGap, true);
-      assert.equal(result.ok, true, JSON.stringify({ result, codes, recent: f.storage.listRunEvents(result.runId).filter(e => e.type === 'tool.completed').slice(-6).map(e => e.payload) }));
-      assert.equal(f.storage.getRun(result.runId)?.usage.majorRevisions, 1);
-      assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main').length, 1, 'only the reassessed outline is saved');
+      assert.equal(first.ok, true, JSON.stringify(first));
+      assert.equal(provider.receivedGap, true, 'the actual reading objection must reach research');
+      assert.equal(f.storage.getRun(first.runId)?.usage.majorRevisions, 1);
     } else {
-      assert.ok(codes.includes('PREWRITING_DISCUSSION_REQUIRED'));
-      assert.equal(f.storage.getRun(result.runId)?.stopReason, 'WRITING_INPUT_REQUIRED');
-      assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main').length, 0);
-      assert.equal(f.storage.listArtifactVersions('p', 'body', 'main').length, 0);
-      assert.equal(f.storage.getRun(result.runId)?.usage.majorRevisions, 0);
+      assert.equal(f.storage.getRun(first.runId)?.stopReason, 'WRITING_INPUT_REQUIRED');
+      const bodies = f.storage.listArtifactVersions('p', 'body', 'main').map(v => [v.id, v.content]);
+      const resumed = await makeApp().resumeDraft({ ...f.input, runId: first.runId, operationId: 'answer-reading-gap', decision: 'resume',
+        userInstruction: '保留原题，请重新判断现有材料能否回答。', expectedProjectRevision: f.storage.inspectProject('p')!.revision }).result;
+      assert.equal(resumed.ok, true, JSON.stringify(resumed));
+      assert.equal(provider.receivedGap, true, 'a reply must go through outline assessment with the unresolved objection');
+      for (const [id, content] of bodies) assert.equal(f.storage.getArtifactVersion(id!)!.content, content);
+      assert.equal(provider.reassessed, 1, 'the author reply must cause a new outline assessment, even if the outline text is unchanged');
+      for (const role of ['draft', 'review_editor', 'central_revision', 'language_review']) {
+        const request = provider.requests.findLast(r => collaborationState(r)?.actor === role)!;
+        assert.match(request.messages[1]!.content, /保留原题，请重新判断现有材料能否回答/u, `resumed ${role}`);
+        assert.match(request.messages[1]!.content, /assistantQuestions.*哪一项具体安排最值得继续查/u, `clarification context ${role}`);
+      }
     }
   } finally { f.close(); }
 });
@@ -2043,7 +2523,7 @@ it('repairs an agent-introduced unsupported detail internally and rechecks the n
 });
 
 for (const targetStage of ['outline', 'draft', 'review_editor', 'review_publish', 'central_revision', 'language_review']) {
-const jsonReviewOutput = targetStage === 'review_editor' || targetStage === 'review_publish' || targetStage === 'central_revision' || targetStage === 'language_review';
+const jsonReviewOutput = targetStage === 'outline' || targetStage === 'review_editor' || targetStage === 'review_publish' || targetStage === 'central_revision' || targetStage === 'language_review';
 const savedOnly = jsonReviewOutput || targetStage === 'outline' || targetStage === 'language_review';
 it(savedOnly ? `shows only the saved public ${targetStage} without exposing structured text` : 'streams public ' + targetStage + ' before saving without exposing private payloads', async () => {
   // Language review must preserve the previous body, not replace it with a test outline.
@@ -2354,7 +2834,8 @@ for (const cancel of [false, true]) it(`desktop recovers a protected expert with
     }
   }
   const provider = new LimitedProvider();
-  const f = setup(provider, 'co_creation', 1, 'quick', '外部资料原文'.repeat(500), 'web_snapshot');
+  // A snapshot without a source reference still exercises on-demand reads.
+  const f = setup(provider, 'co_creation', 1, 'quick', '外部资料原文'.repeat(500), 'web_snapshot', null);
   const input = { ...f.input, budget: { ...f.input.budget, maxModelRequests: 12 } };
   const bridge = createApplicationBridge({ service: f.app, workspaceId: 'protected-retry', model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {}, budget: input.budget } });
   try {
@@ -2628,10 +3109,15 @@ it("uses real director decisions and independent same-draft reviews before compl
     for (const request of provider.requests) {
       const role = collaborationState(request)?.actor;
       if (role === 'review_reader') assert.match(request.messages[0]!.content, /模拟反应.*不是真实用户调研/u);
-      else if (role === 'review_editor') assert.match(request.messages[0]!.content, /第一次读到本文.*原句/u);
+      else if (role === 'review_editor') assert.match(request.messages[0]!.content, /第一次读到本文.*原句/su);
       else if (role === 'language_review') assert.match(request.messages[0]!.content, /独立语言终审.*原始引文/u);
       else if (role === 'fact_check') assert.match(request.messages[0]!.content, /事实核查专员|写作助手.*提取/u);
-      else if (role === 'outline') assert.match(request.messages[0]!.content, /作者原话.*实际引文/u);
+      else if (role === 'outline') assert.match(request.messages[0]!.content, /作者的问题.*sourceReadings.*不把片段分配给预定结论/su);
+      else if (role === 'draft') {
+        assert.ok((collaborationState(request) as any)?.writingPlan);
+        assert.ok(!request.messages[0]!.content.includes(buildExpertInstructions(role)), 'writer uses its focused handoff, not stacked generic review instructions');
+      }
+      else if (role === 'central_revision') assert.ok((collaborationState(request) as any)?.revisionOutputSchema);
       else if (role === 'director' && request.parameters.toolChoice === 'none') {
         assert.equal(collaborationState(request)?.nextStage, null);
         assert.match(request.messages[0]!.content, /所有阶段均已完成/u);
@@ -2653,9 +3139,9 @@ it("uses real director decisions and independent same-draft reviews before compl
     assert.match(draftRequest.messages[0]!.content, /已确认主题作工作标题/u);
     assert.doesNotMatch(draftRequest.messages[0]!.content, /带真实标题/u);
     assert.match(languageRequest.messages[0]!.content, /完整.*正文/u);
-    assert.match(languageRequest.messages[0]!.content, /新增.*工作备注/u);
-    assert.match(languageRequest.messages[0]!.content, /保留必要归属、条件和不确定性/u);
-    assert.match(languageRequest.messages[0]!.content, /内部判断只放在 audit\/comparison/u);
+    assert.match(languageRequest.messages[0]!.content, /工作说明应清除/u);
+    assert.match(languageRequest.messages[0]!.content, /真实归属与有依据的修辞可以保留/u);
+    assert.match(languageRequest.messages[0]!.content, /内部说明只写在audit\/comparison/u);
     const languageState = collaborationState(languageRequest) as any;
     assert.equal(languageState.bodyOutputContract.output, 'complete_article_only');
     assert.equal(languageState.bodyOutputContract.versions.length, 2);

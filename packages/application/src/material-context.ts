@@ -1,5 +1,6 @@
 import type { MaterialRecord, JsonValue } from '../../writing-core/src/index.js';
 import type { SessionStore } from '../../runtime/session/src/index.js';
+import { sourceReferenceMetadata } from '../../writing-core/src/source-reference.js';
 
 /** Small, already-authorized local inputs need no model/tool round trip.
  * Oversized inputs are not silently truncated or credited as fully supplied. */
@@ -11,6 +12,7 @@ export function inlineMaterialContext(materials: readonly MaterialRecord[]): Jso
     remaining -= length;
     return [{ materialId: material.id, contentVersionId: material.contentVersionId,
       displayName: material.displayName,
+      ...sourceReferenceMetadata(material.sourceReference),
       content: material.content, offset: 0, nextOffset: length, totalChars: length, truncated: false,
       delivery: 'inline_full', role: material.role, trustLabel: material.trustLabel,
       sourceKind: material.sourceKind, instructionAuthority: 'none',

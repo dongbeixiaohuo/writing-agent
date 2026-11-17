@@ -107,7 +107,7 @@ export function stageArtifactContext(actor: string, artifacts: readonly ContextA
         const rows = selectedIds ? allRows.filter(row => selectedIds.has(String(row.evidence_id))) : allRows;
         const revisionStage = actor === 'director' ? options.directorStage : actor;
         const revision = revisionStage === 'central_revision';
-        const planProjection = options.omitEditorialPlan || options.writingEvidenceIds || revisionStage === 'language_review' ? undefined
+        const planProjection = options.omitEditorialPlan || options.writingEvidenceIds || revision || revisionStage === 'language_review' ? undefined
           : plan && (selectedIds || revision) ? { ...plan, angles: Array.isArray(plan.angles) ? plan.angles.filter(angle => angle.id === plan.selectedAngleId) : [],
             ...(revision && Array.isArray(plan.materialDecisions) ? { materialDecisions: plan.materialDecisions.filter(item => item.decision === 'use') } : {}) }
             : editorialPlan;
