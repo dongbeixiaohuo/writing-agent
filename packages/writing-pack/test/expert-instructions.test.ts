@@ -86,7 +86,10 @@ describe("expert instruction migration", () => {
     );
     const instructions = roles.map((role) => buildExpertInstructions(role));
     assert.equal(new Set(instructions).size, roles.length);
-    assert.match(buildExpertInstructions("research"), /反证.*适用边界/u);
+    const research = buildExpertInstructions("research");
+    assert.match(research, /读关键原文/u);
+    assert.match(research, /需要比较或检验争议时再比对来源/u);
+    assert.match(research, /不编造人物经历、对话或心理/u);
     assert.match(buildExpertInstructions("central_revision"), /采纳.*不采纳.*理由/u);
   });
 
