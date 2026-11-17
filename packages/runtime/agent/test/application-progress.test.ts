@@ -73,7 +73,10 @@ for (const stopReason of ['TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED'] as cons
         let name: string;
         let args: unknown;
         if (state.actor === 'director') {
-          if (state.unreadArtifactVersionIds.length) { name = 'read_artifact_version'; args = { versionId: state.unreadArtifactVersionIds[0] }; }
+          if (!state.materials.some((material: { materialId: string; truncated: boolean }) =>
+            material.materialId === 'material' && material.truncated === false)) {
+            name = 'read_material'; args = { materialId: 'material', contentVersionId, offset: 0, maxChars: 20_000 };
+          } else if (state.unreadArtifactVersionIds.length) { name = 'read_artifact_version'; args = { versionId: state.unreadArtifactVersionIds[0] }; }
           else if (recovering) { name = 'assess_writing_readiness'; args = { status: 'ready', reason: '恢复的提纲输入完整。', questions: [] }; }
           else { name = 'director_decide'; args = { action: 'dispatch', stage: state.nextStage, readinessReason: '合成个人观察材料充分。', reason: '根据当前授权材料完成此阶段。', questions: [] }; }
         } else if (state.actor === 'research') {
@@ -94,9 +97,11 @@ for (const stopReason of ['TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED'] as cons
     try {
       const actor = { kind: 'user', id: 'test' } as const;
       app.createProject({ projectId: 'p', operationId: 'project', name: 'resume', mode: 'quick', actor });
+      // Oversized local prose keeps read_material available after inlining,
+      // so this fixture still exercises the repeated-read guard in the outline.
       assert.equal(app.importMaterial({ projectId: 'p', operationId: 'material', expectedProjectRevision: storage.inspectProject('p')!.revision,
-        materialId: 'material', displayName: '合成网页快照', sourceKind: 'web_snapshot', sourceReference: 'synthetic', role: 'illustrative',
-        trustLabel: 'user_provided_untrusted', permissionScope: 'project_only', content: '合成的个人观察场景。', actor }).ok, true);
+        materialId: 'material', displayName: '合成个人观察', sourceKind: 'pasted_text', sourceReference: 'synthetic', role: 'illustrative',
+        trustLabel: 'user_provided_untrusted', permissionScope: 'project_only', content: '合成的个人观察场景。'.repeat(700), actor }).ok, true);
       contentVersionId = storage.listMaterials('p')[0]!.contentVersionId;
       assert.equal(app.saveWritingBrief({ projectId: 'p', operationId: 'brief', expectedProjectRevision: storage.inspectProject('p')!.revision,
         baseVersionId: null, actor, brief: { schemaVersion: 1, topic: '安静', genre: 'narrative_observation', audience: '读者',
