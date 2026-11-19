@@ -474,6 +474,8 @@ function timelineForSession(
   const intakeRunIds = new Set(projection.events.filter(event => event.type === 'run.started' &&
     ['writing-pack:intake', 'writing-pack:author-conversation'].includes(String(event.payload.purpose))).map(event => event.runId));
   const savedIntakeReplyRunIds = new Set<string>();
+  const displayedAuthorTurns = new Map<string, string>();
+  const displayedAuthorReceipts = new Map<string, string>();
   const displayedFactRunIds = new Set<string>();
   const latestModelFailureCodes = new Map<string, string>();
   // Bound to the saved result's event boundary, so later rework never changes
@@ -524,6 +526,12 @@ function timelineForSession(
     if (recoveredComparison && runIds.has(recoveredComparison.runId)) {
       appendSavedStage(event, recoveredComparison.runId, 'language_review', recoveredComparison.finalVersionId,
         timeLabel(event.occurredAt), recoveredComparison.operationId);
+    }
+    if (event.type === 'artifact.version_committed' && event.payload.reason === 'contextual-author-intent') {
+      const key = textPayload(event.payload, 'logicalKey');
+      const receiptId = textPayload(event.payload, 'versionId');
+      const instruction = key?.startsWith('author-intent:') ? displayedAuthorTurns.get(key.slice('author-intent:'.length)) : undefined;
+      if (receiptId && instruction !== undefined) displayedAuthorReceipts.set(receiptId, instruction);
     }
     if (event.runId === undefined || !runIds.has(event.runId)) continue;
     const recorded = timingEvents.get(event.runId) ?? [];
@@ -578,6 +586,14 @@ function timelineForSession(
         (event.type === "run.resumed"
           ? "从已保存进度继续写作"
           : "生成草稿");
+      if (event.type === 'run.started' && event.payload.purpose === 'writing-pack:author-conversation') {
+        displayedAuthorTurns.set(event.runId, instruction);
+      }
+      if (event.type === 'run.resumed') {
+        const receipt = event.payload.checkpointDecision;
+        if (receipt && typeof receipt === 'object' && 'receiptId' in receipt && typeof receipt.receiptId === 'string' &&
+            displayedAuthorReceipts.get(receipt.receiptId) === instruction) continue;
+      }
       items.push({
         id: event.id,
         kind: "message",

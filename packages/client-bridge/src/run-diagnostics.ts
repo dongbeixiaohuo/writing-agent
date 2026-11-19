@@ -331,16 +331,23 @@ function toolGroups(tools: readonly MutableTool[], projection: WritingProjectPro
 export function recoveryInterruption(projection: WritingProjectProjection, run: RunRecord): RecoverableRunSummary['interruption'] {
   if (run.stopReason !== 'UNKNOWN_EXTERNAL_OUTCOME') return undefined
   const unknown = new Map<string, NonNullable<RecoverableRunSummary['interruption']>>()
+  const requestActors = new Map<string, string>()
   let replyAccepted = false
   for (const event of projection.events) {
     if (event.runId !== run.id) continue
     if (event.type === 'run.resumed') {
       unknown.clear()
+      requestActors.clear()
       replyAccepted = typeof event.payload.displayInstruction === 'string' && event.payload.displayInstruction.trim().length > 0
+    } else if (event.type === 'request.dispatch_attempted') {
+      const actorLabel = recordedActorLabel(event.payload.actor)
+      if (actorLabel) requestActors.set(event.operationId, actorLabel)
     } else if (event.type === 'request.outcome_unknown' || event.type === 'tool.outcome_unknown') {
       const transport = event.type === 'request.outcome_unknown' ? transportTiming(event.payload.transport) : undefined
+      const actorLabel = event.type === 'request.outcome_unknown' ? requestActors.get(event.operationId) : undefined
       unknown.set(event.operationId, { source: event.type.startsWith('request.') ? 'model' : 'tool',
         cause: errorCode(event.payload) === 'TIMEOUT' ? 'timeout' : 'unknown', replyAccepted,
+        ...(actorLabel ? { actorLabel } : {}),
         ...(transport ? { timeoutPhase: transport.phase, timeoutMs: transport.timeoutMs } : {}) })
     } else if (toolStatus(event) === 'completed' || toolStatus(event) === 'failed') {
       unknown.delete(event.operationId)

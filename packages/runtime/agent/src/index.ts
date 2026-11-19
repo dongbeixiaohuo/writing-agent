@@ -270,7 +270,9 @@ function textOutputCall(tool: TextOutputTool, text: string, requestId: string): 
   try {
     let args: Readonly<Record<string, JsonValue>>;
     if (tool.format === 'json_object') {
-      const parsed: unknown = JSON.parse(text);
+      const trimmed = text.trim();
+      const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/iu.exec(trimmed);
+      const parsed: unknown = JSON.parse(fenced?.[1] ?? trimmed);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'STAGE_OUTPUT_JSON_INVALID';
       const submitted = parsed as Readonly<Record<string, JsonValue>>;
       for (const [field, value] of Object.entries(tool.arguments)) {

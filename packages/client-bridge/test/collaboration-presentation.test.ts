@@ -277,12 +277,13 @@ test('recovery explains the current model interruption and an accepted reply wit
   try {
     f.storage.pauseRun({ projectId: 'project', runId: 'run', operationId: 'checkpoint', reason: 'WRITING_INPUT_REQUIRED', payload: {kind: 'publication_selection', reason: '选标题', questions: ['请选择']} });
     f.storage.resumeRun({ projectId: 'project', runId: 'run', operationId: 'ok', decision: 'resume', displayInstruction: 'ok' });
-    f.event('request.dispatch_attempted', 'timeout', {});
-    f.event('request.outcome_unknown', 'timeout', { error: { code: 'TIMEOUT', message: 'secret provider response' } });
+    f.event('request.dispatch_attempted', 'timeout', { actor: 'review_editor' });
+    f.event('request.outcome_unknown', 'timeout', { error: { code: 'TIMEOUT', message: 'secret provider response' },
+      transport: { phase: 'stream_idle', timeoutMs: 90000, elapsedMs: 95000 } });
     f.storage.finishRun({ projectId: 'project', runId: 'run', operationId: 'wait', status: 'waiting_user', stopReason: 'UNKNOWN_EXTERNAL_OUTCOME' });
     assert.equal((await f.snapshot()).recoverableRuns[0]?.inputRequest, undefined, 'old title choices are not the current recovery decision');
     assert.deepEqual((await f.snapshot()).recoverableRuns[0]?.interruption,
-      { source: 'model', cause: 'timeout', replyAccepted: true });
+      { source: 'model', cause: 'timeout', replyAccepted: true, actorLabel: '编辑审校', timeoutPhase: 'stream_idle', timeoutMs: 90000 });
     f.storage.resumeRun({ projectId: 'project', runId: 'run', operationId: 'retry', decision: 'retry_unknown' });
     f.event('tool.requested', 'external', { toolName: 'external-write' });
     f.event('tool.outcome_unknown', 'external', { error: { code: 'TIMEOUT' } });

@@ -377,10 +377,12 @@ it(`harness text save retains tool safety boundaries: ${format}/${scenario}`, as
 
 const validReviewJson = JSON.stringify({ content: '原句把具体测量对象误写成总体信任。', findings: [] });
 for (const [name, responses, succeeds] of [
+  ['accepts one Markdown fence without retrying', ['  ```JSON\r\n' + validReviewJson + '\r\n```  '], true],
+  ['rejects prose before the fence', ['审稿如下\n```json\n' + validReviewJson + '\n```', validReviewJson], true],
   ['repairs invalid JSON', ['{"content":', validReviewJson], true],
   ['stops repeated malformed JSON', ['{"content":', '{"content":'], false],
   ['bounds invalid JSON objects', ['[]', 'null', '{"number":1e1000}'], false],
-  ['rejects a conflicting fixed stage', ['{"stage":"draft","content":"wrong actor","findings":[]}', validReviewJson], true],
+  ['rejects a conflicting fixed stage inside a fence', ['```json\n{"stage":"draft","content":"wrong actor","findings":[]}\n```', validReviewJson], true],
   ['applies local role field constraints', ['{"content":"missing findings"}', validReviewJson], true],
 ] as const) {
 it(`JSON text output ${name}`, async () => {
@@ -423,7 +425,7 @@ it(`JSON text output ${name}`, async () => {
     const localCalls = storage.listRunEvents(result.runId).filter(event => event.type === 'tool.requested');
     assert.equal(localCalls.length, name === 'applies local role field constraints' ? 2 : succeeds ? 1 : 0);
     assert.ok(localCalls.every(event => (event.payload.arguments as { stage?: string }).stage === 'review_editor' && event.payload.previewId === undefined));
-    assert.match(JSON.stringify(requests[1]!.messages), /完整.*JSON/u);
+    if (requests.length > 1) assert.match(JSON.stringify(requests[1]!.messages), /完整.*JSON/u);
     if (!succeeds) assert.equal(storage.getRun(result.runId)?.stopReason, 'STAGE_OUTPUT_NOT_SAVED');
   } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
 });
