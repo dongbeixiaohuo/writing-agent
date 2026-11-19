@@ -400,6 +400,7 @@ export interface RecoverableRunSummary {
         source: 'model' | 'tool';
         cause: 'timeout' | 'unknown';
         replyAccepted: boolean;
+        actorLabel?: string;
         timeoutPhase?: 'first_response' | 'stream_idle';
         timeoutMs?: number;
     };

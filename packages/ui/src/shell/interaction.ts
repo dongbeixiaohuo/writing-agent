@@ -146,11 +146,16 @@ export function checkpointCopy(
   const next = nextStage === null ? null : stageRoleCopy(nextStage)
 
   if (recovery.stopReason !== 'CO_CREATION_CHECKPOINT') {
-    if (recovery.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && recovery.interruption?.source === 'model') {
+    const interruption = recovery.interruption
+    if (recovery.stopReason === 'UNKNOWN_EXTERNAL_OUTCOME' && interruption?.source === 'model') {
+      const role = interruption.actorLabel ?? '写作助手'
+      const reason = interruption.timeoutPhase === 'stream_idle' ? '模型输出停顿超时' :
+        interruption.timeoutPhase === 'first_response' ? '等待模型响应超时' :
+          interruption.cause === 'timeout' ? '模型请求超时' : '模型请求中断'
       return {
-        role: '写作助手', eyebrow: recovery.interruption.replyAccepted ? '已收到你的回复 · 这一步暂时中断' : '回复尚未完成 · 写作暂时暂停',
-        title: '回复还没有完成，这一步已暂停',
-        description: '写作助手 Agent 没能完成这次回复，未完成的内容没有作为正式成果保存。已保存的内容仍在，可以重试这一步，无需重新填写。',
+        role, eyebrow: interruption.replyAccepted ? '已收到你的回复 · 当前阶段已暂停' : '当前阶段已暂停',
+        title: `${role}因${reason}暂停`,
+        description: '已保存的稿件和确认仍在。点击重试这一步，即可从当前阶段继续。',
         feedbackPlaceholder: '', primaryAction: '重试这一步',
       }
     }

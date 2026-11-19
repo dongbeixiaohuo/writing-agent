@@ -166,6 +166,7 @@ async function approveCurrentCheckpoint(f: ReturnType<typeof setup>, runId: stri
 
 it('explicit approval bypasses semantic classification, persists across restart and is consumed only once', async () => {
   const f = setup();
+  let bridge: ReturnType<typeof createApplicationBridge> | undefined;
   try {
     const first = await f.app.runDraft(f.input);
     const count = f.provider.requests.length;
@@ -182,11 +183,18 @@ it('explicit approval bypasses semantic classification, persists across restart 
     assert.equal(restarted.continuePendingHandoffs(f.input).length, 1);
     for (let n = 0; n < 200 && f.storage.getRun(first.runId)?.status === 'running'; n++) await new Promise(r => setTimeout(r, 5));
     assert.equal(f.storage.listRunEvents(first.runId).findLast(e => e.type === 'run.waiting_user')?.payload.stage, 'draft');
+    bridge = createApplicationBridge({ service: restarted, workspaceId: 'approval', model: {
+      model: 'mock', providerLabel: 'mock', credentialReference: null, parameters: {},
+    } });
+    await bridge.selectSession('p', first.sessionId);
+    const messages = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
+    assert.equal(messages.filter(item => item.kind === 'message' && item.role === 'user' &&
+      item.body === '认可当前阶段，继续下一步').length, 1);
     assert.equal(restarted.continuePendingHandoffs(f.input).length, 0);
     await restarted.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'explicit-ok', approval });
     assert.equal(restarted.continuePendingHandoffs(f.input).length, 0, 'duplicate click does not approve the new draft');
     await assert.rejects(restarted.approveStageCheckpoint({ projectId: 'p', runId: first.runId, operationId: 'old-card', approval }), /已变化/);
-  } finally { f.close(); }
+  } finally { bridge?.dispose(); f.close(); }
 });
 
 it('rejects explicit approval when the displayed body changed, without creating a receipt', async () => {

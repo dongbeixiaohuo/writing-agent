@@ -130,9 +130,11 @@ test('main conversation links to the current manuscript while export settings li
     assert.match(staleCheckpoint, /这个方向可以吗/);
     assert.doesNotMatch(staleCheckpoint, /当前稿件的核查结果已失效/);
     assert.match(render('stale'), /当前稿件的核查结果已失效/);
-    const timeout = render('not_checked', 'ready', 'UNKNOWN_EXTERNAL_OUTCOME', null, {source:'model',cause:'timeout',replyAccepted:true});
+    const timeout = render('not_checked', 'ready', 'UNKNOWN_EXTERNAL_OUTCOME', null,
+      {source:'model',cause:'timeout',replyAccepted:true,actorLabel:'编辑审校',timeoutPhase:'stream_idle',timeoutMs:90000});
     assert.match(timeout, /已收到你的回复/u);
-    assert.match(timeout, /回复还没有完成，这一步已暂停/u);
+    assert.match(timeout, /编辑审校因模型输出停顿超时暂停/u);
+    assert.match(timeout, /已保存的稿件和确认仍在/u);
     assert.match(timeout, />重试这一步</u);
     assert.match(timeout, /data-conversation-recovery="true"/u);
     assert.doesNotMatch(timeout, /避免重复写入|aria-label="本阶段成果"|外部请求的结果未知/u);
