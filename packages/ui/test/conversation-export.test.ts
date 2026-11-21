@@ -135,6 +135,7 @@ test('main conversation links to the current manuscript while export settings li
     assert.match(timeout, /已收到你的回复/u);
     assert.match(timeout, /编辑审校因模型输出停顿超时暂停/u);
     assert.match(timeout, /已保存的稿件和确认仍在/u);
+    assert.match(timeout, /会发起新的模型请求，可能再次计费/u);
     assert.match(timeout, />重试这一步</u);
     assert.match(timeout, /data-conversation-recovery="true"/u);
     assert.doesNotMatch(timeout, /避免重复写入|aria-label="本阶段成果"|外部请求的结果未知/u);

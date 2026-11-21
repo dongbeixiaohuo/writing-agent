@@ -30,6 +30,11 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
     title:'重复读取没有推进当前任务', detail:'模型连续读取相同业务输入和结果，没有提交新的成果；程序已暂停自动循环，避免继续消耗请求。',
     remediation:'已保存内容仍保留。查看最近工具记录后可重试当前步骤，无需重新提供材料。',
   }
+  if (code === 'PARAGRAPH_EDITS_INVALID') return {
+    title: '这次段落修改未保存',
+    detail: '提交的改动与当前稿件或允许修改的段落不匹配。已保存的正文和标题仍可查看。',
+    remediation: '回到对话重试这一步，让主笔按当前稿件重新定位修改。也可以在「稿件与版本」中查看当前正文。',
+  }
   if (code === 'PROVIDER_RETRY_DEFERRED') return {
     title:'模型服务要求稍后重试', detail:'服务商建议的重试时间超过本轮自动等待范围或不合法；程序已保存进度并暂停，而不是继续长时间挂起。',
     remediation:'按主对话的建议时间重试，或选择其他已验证模型；不会提前自动重试同一模型。',

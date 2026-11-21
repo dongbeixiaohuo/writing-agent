@@ -13,7 +13,7 @@ import { PREWRITING_INSTRUCTIONS, PREWRITING_JSON_SCHEMA, draftWritingPlan, READ
   CONFIRMED_READING_SELECTION_INSTRUCTIONS, READING_SELECTION_JSON_SCHEMA, READING_DRAFT_INSTRUCTIONS } from './prewriting.js';
 import { researchReadings } from './research-readings.js';
 import { redevelopmentReference, redevelopmentProblems, redevelopmentHistory } from './revision-context.js';
-import { articleParagraphs, paragraphRepairScope, PARAGRAPH_EDITS_SCHEMA } from './paragraph-revision.js';
+import { articleParagraphs, paragraphEditsOutputSchema, paragraphRepairScope } from './paragraph-revision.js';
 import { PARAGRAPH_REVISION_SUBMISSION, READING_EDITOR_INSTRUCTIONS, READING_REVISION_INSTRUCTIONS, readingAuditPrompt } from './review-closure-prompts.js';
 import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, isReadOnlyRevisionAudit, isReadingFirstRun, workflowStagesForRun, stageArtifact, stageMarker, type WritingWorkflowTools } from "./workflow-tools.js";
 import { EDITORIAL_PLAN_INSTRUCTIONS } from './editorial-plan.js';
@@ -476,20 +476,22 @@ export function createWritingCollaboration(options: {
     const reviewClosure = revisionWork?.closure ?? workflow.reviewClosure(runId);
     const repairBody = (revisionWork?.returnReportId || readingFirst) && current.expectedBodyVersionId ? storage.getArtifactVersion(current.expectedBodyVersionId) : null;
     if (assignment?.stage === 'central_revision' && revisionWork && repairBody && (readingFirst || revisionWork.closure.findings.length)) {
-      const scope = paragraphRepairScope(repairBody.content, revisionWork.closure.findings);
+      const scope = paragraphRepairScope(repairBody.content, revisionWork.closure.findings, repairBody.id);
       const selectedStyle = projectStyleSelection(storage, projectId);
       const authorized = storage.listMaterials(projectId).filter(m => options.materialIds.includes(m.id));
       const research = stageArtifact(storage, projectId, runId, 'research');
       return {
         scopeId: `paragraph-revision:${assignment.decisionId}:${repairBody.id}`, actor: 'central_revision', expectedBodyVersionId: repairBody.id,
-        systemPrompt: readingFirst ? READING_REVISION_INSTRUCTIONS : PARAGRAPH_REVISION_SUBMISSION,
+        systemPrompt: [readingFirst ? READING_REVISION_INSTRUCTIONS : PARAGRAPH_REVISION_SUBMISSION,
+          scope.duplicateParagraphIds.length ? '旧审校引文已无法定位当前稿。本轮只删除 duplicateParagraphIds 中与上一段逐字相同的重复段，每段的 replacement 必须为空字符串。其余段落原样保留。'
+            : scope.editableParagraphIds.length ? '' : '当前稿没有可安全修改的段落。本轮提交空的 edits 数组，保留现稿。'].filter(Boolean).join('\n'),
         userMessage: `修订当前文章的问题段落。\n${styleContext(selectedStyle, 'central_revision')}\nCOLLABORATION_STATE=${JSON.stringify({
           actor: 'central_revision', stage: 'central_revision', revisionMode: 'paragraphs', ready: current.ready, finished: false,
           nextStage: current.nextStage, inputVersionIds: inputs, unreadArtifactVersionIds: [],
-          authorReplies, authorClarifications, baseBodyVersionId: repairBody.id, paragraphScope: scope,
+          authorReplies, authorClarifications, taskInstruction: assignment.reason, baseBodyVersionId: repairBody.id, paragraphScope: scope,
           sourceReadings: researchReadings(storage, projectId, research, authorized),
           revisionFeedback: { findings: revisionWork.closure.findings },
-          revisionOutputSchema: { type: 'object', properties: { paragraphEdits: PARAGRAPH_EDITS_SCHEMA }, required: ['paragraphEdits'], additionalProperties: false },
+          revisionOutputSchema: { type: 'object', properties: { paragraphEdits: paragraphEditsOutputSchema(repairBody.id, scope) }, required: ['paragraphEdits'], additionalProperties: false },
         })}`,
         allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
         textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'central_revision', content: repairBody.content }, format: 'json_object' },

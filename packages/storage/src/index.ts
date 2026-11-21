@@ -6,6 +6,8 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
+  readdirSync,
   renameSync,
   rmSync,
   statSync,
@@ -576,7 +578,16 @@ function classifyDatabaseError(error: unknown): StorageOpenError {
 }
 
 function fileSha256(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+  const descriptor = openSync(path, 'r');
+  try {
+    const hash = createHash('sha256');
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    for (;;) {
+      const size = readSync(descriptor, buffer, 0, buffer.length, null);
+      if (size === 0) return hash.digest('hex');
+      hash.update(buffer.subarray(0, size));
+    }
+  } finally { closeSync(descriptor); }
 }
 
 class ExportFileError extends Error {
@@ -856,6 +867,9 @@ function artifactVersionFromRow(row: ArtifactVersionRow): ArtifactVersion {
 function bodyDocumentFromRow(row: BodyDocumentRow): BodyDocument {
   const parsed = JSON.parse(row.document_json) as BodyDocument;
   if (
+    !parsed || typeof parsed !== 'object' || typeof parsed.content !== 'string' ||
+    !Array.isArray(parsed.blocks) || parsed.blocks.some(block => !block || typeof block.id !== 'string' ||
+      typeof block.content !== 'string' || typeof block.contentHash !== 'string' || !Number.isInteger(block.ordinal)) ||
     parsed.versionId !== row.artifact_version_id ||
     parsed.parserVersion !== BODY_BLOCK_PARSER_VERSION ||
     parsed.contentHash !== row.content_hash
@@ -1291,6 +1305,35 @@ function requestSnapshotFromRow(row: RequestSnapshotRow): RequestSnapshotRecord 
   };
 }
 
+
+export interface ProjectBackupRepairResult {
+  projectId: string;
+  status: 'repaired' | 'no_change';
+  repairedFields: ('brief_json' | 'body_document')[];
+  evidencePath: string | null;
+}
+
+function readableBriefJson(row: WritingBriefVersionRow): boolean {
+  try { WritingBriefSchema.parse(JSON.parse(row.brief_json)); return true; }
+  catch { return false; }
+}
+
+/** Verify derived text and every block against the authoritative saved article. IDs may be retained across revisions. */
+function verifiedRepairBody(row: BodyDocumentRow, artifact: ArtifactVersionRow): boolean {
+  try {
+    const document = bodyDocumentFromRow(row);
+    const expected = parseBodyDocument(artifact.id, artifact.content);
+    return row.project_id === artifact.project_id && row.artifact_version_id === artifact.id &&
+      row.parser_version === BODY_BLOCK_PARSER_VERSION && row.content_hash === artifact.content_hash &&
+      document.content === artifact.content && contentHash(document.content) === artifact.content_hash &&
+      document.blocks.length === expected.blocks.length && new Set(document.blocks.map(block => block.id)).size === document.blocks.length &&
+      document.blocks.every((block, index) => {
+        const target = expected.blocks[index]!;
+        return !!block.id && block.ordinal === target.ordinal && block.kind === target.kind &&
+          block.content === target.content && block.contentHash === target.contentHash;
+      });
+  } catch { return false; }
+}
 
 export class WorkspaceStorage implements StoragePort, SessionStore {
   constructor(
@@ -2469,6 +2512,14 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
     const now = this.clock();
     try {
       this.database.exec("BEGIN IMMEDIATE");
+      // A cancelled run permanently loses write authority, including delayed
+      // asynchronous tools. Check inside the transaction before idempotency or
+      // any mutation so even a stale retry cannot publish a result.
+      const actor = (command as { actor?: Actor }).actor;
+      if (actor?.kind === 'agent' && actor.runId && this.getRun(actor.runId)?.status === 'cancelled') {
+        this.database.exec('ROLLBACK');
+        return failure(operationId, 'RUN_CANCELLED', 'Cancelled run cannot modify the workspace');
+      }
       const prior = this.database
         .prepare(
           `SELECT input_hash, state, result_json
@@ -2613,7 +2664,8 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
           "project.created",
           command.actor,
           command.operationId,
-          { name: command.name, mode: command.mode },
+          { name: command.name, mode: command.mode,
+            ...(command.conversationInputHash ? { conversationInputHash: command.conversationInputHash } : {}) },
           now,
         );
         return {
@@ -5021,7 +5073,9 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
     }
 
     mkdirSync(dirname(destination), { recursive: true });
-    const temporaryPath = `${destination}.tmp-${randomUUID()}`;
+    // Keep the SQLite temporary filename independent of the user's chosen name.
+    // Adding another UUID to a long Windows backup path can prevent SQLite from opening it.
+    const temporaryPath = join(dirname(destination), `backup-${randomUUID()}.tmp`);
     try {
       await backupDatabase(this.database, temporaryPath);
       const inspection = inspectDatabaseFile(temporaryPath);
@@ -5050,6 +5104,146 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
     }
   }
 
+  /** A deliberately narrow repair: restore verified bytes for the same current versions, never roll back pointers or import projects. */
+  repairProjectFromBackup(projectId: string, backupPath: string): ProjectBackupRepairResult {
+    function fail(code: string, message: string): never { throw new StorageOpenError(code, message); }
+    if (this.readOnly) fail('STORAGE_READ_ONLY', 'Workspace storage was opened in read-only mode');
+    if (resolve(backupPath) === resolve(this.databasePath)) fail('PROJECT_REPAIR_BACKUP_INVALID', 'Choose a separate verified backup');
+    let source: DatabaseSync | undefined;
+    try {
+      try {
+        source = new DatabaseSync(resolve(backupPath), { readOnly: true, timeout: 5000 });
+        configureConnection(source, true);
+        source.exec('BEGIN');
+        verifyDatabase(source);
+        source.prepare('SELECT id, current_brief_version_id, latest_body_version_id FROM projects LIMIT 0');
+        source.prepare('SELECT id, project_id, brief_json, content_hash, actor_json FROM writing_brief_versions LIMIT 0');
+        source.prepare('SELECT id, project_id, content, content_hash, actor_json FROM artifact_versions LIMIT 0');
+        source.prepare('SELECT artifact_version_id, project_id, document_json, content_hash FROM body_documents LIMIT 0');
+        if (sqlitePragmaNumber(source, 'application_id') !== APPLICATION_ID || sqlitePragmaNumber(source, 'user_version') !== CURRENT_SCHEMA_VERSION) {
+          fail('PROJECT_REPAIR_BACKUP_INVALID', 'Backup format or schema is not supported');
+        }
+      } catch { fail('PROJECT_REPAIR_BACKUP_INVALID', 'Backup cannot be verified'); }
+      const backup = source;
+      this.database.exec('BEGIN IMMEDIATE');
+      const project = this.getProjectRow(projectId);
+      if (!project) fail('PROJECT_NOT_FOUND', 'Project does not exist');
+      if (this.hasRunInStates(['queued', 'running', 'paused'], projectId)) fail('PROJECT_REPAIR_BUSY', 'Stop this project before repairing its data');
+      if (!backup.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)) fail('PROJECT_REPAIR_NO_MATCH', 'Backup does not contain this project');
+      let briefReplacement: WritingBriefVersionRow | undefined;
+      let bodyReplacement: BodyDocumentRow | undefined;
+      let bodyMissing = false;
+      const before: Record<string, unknown> = {};
+      const sameExcept = (left: object, right: object, field: string): boolean => {
+        const a = Object.entries(left).filter(([key]) => key !== field);
+        const b = Object.entries(right).filter(([key]) => key !== field);
+        return canonicalJson(Object.fromEntries(a)) === canonicalJson(Object.fromEntries(b));
+      };
+      if (project.current_brief_version_id !== null) {
+        const id = project.current_brief_version_id;
+        const current = this.database.prepare('SELECT * FROM writing_brief_versions WHERE id = ? AND project_id = ?').get(id, projectId) as unknown as WritingBriefVersionRow | undefined;
+        if (!current) fail('PROJECT_REPAIR_UNVERIFIABLE', 'Missing brief row has no local content hash to prove the replacement');
+        if (!readableBriefJson(current)) {
+          const candidate = backup.prepare('SELECT * FROM writing_brief_versions WHERE id = ? AND project_id = ?').get(id, projectId) as unknown as WritingBriefVersionRow | undefined;
+          if (!candidate) fail('PROJECT_REPAIR_NO_MATCH', 'Backup does not contain the exact brief version');
+          try { writingBriefVersionFromRow(candidate); } catch { fail('PROJECT_REPAIR_BACKUP_INVALID', 'Backup brief metadata cannot be decoded'); }
+          if (!readableBriefJson(candidate) || contentHash(candidate.brief_json) !== candidate.content_hash) fail('PROJECT_REPAIR_BACKUP_INVALID', 'Backup brief fails schema or content hash verification');
+          if (!sameExcept(current, candidate, 'brief_json')) fail('PROJECT_REPAIR_UNVERIFIABLE', 'Brief metadata or expected hash differs from the backup');
+          briefReplacement = candidate;
+          before.brief = { row: current, rawJsonHex: this.database.prepare('SELECT hex(CAST(brief_json AS BLOB)) AS bytes FROM writing_brief_versions WHERE id = ? AND project_id = ?').get(id, projectId)!.bytes };
+        } else if (contentHash(current.brief_json) !== current.content_hash) {
+          fail('PROJECT_REPAIR_UNVERIFIABLE', 'Readable brief content disagrees with its recorded hash; it will not be overwritten');
+        }
+      }
+      if (project.latest_body_version_id !== null) {
+        const id = project.latest_body_version_id;
+        const artifact = this.database.prepare("SELECT * FROM artifact_versions WHERE id = ? AND project_id = ? AND kind = 'body' AND logical_key = 'main'").get(id, projectId) as unknown as ArtifactVersionRow | undefined;
+        if (!artifact || contentHash(artifact.content) !== artifact.content_hash) fail('PROJECT_REPAIR_UNVERIFIABLE', 'Authoritative article text is missing or its hash does not match');
+        const current = this.database.prepare('SELECT * FROM body_documents WHERE artifact_version_id = ?').get(id) as unknown as BodyDocumentRow | undefined;
+        if (!current || !verifiedRepairBody(current, artifact)) {
+          const candidateArtifact = backup.prepare('SELECT * FROM artifact_versions WHERE id = ? AND project_id = ?').get(id, projectId) as unknown as ArtifactVersionRow | undefined;
+          const candidate = backup.prepare('SELECT * FROM body_documents WHERE artifact_version_id = ? AND project_id = ?').get(id, projectId) as unknown as BodyDocumentRow | undefined;
+          if (!candidateArtifact || !candidate) fail('PROJECT_REPAIR_NO_MATCH', 'Backup does not contain the exact article version and derived document');
+          try { artifactVersionFromRow(candidateArtifact); } catch { fail('PROJECT_REPAIR_BACKUP_INVALID', 'Backup article metadata cannot be decoded'); }
+          if (contentHash(candidateArtifact.content) !== candidateArtifact.content_hash || !verifiedRepairBody(candidate, candidateArtifact)) fail('PROJECT_REPAIR_BACKUP_INVALID', 'Backup article or block document fails verification');
+          if (canonicalJson(artifact) !== canonicalJson(candidateArtifact) || (current && !sameExcept(current, candidate, 'document_json'))) fail('PROJECT_REPAIR_UNVERIFIABLE', 'Article or derived metadata differs from the backup');
+          bodyReplacement = candidate;
+          bodyMissing = current === undefined;
+          before.body = { row: current ?? null, rawJsonHex: current ? this.database.prepare('SELECT hex(CAST(document_json AS BLOB)) AS bytes FROM body_documents WHERE artifact_version_id = ?').get(id)!.bytes : null };
+        }
+      }
+      const repairedFields: ProjectBackupRepairResult['repairedFields'] = [];
+      if (briefReplacement) repairedFields.push('brief_json');
+      if (bodyReplacement) repairedFields.push('body_document');
+      if (!repairedFields.length) {
+        this.database.exec('COMMIT');
+        return { projectId, status: 'no_change', repairedFields, evidencePath: null };
+      }
+      const directory = join(dirname(this.databasePath), 'project-repairs');
+      const evidencePath = join(directory, `${createHash('sha256').update(projectId).digest('hex')}-${randomUUID()}.before.json`);
+      try {
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(evidencePath, JSON.stringify({ format: 'writing-agent-project-repair-before-v1', projectId, recordedAt: this.clock(),
+          backupSha256: fileSha256(backupPath), project, repairedFields, before, replacement: { brief: briefReplacement ?? null, body: bodyReplacement ?? null },
+          note: 'rawJsonHex preserves the exact SQLite TEXT bytes before this repair; this evidence is also retained if the transaction fails.' }, null, 2),
+          { encoding: 'utf8', flag: 'wx', mode: 0o600, flush: true });
+      } catch { fail('PROJECT_REPAIR_EVIDENCE_FAILED', 'Could not preserve the pre-repair bytes; no records were changed'); }
+      if (briefReplacement) {
+        this.database.prepare('UPDATE writing_brief_versions SET brief_json = ? WHERE id = ? AND project_id = ?').run(briefReplacement.brief_json, briefReplacement.id, projectId);
+      }
+      if (bodyReplacement) {
+        if (bodyMissing) this.database.prepare('INSERT INTO body_documents (artifact_version_id, project_id, parser_version, content_hash, document_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(bodyReplacement.artifact_version_id, projectId, bodyReplacement.parser_version, bodyReplacement.content_hash, bodyReplacement.document_json, bodyReplacement.created_at);
+        else this.database.prepare('UPDATE body_documents SET document_json = ? WHERE artifact_version_id = ? AND project_id = ?').run(bodyReplacement.document_json, bodyReplacement.artifact_version_id, projectId);
+      }
+      this.database.exec('COMMIT');
+      return { projectId, status: 'repaired', repairedFields, evidencePath };
+    } catch (error) {
+      if (this.database.isTransaction) this.database.exec('ROLLBACK');
+      throw error;
+    } finally { source?.close(); }
+  }
+
+  getProjectEventSequence(projectId: string): number {
+    const row = this.database.prepare('SELECT MAX(project_seq) AS seq FROM events WHERE project_id = ?').get(projectId) as { seq: number | null };
+    return row.seq ?? 0;
+  }
+
+  /** Diagnostics live outside project rows so broken JSON never prevents recording the failure. */
+  recordProjectReadFailure(projectId: string, diagnostic: { code: string; message: string; stage: string }): void {
+    const directory = join(dirname(this.databasePath), "project-diagnostics");
+    mkdirSync(directory, { recursive: true });
+    const destination = join(directory, `${createHash('sha256').update(projectId).digest('hex')}.json`);
+    const data = JSON.stringify({ projectId, ...diagnostic });
+    if (existsSync(destination) && readFileSync(destination, 'utf8') === data) return;
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, data, { encoding: 'utf8', flag: 'wx' });
+    renameSync(temporary, destination);
+  }
+
+  /** Recovery export deliberately never parses domain JSON, and never exports other projects. */
+  exportProjectRecovery(projectId: string, diagnostic: { code: string; message: string; stage: string } | null = null): string {
+    const project = this.getProjectRow(projectId);
+    if (!project) throw new StorageOpenError('PROJECT_NOT_FOUND', 'Project does not exist');
+    const tables: Record<string, unknown[]> = { projects: [project] };
+    const names = this.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[];
+    for (const { name } of names) {
+      const quoted = `"${name.replaceAll('"', '""')}"`;
+      const columns = this.database.prepare(`PRAGMA table_info(${quoted})`).all() as { name: string }[];
+      if (columns.some(column => column.name === 'project_id')) {
+        tables[name] = this.database.prepare(`SELECT * FROM ${quoted} WHERE project_id = ?`).all(projectId);
+      }
+    }
+    // SQLite TEXT can contain invalid UTF-8 that a JavaScript string cannot preserve.
+    const rawCurrentFields = {
+      brief: this.database.prepare('SELECT id, hex(CAST(brief_json AS BLOB)) AS rawHex FROM writing_brief_versions WHERE project_id = ? AND id = ?').get(projectId, project.current_brief_version_id) ?? null,
+      body: this.database.prepare('SELECT artifact_version_id, hex(CAST(document_json AS BLOB)) AS rawHex FROM body_documents WHERE project_id = ? AND artifact_version_id = ?').get(projectId, project.latest_body_version_id) ?? null,
+    };
+    return JSON.stringify({ format: 'writing-agent-project-recovery-v1', projectId, exportedAt: this.clock(),
+      instructions: '此文件用于在副本中排查问题。tables 包含本项目记录，rawCurrentFields 以十六进制保留当前简报和正文结构字段的 SQLite 原字节。',
+      diagnostic, tables, rawCurrentFields }, null, 2);
+  }
+
   inspectProject(projectId: string): ProjectInspection | null {
     const row = this.getProjectRow(projectId);
     return row === undefined ? null : projectFromRow(row);
@@ -5071,6 +5265,15 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
       )
       .all(projectId) as unknown as SessionRow[];
     return rows.map(sessionFromRow);
+  }
+
+  // A backup or model change only needs the execution state. Decoding every article's
+  // brief (or run metadata) here would make one damaged project block healthy ones.
+  hasRunInStates(states: readonly string[], projectId?: string): boolean {
+    if (!states.length) return false;
+    const filter = projectId === undefined ? '' : ' AND project_id = ?';
+    const query = this.database.prepare(`SELECT 1 FROM runs WHERE status IN (${states.map(() => '?').join(',')})${filter} LIMIT 1`);
+    return query.get(...states, ...(projectId === undefined ? [] : [projectId])) !== undefined;
   }
 
   listRuns(projectId: string, sessionId?: string): RunRecord[] {
@@ -5488,6 +5691,21 @@ export function openWorkspaceStorage(
   options: OpenWorkspaceStorageOptions,
 ): WorkspaceStorage {
   const databasePath = workspaceDatabasePath(options.workspacePath);
+  // Every consumer (desktop, CLI and web) must honor interrupted whole-database
+  // replacement. Only the dedicated recovery path may inspect/install snapshots.
+  const databaseDirectory = dirname(databasePath);
+  if (existsSync(databaseDirectory) && readdirSync(databaseDirectory).some(name => {
+    if (name === "restore-journal.json" || name.startsWith("workspace.sqlite3.restore-previous-")) return true;
+    if (!name.startsWith("restore-recovery-")) return false;
+    const receipt = join(databaseDirectory, name, "completed.json");
+    try {
+      if (!statSync(receipt).isFile() || statSync(receipt).size > 8192) return true;
+      const completed = JSON.parse(readFileSync(receipt, "utf8")) as { version?: unknown; sha256?: unknown };
+      return !completed || completed.version !== 1 || typeof completed.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(completed.sha256);
+    } catch { return true; } // Missing/partial receipts still represent unfinished recovery.
+  })) {
+    throw new StorageOpenError("RESTORE_RECOVERY_REQUIRED", "Workspace restore must be recovered before opening storage");
+  }
   const readOnly = options.readOnly ?? false;
   const databaseExisted = existsSync(databasePath);
   if (readOnly && !databaseExisted) {

@@ -11,6 +11,8 @@ function rpcError(code: string, message: string): DesktopRpcResponse {
 }
 
 const publicMessages: Readonly<Record<string, string>> = {
+  RESTORE_SAFETY_BACKUP_FAILED: '恢复前的安全备份未能完成，原工作区仍在。请检查空间、目录权限和文件占用后重试。',
+  RESTORE_INSTALL_FAILED: '工作区恢复未完成。重启后请按恢复窗口提示操作，保留现场文件。',
   MODEL_GROUPS_INVALID: '分组模型配置无效，请重新选择。',
   MODEL_GROUP_UNAVAILABLE: '分组指定的模型尚未通过验证或配置已变化。请在模型设置中重新验证、选择其他模型或改为跟随默认。',
   STYLE_INPUT_INVALID: '风格资料格式不正确，请检查名称、样文数量和长度后重试。',
@@ -164,6 +166,10 @@ export async function dispatchDesktopRpc(
       case "getRunTraceDetail":
         // Read-only inspection never resends the entire conversation snapshot.
         return { ok: true, result: await bridge.getRunTraceDetail(...request.args as Parameters<ClientBridge['getRunTraceDetail']>) };
+      case "recheckProject":
+        if (!bridge.recheckProject) throw new Error("PROJECT_RECOVERY_UNAVAILABLE");
+        result = await bridge.recheckProject(...request.args as [string]);
+        break;
       case "selectProject":
         result = await bridge.selectProject(...request.args as [string]);
         break;

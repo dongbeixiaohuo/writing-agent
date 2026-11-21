@@ -156,7 +156,7 @@ describe("Desktop renderer bridge", () => {
       "handshake",
       "sendMessage",
     ]);
-    assert.deepEqual(api.requests[1]?.args, ["开始写作", { operationId: "operation-1" }]);
+    assert.deepEqual(api.requests[1]?.args, ["开始写作", { operationId: "operation-1", owner: { workspaceId: "desktop-workspace", projectId: "", sessionId: "" } }]);
     bridge.dispose();
   });
 
@@ -196,7 +196,7 @@ describe("Desktop renderer bridge", () => {
     await bridge.startConversation('用户原文不变', { styleSelection: { id: 'my-style', version: 2 } });
     assert.deepEqual(api.requests.at(-1)?.args, ['用户原文不变', { operationId: 'style-command', styleSelection: { id: 'my-style', version: 2 } }]);
     await bridge.sendMessage('继续', { styleSelection: null });
-    assert.deepEqual(api.requests.at(-1)?.args, ['继续', { operationId: 'style-command', styleSelection: null }]);
+    assert.deepEqual(api.requests.at(-1)?.args, ['继续', { operationId: 'style-command', styleSelection: null, owner: { workspaceId: 'desktop-workspace', projectId: '', sessionId: '' } }]);
     bridge.dispose();
   });
 
@@ -215,4 +215,14 @@ describe("Desktop renderer bridge", () => {
     unsubscribe();
     bridge.dispose();
   });
+});
+
+it('rejects a stale draft owner before desktop IPC dispatch', async () => {
+  const api = new FakeDesktopApi();
+  const bridge = new DesktopClientBridge(api);
+  await bridge.handshake();
+  const before = api.requests.length;
+  await assert.rejects(bridge.sendMessage('other project text', { owner: { workspaceId: 'desktop-workspace', projectId: 'stale-project', sessionId: 'stale-session' } }), error => (error as {code: string}).code === 'DRAFT_OWNER_CHANGED');
+  assert.equal(api.requests.length, before);
+  bridge.dispose();
 });

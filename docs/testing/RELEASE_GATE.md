@@ -1,8 +1,8 @@
 # Writing Agent 桌面发布门禁
 
-更新：2026-11-07。当前公开桌面版 **1.0.0-rc.96**，为 **Pre-release，不是稳定版**。沿用维护者已授权的未签名候选发布；不修改 Skill latest，不删除历史 Release。
+当前桌面版 **1.0.0-rc.103**。发布页提供 Windows x64 安装包、SHA256、构建提交与安装升级记录。[RC103 发布页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.103)
 
-当前下载：**[rc.96](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.96)**。构建源码 `12ac1ac48d1223bef9680223abfd4ed6479bfa11`，执行与附件校验见 [RC96 发布记录](../launch/RC96_RELEASE_EXECUTION.md)。
+以下为历次发布时的验证记录。RC96 对应构建提交 `12ac1ac48d1223bef9680223abfd4ed6479bfa11`。[RC96 发布记录](../launch/RC96_RELEASE_EXECUTION.md)
 
 ## RC96 本次发布检查（2026-11-07）
 

@@ -1,5 +1,6 @@
 import clsx from 'clsx'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { draftKey, readDraft, saveDraft } from '../../ui/src/shell/draft-storage.ts'
 import type {
   BodyBlockView,
   BridgeSnapshot,
@@ -456,18 +457,41 @@ export function WritingWorkbenchPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const workspace = snapshot.revisionWorkspace
+  type EditDrafts = { active: string | null; blocks: Record<string, { replacement: string; instruction: string }> }
+  const editKey = draftKey('paragraphs', snapshot.workspaceId, snapshot.selectedProjectId, workspace.bodyVersionId ?? '')
+  const currentEditKey = useRef(editKey)
+  currentEditKey.current = editKey
+  const draftsRef = useRef<EditDrafts>({ active: null, blocks: {} })
+  const [draftStatus, setDraftStatus] = useState<string | null>(null)
+  const persistEdits = (): void => { setDraftStatus(saveDraft(editKey, draftsRef.current) ?? '局部修改草稿已保存') }
+  const updateEdit = (text: string, note: string): void => {
+    if (!editingBlockId) return
+    draftsRef.current.blocks[editingBlockId] = { replacement: text, instruction: note }
+    draftsRef.current.active = editingBlockId
+    setReplacement(text)
+    setInstruction(note)
+    persistEdits()
+  }
   const writable = snapshot.mode === 'application' && snapshot.connection !== 'offline'
   const documentWritable = documentWriteEnabled(snapshot)
   const pending = workspace.proposals.filter(proposal => proposal.status === 'proposed')
 
-  useEffect(() => {
-    setEditingBlockId(null)
-    setReplacement('')
+  useLayoutEffect(() => {
+    const restored = readDraft<EditDrafts>(editKey, { active: null, blocks: {} })
+    const value = restored.value && typeof restored.value.blocks === 'object' ? restored.value : { active: null, blocks: {} }
+    draftsRef.current = value
+    const active = value.active && workspace.blocks.some(block => block.id === value.active) ? value.active : null
+    const draft = active ? value.blocks[active] : undefined
+    setEditingBlockId(draft ? active : null)
+    setReplacement(draft?.replacement ?? '')
+    setInstruction(draft?.instruction ?? '局部修改正文段落')
+    setDraftStatus(restored.error ?? (draft ? '局部修改草稿已恢复' : null))
+    if (draft) setTab('edit')
     setError(null)
-  }, [snapshot.selectedProjectId, workspace.bodyVersionId])
+  }, [editKey])
 
   useEffect(() => {
-    setTab(requestedTab)
+    if (!draftsRef.current.active) setTab(requestedTab)
   }, [requestedTab])
 
   const run = async (action: () => Promise<unknown>): Promise<void> => {
@@ -487,15 +511,22 @@ export function WritingWorkbenchPanel({
   }
 
   const beginEdit = (block: BodyBlockView): void => {
+    const saved = draftsRef.current.blocks[block.id]
     setEditingBlockId(block.id)
-    setReplacement(block.content)
-    setInstruction('局部修改正文段落')
+    setReplacement(saved?.replacement ?? block.content)
+    setInstruction(saved?.instruction ?? '局部修改正文段落')
+    draftsRef.current.active = block.id
+    draftsRef.current.blocks[block.id] = saved ?? { replacement: block.content, instruction: '局部修改正文段落' }
+    persistEdits()
     setError(null)
   }
 
   const propose = (block: BodyBlockView): void => {
     if (!documentWritable || workspace.bodyVersionId === null || replacement.trim().length === 0) return
     void run(async () => {
+      const liveSnapshot = bridge.getSnapshot()
+      if (liveSnapshot.workspaceId !== snapshot.workspaceId || liveSnapshot.selectedProjectId !== snapshot.selectedProjectId || liveSnapshot.revisionWorkspace.bodyVersionId !== workspace.bodyVersionId)
+        throw new Error('稿件已经切换，请回到原稿件恢复局部修改草稿。')
       await guardedDocumentWrite(bridge, () => bridge.proposeRevision({
         baseBodyVersionId: workspace.bodyVersionId as string,
         instruction,
@@ -507,8 +538,16 @@ export function WritingWorkbenchPanel({
           content: replacement,
         }],
       }))
-      setEditingBlockId(null)
-      setReplacement('')
+      // Clear only the submitted buffer; edits typed while preview was pending survive.
+      if (currentEditKey.current !== editKey) return
+      const current = draftsRef.current.blocks[block.id]
+      if (current?.replacement === replacement && current.instruction === instruction) {
+        delete draftsRef.current.blocks[block.id]
+        draftsRef.current.active = null
+        persistEdits()
+        setEditingBlockId(null)
+        setReplacement('')
+      }
     })
   }
 
@@ -524,6 +563,7 @@ export function WritingWorkbenchPanel({
 
   return (
     <div className={css.rightPanel}>
+      {draftStatus && <p role={draftStatus.includes('失败') ? 'alert' : 'status'}>{draftStatus}</p>}
       <div className={css.rightHeader}>
         <DocumentIcon />
         <span className={css.rightTitle}>{snapshot.previewDocument.title}</span>
@@ -573,11 +613,15 @@ export function WritingWorkbenchPanel({
               </div>
               {editingBlockId === block.id ? (
                 <div className={css.blockEditor}>
-                  <textarea aria-label={`编辑块 ${block.ordinal + 1}`} value={replacement} onChange={event => setReplacement(event.target.value)} />
-                  <input aria-label="修改说明" value={instruction} onChange={event => setInstruction(event.target.value)} />
+                  <textarea aria-label={`编辑块 ${block.ordinal + 1}`} value={replacement} onChange={event => updateEdit(event.target.value, instruction)} />
+                  <input aria-label="修改说明" value={instruction} onChange={event => updateEdit(replacement, event.target.value)} />
                   <div className={css.editorActions}>
                     <button type="button" disabled={!documentWritable || busy || replacement.trim().length === 0 || instruction.trim().length === 0} onClick={() => propose(block)}>生成差异预览</button>
-                    <button type="button" disabled={busy} onClick={() => setEditingBlockId(null)}>取消</button>
+                    <button type="button" disabled={busy} onClick={() => { draftsRef.current.active = null; persistEdits(); setEditingBlockId(null) }}>收起（保留草稿）</button>
+                    <button type="button" disabled={busy} onClick={() => {
+                      if (!window.confirm('确定丢弃这一段尚未预览的修改？')) return
+                      delete draftsRef.current.blocks[block.id]; draftsRef.current.active = null; persistEdits(); setEditingBlockId(null)
+                    }}>丢弃此段草稿</button>
                   </div>
                 </div>
               ) : (

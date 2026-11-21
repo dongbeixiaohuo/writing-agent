@@ -155,7 +155,7 @@ export function checkpointCopy(
       return {
         role, eyebrow: interruption.replyAccepted ? '已收到你的回复 · 当前阶段已暂停' : '当前阶段已暂停',
         title: `${role}因${reason}暂停`,
-        description: '已保存的稿件和确认仍在。点击重试这一步，即可从当前阶段继续。',
+        description: '已保存的稿件和确认仍在。上次请求的上游结果未知，点击“重试这一步”会发起新的模型请求，可能再次计费。',
         feedbackPlaceholder: '', primaryAction: '重试这一步',
       }
     }

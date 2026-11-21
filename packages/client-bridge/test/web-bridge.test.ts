@@ -655,3 +655,26 @@ describe("Web client bridge ordering", () => {
     }
   });
 });
+
+it('web sends the captured draft owner and rejects stale drafts without a request', async () => {
+  const sent: Record<string, unknown>[] = [];
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const route = new URL(String(input)).pathname;
+    if (route === '/api/v6/handshake') return json(handshakeEnvelope());
+    if (route === '/api/v6/snapshot') return json({ snapshot: snapshot() });
+    if (route === '/api/v6/command/start-run') {
+      sent.push(JSON.parse(String(init?.body)));
+      return json({ result: { runId: 'captured' }, snapshot: snapshot() });
+    }
+    throw Error('Unexpected route: ' + route);
+  }) as typeof fetch;
+  const bridge = createWebClientBridge({ baseUrl: 'http://127.0.0.1:4174', bootstrapCapability: BOOTSTRAP, fetchImpl });
+  try {
+    await bridge.handshake();
+    const owner = { workspaceId: 'workspace-wa025', projectId: 'project-1', sessionId: 'session-1' };
+    await bridge.sendMessage('own text', { owner });
+    assert.deepEqual(sent[0]?.owner, owner);
+    await assert.rejects(bridge.sendMessage('stale text', { owner: { ...owner, sessionId: 'old-session' } }), error => (error as { code: string }).code === 'DRAFT_OWNER_CHANGED');
+    assert.equal(sent.length, 1);
+  } finally { bridge.dispose(); }
+});

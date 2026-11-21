@@ -1,3 +1,5 @@
+import { assertMessageOwner, messageOwner } from './message-owner.js';
+import { createHash } from 'node:crypto';
 import type {
   ResumeDraftInput,
   RunDraftInput,
@@ -56,6 +58,7 @@ export interface UiSettingsPersistence {
 }
 
 export interface ApplicationBridgeOptions {
+  readonly startupNotices?: readonly string[];
   readonly service: WritingApplicationService;
   readonly workspaceId: string;
   readonly model: ApplicationBridgeModelConfig;
@@ -771,7 +774,7 @@ function timelineForSession(
     }
     const terminal: Readonly<Record<string, { label: string; state: "success" | "failure" | "cancelled" }>> = {
       "run.completed": { label: "运行完成", state: "success" },
-      "run.cancelled": { label: "写作已停止", state: "cancelled" },
+      "run.cancelled": { label: "本地已停止", state: "cancelled" },
       "run.failed": { label: "这一步没有完成", state: "failure" },
       "run.budget_exhausted": { label: "写作暂时暂停", state: "failure" },
       "run.interrupted": { label: "写作中断，可以继续", state: "failure" },
@@ -796,6 +799,8 @@ function timelineForSession(
                   ? "本轮回复已保存，你可以直接继续对话。"
                   : "这次回复没有保存成功，写作助手 Agent 已暂停。你的消息仍保留，可以重试；具体原因可在运行记录中查看。"
                 : "写作暂时暂停，已保存稿件和已确认选择保留。请点击下方继续按钮，接着完成剩余工作。"
+              : event.type === "run.cancelled"
+                ? "本地已停止，可以发送新消息。上游是否停止或计费仍未知；迟到结果不会写入。"
               : event.type === "run.interrupted"
                 ? "写作中断了，已保存内容仍在，可以接着继续。"
                 : event.type === "run.completed"
@@ -925,6 +930,12 @@ function runRecordView(
       state.get("fact_check") === "completed" &&
       projection.factCheck.status === "passed",
   };
+}
+
+function initialConversation(projection: WritingProjectProjection, operationId: string) {
+  const event = projection.events.find(e => e.type === 'run.started' && e.operationId === operationId);
+  if (!event || typeof event.payload.runId !== 'string' || typeof event.payload.sessionId !== 'string') return undefined;
+  return { runId: event.payload.runId, sessionId: event.payload.sessionId };
 }
 
 function commandInput(kind: string, values: readonly string[]): string {
@@ -1093,6 +1104,7 @@ export class ApplicationClientBridge implements ClientBridge {
   readonly #pollIntervalMs: number;
   readonly #operationIdFactory: () => string;
   readonly #uiSettingsPersistence: UiSettingsPersistence | null;
+  readonly #startupNotices: readonly string[];
   readonly #listeners = new Set<() => void>();
   readonly #commands = new Map<string, CachedCommand<unknown>>();
   #snapshot: BridgeSnapshot;
@@ -1114,6 +1126,7 @@ export class ApplicationClientBridge implements ClientBridge {
     this.#operationIdFactory =
       options.operationIdFactory ?? (() => globalThis.crypto.randomUUID());
     this.#uiSettingsPersistence = options.uiSettingsPersistence ?? null;
+    this.#startupNotices = options.startupNotices ?? [];
     const persistedSettings = this.#uiSettingsPersistence?.load() ?? null;
     const initialTheme = persistedSettings?.theme ?? "paper";
     const initialContentFontSize = persistedSettings?.contentFontSize ?? 14;
@@ -1252,14 +1265,21 @@ export class ApplicationClientBridge implements ClientBridge {
     }
   }
 
+  async recheckProject(projectId: string): Promise<void> {
+    this.#ensureLive();
+    if (projectId !== this.#snapshot.selectedProjectId) throw new Error('PROJECT_SELECTION_REQUIRED');
+    this.#service.recheckProject(projectId);
+    await this.refresh();
+  }
+
   async selectProject(projectId: string): Promise<void> {
     this.#ensureLive();
     const normalizedProjectId = projectId.trim();
     if (normalizedProjectId.length === 0) throw new Error("PROJECT_SELECTION_REQUIRED");
-    const projection = this.#service.getProjectProjection(normalizedProjectId);
+    if (!this.#service.listProjects().some(project => project.id === normalizedProjectId)) throw new Error("PROJECT_NOT_FOUND");
     this.#replace(
       this.#buildSnapshot(
-        projection.project.id,
+        normalizedProjectId,
         null,
         this.#snapshot.generation + 1,
         this.#snapshot.revision + 1,
@@ -1430,6 +1450,9 @@ export class ApplicationClientBridge implements ClientBridge {
     options: BridgeCommandOptions = {},
   ): Promise<void> {
     this.#ensureLive();
+    if (!this.#service.tryProjectProjection(projectId) || this.#service.getProjectReadIssue(projectId)) {
+      throw Object.assign(new Error('当前项目数据无法读取，请先导出原始数据并修复。'), { code: 'PROJECT_DATA_UNREADABLE' });
+    }
     const normalizedName = name.trim();
     if (!normalizedName || Array.from(normalizedName).length > 60) throw new Error("PROJECT_NAME_INVALID");
     const operationId = options.operationId ?? this.#operationIdFactory();
@@ -1603,13 +1626,27 @@ export class ApplicationClientBridge implements ClientBridge {
     const body = text.trim();
     if (!body) throw new Error('EMPTY_MESSAGE');
     if (body.length > 20_000) throw new Error('MESSAGE_TOO_LONG');
-    if (this.#model.credentialReference === null) throw new Error('MODEL_CONFIGURATION_REQUIRED');
     const operationId = options.operationId ?? this.#operationIdFactory();
-    return this.#once(operationId, 'conversation.start', commandInput('conversation.start', [body, JSON.stringify(options.styleSelection ?? null)]), async () => {
-      if (options.styleSelection !== undefined) this.#service.resolveStyleSelection(options.styleSelection);
+    const style = options.styleSelection;
+    const input = commandInput('conversation.start', [body, JSON.stringify(style ? { id: style.id, version: style.version } : null)]);
+    return this.#once(operationId, 'conversation.start', input, async () => {
       const projectId = `project:${operationId}`;
+      const conversationInputHash = createHash('sha256').update(input).digest('hex');
+      if (this.#service.listProjects().some(project => project.id === projectId)) {
+        const projection = this.#service.getProjectProjection(projectId);
+        const created = projection.events.find(event => event.type === 'project.created');
+        const receipt = initialConversation(projection, operationId);
+        if (created?.payload.conversationInputHash && created.payload.conversationInputHash !== conversationInputHash) throw new Error('IDEMPOTENCY_KEY_REUSED');
+        if (!receipt) throw new Error('PROJECT_CREATE_ALREADY_SAVED');
+        const started = projection.events.find(event => event.type === 'run.started' && event.operationId === operationId);
+        if (started?.payload.displayInstruction !== body) throw new Error('IDEMPOTENCY_KEY_REUSED');
+        await this.selectSession(projectId, receipt.sessionId);
+        return { runId: receipt.runId };
+      }
+      if (this.#model.credentialReference === null) throw new Error('MODEL_CONFIGURATION_REQUIRED');
+      if (options.styleSelection !== undefined) this.#service.resolveStyleSelection(options.styleSelection);
       mutationValue(this.#service.createProject({ operationId: `${operationId}:project`, projectId,
-        name: '新写作项目', nameSource: 'placeholder', mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
+        name: '新写作项目', nameSource: 'placeholder', conversationInputHash, mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
       if (options.styleSelection !== undefined) this.#service.selectProjectStyle(projectId, options.styleSelection, `${operationId}:style`);
       this.#replace(this.#buildSnapshot(projectId, null, this.#snapshot.generation + 1,
         this.#snapshot.revision + 1, this.#snapshot.settings, null), true);
@@ -1675,6 +1712,8 @@ export class ApplicationClientBridge implements ClientBridge {
     text: string,
     options: BridgeCommandOptions = {},
   ): Promise<{ runId: string }> {
+    const owner = options.owner ?? messageOwner(this.#snapshot);
+    assertMessageOwner(this.#snapshot, owner);
     this.#ensureLive();
     const body = text.trim();
     if (body.length === 0) throw new Error("EMPTY_MESSAGE");
@@ -1684,10 +1723,11 @@ export class ApplicationClientBridge implements ClientBridge {
     return this.#once(
       operationId,
       "run.start",
-      commandInput("run.start", [this.#snapshot.selectedProjectId, body, options.styleSelection === undefined ? 'unchanged' : JSON.stringify(options.styleSelection)]),
+      commandInput("run.start", [owner.workspaceId, owner.projectId, options.owner === undefined ? 'legacy-session' : owner.sessionId, body, options.styleSelection === undefined ? 'unchanged' : JSON.stringify(options.styleSelection)]),
       async () => {
+        assertMessageOwner(this.#snapshot, owner);
         const generation = this.#snapshot.generation;
-        const projectId = this.#snapshot.selectedProjectId;
+        const projectId = owner.projectId;
         if (projectId.length === 0) throw new Error("PROJECT_SELECTION_REQUIRED");
         let projection = this.#service.getProjectProjection(projectId);
         const active = projection.runs.find((run) => ACTIVE_STATUSES.has(run.status));
@@ -1697,23 +1737,23 @@ export class ApplicationClientBridge implements ClientBridge {
           projection = this.#service.getProjectProjection(projectId);
         }
         if (projection.brief?.brief.confirmationStatus !== 'confirmed') {
-          return this.#startIntake(projectId, this.#snapshot.selectedSessionId || undefined, body, operationId);
+          return this.#startIntake(projectId, owner.sessionId || undefined, body, operationId);
         }
-        const waitingTitle = projection.runs.findLast(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user' &&
+        const waitingTitle = projection.runs.findLast(run => run.sessionId === owner.sessionId && run.status === 'waiting_user' &&
           isPublicationSelectionWait(projection.events.filter(event => event.runId === run.id && event.type === 'run.waiting_user').at(-1)?.payload));
-        const waitingForMaterial = projection.runs.some(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user' && run.stopReason === 'WRITING_INPUT_REQUIRED');
+        const waitingForMaterial = projection.runs.some(run => run.sessionId === owner.sessionId && run.status === 'waiting_user' && run.stopReason === 'WRITING_INPUT_REQUIRED');
         // Backward-compatible start shortcuts used by existing clients. These
         // never confirm a pending checkpoint; every other wording has the same
         // semantic route below instead of being rejected by a whitelist.
-        const startShortcut = !projection.runs.some(run => run.sessionId === this.#snapshot.selectedSessionId && run.status === 'waiting_user') &&
+        const startShortcut = !projection.runs.some(run => run.sessionId === owner.sessionId && run.status === 'waiting_user') &&
           /^(?:请)?(?:开始(?:吧|写作)?|按已确认简报生成草稿|先生成完整稿件|按确认方向开始完整写作|基于同一简报重新生成一版)[。！!\s]*$/u.test(body);
         // No language whitelist here. The contextual intent tool interprets all
         // stage approvals, title choices, objections and requests to write.
         if (!startShortcut && (!waitingForMaterial || (waitingTitle && !projection.publicationSelectionCurrent))) {
-          return this.#startAuthorReply(projectId, this.#snapshot.selectedSessionId, body, operationId);
+          return this.#startAuthorReply(projectId, owner.sessionId, body, operationId);
         }
         const awaitingInput = projection.runs.findLast(run =>
-          run.sessionId === this.#snapshot.selectedSessionId &&
+          run.sessionId === owner.sessionId &&
           run.status === 'waiting_user' && run.stopReason === 'WRITING_INPUT_REQUIRED');
         if (awaitingInput !== undefined) {
           await this.resumeRun(awaitingInput.id, 'resume', { feedback: body, operationId: `${operationId}:answer` });
@@ -1728,9 +1768,9 @@ export class ApplicationClientBridge implements ClientBridge {
           parameters: this.#model.parameters,
           userInstruction: body,
           operationId,
-          ...(this.#snapshot.selectedSessionId.length === 0
+          ...(owner.sessionId.length === 0
             ? {}
-            : { sessionId: this.#snapshot.selectedSessionId }),
+            : { sessionId: owner.sessionId }),
           ...(budget === undefined ? {} : { budget }),
         });
         this.#handoffError = null;
@@ -2313,6 +2353,11 @@ export class ApplicationClientBridge implements ClientBridge {
       }
       return existing.result as Promise<T>;
     }
+    if (!['project.create', 'project.rename', 'conversation.start'].includes(kind) && this.#snapshot.selectedProjectId &&
+        (!this.#service.tryProjectProjection(this.#snapshot.selectedProjectId) || this.#service.getProjectReadIssue(this.#snapshot.selectedProjectId))) {
+      await this.refresh();
+      throw Object.assign(new Error('当前项目数据无法读取，请先导出原始数据并修复。'), { code: 'PROJECT_DATA_UNREADABLE' });
+    }
     const result = action();
     this.#commands.set(operationId, { kind, input, result });
     return result;
@@ -2338,18 +2383,20 @@ export class ApplicationClientBridge implements ClientBridge {
     settings: UiSettings,
     lastError: BridgeSnapshot["lastError"],
   ): BridgeSnapshot {
-    const projections = this.#service
-      .listProjects()
-      .map((project) => this.#service.getProjectProjection(project.id));
+    const projects = this.#service.listProjects();
+    const projections = projects.flatMap(project => {
+      const projection = this.#service.tryProjectProjection(project.id);
+      return projection && !this.#service.getProjectReadIssue(project.id) ? [projection] : [];
+    });
     this.#eventSeqByProject.clear();
-    for (const projection of projections) {
-      this.#eventSeqByProject.set(projection.project.id, projection.latestProjectSeq);
+    for (const project of projects) {
+      this.#eventSeqByProject.set(project.id, this.#service.getProjectEventSequence(project.id));
     }
-    const selectedProjection =
-      projections.find(
-        (projection) => projection.project.id === requestedProjectId,
-      ) ?? projections[0];
-    const selectedProjectId = selectedProjection?.project.id ?? "";
+    // A selected unreadable project must stay selected: never route its commands to a healthy sibling.
+    const selectedProjectId = projects.some(project => project.id === requestedProjectId)
+      ? requestedProjectId : projections[0]?.project.id ?? projects[0]?.id ?? "";
+    const selectedProjection = projections.find(projection => projection.project.id === selectedProjectId);
+    const selectedIssue = this.#service.getProjectReadIssue(selectedProjectId);
     const selectedSession = requestedSessionId === null || requestedSessionId === ''
       ? undefined
       : selectedProjection?.sessions.find(
@@ -2374,7 +2421,7 @@ export class ApplicationClientBridge implements ClientBridge {
     const latestWritingRunId = [...selectedRunViews]
       .reverse()
       .find((run) => run.displayInstruction !== "重新核查当前稿件")?.id ?? null;
-    const savedHandoffError = selectedProjectId ? this.#service.getHandoffError(selectedProjectId, selectedSessionId) : null;
+    const savedHandoffError = selectedProjection ? this.#service.getHandoffError(selectedProjectId, selectedSessionId) : null;
 
     return {
       revision,
@@ -2384,13 +2431,15 @@ export class ApplicationClientBridge implements ClientBridge {
       connection: activeRun === undefined ? "ready" : "running",
       selectedProjectId,
       selectedSessionId,
-      projects: projections.map((projection) => ({
-        id: projection.project.id,
-        name: projection.project.name,
-        sessionIds: projection.sessions.map((session) => session.id),
-        revision: projection.project.revision,
-        latestProjectSeq: projection.latestProjectSeq,
-      })),
+      projects: projects.map(project => {
+        const projection = projections.find(value => value.project.id === project.id);
+        const readIssue = this.#service.getProjectReadIssue(project.id);
+        const first = projection && project.id.startsWith('project:') ? initialConversation(projection, project.id.slice(8)) : undefined;
+        return { id: project.id, name: project.name, revision: project.revision,
+          ...(first ? { initialConversation: first } : {}),
+          sessionIds: projection?.sessions.map(session => session.id) ?? [], latestProjectSeq: projection?.latestProjectSeq ?? 0,
+          ...(readIssue ? { readIssue } : {}) };
+      }),
       sessions: projections.flatMap((projection) =>
         projection.sessions.map((session) => {
           const runs = projection.runs.filter(
@@ -2558,6 +2607,7 @@ export class ApplicationClientBridge implements ClientBridge {
       },
       settings,
       activeRunId: activeRun?.id ?? null,
+      ...(this.#startupNotices.length ? { startupNotices: [...this.#startupNotices] } : {}),
       ...(selectedProjection === undefined ? {} : (() => {
         const selection = this.#service.getProjectStyleSelection(selectedProjectId);
         return selection === undefined ? {} : { projectStyle: selection ? { id: selection.id, version: selection.version, name: selection.name } : null };
@@ -2617,9 +2667,9 @@ export class ApplicationClientBridge implements ClientBridge {
             ...(approval ? { checkpointApproval: approval } : {}),
           };
         }),
-      lastError: lastError ?? (savedHandoffError ? { code: 'CONVERSATION_HANDOFF_FAILED', message: savedHandoffError.message } : null) ?? (this.#handoffError?.projectId === selectedProjectId ? this.#handoffError.error : null),
+      lastError: lastError ?? selectedIssue ?? (savedHandoffError ? { code: 'CONVERSATION_HANDOFF_FAILED', message: savedHandoffError.message } : null) ?? (this.#handoffError?.projectId === selectedProjectId ? this.#handoffError.error : null),
       environmentNotice:
-        activeRun === undefined
+        selectedIssue ? "当前项目已隔离，原始数据保留；其他项目可继续使用" : activeRun === undefined
           ? "本地保存已就绪"
           : "正在写作；已保存的内容会自动保留",
       composerHint:

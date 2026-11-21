@@ -13,6 +13,15 @@ export interface BridgeHandshake {
     workspaceId: string;
 }
 export interface ProjectSummary {
+    initialConversation?: {
+        runId: string;
+        sessionId: string;
+    };
+    readIssue?: {
+        code: string;
+        message: string;
+        stage: string;
+    };
     id: string;
     name: string;
     sessionIds: readonly string[];
@@ -433,6 +442,7 @@ export interface UiSettings {
     credentialReference: string | null;
 }
 export interface BridgeSnapshot {
+    readonly startupNotices?: readonly string[];
     projectStyle?: {
         id: string;
         version: number;
@@ -503,7 +513,14 @@ export interface BridgeSnapshot {
     environmentNotice: string;
     composerHint: string;
 }
+export interface MessageOwner {
+    workspaceId: string;
+    projectId: string;
+    sessionId: string;
+}
 export interface BridgeCommandOptions {
+    /** Origin captured when composing, never inferred after an async boundary. */
+    owner?: MessageOwner;
     operationId?: string;
     /** Wire data only; the application validates and resolves the saved profile. */
     styleSelection?: {
@@ -558,6 +575,7 @@ export interface ClientBridge {
     getSnapshot(): BridgeSnapshot;
     getRunTraceDetail(input: RunTraceDetailInput): Promise<RunTraceDetail>;
     subscribe(listener: () => void): () => void;
+    recheckProject?(projectId: string): Promise<void>;
     selectProject(projectId: string): Promise<void>;
     selectSession(projectId: string, sessionId: string): Promise<void>;
     updateSettings(patch: Partial<Pick<UiSettings, 'theme' | 'contentFontSize'>>): Promise<void>;

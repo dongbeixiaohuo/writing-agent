@@ -37,10 +37,27 @@ for (const marker of [
   '$DSH_HOME',
   'example.editorial-notes',
   '编辑备注演示',
-  'localStorage',
   'sessionStorage',
 ]) {
   assert.equal(production.includes(marker), false, `production bundle contains ${marker}`)
+}
+
+// Unsent author text may persist through the scoped draft module. Keep the
+// renderer storage boundary for every other source, including model settings.
+const storageUses = (text) => text?.match(/\blocalStorage\b/gu)?.length ?? 0
+for (const path of (await allFiles(productionRoot)).filter(path => path.endsWith('.js'))) {
+  const script = await readFile(path, 'utf8')
+  const map = JSON.parse(await readFile(path + '.map', 'utf8'))
+  let allowedUses = 0
+  for (const [index, source] of map.sources.entries()) {
+    const content = map.sourcesContent?.[index]
+    const uses = storageUses(content)
+    if (uses === 0) continue
+    assert.ok(source.endsWith('/packages/ui/src/shell/draft-storage.ts'), `unexpected renderer storage source: ${source}`)
+    assert.ok(content.includes('writing-agent:draft:v1:'), 'draft storage must use its own namespace')
+    allowedUses += uses
+  }
+  assert.equal(storageUses(script), allowedUses, `unexpected browser storage in ${path}`)
 }
 
 assert.match(production, /生产构建不会自动启用 Mock/u)

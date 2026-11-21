@@ -16,6 +16,7 @@ import {
   createApplicationBridge,
 } from "../../../packages/client-bridge/src/application-bridge.js";
 import { createFileUiSettingsPersistence } from "../../../packages/client-bridge/src/ui-settings-persistence.js";
+import { LocalSettingsRecovery } from "../../../packages/client-bridge/src/local-settings-recovery.js";
 import type {
   BridgeSnapshot,
   ClientBridge,
@@ -54,6 +55,7 @@ import {
   type PreparedDiagnosticBundle,
 } from "../../../packages/runtime/diagnostics/src/index.js";
 import { openWorkspaceStorage } from "../../../packages/storage/src/index.js";
+import { assertNoPendingWorkspaceRestore } from "./workspace-restore.js";
 import {
   loadDesktopProviderProfile,
   loadDesktopProviderCatalog,
@@ -126,23 +128,31 @@ export class DesktopApplicationHost {
   #providerChanging = false;
   #styleOperation: AbortController | null = null;
   readonly #searchSettings: SearchSettingsStore;
+  readonly #settingsRecovery: LocalSettingsRecovery;
 
   constructor(options: DesktopApplicationHostOptions) {
+    assertNoPendingWorkspaceRestore(options.workspacePath);
     this.#workspacePath = resolve(options.workspacePath);
     this.#providerProfilePath = resolve(options.providerProfilePath);
     this.#credentials = options.credentials ?? createDefaultCredentialBroker();
-    this.#searchSettings = new SearchSettingsStore(join(dirname(this.#providerProfilePath), 'search-settings.json'), this.#credentials);
+    this.#settingsRecovery = new LocalSettingsRecovery(join(this.#workspacePath, '.writing-agent', 'logs', 'settings-recovery.jsonl'));
     this.#providerFactory = options.providerFactory ?? createConfiguredProvider;
     this.#applicationVersion = options.applicationVersion ?? "development";
     this.#applicationBuild = options.applicationBuild ?? "writing-agent-desktop-v1";
     this.#authorWebFetcher = options.authorWebFetcher;
     this.#storage = openWorkspaceStorage({ workspacePath: this.#workspacePath });
-    this.#providerConfig = loadDesktopProviderProfile(this.#providerProfilePath);
-    const runtime = this.#createRuntime(this.#providerConfig, "");
-    this.#service = runtime.service;
-    this.#bridge = runtime.bridge;
-    this.#service.recoverWorkspace();
-    this.#attachBridgeEvents();
+    try {
+      this.#searchSettings = new SearchSettingsStore(join(dirname(this.#providerProfilePath), 'search-settings.json'), this.#credentials, {}, this.#settingsRecovery);
+      this.#providerConfig = loadDesktopProviderProfile(this.#providerProfilePath, this.#settingsRecovery);
+      const runtime = this.#createRuntime(this.#providerConfig, "");
+      this.#service = runtime.service;
+      this.#bridge = runtime.bridge;
+      this.#service.recoverWorkspace();
+      this.#attachBridgeEvents();
+    } catch (error) {
+      this.#storage.close();
+      throw error;
+    }
   }
 
   get bridge(): ClientBridge {
@@ -231,7 +241,7 @@ export class DesktopApplicationHost {
 
   async providerStatus(mode?: 'summary' | 'active'): Promise<DesktopProviderStatus> {
     const config = this.#providerConfig;
-    const catalog = loadDesktopProviderCatalog(this.#providerProfilePath);
+    const catalog = loadDesktopProviderCatalog(this.#providerProfilePath, this.#settingsRecovery);
     const metadataById = new Map<string, Awaited<ReturnType<CredentialBroker['inspect']>>>();
     const profiles = await Promise.all(catalog.profiles.map(async profile => {
       const checked = mode !== 'summary' && (mode !== 'active' || profile.id === catalog.activeProfileId);
@@ -309,6 +319,7 @@ export class DesktopApplicationHost {
   }
 
   async #changeProvider(change: (prepare: (config: NormalizedProviderConfig) => void) => Promise<NormalizedProviderConfig>): Promise<DesktopProviderStatus> {
+    this.#settingsRecovery.assertWritable(this.#providerProfilePath);
     if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
     if (this.#providerChanging) throw new Error('PROVIDER_SETTINGS_BUSY');
     if (this.#hasExecutingRun()) throw new Error('ACTIVE_RUNS_PRESENT');
@@ -420,7 +431,7 @@ export class DesktopApplicationHost {
     const provider = await this.providerStatus();
     const latestRun = this.#service
       .listProjects()
-      .flatMap((project) => this.#service.getProjectProjection(project.id).runs)
+      .flatMap((project) => this.#service.tryProjectProjection(project.id)?.runs ?? [])
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
       .at(-1);
     const prepared = prepareDiagnosticBundle({
@@ -493,6 +504,54 @@ export class DesktopApplicationHost {
     });
     this.#preparedDiagnostics = prepared;
     return prepared.manifest;
+  }
+
+  #assertRecoverySelection(projectId: unknown): asserts projectId is string {
+    const snapshot = this.bridge.getSnapshot();
+    if (typeof projectId !== 'string' || projectId !== snapshot.selectedProjectId ||
+        !snapshot.projects.some(project => project.id === projectId && project.readIssue)) {
+      throw new Error('PROJECT_RECOVERY_SELECTION_CHANGED');
+    }
+  }
+
+  async repairProjectFromBackup(projectId: unknown, choosePath: () => Promise<string | null>): Promise<{ cancelled: boolean; message?: string }> {
+    this.#assertRecoverySelection(projectId);
+    const path = await choosePath();
+    if (path === null) return { cancelled: true };
+    this.#assertRecoverySelection(projectId);
+    if (this.#hasExecutingRun(projectId)) throw new Error('PROJECT_REPAIR_BUSY');
+    const result = this.#service.repairProjectFromBackup(projectId, path);
+    await this.#bridge.recheckProject!(projectId);
+    const needsRepair = this.bridge.getSnapshot().projects.find(project => project.id === projectId)?.readIssue;
+    const evidence = result.evidencePath ? ` 修复前的数据保存在工作区的 .writing-agent/project-repairs/${basename(result.evidencePath)}。` : '';
+    return { cancelled: false, message: (result.status === 'repaired' ? '已从同版本备份修复本项目的记录。' : '本次没有可替换的简报或正文记录。')
+      + (needsRepair ? ' 该项目还有其他读取错误，可继续导出原始数据。' : ' 项目已可打开。') + evidence };
+  }
+
+  async exportProjectRecovery(projectId: unknown, choosePath: () => Promise<string | null>): Promise<{ cancelled: boolean; fileName?: string }> {
+    this.#assertRecoverySelection(projectId);
+    const selected = await choosePath();
+    if (selected === null) return { cancelled: true };
+    this.#assertRecoverySelection(projectId);
+    if (!isAbsolute(selected) || extname(selected).toLowerCase() !== '.json') throw new Error('PROJECT_RECOVERY_DESTINATION_INVALID');
+    const destination = join(realpathSync(dirname(selected)), basename(selected));
+    const relativeToData = relative(realpathSync(join(this.#workspacePath, '.writing-agent')), destination);
+    const insideData = !isAbsolute(relativeToData) && relativeToData !== '..' && !relativeToData.startsWith('..' + sep);
+    const isConfig = [this.#providerProfilePath, join(dirname(this.#providerProfilePath), 'search-settings.json')]
+      .some(path => relative(destination, path) === '');
+    if (insideData || isConfig) throw new Error('PROJECT_RECOVERY_DESTINATION_INVALID');
+    const temporary = join(dirname(destination), '.writing-agent-recovery-' + randomUUID() + '.tmp');
+    try {
+      const payload = this.#service.exportProjectRecovery(projectId);
+      writeFileSync(temporary, payload, { encoding: 'utf8', flag: 'wx', mode: 0o600, flush: true });
+      renameSync(temporary, destination);
+    } catch (cause) {
+      process.stderr.write('Writing Agent project recovery export failed\n');
+      throw new Error('PROJECT_RECOVERY_EXPORT_FAILED', { cause });
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+    return { cancelled: false, fileName: basename(destination) };
   }
 
   async savePublicationAs(
@@ -641,7 +700,9 @@ export class DesktopApplicationHost {
     outputPath: string,
   ): Promise<{ readonly fileName: string; readonly byteLength: number; readonly sha256: string; readonly schemaVersion: number }> {
     if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
-    if (this.#hasActiveRun()) throw new Error("ACTIVE_RUNS_PRESENT");
+    // A saved question awaiting the author has no active writer. It may belong
+    // to the very project that needs a safety backup before recovery.
+    if (this.#hasExecutingRun()) throw new Error("ACTIVE_RUNS_PRESENT");
     const backup = await this.#storage.createBackup(resolve(outputPath));
     return {
       fileName: basename(backup.path),
@@ -663,7 +724,7 @@ export class DesktopApplicationHost {
     }
     // Waiting/paused runs have no in-flight writer. A confirmed project deletion
     // includes those records; unrelated projects must not veto this operation.
-    if (this.#service.getProjectProjection(projectId).runs.some(
+    if (this.#storage.listRuns(projectId).some(
       (run) => run.status === "queued" || run.status === "running",
     )) throw new Error("PROJECT_DELETE_RUN_ACTIVE");
     const deleted = this.#storage.deleteProject({
@@ -708,7 +769,7 @@ export class DesktopApplicationHost {
     const resolveModel = (actor?: string) => {
       // Settings changes are rejected while a run executes. A continued task
       // reads the saved mapping; retries within a request retain its binding.
-      const selected = groupProviderConfig(loadDesktopProviderCatalog(this.#providerProfilePath), config, actor);
+      const selected = groupProviderConfig(loadDesktopProviderCatalog(this.#providerProfilePath, this.#settingsRecovery), config, actor);
       if (!selected) return undefined;
       const key = JSON.stringify(selected);
       let selectedProvider = providers.get(key);
@@ -742,11 +803,13 @@ export class DesktopApplicationHost {
       },
       clientBuild: `writing-agent-desktop@${this.#applicationVersion}`,
       runtimeBuild: "writing-agent-runtime-v1",
+      startupNotices: this.#settingsRecovery.notices,
       initialProjectId,
       deferHandoffsUntilRefresh,
       ...(previous === undefined ? {} : { initialSessionId: previous.selectedSessionId, initialGeneration: previous.generation + 1 }),
       uiSettingsPersistence: createFileUiSettingsPersistence({
         filePath: join(this.#workspacePath, ".writing-agent", "ui-settings.json"),
+        recovery: this.#settingsRecovery,
       }),
     });
     return { service, bridge };
@@ -762,17 +825,11 @@ export class DesktopApplicationHost {
   }
 
   #hasActiveRun(): boolean {
-    return this.#styleOperation !== null || this.#service.listProjects().some((project) =>
-      this.#service
-        .getProjectProjection(project.id)
-        .runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)),
-    );
+    return this.#styleOperation !== null || this.#storage.hasRunInStates([...ACTIVE_RUN_STATUSES]);
   }
 
   #hasExecutingRun(projectId?: string): boolean {
     if (projectId === undefined && this.#styleOperation !== null) return true;
-    const projectIds = projectId === undefined ? this.#service.listProjects().map(project => project.id) : [projectId];
-    return projectIds.some(id => this.#service.getProjectProjection(id).runs
-      .some(run => run.status === 'queued' || run.status === 'running' || run.status === 'paused'));
+    return this.#storage.hasRunInStates(['queued', 'running', 'paused'], projectId);
   }
 }

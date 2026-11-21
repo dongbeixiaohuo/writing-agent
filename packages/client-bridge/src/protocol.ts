@@ -16,6 +16,8 @@ export interface BridgeHandshake {
 }
 
 export interface ProjectSummary {
+  initialConversation?: { runId: string; sessionId: string }
+  readIssue?: { code: string; message: string; stage: string }
   id: string
   name: string
   sessionIds: readonly string[]
@@ -436,6 +438,7 @@ export interface UiSettings {
 }
 
 export interface BridgeSnapshot {
+  readonly startupNotices?: readonly string[]
   projectStyle?: { id: string; version: number; name: string } | null
   liveActivity?: { runId: string; requestId: string; actor: string; phase: 'waiting' | 'connected' | 'receiving'; startedAt: number; lastActivityAt: number | null; segmentStartedAt?: number; requestOrdinal?: number; workPreview?: { label: string; text: string }; lastEventKind?: 'reasoning' | 'content' | 'tool_arguments'; receivedEvents?: number; activeTool?: { name: string; startedAt: number }; materials?: readonly { id: string; label: string; text: string }[] } | null
   liveReply?: { runId: string; requestId: string; text: string; id?: string; stage?: string; phase?: 'generating' | 'saving' } | null
@@ -465,7 +468,11 @@ export interface BridgeSnapshot {
   composerHint: string
 }
 
+export interface MessageOwner { workspaceId: string; projectId: string; sessionId: string }
+
 export interface BridgeCommandOptions {
+  /** Origin captured when composing, never inferred after an async boundary. */
+  owner?: MessageOwner
   operationId?: string
   /** Wire data only; the application validates and resolves the saved profile. */
   styleSelection?: { id: string; version: number } | null
@@ -522,6 +529,7 @@ export interface ClientBridge {
   getSnapshot(): BridgeSnapshot
   getRunTraceDetail(input: RunTraceDetailInput): Promise<RunTraceDetail>
   subscribe(listener: () => void): () => void
+  recheckProject?(projectId: string): Promise<void>
   selectProject(projectId: string): Promise<void>
   selectSession(projectId: string, sessionId: string): Promise<void>
   updateSettings(patch: Partial<Pick<UiSettings, 'theme' | 'contentFontSize'>>): Promise<void>

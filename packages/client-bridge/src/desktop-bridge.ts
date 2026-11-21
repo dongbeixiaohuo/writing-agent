@@ -1,3 +1,4 @@
+import { assertMessageOwner, messageOwner } from './message-owner.js';
 import {
   UI_BRIDGE_PROTOCOL_VERSION,
   type BridgeCommandOptions,
@@ -22,6 +23,7 @@ export type DesktopRpcMethod =
   | "handshake"
   | "getSnapshot"
   | "getRunTraceDetail"
+  | "recheckProject"
   | "selectProject"
   | "selectSession"
   | "updateSettings"
@@ -44,6 +46,8 @@ export type DesktopRpcMethod =
   | "saveWorkingCopy"
   | "exportPublication"
   | "savePublicationAs"
+  | "exportProjectRecovery"
+  | "repairProjectFromBackup"
   | "revealPublication"
   | "revealProviderConfig"
   | "refresh"
@@ -71,6 +75,7 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "handshake",
   "getSnapshot",
   "getRunTraceDetail",
+  "recheckProject",
   "selectProject",
   "selectSession",
   "updateSettings",
@@ -93,6 +98,8 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "saveWorkingCopy",
   "exportPublication",
   "savePublicationAs",
+  "exportProjectRecovery",
+  "repairProjectFromBackup",
   "revealPublication",
   "revealProviderConfig",
   "refresh",
@@ -329,6 +336,8 @@ export interface SearchConnectionView {
   readonly message: string;
 }
 export interface DesktopHostConfiguration {
+  exportProjectRecovery?(projectId: string): Promise<{ cancelled: boolean; fileName?: string }>;
+  repairProjectFromBackup?(projectId: string): Promise<{ cancelled: boolean; message?: string }>;
   styleLibrary?(command: import('../../writing-core/src/style-profile.js').StyleLibraryCommand): Promise<import('../../writing-core/src/style-profile.js').StyleLibraryResult>;
   searchStatus?(): Promise<SearchSettingsView>;
   configureSearch?(input: SearchSettingsInput): Promise<SearchSettingsView>;
@@ -486,6 +495,10 @@ export class DesktopClientBridge implements ClientBridge {
     };
   };
 
+  async recheckProject(projectId: string): Promise<void> {
+    await this.#invoke("recheckProject", projectId);
+  }
+
   async selectProject(projectId: string): Promise<void> {
     await this.#invoke("selectProject", projectId);
   }
@@ -567,10 +580,12 @@ export class DesktopClientBridge implements ClientBridge {
     text: string,
     options: BridgeCommandOptions = {},
   ): Promise<{ runId: string }> {
+    const owner = options.owner ?? messageOwner(this.#snapshot);
+    assertMessageOwner(this.#snapshot, owner);
     const result = record(await this.#invoke(
       "sendMessage",
       text,
-      { operationId: options.operationId ?? this.#operationIdFactory(), ...(options.styleSelection === undefined ? {} : { styleSelection: options.styleSelection }) },
+      { owner, operationId: options.operationId ?? this.#operationIdFactory(), ...(options.styleSelection === undefined ? {} : { styleSelection: options.styleSelection }) },
     ));
     if (typeof result.runId !== "string") {
       throw new Error("DESKTOP_BRIDGE_RESPONSE_INVALID");

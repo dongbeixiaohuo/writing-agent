@@ -3,11 +3,13 @@ import type { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { migrateWorkspaceStorage, StorageOpenError } from "../../../packages/storage/src/index.js";
 import { DesktopApplicationHost, type DesktopApplicationHostOptions } from "./application-host.js";
+import { assertNoPendingWorkspaceRestore } from "./workspace-restore.js";
 
 /** Called only by the desktop process that owns the single-instance lock. */
 export async function startDesktopApplicationHost(
   options: DesktopApplicationHostOptions,
 ): Promise<DesktopApplicationHost> {
+  assertNoPendingWorkspaceRestore(options.workspacePath);
   try {
     return new DesktopApplicationHost(options);
   } catch (error) {
@@ -22,6 +24,12 @@ export async function startDesktopApplicationHost(
 }
 
 const STARTUP_ERRORS: Readonly<Record<string, string>> = {
+  RESTORE_RECOVERY_REQUIRED: "上次工作区恢复未完成。请重新启动客户端，在恢复窗口选择回退原工作区或重试恢复；程序不会创建空工作区。",
+  RESTORE_RECOVERY_INVALID: "恢复记录或备份校验失败，已停止打开工作区。请保留 .writing-agent 中的所有文件并反馈日志，不要删除或移动数据库。",
+  RESTORE_RECOVERY_UNAVAILABLE: "当前恢复记录无法安全执行所选操作。请保留工作区中的数据库和恢复备份并反馈日志。",
+  RESTORE_CLEANUP_FAILED: "工作区恢复已经验证完成，但临时恢复文件清理失败。项目数据仍保留，请反馈日志并检查磁盘空间及文件占用；不要手工删除恢复备份。",
+  RESTORE_PREPARATION_CLEANUP_FAILED: "恢复准备未完成，原工作区未替换，但临时文件清理失败。请保留文件并反馈日志，检查磁盘空间及文件占用。",
+  RESTORE_LEGACY_ANCHOR_UNVERIFIED: "已安装并验证所选工作区，但另一份遗留数据库未通过校验。未验证的原始文件已保存在工作区 .writing-agent/restore-recovery-* 中，请保留它们并反馈日志。",
   SCHEMA_MIGRATION_REQUIRED: "旧版工作区需要升级，请安装最新客户端后重试。不要删除项目数据库。",
   SCHEMA_MIGRATION_FAILED: "工作区升级未完成，升级前备份仍保留在工作区的 .writing-agent/backups 中。请保留原文件并反馈日志。",
   SCHEMA_UNSUPPORTED: "这个工作区由更新版本的客户端创建，请使用相同或更新版本打开；程序不会降级或清空数据。",
