@@ -2512,6 +2512,14 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
     const now = this.clock();
     try {
       this.database.exec("BEGIN IMMEDIATE");
+      // A cancelled run permanently loses write authority, including delayed
+      // asynchronous tools. Check inside the transaction before idempotency or
+      // any mutation so even a stale retry cannot publish a result.
+      const actor = (command as { actor?: Actor }).actor;
+      if (actor?.kind === 'agent' && actor.runId && this.getRun(actor.runId)?.status === 'cancelled') {
+        this.database.exec('ROLLBACK');
+        return failure(operationId, 'RUN_CANCELLED', 'Cancelled run cannot modify the workspace');
+      }
       const prior = this.database
         .prepare(
           `SELECT input_hash, state, result_json
@@ -2656,7 +2664,8 @@ export class WorkspaceStorage implements StoragePort, SessionStore {
           "project.created",
           command.actor,
           command.operationId,
-          { name: command.name, mode: command.mode },
+          { name: command.name, mode: command.mode,
+            ...(command.conversationInputHash ? { conversationInputHash: command.conversationInputHash } : {}) },
           now,
         );
         return {

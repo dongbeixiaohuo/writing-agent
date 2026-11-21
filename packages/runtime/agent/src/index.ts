@@ -492,6 +492,8 @@ export class AgentRuntime {
 
   #launch(input: AgentRunInput, active: ActiveRun): AgentRunHandle {
     const { projectId, sessionId, runId } = active;
+    let resolveCancelled!: (result: AgentRunResult) => void;
+    const cancelledResult = new Promise<AgentRunResult>(resolve => { resolveCancelled = resolve; });
     const cancel = (reason = "user_stop", operationId = this.#idFactory()): RunRecord => {
       const cancelled = this.#sessions.cancelRun({
         projectId,
@@ -499,6 +501,9 @@ export class AgentRuntime {
         operationId,
         reason,
       });
+      // Local authority is revoked durably before any provider is notified.
+      // Settling the public handle never waits for an uncooperative provider.
+      resolveCancelled(this.#cancelledResult(active));
       active.controller.abort(reason);
       return cancelled;
     };
@@ -529,7 +534,7 @@ export class AgentRuntime {
       { once: true },
     );
 
-    const result = this.#execute(input, active).finally(() => {
+    const result = Promise.race([this.#execute(input, active), cancelledResult]).finally(() => {
       try { this.#onModelStream?.({ projectId, sessionId, runId, requestId: '', event: null }); } catch { /* optional observer */ }
     });
     return { projectId, sessionId, runId, result, cancel };
@@ -672,13 +677,14 @@ export class AgentRuntime {
       contentEvents: 0,
     };
     const preview = (event: ModelEvent | null, lifecycle?: 'started' | 'finished'): void => {
-      if (!observe) return;
+      if (!observe || active.controller.signal.aborted || this.#sessions.getRun(active.runId)?.status !== 'running') return;
       // Presentation must not affect model execution, persistence or cancellation.
       try { this.#onModelStream?.({ projectId: active.projectId, sessionId: active.sessionId, runId: active.runId, requestId: request.requestId, ...(actor ? { actor } : {}), ...(!request.signal?.aborted && lifecycle ? { lifecycle } : {}), ...(textAudience ? { textAudience } : {}), ...(outputPreview ? { outputPreview } : {}), event: request.signal?.aborted ? null : event }); } catch { /* optional observer */ }
     };
     preview(null, 'started');
     try {
       for await (const event of provider.stream(request)) {
+        if (active.controller.signal.aborted || this.#sessions.getRun(active.runId)?.status !== 'running') break;
         const elapsed = Math.round(performance.now() - began);
         if (event.type === 'response_activity' && event.phase === 'headers') stream.headersMs ??= elapsed;
         if (event.type === 'response_activity' && event.phase === 'reasoning') {
@@ -788,6 +794,7 @@ export class AgentRuntime {
     let completed = [...cached.values()].filter(r => r.ok).length;
     let failed = cached.size - completed;
     const progress = (lifecycle?: 'started' | 'finished') => {
+      if (active.controller.signal.aborted || this.#sessions.getRun(runId)?.status !== 'running') return;
       try { this.#onModelStream?.({ projectId, sessionId, runId, requestId:`parallel:${batchId}`, ...(policy.actor ? { actor:policy.actor } : {}),
         ...(lifecycle ? { lifecycle } : {}), event:null,
         parallelTextProgress:{ requests:needed.length, completed, failed, total:batch.tasks.length } }); } catch { /* observer */ }

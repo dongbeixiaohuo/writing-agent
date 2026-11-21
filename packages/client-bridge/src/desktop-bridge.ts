@@ -1,3 +1,4 @@
+import { assertMessageOwner, messageOwner } from './message-owner.js';
 import {
   UI_BRIDGE_PROTOCOL_VERSION,
   type BridgeCommandOptions,
@@ -579,10 +580,12 @@ export class DesktopClientBridge implements ClientBridge {
     text: string,
     options: BridgeCommandOptions = {},
   ): Promise<{ runId: string }> {
+    const owner = options.owner ?? messageOwner(this.#snapshot);
+    assertMessageOwner(this.#snapshot, owner);
     const result = record(await this.#invoke(
       "sendMessage",
       text,
-      { operationId: options.operationId ?? this.#operationIdFactory(), ...(options.styleSelection === undefined ? {} : { styleSelection: options.styleSelection }) },
+      { owner, operationId: options.operationId ?? this.#operationIdFactory(), ...(options.styleSelection === undefined ? {} : { styleSelection: options.styleSelection }) },
     ));
     if (typeof result.runId !== "string") {
       throw new Error("DESKTOP_BRIDGE_RESPONSE_INVALID");

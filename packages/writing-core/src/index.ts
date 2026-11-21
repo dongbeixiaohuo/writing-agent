@@ -265,6 +265,7 @@ export const CreateProjectCommandSchema = z.object({
   projectId: NonEmptyIdSchema,
   name: z.string().trim().min(1).max(60),
   nameSource: z.enum(["placeholder", "agent", "manual", "legacy"]).default("manual"),
+  conversationInputHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   mode: ProjectModeSchema,
   actor: ActorSchema,
 });

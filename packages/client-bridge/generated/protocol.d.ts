@@ -13,6 +13,10 @@ export interface BridgeHandshake {
     workspaceId: string;
 }
 export interface ProjectSummary {
+    initialConversation?: {
+        runId: string;
+        sessionId: string;
+    };
     readIssue?: {
         code: string;
         message: string;
@@ -509,7 +513,14 @@ export interface BridgeSnapshot {
     environmentNotice: string;
     composerHint: string;
 }
+export interface MessageOwner {
+    workspaceId: string;
+    projectId: string;
+    sessionId: string;
+}
 export interface BridgeCommandOptions {
+    /** Origin captured when composing, never inferred after an async boundary. */
+    owner?: MessageOwner;
     operationId?: string;
     /** Wire data only; the application validates and resolves the saved profile. */
     styleSelection?: {

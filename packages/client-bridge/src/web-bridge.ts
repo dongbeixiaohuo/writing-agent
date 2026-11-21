@@ -1,3 +1,4 @@
+import { assertMessageOwner, messageOwner } from './message-owner.js';
 import {
   UI_BRIDGE_PROTOCOL_VERSION,
   type BridgeCommandOptions,
@@ -408,11 +409,15 @@ export class WebClientBridge implements ClientBridge {
     text: string,
     options: BridgeCommandOptions = {},
   ): Promise<{ runId: string }> {
+    const owner = options.owner ?? messageOwner(this.#snapshot);
+    assertMessageOwner(this.#snapshot, owner);
     await this.#ensureHandshake();
+    assertMessageOwner(this.#snapshot, owner);
     const response = await this.#sessionRequest("/api/v6/command/start-run", {
       generation: this.#snapshot.generation,
       operationId: options.operationId ?? this.#operationIdFactory(),
       text,
+      owner,
     });
     this.#accept(responseSnapshot(response.snapshot));
     const result = responseRecord(response.result);

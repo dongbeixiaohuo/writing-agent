@@ -700,7 +700,13 @@ export async function startLocalWebHost(
     }
     if (route === "/api/v6/command/start-run") {
       const operationId = requiredString(body, "operationId", 512);
+      const suppliedOwner = body.owner;
+      if (suppliedOwner !== undefined && (typeof suppliedOwner !== 'object' || suppliedOwner === null ||
+        !['workspaceId', 'projectId', 'sessionId'].every(key => typeof (suppliedOwner as Record<string, unknown>)[key] === 'string'))) {
+        throw new LocalWebRequestError(400, 'DRAFT_OWNER_INVALID', 'Invalid draft origin');
+      }
       const result = await bridge.sendMessage(requiredString(body, "text"), {
+        ...(suppliedOwner === undefined ? {} : { owner: suppliedOwner as { workspaceId: string; projectId: string; sessionId: string } }),
         operationId,
       });
       json(response, 200, { result, snapshot: bridge.getSnapshot() });
@@ -934,7 +940,7 @@ export async function startLocalWebHost(
           error instanceof LocalWebRequestError
             ? error
             : new LocalWebRequestError(
-                500,
+                bridgeCode(error) === 'DRAFT_OWNER_CHANGED' ? 409 : 500,
                 bridgeCode(error),
                 "Local bridge request failed",
               );

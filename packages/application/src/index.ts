@@ -588,9 +588,8 @@ export class WritingApplicationService {
         const scan = this.#handoffScan.get(project.id);
         const seq = this.getProjectEventSequence(project.id);
         if (scan?.model === modelKey && scan.seq === seq) continue;
-        if ([...this.#activeRuns.values()].some(r => r.projectId === project.id)) continue;
+        if (this.#hasExecutingRun(project.id)) continue;
         this.#handoffScan.set(project.id, { seq, model: modelKey });
-        if (this.#storage.listRuns(project.id).some(r => ['running', 'queued', 'paused'].includes(r.status))) continue;
         if (!this.tryProjectProjection(project.id)) continue;
         const handoff = pendingWorkflowHandoffs(this.#storage, project.id)[0];
         if (this.#projectReadIssues.get(project.id)?.stage === '恢复待处理操作') this.#projectReadIssues.delete(project.id);
@@ -707,7 +706,7 @@ export class WritingApplicationService {
     operationId: string,
   ): ConversationBriefConfirmation {
     const projectId = requireProjectId(projectIdInput);
-    if ([...this.#activeRuns.values()].some(active => active.projectId === projectId)) {
+    if (this.#hasExecutingRun(projectId)) {
       throw new ApplicationServiceError('RUN_ALREADY_ACTIVE', 'Wait for the current author reply before confirming the direction');
     }
     try {
@@ -730,9 +729,7 @@ export class WritingApplicationService {
   ): ConversationIntakeRunHandle {
     const projectId = requireProjectId(input.projectId);
     if (
-      [...this.#activeRuns.values()].some(
-        (active) => active.projectId === projectId,
-      )
+      this.#hasExecutingRun(projectId)
     ) {
       throw new ApplicationServiceError(
         "RUN_ALREADY_ACTIVE",
@@ -955,7 +952,7 @@ export class WritingApplicationService {
         intake: this.getConversationIntake(projectId),
       };
     });
-    this.#activeRuns.set(handle.runId, handle);
+    this.#registerActiveRun(handle);
     void result.finally(() => {
       if (this.#activeRuns.get(handle.runId) === handle) {
         this.#activeRuns.delete(handle.runId);
@@ -973,7 +970,7 @@ export class WritingApplicationService {
 
   startAuthorTurn(input: StartConversationTurnInput): AgentRunHandle {
     const projectId = requireProjectId(input.projectId);
-    if ([...this.#activeRuns.values()].some(run => run.projectId === projectId)) {
+    if (this.#hasExecutingRun(projectId)) {
       throw new ApplicationServiceError('RUN_ALREADY_ACTIVE', 'Another run is active for this project');
     }
     if (!this.#storage.inspectProject(projectId)) throw new ApplicationServiceError('PROJECT_NOT_FOUND', 'Project does not exist');
@@ -990,7 +987,7 @@ export class WritingApplicationService {
       ...(this.#authorWebFetcher ? { authorWebFetcher: this.#authorWebFetcher } : {}),
       onModelStream: this.#streamPreview.observe,
       ...(this.#idFactory ? { idFactory: this.#idFactory } : {}) });
-    this.#activeRuns.set(handle.runId, handle);
+    this.#registerActiveRun(handle);
     void handle.result.finally(() => {
       if (this.#activeRuns.get(handle.runId) === handle) this.#activeRuns.delete(handle.runId);
     }).catch(() => undefined);
@@ -1144,7 +1141,7 @@ export class WritingApplicationService {
     if (!this.tryProjectProjection(projectId)) return;
     const issue = this.#projectReadIssues.get(projectId);
     if (issue?.stage === '恢复运行') {
-      if ([...this.#activeRuns.values()].some(run => run.projectId === projectId)) return;
+      if (this.#ownedExecutingRuns().some(handle => handle.projectId === projectId)) return;
       try {
         this.#storage.recoverProjectRuns(projectId);
         this.#projectReadIssues.delete(projectId);
@@ -1156,7 +1153,7 @@ export class WritingApplicationService {
 
   repairProjectFromBackup(projectId: string, backupPath: string): ProjectBackupRepairResult {
     const selectedId = requireProjectId(projectId);
-    if ([...this.#activeRuns.values()].some(run => run.projectId === selectedId)) throw new ApplicationServiceError('PROJECT_REPAIR_BUSY', '当前项目仍在运行，请先停止后再修复。');
+    if (this.#hasExecutingRun(selectedId)) throw new ApplicationServiceError('PROJECT_REPAIR_BUSY', '当前项目仍在运行，请先停止后再修复。');
     if (!this.#storage.repairProjectFromBackup) throw new ApplicationServiceError('PROJECT_RECOVERY_UNAVAILABLE', '当前存储不支持单项目修复。');
     const result = this.#storage.repairProjectFromBackup(selectedId, backupPath);
     this.#handoffScan.delete(selectedId);
@@ -1310,7 +1307,7 @@ export class WritingApplicationService {
   }
 
   recoverWorkspace(): readonly RecoveredProjectRun[] {
-    if (this.#activeRuns.size > 0) {
+    if (this.#ownedExecutingRuns().length > 0) {
       throw new ApplicationServiceError(
         "ACTIVE_RUNS_PRESENT",
         "Workspace recovery cannot run while this service owns active runs",
@@ -1329,6 +1326,10 @@ export class WritingApplicationService {
 
   #prepareDraft(input: RunDraftInput, recovery = false): PreparedDraft {
     const projectId = requireProjectId(input.projectId);
+    if (input.sessionId !== undefined) {
+      const session = this.#storage.getSession(input.sessionId);
+      if (session && session.projectId !== projectId) throw new ApplicationServiceError('SESSION_SCOPE_INVALID', 'Session belongs to another project');
+    }
     const project = this.#storage.inspectProject(projectId);
     if (project === null) {
       throw new ApplicationServiceError("PROJECT_NOT_FOUND", "Project does not exist");
@@ -1725,7 +1726,7 @@ export class WritingApplicationService {
         capabilities: WRITING_PACK_CAPABILITIES,
       };
     });
-    this.#activeRuns.set(handle.runId, handle);
+    this.#registerActiveRun(handle);
     void result
       .finally(() => {
         if (this.#activeRuns.get(handle.runId) === handle) {
@@ -1754,9 +1755,7 @@ export class WritingApplicationService {
   #startFactCheck(input: RunFactCheckInput, resume?: ResumeFactCheckInput): FactCheckRunHandle {
     const projectId = requireProjectId(input.projectId);
     if (
-      [...this.#activeRuns.values()].some(
-        (active) => active.projectId === projectId,
-      )
+      this.#hasExecutingRun(projectId, resume?.runId)
     ) {
       throw new ApplicationServiceError(
         "RUN_ALREADY_ACTIVE",
@@ -1926,7 +1925,7 @@ export class WritingApplicationService {
       publicationReady:
         runResult.ok && workflow.completion(runResult.runId).publicationReady,
     }));
-    this.#activeRuns.set(handle.runId, handle);
+    this.#registerActiveRun(handle);
     void result.finally(() => {
       if (this.#activeRuns.get(handle.runId) === handle) {
         this.#activeRuns.delete(handle.runId);
@@ -1946,22 +1945,17 @@ export class WritingApplicationService {
   }
 
   startDraft(input: RunDraftInput): WritingDraftRunHandle {
+    if (this.#hasExecutingRun(requireProjectId(input.projectId))) {
+      throw new ApplicationServiceError('RUN_ALREADY_ACTIVE', 'Another run is active for this project');
+    }
     const prepared = this.#prepareDraft(input);
     return this.#track(prepared.runtime.start(prepared.input), prepared);
   }
 
   resumeDraft(input: ResumeDraftInput): WritingDraftRunHandle {
     const projectId = requireProjectId(input.projectId);
-    if (this.#activeRuns.has(input.runId)) {
-      throw new ApplicationServiceError(
-        "RUN_ALREADY_ACTIVE",
-        "Run is already active in this application service",
-      );
-    }
     if (
-      [...this.#activeRuns.values()].some(
-        (active) => active.projectId === projectId,
-      )
+      this.#hasExecutingRun(projectId, input.runId)
     ) {
       throw new ApplicationServiceError(
         "RUN_ALREADY_ACTIVE",
@@ -2036,6 +2030,42 @@ export class WritingApplicationService {
       prepared.runtime.resume(prepared.input, input.runId),
       prepared,
     );
+  }
+
+  #ownedExecutingRuns(): AgentRunHandle[] {
+    for (const handle of this.#activeRuns.values()) {
+      const run = this.#storage.getRun(handle.runId);
+      if (run?.status === 'running') continue;
+      this.#activeRuns.delete(handle.runId);
+      this.#streamPreview.observe({ projectId: handle.projectId, sessionId: handle.sessionId,
+        runId: handle.runId, requestId: '', event: null });
+      // Another entry point may have committed cancellation without this
+      // service's handle. Complete its local waiter too; no provider await.
+      if (run?.status === 'cancelled') handle.cancel(run.stopReason ?? 'user_stop');
+    }
+    return [...this.#activeRuns.values()];
+  }
+
+  #hasExecutingRun(projectId: string, recoveringRunId?: string): boolean {
+    const owned = this.#ownedExecutingRuns();
+    return this.#storage.listRuns(projectId).some(run =>
+      ['running', 'queued', 'paused'].includes(run.status) &&
+      // Only explicit recovery may reclaim an unowned persisted running run.
+      !(run.id === recoveringRunId && !owned.some(handle => handle.runId === run.id)));
+  }
+
+  #registerActiveRun(handle: AgentRunHandle): void {
+    const cancel = handle.cancel.bind(handle);
+    handle.cancel = (reason, operationId) => {
+      const record = cancel(reason, operationId);
+      // Release synchronously: a new same-project turn may start in this stack.
+      // Identity matters when a delayed completion belongs to an older handle.
+      if (this.#activeRuns.get(handle.runId) === handle) this.#activeRuns.delete(handle.runId);
+      this.#streamPreview.observe({ projectId: handle.projectId, sessionId: handle.sessionId,
+        runId: handle.runId, requestId: '', event: null });
+      return record;
+    };
+    this.#activeRuns.set(handle.runId, handle);
   }
 
   cancelDraft(input: {

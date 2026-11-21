@@ -253,6 +253,12 @@ test('one idea creates a conversation without a brief; replies and unknown infor
     assert.equal(service.listProjects().length, 1);
     bridge.dispose();
     bridge = createApplicationBridge({ service: new WritingApplicationService({ storage, provider }), model, workspaceId: 'test' });
+    const requestsBeforeReplay = provider.requests.length;
+    assert.deepEqual(await bridge.startConversation('我想写夜跑，但是没想好怎么写', { operationId: 'first' }), result);
+    assert.deepEqual(bridge.getSnapshot().projects[0]?.initialConversation, { sessionId: first.selectedSessionId, runId: result.runId });
+    await assert.rejects(bridge.startConversation('换一条首句', { operationId: 'first' }), /IDEMPOTENCY_KEY_REUSED/);
+    assert.equal(storage.listRuns(first.selectedProjectId).length, 1);
+    assert.equal(provider.requests.length, requestsBeforeReplay);
     assert.equal(bridge.getSnapshot().conversationIntake?.phase, 'collecting');
     assert.equal(bridge.getSnapshot().brief, null);
     provider.next = proposal;

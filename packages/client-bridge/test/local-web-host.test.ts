@@ -363,6 +363,17 @@ describe("secure local Web host", () => {
         "STALE_CLIENT_GENERATION",
       );
       assert.deepEqual(storage.listRuns("project-1"), []);
+      const freshResponse = await api(host.origin, '/api/v6/snapshot', handshake.capability, {});
+      const fresh = (await freshResponse.json()) as { snapshot: { generation: number } };
+      const staleOwnerStart = await api(host.origin, '/api/v6/command/start-run', handshake.capability, {
+        generation: fresh.snapshot.generation,
+        operationId: 'must-not-run-stale-owner', text: '另一个项目的未发送材料',
+        owner: { workspaceId: 'workspace-secure', projectId: 'project-1', sessionId: 'old-session' },
+      });
+      assert.equal(staleOwnerStart.status, 409);
+      assert.equal(errorCode(await staleOwnerStart.json()), 'DRAFT_OWNER_CHANGED');
+      assert.deepEqual(storage.listRuns(createPayload.result.projectId), []);
+
 
       timestamp += 101;
       const expiredSession = await api(

@@ -1,4 +1,6 @@
 import clsx from 'clsx'
+import { draftKey, readDraft, saveDraft, removeProjectDrafts } from './draft-storage.ts'
+import { useConversationCreation } from './conversation-creation.js'
 import { RunDiagnostics } from './RunDiagnostics.tsx'
 import { RunTrace, type RunTraceProps } from './RunTrace.tsx'
 import './RunTrace.css'
@@ -526,8 +528,9 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
   </div>
 }
 
-function Composer({ bridge, hero = false, newProject = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, onOpenStyleLibrary, styleInsertion, onStyleInserted, styleLibraryOpen, hostConfiguration }: {
+function Composer({ bridge, startConversation, hero = false, newProject = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, onOpenStyleLibrary, styleInsertion, onStyleInserted, styleLibraryOpen, hostConfiguration }: {
   bridge: ClientBridge
+  startConversation: ClientBridge['startConversation']
   hero?: boolean
   newProject?: boolean
   initialDraft?: string
@@ -544,6 +547,12 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
 }) {
   const snapshot = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot)
   const editorRef = useRef<HTMLDivElement>(null)
+  const draftOwner = { workspaceId: snapshot.workspaceId, projectId: snapshot.selectedProjectId, sessionId: snapshot.selectedSessionId }
+  const storageKey = newProject || !snapshot.selectedProjectId
+    ? draftKey('new', snapshot.workspaceId)
+    : draftKey('composer', snapshot.workspaceId, snapshot.selectedProjectId, snapshot.selectedSessionId)
+  const ownerRef = useRef({ key: storageKey, owner: draftOwner })
+  const [draftStatus, setDraftStatus] = useState<string | null>(null)
   const draftRef = useRef(initialDraft)
   const submittingRef = useRef(false)
   // The editable DOM owns the text and IME composition. React only needs the
@@ -555,18 +564,23 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   const [submitting, setSubmitting] = useState(false)
   const [styleSelection, setStyleSelection] = useState<StyleSelectionInput | undefined>(undefined)
   const [styleBusy, setStyleBusy] = useState(false)
-  const running = snapshot.activeRunId !== null
+  const running = !newProject && snapshot.activeRunId !== null
   const recoveryMode = composerRecoveryMode(snapshot.recoverableRuns, snapshot.selectedSessionId)
-  const waitingForRecovery = recoveryMode === 'decision'
+  const waitingForRecovery = !newProject && recoveryMode === 'decision'
   const modelConfigured = snapshot.settings.credentialReference !== null
   const writable = snapshot.connection !== 'offline' && modelConfigured && (newProject || !waitingForRecovery)
 
   useLayoutEffect(() => {
-    const editor = editorRef.current
-    if (editor !== null && initialDraft.length > 0 && (editor.textContent ?? '').length === 0) {
-      editor.textContent = initialDraft
-    }
-  }, [])
+    const restored = readDraft(storageKey, initialDraft)
+    const text = typeof restored.value === 'string' ? restored.value : initialDraft
+    ownerRef.current = { key: storageKey, owner: draftOwner }
+    draftRef.current = text
+    if (editorRef.current) editorRef.current.textContent = text
+    setDraftEmpty(text.length === 0)
+    setDraftSendable(text.trim().length > 0)
+    setDraftStatus(restored.error ?? (text ? '草稿已保存' : null))
+    setError(null)
+  }, [storageKey])
 
   useLayoutEffect(() => {
     if (focusRequest > 0) editorRef.current?.focus()
@@ -576,15 +590,22 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
   const submit = async (): Promise<void> => {
     if (draftRef.current.trim().length === 0 || running || submittingRef.current || styleBusy || !writable) return
     const submittedDraft = draftRef.current
+    const submittedOwner = ownerRef.current
     const editor = editorRef.current
     const editorWasFocused = document.activeElement === editor
     try {
       setError(null)
       submittingRef.current = true
       setSubmitting(true)
-      if (newProject || snapshot.selectedProjectId.length === 0) await bridge.startConversation(submittedDraft, styleSelection === undefined ? undefined : { styleSelection })
-      else await bridge.sendMessage(submittedDraft)
+      if (newProject || snapshot.selectedProjectId.length === 0) await startConversation(submittedDraft, styleSelection === undefined ? undefined : { styleSelection })
+      else await bridge.sendMessage(submittedDraft, { owner: submittedOwner.owner })
+      // A response can arrive after this editor unmounts and its draft is
+      // reopened elsewhere. Compare with the latest saved text before clearing.
+      const saved = readDraft(submittedOwner.key, '')
+      const saveError = saved.value === submittedDraft ? saveDraft(submittedOwner.key, '') : saved.error
+      if (ownerRef.current.key !== submittedOwner.key || !editorRef.current?.isConnected) return
       const pendingDraft = draftRef.current === submittedDraft ? '' : draftRef.current
+      setDraftStatus(saveError ?? (pendingDraft ? '草稿已保存' : null))
       draftRef.current = pendingDraft
       setDraftEmpty(pendingDraft.length === 0)
       setDraftSendable(pendingDraft.trim().length > 0)
@@ -593,7 +614,8 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
       const restoreFocus = editorWasFocused && (
         activeElement === editor || activeElement === document.body || activeElement === null || !activeElement.isConnected
       )
-      onSubmitted?.({ restoreFocus, pendingDraft })
+      // Text stays in its origin draft; only focus crosses the hero handoff.
+      onSubmitted?.({ restoreFocus, pendingDraft: '' })
       requestAnimationFrame(() => {
         const currentEditor = editorRef.current
         const currentActive = document.activeElement
@@ -652,6 +674,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
               onInput={event => {
                 const nextDraft = event.currentTarget.textContent ?? ''
                 draftRef.current = nextDraft
+                setDraftStatus(saveDraft(ownerRef.current.key, nextDraft) ?? '草稿已保存')
                 setDraftEmpty(nextDraft.length === 0)
                 setDraftSendable(nextDraft.trim().length > 0)
               }}
@@ -695,6 +718,7 @@ function Composer({ bridge, hero = false, newProject = false, initialDraft = '',
           </div>
         </div>
       </div>
+      {draftStatus && <p role={draftStatus.includes('失败') ? 'alert' : 'status'}>{draftStatus}</p>}
       {(!hero || submitting || error !== null) && (
         <div
           className={css.statusLine}
@@ -1099,6 +1123,8 @@ function SettingsDialog({
       const name = snapshot.projects.find(project => project.id === snapshot.selectedProjectId)?.name
       if (name === undefined) throw new Error('PROJECT_NOT_FOUND')
       await hostConfiguration.deleteProject(snapshot.selectedProjectId, deleteConfirmation)
+      const cleanupError = removeProjectDrafts(snapshot.workspaceId, snapshot.selectedProjectId)
+      if (cleanupError) setSettingsError(cleanupError)
       setDeleteConfirmation('')
       setDeleteResult(`项目“${name}”已永久删除；其他项目未受影响。`)
     } catch (reason) {
@@ -1332,6 +1358,7 @@ export function WritingAgentShell({
   const [styleComposerInsertion, setStyleComposerInsertion] = useState<StyleProfile | undefined>(undefined)
   const [hero, setHero] = useState(() => snapshot.selectedSessionId.length === 0)
   const [newProjectIntent, setNewProjectIntent] = useState(() => snapshot.selectedProjectId.length === 0)
+  const creation = useConversationCreation(bridge, snapshot)
   const [activeTab, setActiveTab] = useState<'conversation' | 'runs'>('conversation')
   const loadTraceDetail = useCallback((runId: string, stepId: string) => bridge.getRunTraceDetail({
     projectId: snapshot.selectedProjectId, sessionId: snapshot.selectedSessionId, runId, stepId,
@@ -1484,7 +1511,7 @@ export function WritingAgentShell({
     }
   }
 
-  const beginNewProject = (): void => {
+  const openNewComposer = (): void => {
     setNewProjectIntent(true)
     setHero(true)
     setActiveTab('conversation')
@@ -1493,11 +1520,23 @@ export function WritingAgentShell({
   }
 
   useEffect(() => applyThemeMode(snapshot.settings.theme), [snapshot.settings.theme])
+  const beginNewProject = async (): Promise<void> => {
+    if (creation.pending) { await creation.recheck(false); return }
+    if (await creation.canOpenNew()) openNewComposer()
+  }
   useEffect(() => {
     // Desktop handshake arrives after the first render; do not hide a restored
     // waiting conversation behind the welcome screen with a disabled composer.
     if (snapshot.selectedSessionId.length > 0) { setHero(false); setNewProjectIntent(false) }
   }, [snapshot.selectedSessionId])
+  // A creation may have committed only its project, before the first session existed.
+  useEffect(() => {
+    if (creation.project?.id === snapshot.selectedProjectId && !creation.project.initialConversation &&
+        !snapshot.selectedSessionId) {
+      setNewProjectIntent(false)
+      setHero(true)
+    }
+  }, [creation.project, snapshot.selectedProjectId, snapshot.selectedSessionId])
   useEffect(() => {
     document.title = brand.productName
   }, [brand.productName])
@@ -1651,6 +1690,19 @@ export function WritingAgentShell({
             : snapshot.environmentNotice}
         </div>
         {snapshot.startupNotices?.map(notice => <div key={notice} className={css.modelSetupNotice} role="status">{notice}</div>)}
+        {(creation.pending || creation.notice) && <div className={css.modelSetupNotice} role="status" aria-label="新建回执">
+          {creation.pending && <span>{creation.project
+            ? creation.project.initialConversation ? '已找回上次新建的项目，重复提交已拦截，没有再次请求模型。' : '已找回上次保存的项目。尚未确认首条消息已启动，请打开该项目检查后继续。'
+            : '上次新建尚未收到回执。可以先核对项目；选择重试将沿用原编号，尚未受理时会发起模型请求。'}</span>}
+          {creation.notice && <span>{creation.notice}</span>}
+          {creation.pending && !creation.project && <>
+            <button type="button" disabled={creation.checking} onClick={() => void creation.recheck(false)}>核对已有项目</button>
+            <button type="button" disabled={creation.checking} onClick={() => void creation.recheck(true)}>按原编号重试新建</button>
+          </>}
+          {creation.project && <button type="button" onClick={() => void openProject(creation.project!)}>查看已建项目</button>}
+          {(creation.project || !creation.pending) && <button type="button" onClick={() => creation.acknowledge()}>知道了</button>}
+          <button type="button" disabled={creation.checking} onClick={async () => { if (await creation.acknowledge()) openNewComposer() }}>另起一篇</button>
+        </div>}
         {sidebarCollapsed && !selectedProject?.readIssue && projectActionNotice && <div className={css.modelSetupNotice} role="status">{projectActionNotice}</div>}
         {!hero && <header className={css.header}>
           <div className={css.titleRow}>
@@ -1703,7 +1755,7 @@ export function WritingAgentShell({
         </section> : hero ? <div className={css.heroStage}>
           <div className={css.heroCopy}><p className={css.heroKicker}>{heroDateLine()}</p><h1>{!newProjectIntent && selectedProject !== undefined ? `在“${selectedProject.name}”中开始新对话` : '今天，写点什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
           {!modelConfigured && snapshot.mode === 'application' && <div className={css.modelSetupNotice}><span>先连接你的模型，然后就可以直接开始交流。</span><button type="button" onClick={() => openSettings('models')}>配置模型</button></div>}
-          <Composer bridge={bridge} hero newProject={newProjectIntent} onSubmitted={submission => {
+          <Composer bridge={bridge} startConversation={creation.start} hero newProject={newProjectIntent} onSubmitted={submission => {
             setComposerHandoff(current => ({ id: (current?.id ?? 0) + 1, draft: submission.pendingDraft, restoreFocus: submission.restoreFocus }))
             setNewProjectIntent(false)
             setActiveTab('conversation')
@@ -1760,6 +1812,7 @@ export function WritingAgentShell({
           {showJumpLatest && <button className={css.jumpLatest} type="button" onClick={forceFollowLatest}>回到最新进度 ↓</button>}
           <div className={css.composerSeat}><Composer
             bridge={bridge}
+            startConversation={creation.start}
             initialDraft={composerHandoff?.draft ?? ''}
             focusRequest={composerHandoff?.restoreFocus ? composerHandoff.id : 0}
             contextChips={[
@@ -1807,7 +1860,8 @@ export function WritingAgentShell({
         onDeleted={projectName => {
           setDeleteProjectTarget(null)
           setNavigationError(null)
-          setProjectActionNotice(`已删除项目“${projectName}”。`)
+          const cleanupError = removeProjectDrafts(snapshot.workspaceId, deleteProjectTarget.id)
+          setProjectActionNotice(cleanupError ?? `已删除项目“${projectName}”。`)
           setNewProjectIntent(bridge.getSnapshot().selectedProjectId.length === 0)
           setHero(true)
         }}

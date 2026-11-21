@@ -1,5 +1,9 @@
 /** Public workflow command failures shared by desktop transport and conversation UI. */
 export const WORKFLOW_COMMAND_MESSAGES: Readonly<Record<string, string>> = {
+  DRAFT_OWNER_CHANGED: '草稿所属项目或会话已变化，请返回原项目后发送。',
+  PROJECT_CREATE_ALREADY_SAVED: '项目已保存，请回到已有项目查看首条消息，再决定是否发送新请求。',
+  PROJECT_CREATE_CHECK_PENDING: '上次新建尚待核对。请先查看新建回执。',
+  PROJECT_CREATE_RECEIPT_UNAVAILABLE: '新建回执无法保存，尚未发送。请检查本机存储后重试。',
   PROJECT_RECOVERY_SELECTION_CHANGED: '项目选择或状态已变化，请重新打开需要修复的项目。',
   PROJECT_RECOVERY_DESTINATION_INVALID: '请选择工作区数据目录之外的 JSON 文件以保存原始数据。',
   PROJECT_RECOVERY_EXPORT_FAILED: '原始数据导出失败，请检查保存目录权限、文件占用和剩余空间后重试。',
