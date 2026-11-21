@@ -81,7 +81,7 @@ import {
   ToolIcon,
 } from './Icons.tsx'
 import css from './WritingAgentShell.module.css'
-import { aboutVersionView } from './about.ts'
+import { ABOUT_DATA_DESCRIPTION, ABOUT_PRODUCT_DESCRIPTION, aboutVersionView } from './about.ts'
 import { conversationFollowTarget, CONVERSATION_FOLLOW_THRESHOLD } from './conversation-follow.ts'
 import { ConversationNavigator } from './ConversationNavigator.tsx'
 import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, stageRoleLabel, runRecordsTabLabel } from './interaction.ts'
@@ -1311,11 +1311,12 @@ function SettingsDialog({
                   <span className={css.aboutReleaseBadge}>{aboutVersion?.releaseLabel ?? '正在读取版本'}</span>
                 </div>
               </section>
-              {aboutVersion !== null && <p className={css.aboutReleaseExplanation}>{aboutVersion.releaseExplanation}</p>}
+              <p className={css.aboutCopy}>{ABOUT_PRODUCT_DESCRIPTION}</p>
+              {aboutVersion?.releaseExplanation && <p className={css.aboutReleaseExplanation}>{aboutVersion.releaseExplanation}</p>}
               {aboutError !== null && <div className={css.editorError} role="alert">{aboutError}</div>}
               <p className={css.aboutCopy}>{snapshot.mode === 'mock'
                 ? '当前是隔离的界面演示环境，不读取或保存真实用户项目。'
-                : '项目数据和模型 Key 都保存在这台电脑上；写作内容只会发往你自己配置的模型服务。'}</p>
+                : ABOUT_DATA_DESCRIPTION}</p>
               {aboutVersion !== null && <details className={css.aboutDetails}>
                 <summary>反馈问题时使用</summary>
                 <dl>

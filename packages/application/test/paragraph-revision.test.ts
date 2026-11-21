@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyParagraphEdits, articleParagraphs, paragraphRepairScope } from '../src/paragraph-revision.js';
+import { applyParagraphEdits, articleParagraphs, paragraphEditsOutputSchema, paragraphRepairScope } from '../src/paragraph-revision.js';
 import { parseRevisionAudit, JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA } from '../src/review-closure.js';
 
 const body = '# 标题\r\n\r\n  有效开场。\r\n\r\n必须本人在场。\r\n\r\n不必本人在场，伙计已经办好。\r\n\r\n保留的结尾。\r\n';
@@ -21,6 +21,29 @@ test('rejects stale, duplicate, unapproved and title edits without partial appli
   assert.throws(() => applyParagraphEdits(body, 'v1', { ...patch, edits: [...patch.edits, ...patch.edits] }, issues));
   assert.throws(() => applyParagraphEdits(body, 'v1', { ...patch, edits: [{ paragraphId: 'p3', replacement: '# 偷换标题' }] }, issues));
   assert.equal(applyParagraphEdits(body, 'v1', { ...patch, edits: [] }, issues).content, body);
+});
+test('rework after an approved revision locates an exact duplicate in the current body, ignoring old paragraph IDs', () => {
+  const duplicate = '一个已经展开的案例段落。';
+  const approved = ['# 标题', '已认可的开头。', duplicate, duplicate, '原样保留结尾。'].join('\n\n');
+  const findings = [
+    { bodyVersionId: 'draft', quote: '上一个版本的开头。', paragraphIds: ['p2'] },
+    { bodyVersionId: 'draft', quote: '上一个版本的案例。' },
+  ];
+  const scope = paragraphRepairScope(approved, findings, 'approved');
+  assert.deepEqual(scope.editableParagraphIds, ['p4']);
+  assert.deepEqual(scope.duplicateParagraphIds, ['p4']);
+  assert.deepEqual(paragraphEditsOutputSchema('approved', scope).properties.edits.items?.properties, {
+    paragraphId: { type: 'string', enum: ['p4'] }, replacement: { type: 'string', const: '' },
+  });
+  const patch = { baseBodyVersionId: 'approved', edits: [{ paragraphId: 'p4', replacement: '' }] };
+  const saved = applyParagraphEdits(approved, 'approved', patch, findings);
+  assert.equal(saved.content, approved.replace(`\n\n${duplicate}\n\n原样保留结尾。`, '\n\n\n\n原样保留结尾。'));
+  for (const paragraphId of ['p1', 'p2', 'p3', 'p5']) {
+    assert.throws(() => applyParagraphEdits(approved, 'approved', { ...patch, edits: [{ paragraphId, replacement: '' }] }, findings));
+  }
+  assert.throws(() => applyParagraphEdits(approved, 'approved', { ...patch, edits: [{ paragraphId: 'p4', replacement: '改写案例。' }] }, findings));
+  assert.deepEqual(paragraphRepairScope(approved, findings, 'draft').editableParagraphIds, ['p2']);
+  assert.deepEqual(paragraphRepairScope(approved.replace(duplicate, '内容不同的段落。'), findings, 'approved').editableParagraphIds, []);
 });
 test('a grounded contradiction blocks delivery independently of an optimistic overall reading verdict', () => {
   const audit = parseRevisionAudit({ consistency: [{ claim: '必须本人在场。', against: '不必本人在场，伙计已经办好。',

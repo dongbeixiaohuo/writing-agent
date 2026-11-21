@@ -1,9 +1,12 @@
 import type { BridgeHandshake } from '../../../client-bridge/src/protocol.ts'
 
+export const ABOUT_PRODUCT_DESCRIPTION = 'Writing Agent 是一款面向公众号、今日头条等平台创作者的开源桌面写作助手。把想法和素材放进来，先和 AI 聊聊从哪个角度写。你选定方向，它帮你整理素材、写出初稿。哪一段没写到点上，就挑出来接着改。'
+export const ABOUT_DATA_DESCRIPTION = '项目、稿件和模型密钥保存在这台电脑上。使用 AI 写作时，参与本次生成的内容会发送到你配置的模型服务。'
+
 export interface AboutVersionView {
   readonly version: string
   readonly releaseLabel: string
-  readonly releaseExplanation: string
+  readonly releaseExplanation?: string
   readonly buildLabel: string
   readonly runtimeLabel: string
   readonly protocolLabel: string
@@ -39,12 +42,7 @@ export function aboutVersionView(handshake: AboutHandshake): AboutVersionView {
   const preRelease = desktopVersion.includes('-')
   return {
     version: desktopVersion,
-    releaseLabel: releaseCandidate ? '测试候选版' : preRelease ? '内部测试版' : '正式版',
-    releaseExplanation: releaseCandidate
-      ? '用于桌面体验测试，尚未完成最终用户签收，不是正式发布版。'
-      : preRelease
-        ? '用于开发与测试，不是正式发布版。'
-        : '当前安装的是正式发布版本。',
+    releaseLabel: releaseCandidate ? '桌面测试版' : preRelease ? '内部测试版' : '正式版',
     buildLabel: `桌面版 ${desktopVersion}`,
     runtimeLabel: handshake.runtimeBuild,
     protocolLabel: `v${String(handshake.protocolVersion)}`,
