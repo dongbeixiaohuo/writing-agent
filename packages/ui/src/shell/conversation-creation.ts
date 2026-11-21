@@ -8,7 +8,7 @@ interface PendingCreation {
   styleSelection?: BridgeCommandOptions['styleSelection']
 }
 
-// Chromium can lose a just-written localStorage item when the desktop process is killed.
+// Chromium can lose a just-written draft when the desktop process is killed.
 // Commit the receipt with strict durability *before* the host can start a paid request.
 type ReceiptAction = { reserve: PendingCreation } | { remove: string | undefined }
 async function receipt(workspace: string, action?: ReceiptAction): Promise<PendingCreation | null> {
