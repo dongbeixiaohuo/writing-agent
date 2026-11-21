@@ -42,7 +42,7 @@ export function aboutVersionView(handshake: AboutHandshake): AboutVersionView {
   const preRelease = desktopVersion.includes('-')
   return {
     version: desktopVersion,
-    releaseLabel: releaseCandidate ? '桌面测试版' : preRelease ? '内部测试版' : '正式版',
+    releaseLabel: releaseCandidate ? '候选版' : preRelease ? '内部测试版' : '正式版',
     buildLabel: `桌面版 ${desktopVersion}`,
     runtimeLabel: handshake.runtimeBuild,
     protocolLabel: `v${String(handshake.protocolVersion)}`,

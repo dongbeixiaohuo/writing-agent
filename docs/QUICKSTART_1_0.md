@@ -1,10 +1,10 @@
 # Writing Agent 桌面版快速开始
 
-下载入口核对：2026-11-19。当前公开安装包为 **1.0.0-rc.102（Windows x64 测试版）**。[发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.102) · [已知限制与发布门禁](testing/RELEASE_GATE.md)
+当前 Windows x64 桌面版为 **1.0.0-rc.103**。[发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.103) · [发布验证与历史记录](testing/RELEASE_GATE.md)
 
 ## 1. 下载、安装与升级
 
-进入 [rc.102 下载页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.102)，下载 Windows x64 的 `Writing-Agent-Setup-1.0.0-rc.102-x64.exe`。不要下载 `Source code.zip` 当作软件，也不要误装旧 `app-preview-0.1.0`。附件 `SHA256SUMS.txt` 提供本版本校验值。安装与 RC101 → RC102 升级验证范围见 [RC102 发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.102)；[RC101 历史记录](launch/RC101_RELEASE_EXECUTION.md)保留追溯，旧包校验值不适用于新包。
+下载 Windows x64 安装包 `Writing-Agent-Setup-1.0.0-rc.103-x64.exe`。安装后可在「设置 → 关于」查看版本。发布页提供 `SHA256SUMS.txt`、安装记录和 RC102 升级验证记录。[下载安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.103/Writing-Agent-Setup-1.0.0-rc.103-x64.exe) · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.103)
 
 维护者本地安装包统一放 `output/desktop`；这不是互联网下载地址。本次 RC 未签名，Windows 可能显示未知发布者提示。核对仓库来源与 SHA-256，不要关闭安全软件来强行安装。建议使用默认本地安装目录，不安装到 OneDrive 等云同步目录。
 
