@@ -13,6 +13,11 @@ export interface BridgeHandshake {
     workspaceId: string;
 }
 export interface ProjectSummary {
+    readIssue?: {
+        code: string;
+        message: string;
+        stage: string;
+    };
     id: string;
     name: string;
     sessionIds: readonly string[];
@@ -433,6 +438,7 @@ export interface UiSettings {
     credentialReference: string | null;
 }
 export interface BridgeSnapshot {
+    readonly startupNotices?: readonly string[];
     projectStyle?: {
         id: string;
         version: number;
@@ -558,6 +564,7 @@ export interface ClientBridge {
     getSnapshot(): BridgeSnapshot;
     getRunTraceDetail(input: RunTraceDetailInput): Promise<RunTraceDetail>;
     subscribe(listener: () => void): () => void;
+    recheckProject?(projectId: string): Promise<void>;
     selectProject(projectId: string): Promise<void>;
     selectSession(projectId: string, sessionId: string): Promise<void>;
     updateSettings(patch: Partial<Pick<UiSettings, 'theme' | 'contentFontSize'>>): Promise<void>;

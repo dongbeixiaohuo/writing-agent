@@ -59,6 +59,16 @@ const api: DesktopHostApi = {
     if (!response.ok) throw new Error(response.error.code);
     return response.result as DesktopPublicationSaveResult;
   },
+  async exportProjectRecovery(projectId) {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'exportProjectRecovery', args: [projectId] });
+    if (!response.ok) throw new Error(response.error.code);
+    return response.result as { cancelled: boolean; fileName?: string };
+  },
+  async repairProjectFromBackup(projectId) {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'repairProjectFromBackup', args: [projectId] });
+    if (!response.ok) throw new Error(response.error.code);
+    return response.result as { cancelled: boolean; message?: string };
+  },
   async revealPublication(receiptId: string): Promise<void> {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'revealPublication', args: [receiptId] });
     if (!response.ok) throw new Error(response.error.code);
@@ -188,7 +198,7 @@ const api: DesktopHostApi = {
       method: "applyWorkspaceRestore",
       args: [confirmationHash, confirmationPhrase],
     });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+    if (!response.ok) throw new Error(response.error.code);
     return response.result as DesktopWorkspaceRestoreResultView;
   },
   async deleteProject(

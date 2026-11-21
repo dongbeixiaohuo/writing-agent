@@ -22,6 +22,7 @@ export type DesktopRpcMethod =
   | "handshake"
   | "getSnapshot"
   | "getRunTraceDetail"
+  | "recheckProject"
   | "selectProject"
   | "selectSession"
   | "updateSettings"
@@ -44,6 +45,8 @@ export type DesktopRpcMethod =
   | "saveWorkingCopy"
   | "exportPublication"
   | "savePublicationAs"
+  | "exportProjectRecovery"
+  | "repairProjectFromBackup"
   | "revealPublication"
   | "revealProviderConfig"
   | "refresh"
@@ -71,6 +74,7 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "handshake",
   "getSnapshot",
   "getRunTraceDetail",
+  "recheckProject",
   "selectProject",
   "selectSession",
   "updateSettings",
@@ -93,6 +97,8 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "saveWorkingCopy",
   "exportPublication",
   "savePublicationAs",
+  "exportProjectRecovery",
+  "repairProjectFromBackup",
   "revealPublication",
   "revealProviderConfig",
   "refresh",
@@ -329,6 +335,8 @@ export interface SearchConnectionView {
   readonly message: string;
 }
 export interface DesktopHostConfiguration {
+  exportProjectRecovery?(projectId: string): Promise<{ cancelled: boolean; fileName?: string }>;
+  repairProjectFromBackup?(projectId: string): Promise<{ cancelled: boolean; message?: string }>;
   styleLibrary?(command: import('../../writing-core/src/style-profile.js').StyleLibraryCommand): Promise<import('../../writing-core/src/style-profile.js').StyleLibraryResult>;
   searchStatus?(): Promise<SearchSettingsView>;
   configureSearch?(input: SearchSettingsInput): Promise<SearchSettingsView>;
@@ -485,6 +493,10 @@ export class DesktopClientBridge implements ClientBridge {
       }
     };
   };
+
+  async recheckProject(projectId: string): Promise<void> {
+    await this.#invoke("recheckProject", projectId);
+  }
 
   async selectProject(projectId: string): Promise<void> {
     await this.#invoke("selectProject", projectId);

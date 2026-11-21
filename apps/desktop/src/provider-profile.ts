@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readLocalSettings, type LocalSettingsRecovery } from '../../../packages/client-bridge/src/local-settings-recovery.js';
 import { MODEL_GROUPS, modelGroupForActor, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
 import {
   mkdirSync,
@@ -91,8 +92,9 @@ function assertTransport(baseURL: string): URL {
 
 export function loadDesktopProviderProfile(
   filePathInput: string,
+  recovery?: LocalSettingsRecovery,
 ): NormalizedProviderConfig | null {
-  const catalog = loadDesktopProviderCatalog(filePathInput);
+  const catalog = loadDesktopProviderCatalog(filePathInput, recovery);
   return catalog.profiles.find(profile => profile.id === catalog.activeProfileId)?.config ?? null;
 }
 
@@ -147,10 +149,9 @@ function withPresetExtraBody(config: NormalizedProviderConfig): NormalizedProvid
   return preset?.extraBody === undefined ? config : parseProviderConfig({ ...config, extraBody: preset.extraBody });
 }
 
-export function loadDesktopProviderCatalog(filePathInput: string): DesktopProviderCatalog {
+export function loadDesktopProviderCatalog(filePathInput: string, recovery?: LocalSettingsRecovery): DesktopProviderCatalog {
   const filePath = resolve(filePathInput);
-  try {
-    const value = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+  return readLocalSettings<DesktopProviderCatalog>(filePath, 'provider', { schemaVersion: 3, activeProfileId: null, profiles: [] }, value => {
     if (typeof value === 'object' && value !== null && 'schemaVersion' in value && value.schemaVersion === 3) {
       const parsed = catalogSchema.parse(value);
       const profiles = parsed.profiles.map(profile => ({ ...profile, config: withPresetExtraBody(parseProviderConfig(profile.config)) }));
@@ -165,18 +166,7 @@ export function loadDesktopProviderCatalog(filePathInput: string): DesktopProvid
     return { schemaVersion: 3, activeProfileId: 'legacy-primary', profiles: [
       { id: 'legacy-primary', displayName: config.providerId, models: [config.model], config },
     ] };
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) return { schemaVersion: 3, activeProfileId: null, profiles: [] };
-    throw providerProfileError(
-      "DESKTOP_PROVIDER_PROFILE_INVALID",
-      "Desktop provider profile is invalid",
-    );
-  }
+  }, recovery);
 }
 
 function writeCatalog(filePathInput: string, catalog: DesktopProviderCatalog): void {

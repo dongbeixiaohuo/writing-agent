@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { readLocalSettings, type LocalSettingsRecovery } from '../../../packages/client-bridge/src/local-settings-recovery.js';
 import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -17,13 +18,11 @@ export class SearchSettingsStore {
   #generation = 0;
   #verification: Partial<Record<SearchProvider, SearchConnectionView>> = {};
   #checking = new Set<SearchProvider>();
-  constructor(readonly path: string, readonly credentials: CredentialBroker, readonly transport: { fetch?: typeof fetch } = {}) {
+  constructor(readonly path: string, readonly credentials: CredentialBroker, readonly transport: { fetch?: typeof fetch } = {},
+    private readonly recovery?: LocalSettingsRecovery) {
     this.#credentialId = `search-tavily-${createHash('sha256').update(path).digest('hex').slice(0, 24)}`;
     this.#deepseekCredentialId = `search-deepseek-${createHash('sha256').update(path).digest('hex').slice(0, 24)}`;
-    if (existsSync(path)) {
-      try { this.#flags = flags.parse(JSON.parse(readFileSync(path, 'utf8'))); }
-      catch { throw new Error('SEARCH_SETTINGS_INVALID'); }
-    }
+    this.#flags = readLocalSettings(path, 'search', this.#flags, value => flags.parse(value), recovery);
   }
   configuration(): FactSearchConfiguration {
     return { ...this.#flags, authorizationMode: 'enabled_services',
@@ -70,6 +69,7 @@ export class SearchSettingsStore {
     } finally { this.#checking.delete(provider); }
   }
   async save(input: SearchSettingsInput): Promise<SearchSettingsView> {
+    this.recovery?.assertWritable(this.path);
     if (this.#saving) throw new Error('SEARCH_SETTINGS_BUSY');
     this.#saving = true;
     try {
@@ -117,7 +117,7 @@ export class SearchSettingsStore {
         }
         throw new Error(rollbackFailures.length ? 'SEARCH_SETTINGS_ROLLBACK_FAILED' : 'SEARCH_SETTINGS_SAVE_FAILED');
       } finally {
-        try { unlinkSync(temp); } catch { /* renamed or never created */ }
+        rmSync(temp, { force: true });
       }
       this.#flags = value;
       this.#generation++;

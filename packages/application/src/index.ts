@@ -124,9 +124,22 @@ export class ApplicationServiceError extends Error {
   }
 }
 
+function isWorkspaceReadFailure(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+  return /^(?:SQLITE_|ERR_SQLITE_|EACCES$|EPERM$|ENOSPC$|ENOMEM$|EIO$)/u.test(code);
+}
+
+export interface ProjectBackupRepairResult { projectId: string; status: 'repaired' | 'no_change'; repairedFields: ('brief_json' | 'body_document')[]; evidencePath: string | null }
+
+export interface ProjectReadIssue { code: string; message: string; stage: string }
+
 export interface WritingApplicationStorage extends StoragePort, SessionStore {
   styleProfiles?(): { get(id: string): StyleProfile };
   listProjects(): ProjectInspection[];
+  recordProjectReadFailure?(projectId: string, diagnostic: ProjectReadIssue): void;
+  exportProjectRecovery?(projectId: string, diagnostic?: ProjectReadIssue | null): string;
+  repairProjectFromBackup?(projectId: string, backupPath: string): ProjectBackupRepairResult;
+  getProjectEventSequence?(projectId: string): number;
   listSessions(projectId: string): SessionRecord[];
   listRuns(projectId: string, sessionId?: string): RunRecord[];
 }
@@ -571,56 +584,61 @@ export class WritingApplicationService {
     // or adding a project event. Re-scan on that change, not on every refresh.
     const modelKey = JSON.stringify([model.model, model.parameters, model.budget, this.#provider.capabilitiesFor(model.model).tools]);
     for (const project of this.#storage.listProjects()) {
-      const scan = this.#handoffScan.get(project.id);
-      const newEvents = this.#storage.listEvents(project.id, scan?.seq ?? 0);
-      if (scan?.model === modelKey && !newEvents.length) continue;
-      if ([...this.#activeRuns.values()].some(r => r.projectId === project.id) ||
-          this.#storage.listRuns(project.id).some(r => ['running', 'queued', 'paused'].includes(r.status))) continue;
-      this.#handoffScan.set(project.id, { seq: newEvents.at(-1)?.projectSeq ?? scan?.seq ?? 0, model: modelKey });
-      const handoff = pendingWorkflowHandoffs(this.#storage, project.id)[0];
-      if (!handoff) continue;
       try {
-        // The final local response may have committed immediately before the process died.
-        // Settle only that proven response; never replay an uncertain external request.
-        const sourceRun = handoff.source.actor.kind === 'agent' ? this.#storage.getRun(handoff.source.actor.runId) : null;
-        if (sourceRun?.status === 'interrupted' && isWorkflowHandoffSourceCommitted(this.#storage, handoff.source)) {
-          this.#storage.resumeRun({ projectId: project.id, runId: sourceRun.id,
-            operationId: `settle-handoff-source:${handoff.id}:resume`, decision: 'resume' });
-          this.#storage.finishRun({ projectId: project.id, runId: sourceRun.id,
-            operationId: `settle-handoff-source:${handoff.id}:complete`, status: 'completed', stopReason: null,
-            payload: { recoveredArtifactVersionId: handoff.source.id, reason: 'durable_response_recovered' } });
+        const scan = this.#handoffScan.get(project.id);
+        const seq = this.getProjectEventSequence(project.id);
+        if (scan?.model === modelKey && scan.seq === seq) continue;
+        if ([...this.#activeRuns.values()].some(r => r.projectId === project.id)) continue;
+        this.#handoffScan.set(project.id, { seq, model: modelKey });
+        if (this.#storage.listRuns(project.id).some(r => ['running', 'queued', 'paused'].includes(r.status))) continue;
+        if (!this.tryProjectProjection(project.id)) continue;
+        const handoff = pendingWorkflowHandoffs(this.#storage, project.id)[0];
+        if (this.#projectReadIssues.get(project.id)?.stage === '恢复待处理操作') this.#projectReadIssues.delete(project.id);
+        if (!handoff) continue;
+        try {
+          // The final local response may have committed immediately before the process died.
+          // Settle only that proven response; never replay an uncertain external request.
+          const sourceRun = handoff.source.actor.kind === 'agent' ? this.#storage.getRun(handoff.source.actor.runId) : null;
+          if (sourceRun?.status === 'interrupted' && isWorkflowHandoffSourceCommitted(this.#storage, handoff.source)) {
+            this.#storage.resumeRun({ projectId: project.id, runId: sourceRun.id,
+              operationId: `settle-handoff-source:${handoff.id}:resume`, decision: 'resume' });
+            this.#storage.finishRun({ projectId: project.id, runId: sourceRun.id,
+              operationId: `settle-handoff-source:${handoff.id}:complete`, status: 'completed', stopReason: null,
+              payload: { recoveredArtifactVersionId: handoff.source.id, reason: 'durable_response_recovered' } });
+          }
+          if (handoff.bodyVersionId !== project.latestBodyVersionId ||
+              (handoff.briefVersionId && handoff.briefVersionId !== project.currentBriefVersionId))
+            throw new ApplicationServiceError('HANDOFF_CONTEXT_CHANGED', '稿件或方向在确认后发生了变化，请核对当前版本后继续。');
+          if (!project.currentBriefVersionId) throw new ApplicationServiceError('WRITING_BRIEF_NOT_CONFIRMED', '请先确认写作方向。');
+          const input = { model: model.model, parameters: model.parameters, ...(model.budget ? { budget: model.budget } : {}), projectId: project.id, sessionId: handoff.sessionId,
+            expectedProjectRevision: project.revision, expectedBriefVersionId: project.currentBriefVersionId,
+            operationId: handoff.operationId, userInstruction: handoff.userMessage };
+          let handle: WritingDraftRunHandle | FactCheckRunHandle;
+          if (handoff.action === 'resume_checkpoint') {
+            if (!handoff.checkpointRunId || !handoff.intentReceiptId) throw new ApplicationServiceError('CHECKPOINT_DECISION_REQUIRED', '缺少当前阶段的确认记录，请在对话中继续。');
+            handle = this.resumeDraft({ ...input, runId: handoff.checkpointRunId, intentReceiptId: handoff.intentReceiptId, decision: 'resume' });
+          } else if (handoff.action === 'continue_title') {
+            if (!handoff.checkpointRunId || !isPublicationSelectionCurrent(this.#storage, project.id))
+              throw new ApplicationServiceError('PUBLICATION_SELECTION_REQUIRED', '请确认当前稿件使用的标题。');
+            const lastBody = this.#storage.listArtifactVersions(project.id, 'body', 'main').findLast(a => a.actor.kind === 'agent' && a.actor.runId === handoff.checkpointRunId);
+            if (lastBody && lastBody.id !== project.latestBodyVersionId) {
+              handle = this.startFactCheck(input);
+              this.cancelDraft({ projectId: project.id, runId: handoff.checkpointRunId,
+                operationId: `${handoff.operationId}:retire-title-wait`, reason: 'current_body_fact_check_started' });
+            } else handle = this.resumeDraft({ ...input, runId: handoff.checkpointRunId, decision: 'resume', userInstruction: '标题已确认，请继续核查当前稿件' });
+          } else if (handoff.action === 'fact_check') handle = this.startFactCheck(input);
+          else handle = this.startDraft(input);
+          started.push({ sourceId: handoff.id, runId: handle.runId });
+          // Observation only: a continuation itself must not silently retry after failure.
+          void handle.result.catch(() => undefined);
+        } catch (error) {
+          if (isWorkspaceReadFailure(error)) throw error;
+          const code = error instanceof ApplicationServiceError ? error.code :
+            typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'AUTHOR_ACTION_FAILED';
+          if (!['MODEL_PROVIDER_REQUIRED', 'MODEL_TOOLS_UNVERIFIED', 'MODEL_CONFIG_INVALID', 'CREDENTIAL_NOT_FOUND', 'RUN_ALREADY_ACTIVE'].includes(code))
+            recordHandoffFailure(this.#storage, handoff, code);
         }
-        if (handoff.bodyVersionId !== project.latestBodyVersionId ||
-            (handoff.briefVersionId && handoff.briefVersionId !== project.currentBriefVersionId))
-          throw new ApplicationServiceError('HANDOFF_CONTEXT_CHANGED', '稿件或方向在确认后发生了变化，请核对当前版本后继续。');
-        if (!project.currentBriefVersionId) throw new ApplicationServiceError('WRITING_BRIEF_NOT_CONFIRMED', '请先确认写作方向。');
-        const input = { model: model.model, parameters: model.parameters, ...(model.budget ? { budget: model.budget } : {}), projectId: project.id, sessionId: handoff.sessionId,
-          expectedProjectRevision: project.revision, expectedBriefVersionId: project.currentBriefVersionId,
-          operationId: handoff.operationId, userInstruction: handoff.userMessage };
-        let handle: WritingDraftRunHandle | FactCheckRunHandle;
-        if (handoff.action === 'resume_checkpoint') {
-          if (!handoff.checkpointRunId || !handoff.intentReceiptId) throw new ApplicationServiceError('CHECKPOINT_DECISION_REQUIRED', '缺少当前阶段的确认记录，请在对话中继续。');
-          handle = this.resumeDraft({ ...input, runId: handoff.checkpointRunId, intentReceiptId: handoff.intentReceiptId, decision: 'resume' });
-        } else if (handoff.action === 'continue_title') {
-          if (!handoff.checkpointRunId || !isPublicationSelectionCurrent(this.#storage, project.id))
-            throw new ApplicationServiceError('PUBLICATION_SELECTION_REQUIRED', '请确认当前稿件使用的标题。');
-          const lastBody = this.#storage.listArtifactVersions(project.id, 'body', 'main').findLast(a => a.actor.kind === 'agent' && a.actor.runId === handoff.checkpointRunId);
-          if (lastBody && lastBody.id !== project.latestBodyVersionId) {
-            handle = this.startFactCheck(input);
-            this.cancelDraft({ projectId: project.id, runId: handoff.checkpointRunId,
-              operationId: `${handoff.operationId}:retire-title-wait`, reason: 'current_body_fact_check_started' });
-          } else handle = this.resumeDraft({ ...input, runId: handoff.checkpointRunId, decision: 'resume', userInstruction: '标题已确认，请继续核查当前稿件' });
-        } else if (handoff.action === 'fact_check') handle = this.startFactCheck(input);
-        else handle = this.startDraft(input);
-        started.push({ sourceId: handoff.id, runId: handle.runId });
-        // Observation only: a continuation itself must not silently retry after failure.
-        void handle.result.catch(() => undefined);
-      } catch (error) {
-        const code = error instanceof ApplicationServiceError ? error.code :
-          typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'AUTHOR_ACTION_FAILED';
-        if (!['MODEL_PROVIDER_REQUIRED', 'MODEL_TOOLS_UNVERIFIED', 'MODEL_CONFIG_INVALID', 'CREDENTIAL_NOT_FOUND', 'RUN_ALREADY_ACTIVE'].includes(code))
-          recordHandoffFailure(this.#storage, handoff, code);
-      }
+      } catch (error) { this.recordProjectReadFailure(project.id, error, '恢复待处理操作'); }
     }
     return started;
   }
@@ -1074,6 +1092,83 @@ export class WritingApplicationService {
     });
   }
 
+  readonly #projectReadIssues = new Map<string, ProjectReadIssue>();
+  readonly #diagnosticWriteFailures = new Map<string, string>();
+
+  recordProjectReadFailure(projectId: string, error: unknown, stage: string): void {
+    if (isWorkspaceReadFailure(error)) throw error;
+    const code = error instanceof ApplicationServiceError ? error.code :
+      typeof error === 'object' && error !== null && 'code' in error ? String(error.code) :
+      error instanceof SyntaxError ? 'PROJECT_JSON_INVALID' : 'PROJECT_DATA_UNREADABLE';
+    if (code === 'PROJECT_BRIEF_INVALID') stage = '读取写作简报';
+    if (code === 'BODY_DOCUMENT_INVALID' || code === 'BODY_DOCUMENT_MISSING') stage = '读取正文';
+    const issue = { code, stage, message: `项目数据暂时无法读取（${stage}，${code}）。原始数据已保留；请先导出原始数据，再检查备份恢复。其他项目可以继续使用。` };
+    this.#projectReadIssues.set(projectId, issue);
+    try {
+      this.#storage.recordProjectReadFailure?.(projectId, issue);
+      this.#diagnosticWriteFailures.delete(projectId);
+    } catch (writeError) {
+      const rawCode = typeof writeError === 'object' && writeError !== null && 'code' in writeError ? String(writeError.code) : 'WRITE_FAILED';
+      const detail = /^[A-Z0-9_]{1,64}$/u.test(rawCode) ? rawCode : 'WRITE_FAILED';
+      this.#projectReadIssues.set(projectId, { ...issue, message: `${issue.message} 诊断记录未能保存（${detail}），请检查磁盘空间和权限。` });
+      if (this.#diagnosticWriteFailures.get(projectId) !== detail) {
+        this.#diagnosticWriteFailures.set(projectId, detail);
+        console.error(`[writing-agent] Project diagnostic persistence failed (${detail}); the notice remains visible and raw export remains available.`);
+      }
+    }
+  }
+
+  getProjectReadIssue(projectId: string): ProjectReadIssue | undefined {
+    return this.#projectReadIssues.get(projectId);
+  }
+
+  tryProjectProjection(projectId: string): WritingProjectProjection | null {
+    try {
+      const projection = this.getProjectProjection(projectId);
+      // Also validate values subsequently used by the UI, before isolating this project.
+      this.getHandoffError(projectId, '');
+      this.getProjectStyleSelection(projectId);
+      this.getConversationIntake(projectId);
+      pendingWorkflowHandoffs(this.#storage, projectId);
+      for (const run of projection.runs) this.getCheckpointApproval(projectId, run.id);
+      const issue = this.#projectReadIssues.get(projectId);
+      if (issue?.stage.startsWith('读取')) this.#projectReadIssues.delete(projectId);
+      return projection;
+    } catch (error) {
+      this.recordProjectReadFailure(projectId, error, '读取项目');
+      return null;
+    }
+  }
+
+  recheckProject(projectId: string): void {
+    if (!this.tryProjectProjection(projectId)) return;
+    const issue = this.#projectReadIssues.get(projectId);
+    if (issue?.stage === '恢复运行') {
+      if ([...this.#activeRuns.values()].some(run => run.projectId === projectId)) return;
+      try {
+        this.#storage.recoverProjectRuns(projectId);
+        this.#projectReadIssues.delete(projectId);
+      } catch (error) { this.recordProjectReadFailure(projectId, error, '恢复运行'); }
+    } else if (issue?.stage === '恢复待处理操作') {
+      this.#handoffScan.delete(projectId);
+    }
+  }
+
+  repairProjectFromBackup(projectId: string, backupPath: string): ProjectBackupRepairResult {
+    const selectedId = requireProjectId(projectId);
+    if ([...this.#activeRuns.values()].some(run => run.projectId === selectedId)) throw new ApplicationServiceError('PROJECT_REPAIR_BUSY', '当前项目仍在运行，请先停止后再修复。');
+    if (!this.#storage.repairProjectFromBackup) throw new ApplicationServiceError('PROJECT_RECOVERY_UNAVAILABLE', '当前存储不支持单项目修复。');
+    const result = this.#storage.repairProjectFromBackup(selectedId, backupPath);
+    this.#handoffScan.delete(selectedId);
+    this.tryProjectProjection(selectedId);
+    return result;
+  }
+
+  exportProjectRecovery(projectId: string): string {
+    if (!this.#storage.exportProjectRecovery) throw new ApplicationServiceError('PROJECT_RECOVERY_UNAVAILABLE', '当前存储不支持原始数据导出');
+    return this.#storage.exportProjectRecovery(requireProjectId(projectId), this.#projectReadIssues.get(projectId) ?? null);
+  }
+
   listProjects(): readonly ProjectInspection[] {
     return this.#storage.listProjects();
   }
@@ -1106,10 +1201,13 @@ export class WritingApplicationService {
     if (project === null) {
       throw new ApplicationServiceError("PROJECT_NOT_FOUND", "Project does not exist");
     }
-    const brief =
-      project.currentBriefVersionId === null
-        ? null
-        : this.#storage.getWritingBriefVersion(project.currentBriefVersionId);
+    const brief = (() => {
+      try { return project.currentBriefVersionId === null ? null : this.#storage.getWritingBriefVersion(project.currentBriefVersionId); }
+      catch (error) { if (isWorkspaceReadFailure(error)) throw error; throw new ApplicationServiceError('PROJECT_BRIEF_INVALID', '项目简报的持久化数据无法解析'); }
+    })();
+    if (project.currentBriefVersionId && (!brief || brief.projectId !== projectId)) {
+      throw new ApplicationServiceError('BRIEF_REFERENCE_INVALID', 'Current brief is missing or belongs to another project');
+    }
     const bodyVersions = this.#storage.listArtifactVersions(
       projectId,
       "body",
@@ -1119,10 +1217,13 @@ export class WritingApplicationService {
       project.latestBodyVersionId === null
         ? null
         : this.#storage.getArtifactVersion(project.latestBodyVersionId);
-    const currentBodyDocument =
-      currentBodyVersion === null
-        ? null
-        : this.#storage.getBodyDocument(currentBodyVersion.id);
+    if (project.latestBodyVersionId && (!currentBodyVersion || currentBodyVersion.projectId !== projectId)) {
+      throw new ApplicationServiceError('BODY_REFERENCE_INVALID', 'Current body is missing or belongs to another project');
+    }
+    const currentBodyDocument = (() => {
+      try { return currentBodyVersion === null ? null : this.#storage.getBodyDocument(currentBodyVersion.id); }
+      catch (error) { if (isWorkspaceReadFailure(error)) throw error; throw new ApplicationServiceError('BODY_DOCUMENT_INVALID', '项目正文的块数据无法解析'); }
+    })();
     if (currentBodyVersion !== null && currentBodyDocument === null) {
       throw new ApplicationServiceError(
         "BODY_DOCUMENT_MISSING",
@@ -1199,10 +1300,13 @@ export class WritingApplicationService {
     };
   }
 
-  // Cheap freshness probe for the bridge poll: reads only events newer than
-  // the caller's recorded sequence instead of rebuilding a full projection.
+  // Cheap freshness probe uses the raw sequence, including projects whose event JSON is unreadable.
+  getProjectEventSequence(projectId: string): number {
+    return this.#storage.getProjectEventSequence?.(projectId) ?? this.#storage.listEvents(projectId).at(-1)?.projectSeq ?? 0;
+  }
+
   hasProjectEventsAfter(projectId: string, projectSeq: number): boolean {
-    return this.#storage.listEvents(projectId, projectSeq).length > 0;
+    return this.getProjectEventSequence(projectId) > projectSeq;
   }
 
   recoverWorkspace(): readonly RecoveredProjectRun[] {
@@ -1212,12 +1316,15 @@ export class WritingApplicationService {
         "Workspace recovery cannot run while this service owns active runs",
       );
     }
-    return this.#storage.listProjects().flatMap((project) =>
-      this.#storage.recoverProjectRuns(project.id).map((run) => ({
-        ...run,
-        projectId: project.id,
-      })),
-    );
+    return this.#storage.listProjects().flatMap((project) => {
+      if (!this.tryProjectProjection(project.id)) return [];
+      try {
+        return this.#storage.recoverProjectRuns(project.id).map(run => ({ ...run, projectId: project.id }));
+      } catch (error) {
+        this.recordProjectReadFailure(project.id, error, '恢复运行');
+        return [];
+      }
+    });
   }
 
   #prepareDraft(input: RunDraftInput, recovery = false): PreparedDraft {

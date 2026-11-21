@@ -47,7 +47,7 @@ import {
   resolveRendererAsset,
 } from "./security-policy.js";
 import { claimDesktopSingleInstance } from "./single-instance.js";
-import { replaceWorkspaceDatabaseFromBackup } from "./workspace-restore.js";
+import { inspectPendingWorkspaceRestore, recoverPendingWorkspaceRestore, replaceWorkspaceDatabaseFromBackup } from "./workspace-restore.js";
 
 const APP_ID = "com.dongbeixiaohuo.writingagent";
 const RPC_METHODS = new Set<DesktopRpcMethod>(DESKTOP_RPC_METHODS);
@@ -96,6 +96,7 @@ let mainWindow: BrowserWindow | null = null;
 let host: DesktopApplicationHost | null = null;
 let hostUnsubscribe: (() => void) | null = null;
 let quitting = false;
+let restoringWorkspace = false;
 // The window close button asks first; app.quit() paths set this to skip the prompt.
 let allowClose = false;
 let desktopFailureReported = false;
@@ -177,6 +178,9 @@ async function handleRpc(
     return { ok: false, error: { code: "DESKTOP_REQUEST_INVALID", message: "Desktop request is invalid" } };
   }
   const currentHost = host;
+  if (restoringWorkspace) {
+    return { ok: false, error: { code: 'RESTORE_IN_PROGRESS', message: '工作区正在恢复，请等待恢复完成或重启后的恢复提示。' } };
+  }
   if (currentHost === null) {
     return { ok: false, error: { code: "DESKTOP_HOST_NOT_READY", message: "Desktop host is not ready" } };
   }
@@ -193,6 +197,26 @@ async function handleRpc(
       const result = parsed.method === 'searchStatus' ? await currentHost.searchStatus()
         : parsed.method === 'testSearchConnection' ? await currentHost.testSearchConnection(parsed.args[0] as 'deepseek' | 'parallel' | 'tavily')
         : await currentHost.configureSearch(parsed.args[0] as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsInput);
+      return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
+    }
+    if (parsed.method === 'exportProjectRecovery') {
+      const result = await currentHost.exportProjectRecovery(parsed.args[0], async () => {
+        const selected = await showSaveDialog({
+          title: '保存问题项目的原始数据',
+          defaultPath: join(app.getPath('documents'), '写作项目恢复资料.json'),
+          filters: [{ name: '项目恢复资料', extensions: ['json'] }],
+          properties: ['showOverwriteConfirmation', 'createDirectory'],
+        });
+        return selected.canceled ? null : selected.filePath ?? null;
+      });
+      return { ok: true, result };
+    }
+    if (parsed.method === 'repairProjectFromBackup') {
+      const result = await currentHost.repairProjectFromBackup(parsed.args[0], async () => {
+        const selected = await showOpenDialog({ title: '选择备份以修复当前项目的同版本简报或正文',
+          properties: ['openFile'], filters: [{ name: 'Writing Agent 工作区备份', extensions: ['sqlite3'] }] });
+        return selected.canceled ? null : selected.filePaths[0] ?? null;
+      });
       return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
     }
     if (parsed.method === 'savePublicationAs') {
@@ -399,42 +423,45 @@ async function handleRpc(
       ) {
         throw Object.assign(new Error("Workspace restore confirmation does not match"), { code: "RESTORE_CONFIRMATION_MISMATCH" });
       }
-      const inspection = inspectWorkspaceBackupFile(restore.backupPath);
-      if (!inspection.ok || !inspection.supported) {
-        const code = inspection.ok ? "SCHEMA_UNSUPPORTED" : inspection.code;
-        throw Object.assign(new Error("Selected backup is no longer valid"), { code });
-      }
-      const freshSize = statSync(restore.backupPath).size;
-      const freshSha256 = await sha256File(restore.backupPath);
-      if (freshSize !== restore.byteLength || freshSha256 !== restore.sha256) {
-        throw Object.assign(new Error("Selected backup changed after preview"), { code: "RESTORE_CONFIRMATION_STALE" });
-      }
-
       const safetyDirectory = join(workspacePath, ".writing-agent", "restore-backups");
-      mkdirSync(safetyDirectory, { recursive: true });
       const safetyPath = join(
         safetyDirectory,
         `before-restore-${new Date().toISOString().replace(/[:.]/gu, "-")}-${randomUUID()}.sqlite3`,
       );
-      const safety = await currentHost.writeWorkspaceBackup(safetyPath);
       const snapshot = currentHost.bridge.getSnapshot();
-      hostUnsubscribe?.();
-      hostUnsubscribe = null;
-      currentHost.close();
-      host = null;
-      preparedRestore = null;
+      let safety: Awaited<ReturnType<DesktopApplicationHost["writeWorkspaceBackup"]>>;
+      let stage = "prepare";
+      restoringWorkspace = true;
       try {
-        const closedSize = statSync(restore.backupPath).size;
-        const closedSha256 = await sha256File(restore.backupPath);
-        if (closedSize !== restore.byteLength || closedSha256 !== restore.sha256) {
-          throw Object.assign(new Error("Selected backup changed before restore"), { code: "RESTORE_CONFIRMATION_STALE" });
-        }
         await replaceWorkspaceDatabaseFromBackup({
           workspacePath,
           backupPath: restore.backupPath,
+          prepareLiveDatabase: async () => {
+            stage = "safety-backup";
+            safety = await currentHost.writeWorkspaceBackup(safetyPath);
+            stage = "verify-selection";
+            if (statSync(restore.backupPath).size !== restore.byteLength || await sha256File(restore.backupPath) !== restore.sha256) {
+              throw Object.assign(new Error("Selected backup changed after preview"), { code: "RESTORE_CONFIRMATION_STALE" });
+            }
+            hostUnsubscribe?.();
+            hostUnsubscribe = null;
+            currentHost.close();
+            host = null;
+            preparedRestore = null;
+            stage = "install";
+          },
         });
       } catch (error) {
-        restartDesktopAfterResponse();
+        const reason = typeof error === 'object' && error !== null && 'code' in error && /^[A-Z][A-Z0-9_]{1,63}$/.test(String(error.code))
+          ? String(error.code) : 'UNKNOWN';
+        process.stderr.write(`Writing Agent restore failed at ${stage} (${reason})\n`);
+        const code = describeDesktopStartupFailure(error).code;
+        if (host === null || code === 'RESTORE_PREPARATION_CLEANUP_FAILED' || code.startsWith('RESTORE_RECOVERY_')) restartDesktopAfterResponse();
+        else restoringWorkspace = false;
+        const failure = safeDesktopFailure(error);
+        if (!failure.ok && failure.error.code === 'DESKTOP_COMMAND_FAILED' && (stage === 'safety-backup' || stage === 'install')) {
+          throw new Error(stage === 'safety-backup' ? 'RESTORE_SAFETY_BACKUP_FAILED' : 'RESTORE_INSTALL_FAILED', { cause: error });
+        }
         throw error;
       }
       restartDesktopAfterResponse();
@@ -442,9 +469,9 @@ async function handleRpc(
         ok: true,
         result: {
           restarting: true,
-          restoredProjectCount: inspection.projectCount,
-          safetyBackupFileName: safety.fileName,
-          safetyBackupSha256: safety.sha256,
+          restoredProjectCount: restore.projectCount,
+          safetyBackupFileName: safety!.fileName,
+          safetyBackupSha256: safety!.sha256,
         },
         snapshot,
       };
@@ -557,6 +584,51 @@ async function runSmoke(window: BrowserWindow): Promise<void> {
   app.quit();
 }
 
+async function resolveInterruptedWorkspaceRestore(): Promise<boolean> {
+  for (;;) {
+    const pending = inspectPendingWorkspaceRestore(workspacePath);
+    if (pending === null) return true;
+    const pendingError = { code: pending.hasInvalidAnchor ? "RESTORE_RECOVERY_INVALID" : "RESTORE_RECOVERY_REQUIRED" };
+    if (runEnvironment.mode === "smoke") throw pendingError;
+    let logHint = "";
+    try {
+      logHint = `\n恢复日志：${recordDesktopStartupFailure(pendingError, join(userDataPath, "logs"), app.getVersion())}`;
+    } catch {
+      logHint = "\n本地日志无法写入，请保留错误代码 RESTORE_RECOVERY_REQUIRED。";
+      process.stderr.write("Writing Agent restore recovery log unavailable\n");
+    }
+    const actions = ["exit", ...(pending.canRollback ? ["rollback"] : []), ...(pending.canRetry ? ["retry"] : [])] as const;
+    const result = await dialog.showMessageBox({
+      type: "warning", title: "Writing Agent：上次恢复未完成",
+      message: "工作区恢复曾被中断，尚未打开项目数据库。",
+      detail: (pending.kind === "preparing" ? "上次在准备恢复副本时被中断，原数据库尚未替换。选择“继续原工作区”会验证并打开原数据，将未完成的准备目录封存在 .writing-agent/restore-evidence-* 中。如仍需恢复，请进入工作区重新选择备份。"
+        : pending.kind === "legacy"
+        ? "发现旧版恢复留下的原数据库。回退会恢复原数据库；如果当前数据库中后来保存过文章，会先把当前数据及 WAL 保存为已验证的独立副本。选择“保留现有工作区”可保留当前文章。保留的另一份数据位于工作区 .writing-agent/restore-recovery-* 中。存在多份原数据库时，请退出并保留文件供人工核对。"
+        : "回退原工作区：恢复操作之前的已保存项目。重试恢复：重新安装上次已验证的目标备份。退出：保留所有文件，暂不打开工作区。")
+        + (pending.hasInvalidAnchor ? "\n部分恢复副本未通过校验，只提供仍可验证的选项；请保留文件并反馈日志。" : "") + logHint,
+      buttons: actions.map(action => action === "exit" ? "退出" : action === "rollback" ? pending.kind === "preparing" ? "继续原工作区" : "回退原工作区" : pending.kind === "legacy" ? "保留现有工作区" : "重试恢复"),
+      defaultId: 0, cancelId: 0, noLink: true,
+    });
+    const action = actions[result.response];
+    if (action === undefined || action === "exit") return false;
+    try {
+      const restored = await recoverPendingWorkspaceRestore({ workspacePath, action: action as "rollback" | "retry" });
+      if (restored.warningCode) {
+        const warning = { code: restored.warningCode };
+        try { recordDesktopStartupFailure(warning, join(userDataPath, "logs"), app.getVersion()); }
+        catch { process.stderr.write(`Writing Agent restore warning: ${restored.warningCode}; log unavailable\n`); }
+        dialog.showErrorBox("工作区已恢复，部分旧文件需要核对", describeDesktopStartupFailure(warning).message);
+      }
+    } catch (error) {
+      const failure = describeDesktopStartupFailure(error);
+      let errorLog = "本地日志无法写入，请记录错误代码。";
+      try { errorLog = `本地日志：${recordDesktopStartupFailure(error, join(userDataPath, "logs"), app.getVersion())}`; }
+      catch { process.stderr.write(`Writing Agent restore recovery failed: ${failure.code}; log unavailable\n`); }
+      dialog.showErrorBox("工作区恢复未完成", `${failure.message}\n错误代码：${failure.code}\n${errorLog}\n恢复备份仍保留，可以重试或退出。`);
+    }
+  }
+}
+
 async function start(): Promise<void> {
   await app.whenReady();
   app.setAppUserModelId("com.dongbeixiaohuo.writingagent");
@@ -585,6 +657,7 @@ async function start(): Promise<void> {
   });
 
   mkdirSync(workspacePath, { recursive: true });
+  if (!await resolveInterruptedWorkspaceRestore()) { app.quit(); return; }
   host = await startDesktopApplicationHost({
     workspacePath,
     providerProfilePath,
@@ -624,7 +697,7 @@ if (ownsInstance) {
     },
   });
   app.on("activate", () => {
-    if (mainWindow === null && app.isReady()) mainWindow = createWindow();
+    if (mainWindow === null && host !== null && app.isReady()) mainWindow = createWindow();
   });
   app.on("window-all-closed", () => app.quit());
   app.on("before-quit", () => {
@@ -650,7 +723,7 @@ function reportDesktopFailure(error: unknown): void {
   try {
     const logPath = recordDesktopStartupFailure(error, join(userDataPath, "logs"), app.getVersion());
     logHint = `本地日志：${logPath}\n进程日志：${join(userDataPath, "logs", "process-events.jsonl")}`;
-  } catch { /* Report failure even when the profile directory is not writable. */ }
+  } catch { process.stderr.write('Writing Agent startup log could not be written\n'); }
   process.stderr.write(`Writing Agent desktop failed: ${failure.code}\n`);
   if (runEnvironment.mode !== "smoke") {
     dialog.showErrorBox("Writing Agent 无法继续运行", `${failure.message}\n\n错误代码：${failure.code}\n${logHint}`);

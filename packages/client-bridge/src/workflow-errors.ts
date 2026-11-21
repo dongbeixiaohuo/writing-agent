@@ -1,5 +1,16 @@
 /** Public workflow command failures shared by desktop transport and conversation UI. */
 export const WORKFLOW_COMMAND_MESSAGES: Readonly<Record<string, string>> = {
+  PROJECT_RECOVERY_SELECTION_CHANGED: '项目选择或状态已变化，请重新打开需要修复的项目。',
+  PROJECT_RECOVERY_DESTINATION_INVALID: '请选择工作区数据目录之外的 JSON 文件以保存原始数据。',
+  PROJECT_RECOVERY_EXPORT_FAILED: '原始数据导出失败，请检查保存目录权限、文件占用和剩余空间后重试。',
+  PROJECT_RECOVERY_UNAVAILABLE: '当前存储无法执行这项项目恢复操作。',
+  PROJECT_REPAIR_BACKUP_INVALID: '备份文件未通过检查。请重新选择完好的工作区备份。',
+  PROJECT_REPAIR_NO_MATCH: '备份中没有能匹配本项目当前版本的记录。请选其他备份，或导出原始数据。',
+  PROJECT_REPAIR_UNVERIFIABLE: '现有证据不足以验证这份备份可以修复当前记录。请保留原数据并选择其他备份。',
+  PROJECT_REPAIR_BUSY: '项目正在执行操作，请在完成后再修复。',
+  PROJECT_REPAIR_EVIDENCE_FAILED: '修复前的取证副本未能保存，请检查磁盘空间和目录权限后重试。',
+  SETTINGS_FILE_PRESERVED: '原设置文件无法读取或备份，已保留在原位置。请检查权限或文件占用，重开应用后再保存。',
+  PROJECT_DATA_UNREADABLE: '当前项目的数据无法读取，原始数据已保留。请先导出原始数据并打开项目修复。',
   MODEL_GROUP_UNAVAILABLE: '分组指定的模型未通过验证或配置已变化。请到模型设置重新验证、选择其他模型或改为跟随默认，再继续；稿件和已完成阶段仍保留。',
   FACT_SEARCH_DECISION_REQUIRED: '请在当前搜索提示选择重试、追加搜索或不再搜索；旧提示已失效时，请使用最新提示。',
   SEARCH_DISABLED: '当前已关闭全部搜索服务。请在设置中重新开启搜索，或选择“不再搜索，继续核查”；已取得结果仍保留。',

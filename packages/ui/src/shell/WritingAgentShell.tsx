@@ -1341,6 +1341,7 @@ export function WritingAgentShell({
   const [briefConfirmationError, setBriefConfirmationError] = useState<string | null>(null)
   const [navigationError, setNavigationError] = useState<string | null>(null)
   const [projectActionNotice, setProjectActionNotice] = useState<string | null>(null)
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<BridgeSnapshot['projects'][number] | null>(null)
   const [renameProjectTarget, setRenameProjectTarget] = useState<BridgeSnapshot['projects'][number] | null>(null)
   const [composerHandoff, setComposerHandoff] = useState<{ id: number, draft: string, restoreFocus: boolean } | null>(null)
@@ -1406,6 +1407,23 @@ export function WritingAgentShell({
   const openSettings = (section: SettingsSection): void => {
     setSettingsSection(section)
     setSettingsOpen(true)
+  }
+
+  async function recoverSelectedProject(action: 'export' | 'repair') {
+    if (!selectedProject?.readIssue || !hostConfiguration || recoveryBusy) return
+    setRecoveryBusy(true)
+    setProjectActionNotice(null)
+    try {
+      if (action === 'export' && hostConfiguration.exportProjectRecovery) {
+        const result = await hostConfiguration.exportProjectRecovery(selectedProject.id)
+        setProjectActionNotice(result.cancelled ? '已取消原始数据导出。' : `“${selectedProject.name}”的原始数据已保存到 ${result.fileName}。`)
+      } else if (action === 'repair' && hostConfiguration.repairProjectFromBackup) {
+        const result = await hostConfiguration.repairProjectFromBackup(selectedProject.id)
+        setProjectActionNotice(result.cancelled ? '已取消项目修复。' : `“${selectedProject.name}” · ${result.message}`)
+      }
+    } catch (error) {
+      setProjectActionNotice(commandErrorMessage(error, '操作未完成，请检查备份或保存位置后重试。'))
+    } finally { setRecoveryBusy(false) }
   }
 
   const openWritingPanel = (panelId: string, initialView?: string): void => {
@@ -1562,12 +1580,13 @@ export function WritingAgentShell({
                     aria-current={!newProjectIntent && project.id === snapshot.selectedProjectId ? 'true' : undefined}
                     onClick={() => void openProject(project)}
                   >
-                    <span className={css.projectIdentity}><FolderIcon /><span>{project.name}</span></span>
+                    <span className={css.projectIdentity}><FolderIcon /><span>{project.name}{project.readIssue ? ' · 需要修复' : ''}</span></span>
                   </button>
                   <button
                     className={css.projectRenameButton}
                     type="button"
                     aria-label={`重命名项目“${project.name}”`}
+                    disabled={!!project.readIssue}
                     title="重命名项目"
                     onClick={() => {
                       setProjectActionNotice(null)
@@ -1589,6 +1608,7 @@ export function WritingAgentShell({
                     className={css.projectNewConversationButton}
                     type="button"
                     aria-label={`在项目“${project.name}”中新建对话`}
+                    disabled={!!project.readIssue}
                     title="在此项目中新建对话"
                     onClick={() => void startNewConversation(project.id)}
                   ><PlusIcon /></button>
@@ -1630,6 +1650,8 @@ export function WritingAgentShell({
             ? `本地服务连接已中断${snapshot.lastError === null ? '' : `：${snapshot.lastError.code}`}`
             : snapshot.environmentNotice}
         </div>
+        {snapshot.startupNotices?.map(notice => <div key={notice} className={css.modelSetupNotice} role="status">{notice}</div>)}
+        {sidebarCollapsed && !selectedProject?.readIssue && projectActionNotice && <div className={css.modelSetupNotice} role="status">{projectActionNotice}</div>}
         {!hero && <header className={css.header}>
           <div className={css.titleRow}>
             <div className={css.breadcrumbs}><span className={css.crumbMuted}>{selectedProject?.name}</span><span>/</span><span>{selectedSession?.title}</span></div>
@@ -1664,7 +1686,21 @@ export function WritingAgentShell({
           <span>本项目的另一个对话正在运行。可以前往查看进度或停止；完成后再继续当前对话。</span>
           <button type="button" onClick={() => void openSession(otherRunningSession.projectId, otherRunningSession.id)}>查看运行中的对话</button>
         </div>}
-        {hero ? <div className={css.heroStage}>
+        {!newProjectIntent && selectedProject?.readIssue ? <section className={css.heroStage} aria-label="项目修复" role="status">
+          <h1>“{selectedProject.name}”需要修复</h1>
+          <p>{selectedProject.readIssue.message}</p>
+          <p>{hostConfiguration?.exportProjectRecovery ? '可导出这个项目的材料、简报、正文和运行记录。损坏字段也会保留，便于在副本中排查。' : '在桌面客户端打开此工作区，可导出问题项目的原始记录，并从备份修复此项目。'}</p>
+          {hostConfiguration?.exportProjectRecovery && <button type="button" className={css.secondaryAction} disabled={recoveryBusy} onClick={() => void recoverSelectedProject('export')}>导出此项目原始数据</button>}
+          {hostConfiguration?.repairProjectFromBackup && <>
+            <p>选择含同一版本的工作区备份，可单独修复这篇稿件的简报或正文记录。修复前会保留原始记录。</p>
+            <button type="button" className={css.secondaryAction} disabled={recoveryBusy} onClick={() => void recoverSelectedProject('repair')}>从备份修复此项目</button>
+          </>}
+          {projectActionNotice && <p role="status">{projectActionNotice}</p>}
+          <p>如有完好的工作区备份，可打开备份恢复。还原会替换整个工作区，影响所有项目；请先备份当前工作区。</p>
+          {hostConfiguration && <button type="button" className={css.secondaryAction} onClick={() => openSettings('data')}>打开备份恢复</button>}
+          <button type="button" className={css.secondaryAction} onClick={() => { void (bridge.recheckProject ? bridge.recheckProject(selectedProject.id) : bridge.refresh()).catch(error => setProjectActionNotice(commandErrorMessage(error, '重新检查未完成，请稍后重试。'))) }}>重新检查项目</button>
+          <button type="button" className={css.secondaryAction} onClick={beginNewProject}>新建其他项目</button>
+        </section> : hero ? <div className={css.heroStage}>
           <div className={css.heroCopy}><p className={css.heroKicker}>{heroDateLine()}</p><h1>{!newProjectIntent && selectedProject !== undefined ? `在“${selectedProject.name}”中开始新对话` : '今天，写点什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
           {!modelConfigured && snapshot.mode === 'application' && <div className={css.modelSetupNotice}><span>先连接你的模型，然后就可以直接开始交流。</span><button type="button" onClick={() => openSettings('models')}>配置模型</button></div>}
           <Composer bridge={bridge} hero newProject={newProjectIntent} onSubmitted={submission => {

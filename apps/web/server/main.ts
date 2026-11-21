@@ -8,6 +8,7 @@ import { WritingApplicationService } from "../../../packages/application/src/ind
 import { createApplicationBridge } from "../../../packages/client-bridge/src/application-bridge.js";
 import { startLocalWebHost } from "../../../packages/client-bridge/src/local-web-host.js";
 import { createFileUiSettingsPersistence } from "../../../packages/client-bridge/src/ui-settings-persistence.js";
+import { LocalSettingsRecovery } from "../../../packages/client-bridge/src/local-settings-recovery.js";
 import {
   createConfiguredProvider,
   createDefaultCredentialBroker,
@@ -55,8 +56,10 @@ async function main(): Promise<number> {
   );
   const storage = openWorkspaceStorage({ workspacePath });
   const service = new WritingApplicationService({ storage, provider });
+  const recovery = new LocalSettingsRecovery(join(workspacePath, ".writing-agent", "logs", "settings-recovery.jsonl"));
   const uiSettingsPersistence = createFileUiSettingsPersistence({
     filePath: join(workspacePath, ".writing-agent", "ui-settings.json"),
+    recovery,
   });
   const recovered = service.recoverWorkspace();
   const host = await startLocalWebHost({
@@ -74,6 +77,7 @@ async function main(): Promise<number> {
         clientBuild: "writing-agent-web-v3",
         runtimeBuild: "writing-agent-runtime-v1",
         uiSettingsPersistence,
+        startupNotices: recovery.notices,
       }),
   });
 

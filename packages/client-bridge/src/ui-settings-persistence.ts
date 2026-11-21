@@ -1,12 +1,12 @@
 import {
   mkdirSync,
-  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
+import { readLocalSettings, type LocalSettingsRecovery } from './local-settings-recovery.js'
 
 import type {
   PersistedUiSettings,
@@ -19,6 +19,7 @@ interface UiSettingsFile extends PersistedUiSettings {
 
 export interface FileUiSettingsPersistenceOptions {
   readonly filePath: string
+  readonly recovery?: LocalSettingsRecovery
 }
 
 function parseSettings(value: unknown): PersistedUiSettings {
@@ -48,22 +49,10 @@ export function createFileUiSettingsPersistence(
   const filePath = resolve(options.filePath)
   return {
     load() {
-      try {
-        return parseSettings(JSON.parse(readFileSync(filePath, 'utf8')) as unknown)
-      } catch (error) {
-        if (
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          error.code === 'ENOENT'
-        ) {
-          return null
-        }
-        if (error instanceof Error && error.message === 'UI_SETTINGS_INVALID') throw error
-        throw new Error('UI_SETTINGS_INVALID')
-      }
+      return readLocalSettings(filePath, 'appearance', null, parseSettings, options.recovery)
     },
     save(value) {
+      options.recovery?.assertWritable(filePath)
       const validated = parseSettings({ schemaVersion: 1, ...value })
       const payload: UiSettingsFile = {
         schemaVersion: 1,
