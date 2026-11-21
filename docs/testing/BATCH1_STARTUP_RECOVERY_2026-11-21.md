@@ -78,14 +78,14 @@ npm run test:startup-recovery:desktop
 node --import tsx --test --test-reporter=spec --test-name-pattern="legacy interrupted restore blocks|startup preserves damaged|unreadable settings path|genuine two-project" apps/desktop/test/startup-config-recovery.test.ts packages/client-bridge/test/project-read-isolation.test.ts
 ```
 
-| 验证 | 结果 | 本次原始输出 |
+| 验证 | 结果 | 本地日志路径 |
 | --- | --- | --- |
-| 以上 7 个断言，RC102 | 0 通过，7 失败。旧库改名用例报 Missing expected rejection，坏简报与坏正文各在创建界面时异常 | [修复前日志](../../output/testing/batch1-startup/before-RC102.log) |
-| 相同 7 个断言，第一批实现 | 7 通过，0 失败 | [修复后日志](../../output/testing/batch1-startup/after-same-seven.log) |
-| 第一批专项 | 83 通过，0 失败，0 跳过 | [专项日志](../../output/testing/batch1-startup/startup-recovery.log) |
-| Windows Electron 正常恢复、准备期继续、回退、重试、退出，以及坏稿隔离导出与单篇修复 | 6 通过，0 失败，0 跳过 | [桌面日志](../../output/testing/batch1-startup/native-electron.log) |
-| 桌面回归 | 141 通过，0 失败，0 跳过 | [桌面模块回归](../../output/testing/batch1-startup/regression-desktop-final.log) |
-| runtime、Desktop、Web 三份类型检查 | 全部退出码 0 | [类型检查](../../output/testing/batch1-startup/types.log) |
+| 以上 7 个断言，RC102 | 0 通过，7 失败。旧库改名用例报 Missing expected rejection，坏简报与坏正文各在创建界面时异常 | `output/testing/batch1-startup/before-RC102.log` |
+| 相同 7 个断言，第一批实现 | 7 通过，0 失败 | `output/testing/batch1-startup/after-same-seven.log` |
+| 第一批专项 | 83 通过，0 失败，0 跳过 | `output/testing/batch1-startup/startup-recovery.log` |
+| Windows Electron 正常恢复、准备期继续、回退、重试、退出，以及坏稿隔离导出与单篇修复 | 6 通过，0 失败，0 跳过 | `output/testing/batch1-startup/native-electron.log` |
+| 桌面回归 | 141 通过，0 失败，0 跳过 | `output/testing/batch1-startup/regression-desktop-final.log` |
+| runtime、Desktop、Web 三份类型检查 | 全部退出码 0 | `output/testing/batch1-startup/types.log` |
 
 恢复测试在独立子进程中强制结束进程，覆盖创建准备目录、快照登记、处理 WAL 和 SHM、移除主库、安装目标以及验证完成等边界，也覆盖在回退或重试途中再次强退。断言读取实际项目和已提交的 WAL 内容。单篇测试覆盖备份已过期、匹配失败、事务中途报错后整笔回滚、重做同一修复、非法 UTF-8 原始字节，以及所有项目都坏时仍能新建。另做了既有存储、工作流、界面和桥接回归；专项和常规套件包含重叠测试，计数分别报告。
 

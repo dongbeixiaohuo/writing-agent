@@ -97,16 +97,16 @@ node --import tsx --test --test-concurrency=1 --test-reporter=spec tests/ux/batc
 Remove-Item Env:WA_COMPILED_ROOT, Env:WA_TEST_LABEL
 ```
 
-| 验证 | 实测结果 | 本次原始输出 |
+| 验证 | 实测结果 | 本地日志路径 |
 | --- | --- | --- |
-| RC102 同脚本 Electron 对照 | 0 通过，7 失败 | [桌面对照日志](../../output/testing/batch2/rc102-desktop-comparison.log) |
-| 第二批真实 Electron | 7 通过，0 失败 | [桌面修复日志](../../output/testing/batch2/batch2-desktop.log) |
-| 第二批专项 | 61 通过，0 失败 | [专项日志](../../output/testing/batch2/writing-regression.log) |
-| 取消专项同脚本对照 | RC102 0/12，第二批 12/12 | [RC102](../../output/testing/batch2/h6-rc102-entry.log) · [第二批](../../output/testing/batch2/h6-fixed-entry.log) |
-| 第一批专项复跑 | 83 通过，0 失败 | [启动恢复日志](../../output/testing/batch2/startup-rerun.log) |
-| 第一批真实 Electron 复跑 | 6 通过，0 失败 | [桌面启动恢复日志](../../output/testing/batch2/startup-desktop-final.log) |
-| 既有运行时、桥接、对话、UI 套件 | 分别 468、162、104、125 通过 | [运行时](../../output/testing/batch2/runtime.log) · [桥接](../../output/testing/batch2/bridge-final.log) · [对话](../../output/testing/batch2/conversation-rerun.log) · [界面](../../output/testing/batch2/ui-final.log) |
-| 既有桌面模块、流程确认套件 | 分别 141、28 通过 | [桌面模块](../../output/testing/batch2/desktop-modules.log) · [流程确认](../../output/testing/batch2/confirmation.log) |
+| RC102 同脚本 Electron 对照 | 0 通过，7 失败 | `output/testing/batch2/rc102-desktop-comparison.log` |
+| 第二批真实 Electron | 7 通过，0 失败 | `output/testing/batch2/batch2-desktop.log` |
+| 第二批专项 | 61 通过，0 失败 | `output/testing/batch2/writing-regression.log` |
+| 取消专项同脚本对照 | RC102 0/12，第二批 12/12 | `output/testing/batch2/h6-rc102-entry.log` · `output/testing/batch2/h6-fixed-entry.log` |
+| 第一批专项复跑 | 83 通过，0 失败 | `output/testing/batch2/startup-rerun.log` |
+| 第一批真实 Electron 复跑 | 6 通过，0 失败 | `output/testing/batch2/startup-desktop-final.log` |
+| 既有运行时、桥接、对话、UI 套件 | 分别 468、162、104、125 通过 | `output/testing/batch2/runtime.log` · `output/testing/batch2/bridge-final.log` · `output/testing/batch2/conversation-rerun.log` · `output/testing/batch2/ui-final.log` |
+| 既有桌面模块、流程确认套件 | 分别 141、28 通过 | `output/testing/batch2/desktop-modules.log` · `output/testing/batch2/confirmation.log` |
 
 原始日志和各用例的 JSON 在工作树内的 `output/testing/batch2/`，由 Git 忽略。测试脚本已保存在仓库中，各套件可能覆盖同一行为，计数分别报告。
 
