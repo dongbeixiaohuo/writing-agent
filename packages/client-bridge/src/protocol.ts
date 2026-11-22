@@ -440,7 +440,7 @@ export interface UiSettings {
 export interface BridgeSnapshot {
   readonly startupNotices?: readonly string[]
   projectStyle?: { id: string; version: number; name: string } | null
-  liveActivity?: { runId: string; requestId: string; actor: string; phase: 'waiting' | 'connected' | 'receiving'; startedAt: number; lastActivityAt: number | null; segmentStartedAt?: number; requestOrdinal?: number; workPreview?: { label: string; text: string }; lastEventKind?: 'reasoning' | 'content' | 'tool_arguments'; receivedEvents?: number; activeTool?: { name: string; startedAt: number }; materials?: readonly { id: string; label: string; text: string }[] } | null
+  liveActivity?: { runId: string; requestId: string; actor: string; phase: 'waiting' | 'connected' | 'receiving'; startedAt: number; lastActivityAt: number | null; segmentStartedAt?: number; requestOrdinal?: number; workPreview?: { label: string; text: string }; lastEventKind?: 'reasoning' | 'content' | 'tool_arguments'; receivedEvents?: number; activeTool?: { name: string; startedAt: number } } | null
   liveReply?: { runId: string; requestId: string; text: string; id?: string; stage?: string; phase?: 'generating' | 'saving' } | null
   revision: number
   generation: number

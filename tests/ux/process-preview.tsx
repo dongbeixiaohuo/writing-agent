@@ -21,10 +21,13 @@ function App() {
     const timer = setInterval(() => setCount(n => Math.min(n + 5, body.length)), 70);
     return () => clearInterval(timer);
   }, [mode]);
+  const oldActivity = {
+    materials: [{ id: 'body', label: '本次提供的稿件', text: body }],
+  };
   const activity: NonNullable<BridgeSnapshot['liveActivity']> = {
-    runId: 'demo', requestId: 'q3', actor: mode === 'search' ? 'fact_check' : 'language_review', phase: 'receiving',
+    ...oldActivity,
+    runId: 'demo', requestId: 'q3', actor: mode === 'search' ? 'fact_check' : mode === 'waiting' ? 'director' : 'draft', phase: 'receiving',
     startedAt, segmentStartedAt: startedAt, lastActivityAt: Date.now(), requestOrdinal: 3, lastEventKind: 'reasoning', receivedEvents: 36,
-    materials: [{ id: 'body', label: '本次提供的稿件', text: body }, { id: 'review', label: '已保存的审校建议', text: '保持叙事顺序，只做必要的语言润色。不补造亲历。' }],
     ...(mode === 'process' ? { workPreview: { label: '下一步任务说明 · 整理中，尚未执行', text: step ? '核对文中的假期日期，正文保持不变。' : '核对文中的假期' } } : {}),
     ...(mode === 'search' ? { activeTool: { name: 'search_fact_sources', startedAt: Date.now() - 5000 } } : {}),
   };

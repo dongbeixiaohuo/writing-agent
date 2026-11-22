@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ConversationStreamPreview, requestMaterialPreviews, type MaterialPreview } from './conversation-stream.js';
+import { ConversationStreamPreview, type LiveConversationActivity } from './conversation-stream.js';
 import { deliveredInlineMaterialIds } from './material-context.js';
 import { projectRevisionComparisons, type RevisionComparisonView } from './revision-comparison.js';
 import { factMaterialContext, factReviewPrompt, factReviewTools, projectFactHistory, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionError, factRecordCatalog } from './fact-context.js';
@@ -532,38 +532,22 @@ export class WritingApplicationService {
     return approveStageCheckpoint(this.#storage, input);
   }
   readonly #streamPreview = new ConversationStreamPreview();
-  #activityMaterials: { requestId: string; previews: readonly MaterialPreview[] } | null = null;
+  #activityTool: { runId: string; eventSeq: number; tool: LiveConversationActivity['activeTool'] } | null = null;
   getLiveActivity(projectId: string, sessionId: string, runId: string) {
     if (this.#storage.getRun(runId)?.status !== 'running') return null;
-    let activity = this.#streamPreview.getActivity(projectId, sessionId, runId);
+    const activity = this.#streamPreview.getActivity(projectId, sessionId, runId);
     if (!activity) return activity;
-    // Only actual authorized read results, never private model reasoning or raw
-    // tool arguments, can be shown as a temporary material excerpt.
-    const events = this.#storage.listRunEvents(runId);
-    const start = events.findLastIndex(event => event.type === 'run.started' || event.type === 'run.resumed');
-    const segment = events.slice(start);
-    if (this.#activityMaterials?.requestId !== activity.requestId) {
-      const request = segment.findLast(event => event.type === 'request.dispatch_attempted' && event.payload.requestId === activity!.requestId);
-      const snapshot = typeof request?.payload.snapshotId === 'string' ? this.#storage.getRequestSnapshot(request.payload.snapshotId) : null;
-      this.#activityMaterials = { requestId: activity.requestId, previews: snapshot ? requestMaterialPreviews(snapshot.request.messages) : [] };
+    const eventSeq = this.getProjectEventSequence(projectId);
+    if (this.#activityTool?.runId !== runId || this.#activityTool.eventSeq !== eventSeq) {
+      const events = this.#storage.listRunEvents(runId);
+      const start = events.findLastIndex(event => event.type === 'run.started' || event.type === 'run.resumed');
+      const segment = events.slice(Math.max(0, start));
+      const settled = new Set(segment.filter(event => ['tool.completed', 'tool.failed', 'tool.outcome_unknown'].includes(event.type)).map(event => event.operationId));
+      const pending = segment.findLast(event => event.type === 'tool.requested' && !settled.has(event.operationId));
+      this.#activityTool = { runId, eventSeq, tool: typeof pending?.payload.toolName === 'string'
+        ? { name: pending.payload.toolName, startedAt: Date.parse(pending.occurredAt) } : undefined };
     }
-    if (this.#activityMaterials.previews.length) activity = { ...activity, materials: this.#activityMaterials.previews };
-    const settledTools = new Set(segment.filter(event => ['tool.completed', 'tool.failed', 'tool.outcome_unknown'].includes(event.type)).map(event => event.operationId));
-    const pendingTool = segment.findLast(event => event.type === 'tool.requested' && !settledTools.has(event.operationId));
-    if (pendingTool && typeof pendingTool.payload.toolName === 'string') activity = {
-      ...activity, activeTool: { name: pendingTool.payload.toolName, startedAt: Date.parse(pendingTool.occurredAt) },
-    };
-    if (activity.workPreview || activity.materials?.length) return activity;
-    for (const event of events.slice(start).reverse()) {
-      const envelope = event.payload.result as { ok?: boolean; toolName?: string; result?: { content?: unknown } } | undefined;
-      if (event.type === 'tool.completed' && envelope?.ok && ['read_material', 'read_artifact_version'].includes(envelope.toolName ?? '') && typeof envelope.result?.content === 'string') {
-        const content = envelope.result.content;
-        // Ledger JSON is for execution diagnostics, not the author's reading area.
-        if (content.trimStart().startsWith('{') || content.trimStart().startsWith('[')) continue;
-        return { ...activity, workPreview: { label: envelope.toolName === 'read_material' ? '已读取的参考材料 · 节选，不是最终回复' : '正在核对的已保存内容 · 节选，不是新回复', text: content.slice(0, 800) } };
-      }
-    }
-    return activity;
+    return this.#activityTool.tool ? { ...activity, activeTool: this.#activityTool.tool } : activity;
   }
   getLiveReply(projectId: string, sessionId: string, runId: string) {
     return this.#storage.getRun(runId)?.status === 'running' ? this.#streamPreview.get(projectId, sessionId, runId) : null;

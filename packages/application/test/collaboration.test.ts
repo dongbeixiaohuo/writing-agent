@@ -2617,7 +2617,10 @@ it(savedOnly ? `shows only the saved public ${targetStage} without exposing stru
       assert.equal(waitingError, undefined);
       const activity = waitingActivity as ReturnType<typeof f.app.getLiveActivity>;
       assert.ok(activity, 'active request must be visible');
-      assert.ok(activity.materials?.some(item => item.text.includes('central_revision')), `bound manuscript must be available before model prose: ${JSON.stringify(activity)}`);
+      const request = f.storage.listRequestSnapshots(result.runId).find(item => item.requestId === activity.requestId);
+      assert.ok(request?.request.messages.some(message => message.role === 'user' && message.content.includes('central_revision')),
+        'the bound manuscript must be in the request even with no materials card');
+      assert.ok(!('materials' in activity));
       assert.doesNotMatch(activity.workPreview?.label ?? '', /正在核对的已保存内容/, 'do not duplicate the manuscript as a legacy read preview');
       const finalBody = f.storage.getArtifactVersion(f.storage.inspectProject('p')!.latestBodyVersionId!)!;
       assert.equal(finalBody.content, full, 'hide the in-flight text without losing any of the saved article');

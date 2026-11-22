@@ -30,7 +30,7 @@ test('program generated confirmation summaries render Markdown in the actual use
   } finally {rmSync(root,{recursive:true,force:true});}
 });
 
-test('working materials are a collapsed manual preview, not rotating progress', () => {
+test('the writing status only shows who is working, elapsed time and the stop button', () => {
   const root=mkdtempSync(join(tmpdir(),'wa-material-preview-'));const file=join(root,'render.cjs');
   try {
     buildSync({stdin:{contents:`import React from 'react'; import {renderToStaticMarkup} from 'react-dom/server';
@@ -39,16 +39,11 @@ test('working materials are a collapsed manual preview, not rotating progress', 
       const snapshot={activeRunId:'run-1',liveReply:'',liveActivity:{runId:'run-1',requestId:'request-1',actor:'research',phase:'receiving',startedAt:1000,lastActivityAt:2000,lastEventKind:'tool_arguments',receivedEvents:999,workPreview:{label:'尚未执行',text:'INTERNAL_TOOL_ARGUMENTS'},materials:[{id:'m1',label:'访谈纪要',text:longText},{id:'m2',label:'产品资料',text:'第二份节选'}]}};
       export const html=renderToStaticMarkup(React.createElement(ConversationWorking,{snapshot,bridge:{cancelRun:async()=>{}}}));`,resolveDir:resolve('.'),loader:'tsx'},bundle:true,platform:'node',format:'cjs',outfile:file,jsx:'automatic',loader:{'.css':'empty'},logLevel:'silent'});
     const {html}=createRequire(import.meta.url)(file);
-    assert.match(html, /写作要求与参考素材（2 项）/);
-    assert.match(html, /写作要求与参考材料/);
-    assert.match(html, /<select[^>]*aria-label="选择参考材料"/);
-    assert.match(html, /<option[^>]*value="0"[^>]*selected=""[^>]*>访谈纪要<\/option>/);
-    assert.match(html, /<option[^>]*value="1"[^>]*>产品资料<\/option>/);
-    assert.match(html, /<details[^>]*data-material-details="true"(?![^>]*open)/);
-    assert.doesNotMatch(html, /TAIL_MUST_NOT_RENDER|INTERNAL_TOOL_ARGUMENTS|尚未执行|数据活动|私有推理|999/);
+    assert.doesNotMatch(html, /写作要求与参考素材|选择参考材料|data-material-preview|访谈纪要|产品资料|TAIL_MUST_NOT_RENDER|INTERNAL_TOOL_ARGUMENTS/);
     assert.match(html, /资料员包打听在翻手头的材料/);
     assert.match(html, /src="\/agent-avatars\/research\.png" width="36" height="36"/u);
     assert.match(html, /本轮已用时/);
+    assert.match(html, /<button[^>]*>停止<\/button>/u);
   } finally {rmSync(root,{recursive:true,force:true});}
 });
 

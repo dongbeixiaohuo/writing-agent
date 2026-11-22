@@ -589,6 +589,46 @@ describe("Application Service client bridge", () => {
       bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true });
     }
   });
+  it('publishes streaming text without rebuilding saved projects, then refreshes on a durable write', async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'wa-live-refresh-'));
+    const storage = openWorkspaceStorage({ workspacePath });
+    const service = new WritingApplicationService({ storage });
+    seedProject(service, 'stream-project', '流式项目');
+    seedProject(service, 'another-project', '其他项目');
+    storage.createSession({ projectId: 'stream-project', sessionId: 'stream-session', purpose: 'writing-pack:draft' });
+    storage.startRun({ projectId: 'stream-project', sessionId: 'stream-session', runId: 'stream-run',
+      purpose: 'writing-pack:draft', planVersion: 'test', operationId: 'start-stream' });
+    const bridge = bridgeFor(service);
+    try {
+      await bridge.selectSession('stream-project', 'stream-session');
+      let text = '';
+      service.getLiveReply = (projectId, sessionId, runId) =>
+        projectId === 'stream-project' && sessionId === 'stream-session' && runId === 'stream-run' && text
+          ? { runId, requestId: 'draft-request', stage: 'draft', phase: 'generating', text } : null;
+      const projectProjection = service.getProjectProjection.bind(service);
+      let rebuilds = 0;
+      service.getProjectProjection = projectId => { rebuilds += 1; return projectProjection(projectId); };
+      const saved = bridge.getSnapshot();
+      assert.equal(saved.activeRunId, 'stream-run');
+      const unsubscribe = bridge.subscribe(() => {});
+      text = '正在输出的初稿。';
+      await waitUntil(() => bridge.getSnapshot().liveReply?.text === text);
+      assert.equal(rebuilds, 0, 'a live delta must not replay the event histories of either project');
+      assert.equal(bridge.getSnapshot().timelineBySession, saved.timelineBySession);
+      assert.equal(bridge.getSnapshot().runRecords, saved.runRecords);
+      assert.ok(bridge.getSnapshot().revision > saved.revision);
+      const imported = service.importMaterial({ projectId: 'another-project', operationId: 'stream-durable-write',
+        expectedProjectRevision: storage.inspectProject('another-project')!.revision, materialId: 'new-material',
+        displayName: '另一个项目新材料', sourceKind: 'pasted_text', sourceReference: null, role: 'illustrative',
+        trustLabel: 'user_provided_untrusted', permissionScope: 'project_only', content: '留在另一个项目的资料。', actor });
+      assert.ok(imported.ok);
+      await waitUntil(() => rebuilds > 0 && bridge.getSnapshot().timelineBySession !== saved.timelineBySession);
+      assert.equal(bridge.getSnapshot().liveReply?.text, text);
+      unsubscribe();
+    } finally {
+      bridge.dispose(); storage.close(); rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
   it("selects an existing project without sessions and starts its first conversation", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "wa-bridge-empty-project-"));
     const storage = openWorkspaceStorage({ workspacePath });
