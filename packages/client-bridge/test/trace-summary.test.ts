@@ -428,3 +428,12 @@ test('tool trace summarizes persisted inputs, replies, evidence, sources, and fa
   assert.match(content?.outputPreview ?? '', /样本量为 120 家企业/u)
   assert.doesNotMatch(JSON.stringify(trace), /do-not-show|Dante|secret\.txt/u)
 })
+
+test('local fact record read failures do not imply a failed online search', () => {
+  for (const errorCode of ['FACT_RECORD_NOT_FOUND', 'FACT_RECORD_INDEX_INVALID']) {
+    const failure = explainRunFailure({ kind: 'tool', status: 'failed', technicalName: 'read_fact_record', errorCode });
+    assert.match(failure.title, /读回.*来源/u);
+    assert.match(failure.detail, /没有向搜索服务发出请求/u);
+    assert.match(failure.remediation, /重试当前核查步骤/u);
+  }
+});

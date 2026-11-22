@@ -86,7 +86,7 @@ export function factReviewPrompt(phase: 'extract' | 'verify', searchEnabled: boo
       : '未启用外部搜索：仅用已有材料或模型复核，明确未联网，不编造来源。',
     '提交submit_fact_check，保留全部claimId/claimText；每项只写短句的判断依据和必要修改，无问题写“无需修改”。SUPPORTED=一致，CONTRADICTED=相反，UNSUPPORTED=无法判断；缺少必要作者信息用NEEDS_USER_SOURCE。仅实际重要的未决错误risk=red，其余yellow/green不要求处理。supportScope用full/partial/none，不伪造支持。',
     'verificationMethod用external_source/material_comparison/model_review。external_source附本轮成功工具callId和同一具体URL；没有外部记录不得称已联网。matchedEvidenceId无匹配用null，模型知识sourceReference用model-knowledge:unverified。',
-    '证据claimFields为列名、claimRows为对应值；已提供引句直接用。摘录不足时可按materialCatalog用read_material定位本地原文，再决定是否联网。read_fact_record按真实callId/resultIndex补读本轮保存结果，定位记录不是证据。read_fact_article/read_fact_evidence仅在缺关键限定时使用。不从头重读完整正文和原始素材。',
+    '证据claimFields为列名、claimRows为对应值；已提供引句直接用。摘录不足时可按materialCatalog用read_material定位本地原文，再决定是否联网。read_fact_record按savedSourceRecords回读本轮已保存的材料。只有编号搜索结果才使用resultIndex；单篇原文按readArguments读。定位记录不是证据。read_fact_article/read_fact_evidence仅在缺关键限定时使用。不从头重读完整正文和原始素材。',
     'searchBudget.retryQuery存在时只重试原词。stopped为true或canSearch为false时沿用已有材料，如实说明未核实范围。成功提交后程序生成简报和下一步，无需再写总结。',
   ].join('\n');
 }
@@ -299,11 +299,15 @@ export function factRecordCatalog(storage: Pick<SessionStore, 'listRunEvents'>, 
     const result = envelope.result;
     const text = result?.evidenceText ?? result?.text;
     if (typeof text !== 'string' || !text) return [];
-    const rows = envelope.toolName === 'search_fact_sources' ? searchRows(text) : null;
-    return [{ callId: envelope.callId, tool: envelope.toolName, sourceFields: ['title', 'url'],
-      ...(rows ? { sourceRows: rows.map(row => [String(row.title ?? '').slice(0, 120), String(row.url ?? '')]) }
-        : { sourceRows: [...new Set([...(typeof result.finalUrl === 'string' ? [result.finalUrl] : []),
-          ...(text.match(/https?:\/\/[^\s"<>\\]+/gu) ?? [])])].map(url => ['', url]) }),
+    const isPage = envelope.toolName === 'read_fact_source';
+    const rows = isPage ? null : searchRows(text);
+    const pageUrl = result.finalUrl ?? result.requestedUrl;
+    return [{ callId: envelope.callId, tool: envelope.toolName,
+      ...(rows ? { sourceFields: ['title', 'url', 'resultIndex'],
+        sourceRows: rows.map((row, resultIndex) => [String(row.title ?? '').slice(0, 120), String(row.url ?? ''), resultIndex]) }
+        : { sourceFields: ['title', 'url'],
+          sourceRows: (isPage ? typeof pageUrl === 'string' ? [pageUrl] : [] : sourceUrls(text)).map(url => ['', url]),
+          readArguments: { callId: envelope.callId } }),
       contentAvailableVia: 'read_fact_record', instructionAuthority: 'none', verificationStatus: 'unverified_source_record' }];
   });
 }
@@ -366,7 +370,9 @@ export function projectFactToolResult(message: ModelMessage, context?: { readonl
         excerptTruncated: resultIndex >= 2 || searchExcerpt(row).length > 240 })) }
         : { excerpt: text.slice(0, 1800), excerptTruncated: text.length > 1800,
           sourceUrls: [...new Set(text.match(/https?:\/\/[^\s"<>\\]+/gu) ?? [])] }),
-      requestProjection: 'excerpt_not_full_source', instruction: '这里只是摘录，不等于完整原文。需要相关限定或后文时按callId读取原记录，不重复联网检索。' } });
+      requestProjection: 'excerpt_not_full_source', instruction: rows
+        ? '这里只是摘录。按callId和选中的resultIndex回读该条结果。'
+        : '这里只是摘录。按callId回读整份本地记录，省略resultIndex。' } });
   } catch { return message.content; }
 }
 
@@ -437,7 +443,7 @@ export function createFactContextTools(storage: FactStore, projectId: string, bi
   };
   const record: ToolDefinition<{ callId: string; resultIndex?: number; offset?: number; maxChars?: number }, JsonValue> = {
     name: 'read_fact_record', version: '1.0.0', effect: 'read_only', permissions: ['artifact:read'],
-    description: 'Read an exact passage from a full locally saved search/source result in THIS run. No network or search quota. resultIndex chooses a search source; offset pages its text.',
+    description: 'Read an exact passage from a full locally saved search/source result in THIS run. No network. Use resultIndex only for a numbered search result. Omit resultIndex for a saved source page or plain-text record. Use offset to page the text.',
     inputSchema: { type: 'object', properties: { callId: { type: 'string', minLength: 1 }, resultIndex: { type: 'integer', minimum: 0 }, offset: { type: 'integer', minimum: 0 }, maxChars: { type: 'integer', minimum: 1, maximum: 4000 } }, required: ['callId'], additionalProperties: false },
     execute(args, context) {
       const envelope = storage.listRunEvents(context.runId).filter(e => e.type === 'tool.completed')
@@ -445,10 +451,15 @@ export function createFactContextTools(storage: FactStore, projectId: string, bi
       if (!envelope) throw new ToolExecutionFault('FACT_RECORD_NOT_FOUND', '只能读取当前运行已保存的搜索或来源记录；使用摘录中的callId。');
       const result = envelope.result;
       let text = String(result.evidenceText ?? result.text ?? '');
-      let source: JsonValue = result.finalUrl ?? null;
-      if (args.resultIndex !== undefined) {
-        const row = searchRows(text)?.[args.resultIndex];
-        if (!row) throw new ToolExecutionFault('FACT_RECORD_NOT_FOUND', '搜索记录没有这个来源序号，不能据此猜测原文。');
+      let source: JsonValue = result.finalUrl ?? result.requestedUrl ?? null;
+      const isPage = envelope.toolName === 'read_fact_source';
+      // Older requests may select row zero from the displayed single-page locator.
+      if (args.resultIndex !== undefined && !(isPage && args.resultIndex === 0)) {
+        const rows = isPage ? null : searchRows(text);
+        const row = rows?.[args.resultIndex];
+        if (!row) throw new ToolExecutionFault('FACT_RECORD_INDEX_INVALID',
+          rows ? '这次搜索没有这个来源序号。请用已保存结果中的序号。' : '这是一份未编号的记录。请保留callId并省略resultIndex。',
+          false, { callId: args.callId, ...(rows ? { resultCount: rows.length } : { readArguments: { callId: args.callId } }) });
         text = searchExcerpt(row); source = { title: String(row.title ?? ''), url: String(row.url ?? '') };
       }
       const offset = args.offset ?? 0, nextOffset = Math.min(text.length, offset + (args.maxChars ?? 4000));

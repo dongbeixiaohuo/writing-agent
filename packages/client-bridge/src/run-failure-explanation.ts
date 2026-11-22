@@ -190,6 +190,12 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
     }
   }
 
+  if (technicalName === 'read_fact_record' && (code === 'FACT_RECORD_NOT_FOUND' || code === 'FACT_RECORD_INDEX_INVALID')) return {
+    title: '没能读回本轮保存的来源',
+    detail: '工具找不到这次指定的本地回读记录或来源序号。这一步没有向搜索服务发出请求。',
+    remediation: '可以回到对话重试当前核查步骤。定位具体记录时，查看本步骤的输入和输出；已有来源可以继续使用。',
+  }
+
   if (technicalName === 'read_fact_source') {
     if (code === 'FACT_SOURCE_NOT_IN_LEDGER') return {
       title: '来源读取被授权记录门禁拒绝',
