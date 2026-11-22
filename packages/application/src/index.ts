@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { ConversationStreamPreview, requestMaterialPreviews, type MaterialPreview } from './conversation-stream.js';
+import { ConversationStreamPreview, type LiveConversationActivity } from './conversation-stream.js';
 import { deliveredInlineMaterialIds } from './material-context.js';
 import { projectRevisionComparisons, type RevisionComparisonView } from './revision-comparison.js';
-import { factReviewPrompt, factReviewTools, projectFactHistory, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionError, factRecordCatalog } from './fact-context.js';
+import { factMaterialContext, factReviewPrompt, factReviewTools, projectFactHistory, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionError, factRecordCatalog, factSourcePassages } from './fact-context.js';
 import { validateFactSearchDecision, FACT_SEARCH_DECISION_REQUIRED, type FactSearchDecision } from './fact-search-recovery.js';
 import { pendingWorkflowHandoffs, recordHandoffFailure, isWorkflowHandoffSourceCommitted } from './workflow-handoff.js';
 import { finalLockedTitle } from '../../writing-core/src/index.js';
 
 import { createFactSearchTools, type FactSearchConfiguration } from './fact-search.js';
+import { createOutlineSupplement } from './research-supplement.js';
 import { createFactSourceTool, factToolFailureLoopKey } from './fact-web.js';
 import { createAuthorWebTool, authorizedAuthorWebUrls, AUTHOR_WEB_INSTRUCTIONS, type AuthorWebFetcher } from './author-web.js';
 import {
@@ -531,38 +532,22 @@ export class WritingApplicationService {
     return approveStageCheckpoint(this.#storage, input);
   }
   readonly #streamPreview = new ConversationStreamPreview();
-  #activityMaterials: { requestId: string; previews: readonly MaterialPreview[] } | null = null;
+  #activityTool: { runId: string; eventSeq: number; tool: LiveConversationActivity['activeTool'] } | null = null;
   getLiveActivity(projectId: string, sessionId: string, runId: string) {
     if (this.#storage.getRun(runId)?.status !== 'running') return null;
-    let activity = this.#streamPreview.getActivity(projectId, sessionId, runId);
+    const activity = this.#streamPreview.getActivity(projectId, sessionId, runId);
     if (!activity) return activity;
-    // Only actual authorized read results, never private model reasoning or raw
-    // tool arguments, can be shown as a temporary material excerpt.
-    const events = this.#storage.listRunEvents(runId);
-    const start = events.findLastIndex(event => event.type === 'run.started' || event.type === 'run.resumed');
-    const segment = events.slice(start);
-    if (this.#activityMaterials?.requestId !== activity.requestId) {
-      const request = segment.findLast(event => event.type === 'request.dispatch_attempted' && event.payload.requestId === activity!.requestId);
-      const snapshot = typeof request?.payload.snapshotId === 'string' ? this.#storage.getRequestSnapshot(request.payload.snapshotId) : null;
-      this.#activityMaterials = { requestId: activity.requestId, previews: snapshot ? requestMaterialPreviews(snapshot.request.messages) : [] };
+    const eventSeq = this.getProjectEventSequence(projectId);
+    if (this.#activityTool?.runId !== runId || this.#activityTool.eventSeq !== eventSeq) {
+      const events = this.#storage.listRunEvents(runId);
+      const start = events.findLastIndex(event => event.type === 'run.started' || event.type === 'run.resumed');
+      const segment = events.slice(Math.max(0, start));
+      const settled = new Set(segment.filter(event => ['tool.completed', 'tool.failed', 'tool.outcome_unknown'].includes(event.type)).map(event => event.operationId));
+      const pending = segment.findLast(event => event.type === 'tool.requested' && !settled.has(event.operationId));
+      this.#activityTool = { runId, eventSeq, tool: typeof pending?.payload.toolName === 'string'
+        ? { name: pending.payload.toolName, startedAt: Date.parse(pending.occurredAt) } : undefined };
     }
-    if (this.#activityMaterials.previews.length) activity = { ...activity, materials: this.#activityMaterials.previews };
-    const settledTools = new Set(segment.filter(event => ['tool.completed', 'tool.failed', 'tool.outcome_unknown'].includes(event.type)).map(event => event.operationId));
-    const pendingTool = segment.findLast(event => event.type === 'tool.requested' && !settledTools.has(event.operationId));
-    if (pendingTool && typeof pendingTool.payload.toolName === 'string') activity = {
-      ...activity, activeTool: { name: pendingTool.payload.toolName, startedAt: Date.parse(pendingTool.occurredAt) },
-    };
-    if (activity.workPreview || activity.materials?.length) return activity;
-    for (const event of events.slice(start).reverse()) {
-      const envelope = event.payload.result as { ok?: boolean; toolName?: string; result?: { content?: unknown } } | undefined;
-      if (event.type === 'tool.completed' && envelope?.ok && ['read_material', 'read_artifact_version'].includes(envelope.toolName ?? '') && typeof envelope.result?.content === 'string') {
-        const content = envelope.result.content;
-        // Ledger JSON is for execution diagnostics, not the author's reading area.
-        if (content.trimStart().startsWith('{') || content.trimStart().startsWith('[')) continue;
-        return { ...activity, workPreview: { label: envelope.toolName === 'read_material' ? '已读取的参考材料 · 节选，不是最终回复' : '正在核对的已保存内容 · 节选，不是新回复', text: content.slice(0, 800) } };
-      }
-    }
-    return activity;
+    return this.#activityTool.tool ? { ...activity, activeTool: this.#activityTool.tool } : activity;
   }
   getLiveReply(projectId: string, sessionId: string, runId: string) {
     return this.#storage.getRun(runId)?.status === 'running' ? this.#streamPreview.get(projectId, sessionId, runId) : null;
@@ -1429,11 +1414,14 @@ export class WritingApplicationService {
         contentVersionId: material.contentVersionId,
       };
     });
+    const researchSearch = createFactSearchTools({ storage: this.#storage, purpose: 'research', configuration: this.#factSearchConfiguration });
+    const supplementSearch = createFactSearchTools({ storage: this.#storage, purpose: 'supplement', configuration: this.#factSearchConfiguration });
     const workflow = createWritingWorkflowTools({
       storage: this.#storage,
       projectId,
       mode: project.mode,
       requireEditorialPlan: true,
+      supplementOutline: createOutlineSupplement(this.#storage, projectId, supplementSearch),
       interactionMode: briefVersion.brief.interactionMode,
       requiredMaterialIds: briefVersion.brief.materialIds,
       completedMaterialIds: (runId) =>
@@ -1529,6 +1517,8 @@ export class WritingApplicationService {
       .join("\n\n");
     const collaboration = createWritingCollaboration({ storage: this.#storage, projectId, workflow,
       factSearchConfiguration: this.#factSearchConfiguration,
+      researchSearch,
+      supplementSearch,
       authorReviewDiscussion: recentAuthorConversationHistory(this.#storage, projectId, input.sessionId),
       systemPrompt: prompt.systemPrompt, directorMessage: assembledUserMessage,
       expertMessage: [prompt.userMessage, latestInstruction, originalInstructionBoundary, inputHistoryBoundary].filter(Boolean).join("\n\n"),
@@ -1822,6 +1812,8 @@ export class WritingApplicationService {
     if ((currentBrief?.interactionMode === 'co_creation' || (project.currentTitleVersionId && this.#storage.getArtifactVersion(project.currentTitleVersionId)?.reason === 'author-publication-selection')) && !isPublicationSelectionCurrent(this.#storage, projectId)) {
       throw new ApplicationServiceError('PUBLICATION_SELECTION_REQUIRED', '请先在主对话选择或确认发布标题，再核查最终标题与正文。');
     }
+    const materials = this.#storage.listMaterials(projectId).filter(material => !currentBrief || currentBrief.materialIds.includes(material.id));
+    const { materialCatalog } = factMaterialContext(materials);
     const factBinding = () => {
       const current = this.#storage.inspectProject(projectId);
       if (current?.latestBodyVersionId !== body.id || current.currentEvidenceVersionId !== evidence.id) return null;
@@ -1832,6 +1824,7 @@ export class WritingApplicationService {
     };
     const tools = ToolRegistry.create([
       ...createFactContextTools(this.#storage, projectId, factBinding),
+      ...createBuiltinReadTools({ materials: this.#storage, versions: this.#storage }).filter(tool => tool.name === "read_material"),
       ...(factSearch.enabled() ? [...factSearch.definitions, createFactSourceTool({ storage: this.#storage, projectId,
         searchEnabled: factSearch.enabled, isDiscoveredSource: factSearch.isDiscoveredSource }) as unknown as ToolDefinition<never, JsonValue>] : []),
       ...workflow.definitions,
@@ -1845,6 +1838,7 @@ export class WritingApplicationService {
       requestPolicy: runId => {
         const binding = factBinding(), prepared = factPreparation(this.#storage, runId, binding);
         return { actor: prepared ? 'fact_check' : 'fact_extract', scopeId: `fact-check-only:${body.id}:${evidence.id}:${binding?.titleVersionId}:${prepared?.preparationId ?? 'extract'}`,
+          ...(prepared ? {} : { lightReasoning: true, disableConfiguredThinking: true }),
           systemPrompt: factReviewPrompt(prepared ? 'verify' : 'extract', factSearch.enabled()),
           progressKey: JSON.stringify({ ...factInput, factPhase: prepared ? 'verify' : 'extract',
             artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),
@@ -1852,9 +1846,15 @@ export class WritingApplicationService {
             ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason } : {}) }),
           userMessage: JSON.stringify({ ...factInput, artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),
             selectedPublication: selectedPublicationContext(this.#storage, projectId), factPhase: prepared ? 'verify' : 'extract',
-            ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
-              savedSourceRecords: factRecordCatalog(this.#storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.budget(runId) }),
-          allowedTools: factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled()),
+            ...(prepared ? { materialCatalog, preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
+              savedSourceRecords: factRecordCatalog(this.#storage, runId, prepared.preparationId),
+              savedSourcePassages: factSourcePassages(this.#storage, runId, evidence, prepared, materials) } : {}), searchBudget: factSearch.progress(runId) }),
+          allowedTools: factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled(), materials.length > 0),
+          authorizeTool: call => {
+            if (call.name !== 'read_material') return true;
+            const args = call.arguments as { materialId: string; contentVersionId: string };
+            return materials.some(material => material.id === args.materialId && material.contentVersionId === args.contentVersionId);
+          },
           projectHistory: projectFactHistory,
           toolFailureLoopKey: factToolFailureLoopKey,
           projectToolResult: (message, context) => projectFactToolResult(message, context, prepared ? {
@@ -1902,7 +1902,10 @@ export class WritingApplicationService {
       displayInstruction: "重新核查当前稿件",
       ...(input.operationId === undefined ? {} : { operationId: input.operationId }),
       ...(recoveredRun ? { sessionId: recoveredRun.sessionId } : input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-      ...(input.budget === undefined ? {} : { budget: input.budget }),
+      ...(input.budget ? { budget: input.budget } : factSearch.automatic() ? {
+        budget: { maxModelRequests: Math.max(26, factSearch.configuredTarget() + 16), maxToolCalls: Math.max(34, factSearch.configuredTarget() + 24),
+          maxRetriesPerRequest: 2, maxMajorRevisions: 0 },
+      } : {}),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     };
     if (resume) {

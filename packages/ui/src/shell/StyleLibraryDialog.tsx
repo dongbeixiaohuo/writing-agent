@@ -11,6 +11,7 @@ import {
 } from '../../../writing-core/src/style-profile.js'
 import { CheckIcon, CloseIcon, EditIcon, PlusIcon, TrashIcon } from './Icons.tsx'
 import css from './StyleLibraryDialog.module.css'
+import { AgentAvatar } from './AgentAvatar.tsx'
 import { StylePackageDetails, StylePreviewComparison } from './StylePackageDetails.tsx'
 import { STYLE_CARD_LIMIT } from '../../../writing-core/src/style-package.js'
 import { MarkdownContent } from './MarkdownContent.tsx'
@@ -241,8 +242,8 @@ export function StyleLibraryDialog({ host, onClose, onSelect }: {
     <section ref={dialogRef} className={css.dialog} role="dialog" aria-modal="true" aria-labelledby="style-library-title">
       <header className={css.header}><div><h2 id="style-library-title">风格库</h2><p>提取时，样文会发送给你配置的模型。网页只会在点击“批量读取网页”后访问。</p></div>{busy ? <button type="button" className={css.cancelButton} onClick={() => void cancelActive()}>取消任务</button> : <button type="button" className={css.iconButton} aria-label="关闭风格库" onClick={onClose}><CloseIcon /></button>}</header>
       {error && <p className={css.error} role="alert">{error}</p>}
-      {activeAction === 'analyze' && <p className={css.operationStatus} role="status">风格分析 Agent 正在阅读样文，提炼有辨识度的写法和示例。</p>}
-      {activeAction === 'preview' && <p className={css.operationStatus} role="status">内容主笔 Agent 正在按这套风格试写，完成后请你看看效果。</p>}
+      {activeAction === 'analyze' && <p className={css.operationStatus} role="status"><AgentAvatar persona="style" /><span>风格分析员苏小样在读样文，看看它哪几笔最像你。</span></p>}
+      {activeAction === 'preview' && <p className={css.operationStatus} role="status"><AgentAvatar persona="writer" /><span>周一稿拿这套写法试写一小篇。像不像，你读一段就有数。</span></p>}
       <div className={css.layout}>
         <aside className={css.library} aria-label="已保存风格">
           <div className={css.libraryHead}><strong>已保存</strong><button type="button" className={css.textButton} disabled={busy} onClick={reset}><PlusIcon size={14} />新建</button></div>

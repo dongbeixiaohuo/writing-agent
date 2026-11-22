@@ -87,11 +87,11 @@ test('main conversation links to the current manuscript while export settings li
     assert.match(passed, /网络中断，请重试/u);
     assert.match(passed, /请确认这份提纲/u);
     assert.match(passed, /处理用时 61 秒/u);
-    assert.match(passed, /事实核查专员/u);
+    assert.match(passed, /核查员查有据/u);
     const streaming = render('not_checked', 'running');
     assert.match(streaming, /这是一段正在到达的回复/u);
     assert.match(streaming, /正在生成.*尚未保存/u);
-    assert.match(render('not_checked', 'running', null, 'waiting'), /role="status">[^<]*Agent 正在/u);
+    assert.match(render('not_checked', 'running', null, 'waiting'), /role="status">写作助手汤大姆在看你的消息/u);
     assert.match(render('not_checked', 'running', null, 'waiting'), /data-conversation-message="status"/u);
     assert.match(render('passed', 'ready', null, 'delivery'), /aria-label="文章导出"/u);
     assert.match(render('passed', 'ready', null, 'read'), /<h1>一篇文章<\/h1>/u);
@@ -133,7 +133,8 @@ test('main conversation links to the current manuscript while export settings li
     const timeout = render('not_checked', 'ready', 'UNKNOWN_EXTERNAL_OUTCOME', null,
       {source:'model',cause:'timeout',replyAccepted:true,actorLabel:'编辑审校',timeoutPhase:'stream_idle',timeoutMs:90000});
     assert.match(timeout, /已收到你的回复/u);
-    assert.match(timeout, /编辑审校因模型输出停顿超时暂停/u);
+    assert.match(timeout, /src="\/agent-avatars\/editor\.png" width="36" height="36"/u);
+    assert.match(timeout, /编辑挑刺姐因模型输出停顿超时暂停/u);
     assert.match(timeout, /已保存的稿件和确认仍在/u);
     assert.match(timeout, /会发起新的模型请求，可能再次计费/u);
     assert.match(timeout, />重试这一步</u);

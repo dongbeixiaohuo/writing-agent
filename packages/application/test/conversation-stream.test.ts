@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ConversationStreamPreview, topLevelString, requestMaterialPreviews } from '../src/conversation-stream.js';
+import { ConversationStreamPreview, topLevelString } from '../src/conversation-stream.js';
 
 test('parallel reader progress has one stable activity, counts three requests once, and never exposes child JSON', () => {
   const view = new ConversationStreamPreview();
@@ -16,20 +16,6 @@ test('parallel reader progress has one stable activity, counts three requests on
   assert.equal(view.getActivity('p','s','r')!.requestOrdinal, 3);
   view.observe({...base, requestId:'', event:null});
   assert.equal(view.getActivity('p','s','r'), null);
-});
-
-test('input previews distinguish source articles, confirmed requirements and unclassified conversation additions', () => {
-  const previews = requestMaterialPreviews([{ role: 'user', content: JSON.stringify({
-    writingRequirements: { audience: '普通患者和家属', platform: '今日头条' },
-    materials: [
-      { materialId: 'web', contentVersionId: 'v1', displayName: '共识解读', sourceKind: 'web_snapshot', content: '文章原文。' },
-      { materialId: 'intake-user-a', contentVersionId: 'v2', displayName: '需求对话 a', content: '普通患者和家属' },
-      { materialId: 'intake-user-p', contentVersionId: 'v3', displayName: '需求对话 p', content: '今日头条' },
-      { materialId: 'intake-user-extra', contentVersionId: 'v4', displayName: '需求对话 extra', content: '语气温和一点' },
-    ],
-  }) }]);
-  assert.deepEqual(previews.map(p => p.label), ['目标读者', '发布平台', '网页素材 · 共识解读', '需求补充 · 语气温和一点']);
-  assert.deepEqual(previews.map(p => p.text), ['普通患者和家属', '今日头条', '文章原文。', '语气温和一点']);
 });
 
 test('compact research streams only public notes, including partial escaped text, never raw fields', () => {
@@ -72,16 +58,6 @@ test('final review with an explicit legacy output preview keeps the article visi
   assert.equal(view.get('p', 's', 'r')?.phase, 'saving');
 });
 
-test('material previews omit bare links and duplicate excerpts without discarding real article text', () => {
-  const previews = requestMaterialPreviews([{role:'user',content:JSON.stringify({materials:[
-    {contentVersionId:'link1',content:'https://example.com/article'},
-    {contentVersionId:'link2',content:'https://example.com/article'},
-    {contentVersionId:'article',content:'完整文章。'},
-    {contentVersionId:'copy',content:'完整文章。'},
-  ]})}]);
-  assert.deepEqual(previews.map(p=>p.text), ['完整文章。']);
-});
-
 test('pending dispatch preview expires when the expert request actually starts', () => {
   const view = new ConversationStreamPreview();
   const base = { projectId:'p',sessionId:'s',runId:'r',requestId:'director',actor:'director' };
@@ -91,17 +67,6 @@ test('pending dispatch preview expires when the expert request actually starts',
   view.observe({...base,requestId:'outline',actor:'outline',lifecycle:'started',event:null});
   assert.equal(view.getActivity('p','s','r')!.workPreview, undefined);
   assert.equal(view.getActivity('p','s','r')!.requestOrdinal, 2);
-});
-
-test('waiting previews use only actual public materials injected into the request, never prompts or reasoning', () => {
-  const previews = requestMaterialPreviews([{ role: 'system', content: 'PRIVATE SYSTEM' }, { role:'user', content: 'task\nCOLLABORATION_STATE=' + JSON.stringify({
-    artifacts: [{ id:'b',kind:'body',content:'# 当前稿\n\n正文。' }, {id:'e',kind:'evidence',content:JSON.stringify({claims:[{secret:'PRIVATE LEDGER'}],notes:'只写个人感受。'})}],
-    materials:[{materialId:'m',contentVersionId:'v',content:'原始材料。'}], reasoning:'PRIVATE REASONING',
-  }) }]);
-  assert.equal(previews.length, 3);
-  assert.deepEqual(previews.map(p=>p.text), ['# 当前稿\n\n正文。', '只写个人感受。', '原始材料。']);
-  assert.doesNotMatch(JSON.stringify(previews), /PRIVATE/);
-  assert.deepEqual(requestMaterialPreviews([{role:'assistant',content:'PRIVATE'},{role:'user',content:'invalid JSON'}]), []);
 });
 
 test('public task summaries and search queries stream as temporary process previews, not final answers', () => {

@@ -370,3 +370,25 @@ test('fact source read propagates cancellation to the transport and reports ABOR
     assert.equal(requests, 2);
   } finally { f.close(); }
 });
+
+test('opens the numbered result with its original query and fences it to its own run', async () => {
+  const f = setup('{"claims":[]}');
+  try {
+    f.storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'test' });
+    f.storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', purpose: 'test', planVersion: 'test', operationId: 'start' });
+    const url = LEDGER_URL + '?tracking=keep%2Fexact';
+    f.storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId: 'search', type: 'tool.completed',
+      payload: { result: { ok: true, toolName: 'search_research_sources', callId: 'search-1',
+        result: { mode: 'external', evidenceText: JSON.stringify([null, { url, excerpt: '内容' }, { url: 'http://127.0.0.1', excerpt: '私网' }]) } } } });
+    const captured: string[] = [];
+    const tool = createFactSourceTool({ storage: f.storage, projectId: 'p', fetcher: fetcherWith('原文', captured) });
+    const result = await tool.execute({ searchCallId: 'search-1', resultNumber: 2 }, { projectId: 'p', runId: 'r' } as never) as any;
+    assert.deepEqual(captured, [url]);
+    assert.equal(result.requestedUrl, url);
+    assert.equal(result.resultNumber, 2);
+    await assert.rejects(async () => tool.execute({ searchCallId: 'search-1', resultNumber: 1 }, { projectId: 'p', runId: 'r' } as never), { code: 'FACT_SOURCE_RESULT_NOT_FOUND' });
+    await assert.rejects(async () => tool.execute({ searchCallId: 'search-1', resultNumber: 2 }, { projectId: 'p', runId: 'different' } as never), { code: 'FACT_SOURCE_RESULT_NOT_FOUND' });
+    await assert.rejects(async () => tool.execute({ searchCallId: 'search-1', resultNumber: 3 }, { projectId: 'p', runId: 'r' } as never));
+    assert.deepEqual(captured, [url]);
+  } finally { f.close(); }
+});

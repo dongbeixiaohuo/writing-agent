@@ -48,10 +48,10 @@ export function ConversationExportCard({ bridge, snapshot, hostConfiguration, on
   const gate = snapshot.deliveryWorkspace.gateStatus
   const description = snapshot.connection === 'offline' ? '本地服务尚未连接，请恢复连接后再导出。'
     : snapshot.mode === 'mock' ? '当前为界面预览，不能导出真实稿件。'
-    : writing ? '写作团队正在完善文章，完成核查后可在这里导出。'
+    : writing ? '稿子还在改，等核查做完，就能从这儿导出。'
     : gate === 'stale' ? '稿件已修改，需要重新核查当前版本后再导出。'
     : gate === 'blocked' ? '请先处理上方核查问题。你可以直接在对话中提出修改意见。'
-    : gate === 'checking' ? '事实核查 Agent 正在检查当前稿件，完成后可查看结果。'
+    : gate === 'checking' ? '查有据在核对这版稿子，结果出来会显示在这里。'
     : gate === 'error' ? '核查未完成，请查看原因并重新核查。'
     : !ready ? '当前版本尚未通过事实核查，完成核查后才能正式导出。'
     : hostConfiguration ? '点击“导出文章”选择保存位置。导出的是当前已核查版本，不会自动发布到外部平台。'

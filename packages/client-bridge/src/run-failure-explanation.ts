@@ -22,230 +22,347 @@ export interface RunFailureContext {
  */
 export function explainRunFailure(context: RunFailureContext): RunFailureExplanation {
   const { errorCode: code, technicalName, transportPhase } = context
+  if (context.kind !== 'model' && context.status === 'outcome_unknown') return {
+    title: '还不知道这一步有没有完成',
+    detail: 'App 已经发出请求，但没收到能确认结果的回执。',
+    remediation: '先回到对话或查看稿件，确认有没有新结果。确认没有结果后再决定是否重试。',
+  }
   if (code === 'MODEL_GROUP_UNAVAILABLE') return {
-    title: '分组指定的模型暂不可用', detail: '该组的模型尚未通过验证或配置已变化，本次没有自动换用其他模型。',
-    remediation: '在模型设置中重新验证对应模型、选择其他已验证模型或改为跟随默认，然后继续任务；已保存内容仍保留。',
+    title: '这一步选用的模型暂时不能用',
+    detail: '给这一步指定的模型需要重新验证。',
+    remediation: '在模型设置里测试这个模型，或为这一步选择一个已经验证的模型，再回到对话继续。',
   }
   if (code === 'TOOL_NO_PROGRESS') return {
-    title:'重复读取没有推进当前任务', detail:'模型连续读取相同业务输入和结果，没有提交新的成果；程序已暂停自动循环，避免继续消耗请求。',
-    remediation:'已保存内容仍保留。查看最近工具记录后可重试当前步骤，无需重新提供材料。',
+    title: '助手反复读了同一份内容',
+    detail: '连续读取没有得到新内容，App 暂停了这一步。已保存的内容还在。',
+    remediation: '回到对话重试这一步，可以继续用已有材料。',
   }
-  if (code === 'PARAGRAPH_EDITS_INVALID') return {
+  if (code === 'PARAGRAPH_EDITS_INVALID' || code === 'REVIEW_EDITS_INVALID' || code === 'FINAL_LINT_INVALID') return {
     title: '这次段落修改未保存',
     detail: '提交的改动与当前稿件或允许修改的段落不匹配。已保存的正文和标题仍可查看。',
     remediation: '回到对话重试这一步，让主笔按当前稿件重新定位修改。也可以在「稿件与版本」中查看当前正文。',
   }
   if (code === 'PROVIDER_RETRY_DEFERRED') return {
-    title:'模型服务要求稍后重试', detail:'服务商建议的重试时间超过本轮自动等待范围或不合法；程序已保存进度并暂停，而不是继续长时间挂起。',
-    remediation:'按主对话的建议时间重试，或选择其他已验证模型；不会提前自动重试同一模型。',
+    title: '模型服务要求稍后再试',
+    detail: '这一步已暂停，已保存的进度还在。',
+    remediation: '到对话里查看建议的重试时间，也可以换用已经验证的模型。',
   }
   if (code === 'SEARCH_QUERY_TOO_LONG') return {
-    title:'搜索词超过 DeepSeek 的长度限制', detail:'DeepSeek Search 最多接受 128 个 Unicode 字符；本次没有向它发送请求，也没有静默截断问题。',
-    remediation:'精简为一个公开事实的问题再搜索，或使用其他已启用的搜索服务。',
+    title: '搜索词太长，这次没有搜索',
+    detail: '当前搜索服务最多接受 128 个字符。',
+    remediation: '回到对话，让助手把搜索词缩短后再搜。',
   }
   if (code === 'INTAKE_SOURCE_READ_REQUIRED') return {
-    title: '本轮链接尚未尝试读取，方案未保存',
-    detail: '模型已请求提交方案，但尚有当轮指定链接未经读取尝试；这是本机来源前置检查，不是模型无响应或搜索服务超时。',
-    remediation: '先读取记录中列出的链接，再提交方案；读取失败或超过每轮三条时明确说明未读范围，不猜测网页内容。',
+    title: '方案还没保存，你给的链接还没读完',
+    detail: '助手准备提交方案，但有链接还没尝试打开。',
+    remediation: '回到对话，让助手先读这些链接。打不开的网页也可以直接贴正文。',
+  }
+  if (code === 'INTAKE_DIRECTION_OPTIONS_REQUIRED' || code === 'INTAKE_DIRECTION_OPTIONS_INVALID') return {
+    title: '助手还没有给出完整的方向列表',
+    detail: '这条回复需要先补齐可选方向，才能交给你选择。',
+    remediation: '如果对话停在这里，可以重试这一步，让助手列出可选方向。',
+  }
+  if (code === 'AUTHOR_OUTPUT_REQUIRED' || code === 'INTAKE_PROPOSAL_REQUIRED' || code === 'STAGE_OUTPUT_NOT_SAVED') return {
+    title: '助手回了话，但这一步还没做完',
+    detail: '这一步应该提交的成果没有保存。',
+    remediation: '回到对话重试当前一步。已经保存的稿件仍可在「稿件与版本」里查看。',
+  }
+  if (code?.startsWith('INTAKE_') && code.includes('AUTHORIZATION')) return {
+    title: '这一步还不能按该要求继续',
+    detail: 'App 没找到能确认这一要求的作者原话。',
+    remediation: '回到对话，直接说明你的要求，再让助手继续。',
+  }
+  if (code === 'TOOL_PERMISSION_DENIED') return {
+    title: '这一步暂时不能进行',
+    detail: '助手这次没有执行该操作的权限。',
+    remediation: '回到对话看助手有没有继续。若停在这里，可以查看当前步骤说明或重试。',
+  }
+  if (code === 'TOOL_INPUT_INVALID' || code === 'TOOL_ARGUMENTS_INVALID') return {
+    title: '这一步缺了需要的信息',
+    detail: '助手传给这一步的内容不完整，或写法不符合这一步的要求。',
+    remediation: '如果助手停在这里，重试这一步即可继续使用之前的输入。',
+  }
+  if (code === 'MATERIAL_NOT_FOUND' || code === 'ARTIFACT_VERSION_NOT_FOUND') return {
+    title: '没找到要读取的材料或稿件',
+    detail: '这次想打开的内容没有读到。',
+    remediation: '检查项目里是否还保留这份材料或稿件版本，也可以让助手使用当前版本。',
   }
   if (code === 'READER_RETEST_STALE') return {
-    title: '读者重测期间稿件版本发生变化',
-    detail: '正文或已选标题已变化，旧版本的模拟感受未保存为当前结论；稿件未被覆盖，也不是模型无响应。',
-    remediation: '确认当前版本后，按当前版本重新重测读者；不需要重新提交材料或重跑写作流程。',
+    title: '读者试读期间，稿件改了',
+    detail: '这次试读针对的是旧版，读后感没有保存到当前稿件。',
+    remediation: '如果还想看读者反应，可以对当前稿件再试读一次。',
+  }
+  if (code === 'WRITING_READINESS_REQUIRED' || code === 'WRITING_READINESS_INVALID' || code === 'READINESS_CONTEXT_READ_REQUIRED') return {
+    title: '这一步还没准备好',
+    detail: '助手还没有完成继续写作前要做的检查。',
+    remediation: '回到对话看是否需要你补充信息。如果已经给过，可以重试这一步。',
+  }
+  if (code?.startsWith('DIRECTOR_') || code === 'INTENT_SELECTION_INVALID') return {
+    title: '助手没能接上当前工作',
+    detail: '这次安排与当前写作进度或作者的选择对不上。',
+    remediation: '回到对话查看现在停在哪一步，再重试或告诉助手要接着做什么。',
+  }
+  if (code === 'BODY_STAGE_CONTAINS_PROCESS_NOTES' || code === 'BODY_STAGE_STRUCTURE_MISMATCH') return {
+    title: '这次正文没有保存',
+    detail: code === 'BODY_STAGE_CONTAINS_PROCESS_NOTES'
+      ? '助手把写作过程里的备注写进了正文。' : '这次交回的正文和这一轮要求的改动范围对不上。',
+    remediation: '在对话里重试这一步，让助手按原要求交回正文。',
+  }
+  if (code === 'EVIDENCE_LEDGER_INVALID' || code === 'EDITORIAL_PLAN_INVALID' || code === 'PREWRITING_INVALID') return {
+    title: '资料或写作安排没有保存',
+    detail: '助手交回的资料或安排有缺项，App 还不能交给下一步。',
+    remediation: '回到对话重试这一步，继续用你已经提供的材料。',
+  }
+  if (code === 'FACT_CLAIM_NOT_IN_ARTICLE' || code === 'FACT_SUBMISSION_INCOMPLETE') return {
+    title: '核查没有对上当前稿件',
+    detail: code === 'FACT_CLAIM_NOT_IN_ARTICLE'
+      ? '这次要查的那句话，在当前稿件里找不到。' : '这次还有已经列出的疑点没有核对。',
+    remediation: '回到对话，让助手按当前稿件把核查补齐。',
   }
   if (code === 'FACT_EXTERNAL_RECORD_REQUIRED') return {
     title: '核查提交的查证依据不完整',
-    detail: '提交的外部来源未通过记录关联校验，具体条目与原因见记录信息和输出详情；这不是模型无响应或搜索超时。',
-    remediation: '修正对应来源记录，或如实改用材料对照/模型复核，不需要为了补引用重复搜索。真实未决问题应说明纠正动作。稿件仍保留。',
+    detail: '核查结果里提到的部分资料，在这次保存的来源里找不到。稿件仍保留。',
+    remediation: '回到对话，让助手先用已经找到的材料核对。暂时查不清的地方可以留待确认。',
   }
   if (code === 'FACT_CLAIM_SELECTION_REQUIRED') return {
-    title: '新增待查事实没有说明选择原因',
-    detail: '模型增加了待查条目，但没有记录为什么需要核对；这是提交格式问题，不是模型无响应或搜索故障。',
-    remediation: '为新增条目补充key_fact或suspected_error，保留原待查条目后重新提交，不必重新读取全文。',
+    title: '助手没说清为什么要查这一处',
+    detail: '这一步新增了要查的事实，漏写了理由，所以核查结果没能保存。',
+    remediation: '回到对话重试核查，让助手补上理由，继续用已有的稿件和材料。',
   }
   if (code === 'FACT_KEY_EXTERNAL_CHECK_REQUIRED') return {
-    title: '旧核查规则拒绝了提交',
-    detail: '这条历史记录来自要求关键事实逐条外部查证的旧规则；当前版本已取消该要求。',
-    remediation: '在当前版本重新核查即可；无需为普通背景或作者自述补充公开证明。稿件仍保留。',
+    title: '旧版因为缺少公开资料停下了核查',
+    detail: '这是旧版要求每条重要事实都要找公开资料时留下的记录。新版已取消这项要求。',
+    remediation: '用当前版本重新核查即可，无需为普通背景或作者自述逐条找公开证明。',
   }
   if (code === 'CHECKPOINT_REWORK_REQUIRED' || code === 'OUTLINE_REWORK_REQUIRED') return {
-    title: '当前决策记录要求先修改，不能直接进入下一阶段',
-    detail: '模型已返回调度请求，但程序读到的作者决策是“修改当前阶段”，因此拒绝跳步；这不是模型无响应，也不是搜索故障。决策记录可能与作者本意不符，需要核对本轮回复。',
-    remediation: '如果你已认可当前成果，回到对话点击“认可当前阶段，继续”重新明确确认；如果仍要修改，说明修改要求，改好后再确认。无需重新提交材料。',
+    title: '当前这一步还需要修改',
+    detail: 'App 把你上一条回复理解成了「先改这一步」，所以停在这里。',
+    remediation: '如果这版已经可以，在对话里点「认可当前阶段，继续」。还想调整的话，直接告诉助手怎么改。',
   }
   if (context.kind === 'model') {
     if (code === 'PARALLEL_TASK_TIMEOUT') return {
-      title:'该模拟读者未在本阶段时限内返回完整感受', detail:'仅此读者响应缺失，不等于文章丢失；其他模拟读者可以继续。',
-      remediation:'本次不会自动反复请求此读者；若全部读者都失败，可稍后重试本阶段。',
+      title: '这位模拟读者迟迟没有回完',
+      detail: '这位读者的回复没能保存，其他读者可以继续。',
+      remediation: '如果所有读者都没有返回，可以稍后再试读。',
     }
     if (code === 'PARALLEL_TEXT_INVALID') return {
-      title:'该模拟读者没有返回符合要求的口语感受', detail:'未保存残缺回复或编辑诊断，也未编造此人的反应；其他模拟读者可以继续。',
-      remediation:'查看输出详情；本次未自动重试，全部失败时可重试读者阶段。',
+      title: '这位模拟读者没有给出可用的读后感',
+      detail: '这位读者的结果被略过，其他读者可以继续。',
+      remediation: '如果所有读者都没有返回，可以稍后再试读。',
     }
     if (transportPhase === 'first_response') return {
-      title: '模型未在等待时限内返回首个有效内容',
-      detail: '失败发生在模型请求阶段；本机记录的是首次有效响应等待超时，未获得可交给后续步骤的模型结果。',
-      remediation: '请稍后重试这一步，已保存内容仍在。若反复超时，再查看“时序”并验证模型连接。',
+      title: '等了很久，模型还没开始回复',
+      detail: '这一步等到超时，已保存的内容还在。',
+      remediation: '可以稍后重试。多次出现时，到模型设置里测试连接。',
     }
     if (transportPhase === 'stream_idle') return {
-      title: '模型响应在传输中停滞',
-      detail: '失败发生在模型请求阶段；本机曾收到响应活动，但后续内容超过本地等待时限。',
-      remediation: '请稍后重试这一步，已保存内容仍在。若反复停滞，再查看“时序”的最后内容时间并验证模型连接。',
-    }
-    if (code === 'MODEL_OUTPUT_TRUNCATED') return {
-      title: '模型输出未完整结束',
-      detail: '失败发生在模型输出阶段；已记录的结果不足以完成本次步骤。',
-      remediation: '查看输出与时序详情，必要时缩小单次任务或提高可用输出上限后重试。',
-    }
-    if (code === 'MODEL_RESPONSE_INVALID') return {
-      title: '模型回复未通过格式校验',
-      detail: '模型请求已有返回，但回复不符合本步骤要求的格式。该结果没有作为正式成果保存。',
-      remediation: '查看本步骤的输出与技术代码，核对服务类型和模型兼容性后重试；无需重新填写写作材料。',
+      title: '模型回复到一半停了',
+      detail: 'App 等不到后面的内容，这次回复没有完成。',
+      remediation: '可以稍后重试。这一步之前保存的内容还在。',
     }
     if (context.status === 'outcome_unknown') return {
-      title: '模型请求结果尚未确认',
-      detail: '客户端已停止等待，现有记录无法确认服务端最终结果。',
-      remediation: '先检查时序和模型配置；确认本次没有产生可用结果后再重试。',
+      title: '还不知道模型有没有回完',
+      detail: 'App 已停止等待，这次没有收到能确认结果的回复。',
+      remediation: '先看对话里有没有可用的回复，再决定是否重试。',
+    }
+    if (code === 'MODEL_OUTPUT_TRUNCATED') return {
+      title: '模型回复太长，被截断了',
+      detail: '这次只收到一部分内容，还不能完成这一步。',
+      remediation: '可以重试这一步。多次出现时，可把任务分小一点再试。',
+    }
+    if (code === 'MODEL_RESPONSE_INVALID' || code === 'INVALID_REQUEST') return {
+      title: code === 'INVALID_REQUEST' ? '模型服务没有接受这次请求' : '模型回了话，但回复格式没对上',
+      detail: 'App 没能用这次回复保存新成果。',
+      remediation: '回到对话重试这一步，可以继续用已有材料。反复出现时，可在模型设置中换用已验证的模型。',
+    }
+    if (code === 'AUTH_FAILED' || code === 'QUOTA_EXCEEDED' || code === 'MODEL_UNSUPPORTED') return {
+      title: code === 'AUTH_FAILED' ? '模型服务没有通过账号验证' : code === 'QUOTA_EXCEEDED'
+        ? '模型服务的用量额度不足' : '模型服务不支持这次用的模型',
+      detail: '这一步没有拿到可用的回复。',
+      remediation: code === 'QUOTA_EXCEEDED' ? '检查模型服务的账户额度，或换用另一个已验证的模型。'
+        : '在模型设置里测试连接，检查密钥和模型选择后再重试。',
+    }
+    if (code === 'RATE_LIMITED' || code === 'PROVIDER_UNAVAILABLE' || code === 'NETWORK_ERROR' || code === 'TIMEOUT' || code === 'ABORTED') return {
+      title: code === 'RATE_LIMITED' ? '模型服务暂时限制了请求' : code === 'PROVIDER_UNAVAILABLE' ? '模型服务暂时不可用'
+        : code === 'NETWORK_ERROR' ? '这次没有连上模型服务' : code === 'TIMEOUT' ? '等模型回复时超时了' : '这次模型请求已停止',
+      detail: '这次没有完成新的回复，已保存的内容还在。',
+      remediation: '可以稍后重试这一步。反复出现时，在模型设置里测试连接。',
     }
     return {
-      title: '模型请求未成功完成',
-      detail: '失败发生在模型请求阶段；现有代码不足以判定更具体的外部原因。',
-      remediation: '查看本步骤的输出与时序，核对模型配置、账户状态和连接后再重试。',
+      title: '这次没有拿到可用的模型回复',
+      detail: '记录里没有更具体的原因。',
+      remediation: '可以在模型设置里测试连接，再回到对话重试。',
     }
   }
 
   if (technicalName === 'submit_writing_stage' && (code?.startsWith('STAGE_') || code?.startsWith('WORKFLOW_'))) return {
-    title: '写作阶段提交未通过程序校验',
-    detail: '失败发生在本机保存或流程前置条件校验。已保存的上一版成果仍可查看。',
-    remediation: '查看本步骤的技术代码与输出，按具体校验原因修正当前阶段后重试。',
+    title: '这一步的成果没能保存',
+    detail: 'App 检查这次提交时发现问题，已保存的上一版内容仍可查看。',
+    remediation: '回到对话重试这一步。若想先看已保存的正文，打开「稿件与版本」。',
   }
 
   if (code === 'FACT_SEARCH_DISABLED') return {
     title: '外部事实搜索已关闭',
-    detail: '当前运行配置不允许调用外部事实搜索；本次未请求搜索服务。',
-    remediation: '保持模型复核模式并明确披露未联网验证，或在需要联网核查时先启用搜索。',
+    detail: '本次没有联网搜索。',
+    remediation: '可以让助手只用已有材料核对。需要找新资料时，在设置里开启搜索。',
   }
 
   if (technicalName === 'read_author_web') {
     if (code === 'WEB_ARTICLE_ACCESS_RESTRICTED') return {
-      title: '微信返回了验证或访问受限页',
-      detail: '网页请求已执行，但没有取得可确认的文章正文；不是模型未响应，也不是搜索引擎出错。',
-      remediation: '请在浏览器或微信中确认文章能否打开；也可以粘贴正文作为材料。不会自动绕过登录或安全验证。',
+      title: '微信要求验证，文章没打开',
+      detail: '这次打开后看到的是验证或访问提示页，没读到文章正文。',
+      remediation: '可以在微信里打开原文，再把正文贴给助手。',
     }
     if (code === 'WEB_ARTICLE_UNAVAILABLE') return {
       title: '微信文章已不可用',
-      detail: '来源页面提示内容已删除、违规或无法查看，未保存为可用材料。',
+      detail: '网页提示文章已删除或不能查看，这次没能把它保存为材料。',
       remediation: '提供仍可访问的文章链接，或提供你已取得的正文。',
     }
     if (code === 'WEB_ARTICLE_CONTENT_MISSING' || code === 'AUTHOR_WEB_CONTENT_EMPTY') return {
-      title: '网页没有返回可读取的正文',
-      detail: '网页获取结束，但未能提取文章内容；不会把菜单或提示页当成文章。',
-      remediation: '核对是否为文章详情链接，或粘贴正文；图文中的图片文字暂不做 OCR。',
+      title: '打开了网页，但没读到文章正文',
+      detail: '这次没有取得可供写作使用的文字。',
+      remediation: '可以发直接指向文章的链接，或把正文贴到对话里。',
     }
     if (code === 'AUTHOR_WEB_LIMIT_REACHED') return {
       title: '本轮网页读取次数已达上限',
-      detail: '每轮最多读取 3 次外部网页；本次未再请求网站。',
+      detail: '这一轮最多打开 3 个网页，App 没有再打开这条链接。',
       remediation: '先使用已保存材料，其他链接可以下一轮继续读取。',
     }
     if (code === 'ABORTED' || code === 'WEB_REQUEST_ABORTED') return {
       title: code === 'ABORTED' ? '网页读取已停止' : '网页读取超时或被取消',
-      detail: '本次没有取得并保存完整文章；不是搜索引擎失败。',
-      remediation: '需要时重新读取该链接，或粘贴正文；单次外部读取最长等待 15 秒。',
+      detail: '这次没有把文章正文读完整。',
+      remediation: '需要这份资料的话，可以让助手再读一次，也可以直接贴正文。',
     }
     return {
-      title: '用户提供的网页读取失败',
-      detail: '失败发生在直接网页读取或材料保存阶段；未确认正文可用，不能推断为模型故障或搜索服务故障。',
-      remediation: '查看技术代码和输出详情，核对链接是否为可公开访问的 HTTP(S) 文章；也可以直接粘贴正文。',
+      title: '没能把你给的网页保存为材料',
+      detail: '这次没有拿到可以保存的正文。',
+      remediation: '可以在浏览器里打开网页检查，或直接把正文贴给助手。',
+    }
+  }
+
+  if (technicalName === 'search_research_sources' || technicalName === 'search_fact_sources') {
+    if (code === 'SEARCH_HTTP_429') return {
+      title: '搜索服务暂时限制了请求',
+      detail: '这次搜索没有拿到结果。',
+      remediation: '如果对话停在这里，可以稍后重试，也可以用已有资料继续。',
+    }
+    if (code === 'SEARCH_NO_RESULTS') return {
+      title: '这次搜索没有找到可用结果',
+      detail: '已经提交搜索，未取得能用的资料。',
+      remediation: '可以让助手换个搜法，也可以用手头的资料继续。',
+    }
+    if (code === 'SEARCH_API_KEY_REQUIRED' || code === 'SEARCH_HTTP_401' || code === 'SEARCH_HTTP_403') return {
+      title: '这次没能使用搜索服务',
+      detail: '搜索服务缺少可用的账号凭据，或拒绝了请求。',
+      remediation: '可在搜索设置里检查所用服务，或用已有资料继续。',
+    }
+    if (code === 'SEARCH_USER_DECLINED') return {
+      title: '这次没有联网搜索',
+      detail: '你选择了先不搜索，已找到的资料还在。',
+      remediation: '可以用已有资料继续。需要公开资料时，再回到对话提出搜索。',
     }
   }
 
   if (technicalName === 'search_research_sources') return {
-    title: code === 'SEARCH_TIMEOUT' || code === 'SEARCH_REQUEST_TIMEOUT' ? '前置研究搜索等待超时'
-      : code === 'SEARCH_LIMIT_REACHED' ? '前置研究搜索已到上限' : '前置研究搜索未取得结果',
-    detail: code === 'SEARCH_LIMIT_REACHED' ? '这是最多两次查询尝试的研究额度门禁，本次未发起新请求；最终事实核查额度不受影响。'
-      : '背景搜索工具未取得可用结果；这不是大模型未响应。具体服务、耗时和技术代码保留在运行记录中。',
-    remediation: '继续用已有材料整理提纲，并说明尚未取得的背景信息；前置补查不增加作者确认步骤。',
+    title: code === 'SEARCH_TIMEOUT' || code === 'SEARCH_REQUEST_TIMEOUT' ? '找资料时等到超时'
+      : code === 'SEARCH_LIMIT_REACHED' ? '这轮找资料的搜索次数已用完' : '这次搜索没找到可用资料',
+    detail: code === 'SEARCH_LIMIT_REACHED' ? 'App 没有再发出搜索请求。已经找到的资料还在。'
+      : '这一步没有新增可用材料。',
+    remediation: '已有材料够写时，助手可以沿原题继续。也可以在对话里补充你手头的材料。',
   }
 
   if (technicalName === 'search_fact_sources') {
     if (code === 'SEARCH_TIMEOUT' || code === 'SEARCH_REQUEST_TIMEOUT') return {
-      title: '搜索服务等待超时',
-      detail: '本次没有取得可用搜索结果；这是搜索网络等待超时，不是大模型未响应。各服务尝试及耗时保留在输出和时序中。',
-      remediation: '在当前搜索提示选择“重试本次搜索”，或“不再搜索，继续核查”；停止搜索后会说明未联网核对的范围。',
+      title: '等搜索结果时超时了',
+      detail: '这次没有找到可用的新材料。',
+      remediation: '回到对话，可以重试本次搜索，或用已有材料继续核查。',
     }
     if (code === 'SEARCH_LIMIT_REACHED') return {
-      title: '本轮公开搜索次数已达上限',
-      detail: '这是本轮检索次数门禁；本次未发起新的搜索服务请求。',
-      remediation: '在当前搜索提示选择“追加3次搜索”，或“不再搜索，继续核查”；已有结果会保留，未证实的主张仍须如实说明。',
+      title: '这轮搜索次数已经用完',
+      detail: 'App 没有再发出搜索。已经找到的资料还在。',
+      remediation: '如果对话里出现搜索选项，可以选择继续搜索，或先用已有资料核对。',
     }
     if (code === 'SEARCH_APPROVAL_TIMEOUT' || code === 'SEARCH_APPROVAL_FAILED' || code === 'SEARCH_NOT_AUTHORIZED') return {
-      title: '公开搜索尚未执行',
-      detail: '失败发生在外发检索授权阶段；记录表明尚未请求搜索服务。',
-      remediation: '确认脱敏检索词并完成搜索授权，再重试本次检索。',
+      title: '这次搜索还没有发出去',
+      detail: 'App 没拿到可以发出搜索的确认。',
+      remediation: '回到对话查看搜索提示。也可以先让助手用已有资料继续。',
     }
     return {
       title: '公开搜索服务请求失败',
-      detail: '失败发生在公开搜索工具阶段；现有记录不表示模型未响应，也不足以推断更具体的外部原因。',
-      remediation: '查看各搜索服务的进度与输出，检查搜索设置；在当前提示选择重试或不再搜索，不必重新填写写作材料。',
+      detail: '这次没能取回搜索结果，记录里没有更具体的原因。',
+      remediation: '回到对话重试搜索，或用已有材料继续核查。',
     }
   }
 
+  if (technicalName === 'read_fact_record' && (code === 'FACT_RECORD_NOT_FOUND' || code === 'FACT_RECORD_INDEX_INVALID')) return {
+    title: '没找到要重新查看的那条资料',
+    detail: '这一步只在已保存的资料里找，没有重新联网搜索。',
+    remediation: '回到对话重试核查，或让助手使用已经找到的其他资料。',
+  }
+
+  if (code === 'PUBLICATION_TITLE_HEADING_COLLISION' || code === 'PUBLICATION_TITLE_REPAIR_REQUIRED') return {
+    title: '有候选标题与正文小标题重复',
+    detail: '这组候选正在等重复项换一个标题。',
+    remediation: '标题专家只需替换重复的编号，其他候选会保留。',
+  }
+
   if (technicalName === 'read_fact_source') {
+    if (code === 'FACT_SOURCE_RESULT_NOT_FOUND') return {
+      title: '没找到选中的搜索结果',
+      detail: '这个编号和本轮已保存的搜索结果对不上。',
+      remediation: '用本轮搜索返回的结果编号重新打开，或先用已有材料继续。',
+    }
     if (code === 'FACT_SOURCE_NOT_IN_LEDGER') return {
-      title: '来源读取被授权记录门禁拒绝',
-      detail: '当前读取目标未匹配到证据账本或本轮搜索的可用来源记录；门禁在未发出网络读取时已拒绝。',
-      remediation: '先运行公开搜索并使用本轮返回或账本已有的同一来源；若已有记录，再核对 URL 形式是否一致。',
+      title: '这一步没有打开网页',
+      detail: '这条链接不在本轮搜索结果或已保存的核查资料里。App 没有向该网站发请求。',
+      remediation: '如果这条资料很重要，回到对话让助手重新找来源，或把网页正文贴给它。',
     }
     if (code === 'FACT_SOURCE_TIMEOUT') return {
-      title: '已授权来源原文读取超时',
-      detail: '来源网页读取等待超时，本次没有取得可确认的原文内容；这不是大模型未响应，也不是搜索引擎超时。',
-      remediation: '已有搜索摘录足够时继续核查，并明确标注未读取原文；关键内容仍不足时改用其他已授权来源，不要反复重试同一页面。',
+      title: '等网页打开时超时了',
+      detail: '这次没能读到网页正文。',
+      remediation: '让助手先用已有摘录。如果缺关键内容，可以换一条来源或贴正文。',
     }
     if (code === 'NETWORK_PRIVATE_TARGET_DENIED' || code === 'NETWORK_CREDENTIALS_DENIED') return {
-      title: '来源读取被本机安全规则拒绝',
+      title: 'App 没有打开这个地址',
       detail: code === 'NETWORK_PRIVATE_TARGET_DENIED'
-        ? '目标被本机网络安全规则判定为不允许访问的私有网络地址；对该目标未发出网络读取。若发生重定向，先前公开地址可能已被读取。'
-        : '来源地址包含本机安全规则不允许携带的凭据信息；对该目标未发出网络读取。若发生重定向，先前公开地址可能已被读取。',
-      remediation: '使用不含凭据、且符合公开网络访问规则的已授权来源；不要放宽本机安全边界。',
+        ? '最后要打开的是内网地址，App 没有向这个地址发出请求。' : '地址里带有账号或密码等登录信息，App 没有向这个地址发出请求。',
+      remediation: '可以提供公开网页，或把你能看到的正文贴到对话里。',
     }
     if (code === 'NETWORK_TARGET_UNRESOLVED') return {
-      title: '来源域名解析失败',
-      detail: '本机未能将目标域名解析为可用网络地址；本次未取得网页内容。',
-      remediation: '核对来源域名与本机 DNS 状态，或改用其他已授权的公开来源。',
+      title: '没有找到这个网站的地址',
+      detail: '这次无法通过链接找到网站，因此没读到网页内容。',
+      remediation: '可以检查链接能否在浏览器打开，或让助手换一份公开资料。',
+    }
+    if (code === 'WEB_RESPONSE_TOO_LARGE' || code === 'WEB_ENCODING_INVALID' || code === 'WEB_CONTENT_TYPE_DENIED') return {
+      title: code === 'WEB_RESPONSE_TOO_LARGE' ? '网页内容太大，没能读完'
+        : code === 'WEB_ENCODING_INVALID' ? '网页内容没能转成可读文字' : '这份网页内容暂时读不了',
+      detail: '这次没有取到可以直接用的正文。',
+      remediation: '可以贴出需要的片段，或换另一份来源。',
     }
     if (code === 'WEB_HTTP_STATUS_REJECTED') {
       const status = context.httpStatus;
       const known = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599;
       const meaning = status === 401 ? '网站要求身份验证' : status === 403 ? '网站拒绝访问' : status === 404 ? '页面不存在'
         : status === 429 ? '网站限制请求频率' : known && status >= 500 ? '网站服务异常' : '网站未返回成功响应';
-      return {
-        title: known ? `来源网站返回 HTTP ${status}：${meaning}` : '来源网站未返回成功响应（旧记录缺少状态码）',
-        detail: `${known ? '请求已到达来源网站，但没有取得可确认的原文。' : '旧记录未保存具体 HTTP 状态，不能推断为 403、404 或其他原因。'}这不是禁止 http:// 来源，也不表示模型或搜索引擎失败。`,
-        remediation: '使用已有搜索摘录并注明未读取原文，或换一个公开来源；不要反复重试同一页面。',
-      }
+      return { title: meaning, detail: known ? '网站有回应，但这次没拿到网页正文。' : '旧记录只保存了网站没有成功返回的结果。',
+        remediation: '可以先用已经找到的摘录，也可以换一个来源。' }
     }
     return {
-      title: '已授权来源原文读取失败',
-      detail: '失败发生在来源读取工具阶段；现有记录不足以说明网站宕机或搜索服务失败。',
-      remediation: '查看该步骤输出，使用已有搜索摘录并说明限制，或选择其他已授权来源。',
+      title: '这次没能读到网页正文',
+      detail: '记录里没有更具体的原因。',
+      remediation: '可以让助手先用已有摘录，或换一份能打开的来源。',
     }
   }
 
   if (technicalName === 'submit_fact_check' || code?.startsWith('FACT_CHECK_') || code?.startsWith('FACT_GATE_')) return {
-    title: '事实核查提交被业务门禁拒绝',
-    detail: '失败发生在事实核查提交或校验阶段；这不是模型无响应或搜索服务失败的证据。',
-    remediation: '根据技术代码检查主张、证据引用、当前正文与标题绑定，修正后重新提交核查。',
-  }
-
-  if (context.status === 'outcome_unknown') return {
-    title: '工具外部结果尚未确认',
-    detail: '请求已发出，但当前记录无法确认外部操作的最终结果。',
-    remediation: '先到目标系统核对实际结果，未确认前不要盲目重试可能产生副作用的操作。',
+    title: '这次核查结果没能保存',
+    detail: 'App 检查核查结果时发现问题。已保存的稿件还可以在「稿件与版本」里查看。',
+    remediation: '回到对话，让助手针对当前稿件重试核查。',
   }
 
   return {
-    title: context.kind === 'agent' ? 'Agent 调度未成功完成' : '工具执行失败',
-    detail: '现有记录只能确认该步骤未成功完成，不足以推断其他系统的状态。',
-    remediation: '查看本步骤的输入与输出详情，按技术代码修正前置条件后再重试。',
+    title: context.kind === 'agent' ? '助手没能安排下一步' : '这一步没有完成',
+    detail: '记录里没有更具体的原因。',
+    remediation: '如果对话停在这里，可以重试这一步。需要反馈时，可展开技术详情。',
   }
 }

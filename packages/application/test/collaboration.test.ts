@@ -137,7 +137,7 @@ for (const interruptedCommit of [false, true]) for (const action of ['resume_che
   } finally { bridge?.dispose(); f.close(); }
 });
 
-for (const parallelEnabled of [false, true]) it(`full workflow separates search quotas and scopes source reading (enabled=${parallelEnabled})`, async () => {
+for (const parallelEnabled of [false, true]) it(`full workflow keeps research and final searches separate and scopes source reading (enabled=${parallelEnabled})`, async () => {
   const provider = new CollaborationProvider();
   const f = setup(provider);
   try {
@@ -156,11 +156,11 @@ for (const parallelEnabled of [false, true]) it(`full workflow separates search 
         parallelEnabled && collaborationState(request)?.stage === 'research');
     }
     const verification = checks.find(request => (collaborationState(request) as any)?.factPhase === 'verify')!;
-    assert.match(verification.messages[0]!.content, parallelEnabled ? /需要联网.*公开事实/u : /未启用外部搜索.*未联网/u);
+    assert.match(verification.messages[0]!.content, parallelEnabled ? /只对仍存疑.*正文实际写出.*search_fact_sources/u : /未启用外部搜索.*未联网/u);
   } finally { f.close(); }
 });
 
-it('optional front research uses configured Tavily before the outline and keeps final quota intact', async () => {
+it('optional front research uses configured Tavily before the outline without forcing a final search', async () => {
   class ResearchProvider extends CollaborationProvider {
     searches = 0;
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
@@ -477,14 +477,15 @@ it('scopes research to supplied evidence without demanding unavailable searches 
   } finally { f.close(); }
 });
 
-it('fact check uses selected facts and evidence, without repeating writing instructions or original materials', async () => {
+it('fact check offers local material readback without resending the writing packet', async () => {
   const provider = new CollaborationProvider(); const f = setup(provider, 'autonomous', 1);
   try {
     const result = await f.app.runDraft({ ...f.input, userInstruction: '数字如有冲突请标明，保留我的判断。' });
     assert.equal(result.ok, true);
     const request = provider.requests.find(r => collaborationState(r)?.actor === 'fact_check')!;
     const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
-    assert.equal(state.materialCatalog, undefined);
+    assert.ok(state.materialCatalog.some((item: { materialId: string }) => item.materialId === "m-0"));
+    assert.doesNotMatch(request.messages[1]!.content, /写安静的观察，要求 0/u);
     assert.equal(state.factPhase, 'verify');
     assert.equal(state.artifacts.find((a: any) => a.kind === 'body').content.projection, 'fact_article_catalog');
     assert.ok(request.tools?.some(t => t.name === 'read_fact_article'));
@@ -495,7 +496,7 @@ it('fact check uses selected facts and evidence, without repeating writing instr
     assert.ok(request.messages[0]!.content.length < 1400);
     assert.doesNotMatch(request.messages[1]!.content, /必须先用 read_material|约 800 字符/);
     assert.ok(!request.tools?.some(t => t.name === 'read_artifact_version'), 'no reread tool when bound artifacts already provided in full');
-    assert.equal(request.tools?.some(t => t.name === 'read_material'), false, 'specialist compares prepared facts, not the original writing packet');
+    assert.ok(request.tools?.some(t => t.name === 'read_material'), 'the specialist may read the needed local passage');
   } finally { f.close(); }
 });
 
@@ -523,7 +524,8 @@ it('lets research inspect source pages while retaining URL authorization and the
     assert.ok(f.storage.listRunEvents(result.runId).some(e => e.type === 'tool.failed' &&
       (e.payload.result as any).error.code === 'FACT_SOURCE_NOT_IN_LEDGER'), 'unknown URLs must be rejected before network access');
     const research = provider.requests.find(r => collaborationState(r)?.stage === 'research')!;
-    assert.equal((collaborationState(research) as any).researchSearchBudget.limit, 2);
+    assert.equal((collaborationState(research) as any).researchSearchBudget.used, 0);
+    assert.equal((collaborationState(research) as any).researchSearchBudget.target, undefined);
   } finally { f.close(); }
 });
 
@@ -1807,7 +1809,7 @@ it('scales outline and research guidance to the article without imposing a trunc
     await f.app.runDraft(f.input);
     const outline=provider.requests.find(r=>collaborationState(r)?.actor==='outline')!;
     const research=provider.requests.find(r=>collaborationState(r)?.actor==='research')!;
-    assert.match(research.messages[0]!.content,/只入账与候选相关的材料.*能解释原因、呈现差异或限制结论/u);
+    assert.match(research.messages[0]!.content,/只入账对当前写作有用的材料.*能解释原因、呈现差异或限制结论/u);
     const state=JSON.parse(outline.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
     assert.equal(state.outputGuidance.articleTargetCharacters,800);
     assert.ok(state.outputGuidance.outlineTargetCharacters<=800);
@@ -2313,7 +2315,7 @@ for (const decision of ['research', 'discuss']) it(`keeps the confirmed directio
     assert.ok(draftRequest);
     const state = JSON.parse(draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
     assert.equal(state.writingRequirements.topic, '安静');
-    assert.deepEqual(state.writingPlan, { promise: '安静', readingRoute: { question: '安静', moments: [] } });
+    assert.deepEqual(state.writingPlan, { promise: '安静', readerPayoff: '安静', readingRoute: { question: '安静', moments: [] } });
     assert.doesNotMatch(draftRequest.messages[1]!.content, /助手自行提出的方向|是否改为只比较家庭规模/u);
     assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, null);
   } finally { f.close(); }
@@ -2452,11 +2454,9 @@ it('finishes a passed workflow without asking the model for an inapplicable stag
       const state = collaborationState(request);
       return state?.actor === 'director' && state.nextStage === null && !state.finished;
     });
-    assert.equal(finishRequests.length, 1);
-    assert.equal(finishRequests[0]!.parameters.toolChoice, 'none');
-    assert.deepEqual(finishRequests[0]!.tools ?? [], []);
+    assert.equal(finishRequests.length, 0, 'verified completion does not request a director model turn');
     const finish = f.storage.listRunEvents(result.runId).findLast(event => event.type === 'tool.requested' && event.payload.toolName === 'director_decide');
-    assert.equal(finish?.payload.origin, 'harness_text_output');
+    assert.equal(finish?.payload.origin, 'harness_workflow');
     assert.deepEqual(finish?.payload.arguments, { action: 'finish', stage: null, reason: '稿件已保存并通过核查，可以查看当前稿件。', questions: [] });
     assert.equal(f.storage.listRunEvents(result.runId).filter(event => event.type === 'run.completed').length, 1);
   } finally { f.close(); }
@@ -2615,7 +2615,10 @@ it(savedOnly ? `shows only the saved public ${targetStage} without exposing stru
       assert.equal(waitingError, undefined);
       const activity = waitingActivity as ReturnType<typeof f.app.getLiveActivity>;
       assert.ok(activity, 'active request must be visible');
-      assert.ok(activity.materials?.some(item => item.text.includes('central_revision')), `bound manuscript must be available before model prose: ${JSON.stringify(activity)}`);
+      const request = f.storage.listRequestSnapshots(result.runId).find(item => item.requestId === activity.requestId);
+      assert.ok(request?.request.messages.some(message => message.role === 'user' && message.content.includes('central_revision')),
+        'the bound manuscript must be in the request even with no materials card');
+      assert.ok(!('materials' in activity));
       assert.doesNotMatch(activity.workPreview?.label ?? '', /正在核对的已保存内容/, 'do not duplicate the manuscript as a legacy read preview');
       const finalBody = f.storage.getArtifactVersion(f.storage.inspectProject('p')!.latestBodyVersionId!)!;
       assert.equal(finalBody.content, full, 'hide the in-flight text without losing any of the saved article');
@@ -3003,7 +3006,8 @@ it('resumed collaboration fact check retires consumed pages even during schema c
 });
 
 it('waits for co-author title selection before fact-checking and preserves that choice', async () => {
-  const f = setup(new CollaborationProvider(), 'co_creation');
+  const provider = new CollaborationProvider();
+  const f = setup(provider, 'co_creation');
   try {
     const first = await f.app.runDraft(f.input);
     for (let index = 0; index < 6; index++) {
@@ -3016,9 +3020,22 @@ it('waits for co-author title selection before fact-checking and preserves that 
     const candidate = getPublicationCandidates(f.storage, 'p')!;
     choosePublicationCandidate(f.storage, 'p', 'choose', '确认标题：安静', candidate.id, 1);
     const titleVersion = f.storage.inspectProject('p')!.currentTitleVersionId;
+    const beforeFactCheck = f.storage.listRequestSnapshots(first.runId).length;
     const result = await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, runId: first.runId, operationId: 'after-title', decision: 'resume', userInstruction: '标题已确认，请继续核查' })).result;
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(f.storage.inspectProject('p')!.currentTitleVersionId, titleVersion, 'fact checking must not replace selected title');
+    const requests = f.storage.listRequestSnapshots(first.runId).slice(beforeFactCheck).map(row => row.request);
+    assert.deepEqual(requests.map(request => request.tools?.some(tool => tool.name === 'prepare_fact_check') ? 'extract'
+      : request.tools?.some(tool => tool.name === 'submit_fact_check') ? 'verify' : 'other'), ['extract', 'verify']);
+    assert.equal(requests[0]?.parameters.lightReasoning, true);
+    assert.equal(requests[1]?.parameters.lightReasoning, undefined);
+    const events = f.storage.listRunEvents(first.runId);
+    const lastResume = events.findLastIndex(e => e.type === 'run.resumed');
+    const segment = events.slice(lastResume + 1);
+    const decisions = segment.filter(e => e.type === 'tool.requested' && e.payload.toolName === 'director_decide');
+    assert.deepEqual(decisions.map(e => [e.payload.origin, (e.payload.arguments as { action: string }).action]), [
+      ['harness_workflow', 'dispatch'], ['harness_workflow', 'finish'],
+    ]);
   } finally { f.close(); }
 });
 
@@ -3031,8 +3048,16 @@ it('uses an isolated title expert when the final body has no explicit title inst
         assert.match(request.messages[0]!.content, /ACTOR=title/u);
         assert.ok(request.tools?.some(tool => tool.name === 'submit_publication_candidates'));
         assert.equal(request.tools?.some(tool => tool.name === 'submit_writing_stage'), false);
+        const collision = request.messages.find(message => message.role === 'tool' && message.content.includes('PUBLICATION_TITLE_HEADING_COLLISION'));
+        if (collision) {
+          assert.deepEqual(JSON.parse(collision.content).error.details.collisions.map((item: { index: number }) => item.index), [1]);
+          yield { type: 'tool_call_delta', index: 0, id: 'title-repair', name: 'submit_publication_candidates',
+            argumentsDelta: JSON.stringify({ replacements: [{ index: 1, title: '把安静留在窗边' }] }) };
+          yield { type: 'completed', finishReason: 'tool_calls' };
+          return;
+        }
         yield { type: 'tool_call_delta', index: 0, id: 'title-candidates', name: 'submit_publication_candidates', argumentsDelta: JSON.stringify({ candidates: [
-          { title: '把安静留在窗边', opening: null, distributionCopy: null, rationale: '忠实概括正文的观察' },
+          { title: '窗边的光', opening: null, distributionCopy: null, rationale: '忠实概括正文的观察' },
           { title: '安静不是空白', opening: null, distributionCopy: null, rationale: '强调正文的核心判断' },
         ] }) };
         yield { type: 'completed', finishReason: 'tool_calls' };
@@ -3041,7 +3066,7 @@ it('uses an isolated title expert when the final body has no explicit title inst
       if (state?.stage && ['draft', 'central_revision', 'language_review'].includes(state.stage)) {
         this.requests.push(structuredClone(request));
         yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: state.stage,
-          content: '我喜欢这样的安静。它不是退场，而是把注意力重新放回眼前。\n\n窗边的光慢慢移动，房间也跟着有了层次。' })!;
+          content: '我喜欢这样的安静。它不是退场，而是把注意力重新放回眼前。\n\n## 窗边的光\n\n窗边的光慢慢移动，房间也跟着有了层次。' })!;
         return;
       }
       yield* super.providerStream(request);

@@ -8,7 +8,7 @@ import { createToolPermissionGrant } from '../../runtime/tools/src/index.js';
 import { createFactSearchTools } from '../src/fact-search.js';
 import { validateFactSearchDecision, factSearchLimitations, FACT_SEARCH_DECISION_REQUIRED } from '../src/fact-search-recovery.js';
 
-test('search decisions survive rebuild, retry a cached failure once and only append author-approved quota', async () => {
+test('search decisions survive rebuild and retries do not add a distinct query', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-search-decisions-'));
   const storage = openWorkspaceStorage({ workspacePath: root });
   storage.createProject({ projectId: 'p', operationId: 'create', name: 'Search decisions', mode: 'quick', actor: { kind: 'user', id: 'test' } });
@@ -16,7 +16,7 @@ test('search decisions survive rebuild, retry a cached failure once and only app
   storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', planVersion: 'test' });
   let requests = 0, fails = true, operation = 0;
   const scope = () => createFactSearchTools({ storage,
-    configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, searchLimit: 1,
+    configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, searchLimit: 10,
       authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
     fetch: async () => { requests++; if (fails) throw new Error('SEARCH_REQUEST_TIMEOUT');
       return Response.json({ results: [{ url: 'https://example.test/fact', content: '日期记录' }] }); },
@@ -30,7 +30,7 @@ test('search decisions survive rebuild, retry a cached failure once and only app
     storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId, type: 'tool.completed', payload: { result: { ok: true, toolName: 'search_fact_sources', result } } });
     return result;
   };
-  const resume = (action: 'retry' | 'extend' | 'continue') => {
+  const resume = (action: 'retry' | 'continue') => {
     const waiting = scope().pause('r')!;
     assert.ok(waiting);
     // Simulates reopening after tool settlement but before pause was persisted.
@@ -46,8 +46,8 @@ test('search decisions survive rebuild, retry a cached failure once and only app
   try {
     const failed = await invoke('公开日期');
     assert.equal(failed.recoveryRequired?.kind, 'timeout');
-    assert.equal(failed.quotaCharged, false);
-    assert.equal(scope().budget('r').used, 0);
+    assert.equal(failed.quotaCharged, true);
+    assert.equal(scope().budget('r').used, 1);
     assert.equal((await invoke('公开日期')).cacheHit, true);
     assert.equal(requests, 1, 'reopening must preserve failed-query cache');
     resume('retry');
@@ -55,28 +55,30 @@ test('search decisions survive rebuild, retry a cached failure once and only app
       payload: { toolName: 'search_fact_sources', arguments: { query: '模型误改的查询' } } });
     storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId: 'rejected-query', type: 'tool.completed',
       payload: { result: { ok: false, toolName: 'search_fact_sources', error: { code: 'SEARCH_RETRY_QUERY_REQUIRED' } } } });
-    assert.equal(scope().budget('r').used, 0, 'validation failures without a network attempt never spend query quota');
+    assert.equal(scope().budget('r').used, 1, 'validation failures without a network attempt never increase the query count');
     assert.equal(scope().budget('r').retryQuery, '公开日期');
     fails = false;
     const success = await invoke('公开日期');
     assert.equal(success.mode, 'external');
     assert.equal(requests, 2);
     assert.equal(scope().budget('r').retryQuery, null);
-    assert.equal(success.recoveryRequired?.kind, 'limit');
-    resume('extend');
-    assert.equal(scope().budget('r').limit, 4);
-    assert.equal(scope().budget('r').used, 1, 'extension must not reset previous usage');
+    for (let index = 1; index < 10; index++) {
+      const extra = await invoke(`补充事实 ${index}`);
+      assert.equal(extra.recoveryRequired, undefined);
+    }
+    assert.equal(scope().budget('r').target, 10);
+    assert.equal(scope().budget('r').used, 10, 'retry must not add a distinct query');
     assert.equal((await invoke('公开日期')).cacheHit, true, 'approved retry is one-shot');
-    assert.equal(requests, 2);
+    assert.equal(requests, 11);
     fails = true;
     await invoke('另一个公开事实');
     resume('continue');
     assert.equal(scope().budget('r').stopped, true);
     assert.equal((await invoke('第三个公开事实')).failureCode, 'SEARCH_USER_DECLINED');
-    assert.equal(requests, 3, 'declining must prevent further network attempts');
+    assert.equal(requests, 12, 'declining must prevent further network attempts');
     assert.equal((await invoke('公开日期')).mode, 'external', 'already saved successful sources remain usable');
     assert.deepEqual(factSearchLimitations(storage.listRunEvents('r')).map(r => r.query), ['另一个公开事实']);
-    assert.equal(storage.listRunEvents('r').filter(e => e.type === 'search.attempt_started').length, 3);
+    assert.equal(storage.listRunEvents('r').filter(e => e.type === 'search.attempt_started').length, 12);
   } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -86,7 +88,7 @@ test('mixed provider failures charge once; a timeout followed by successful fall
       authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
       fetch: async url => {
         if (String(url).includes('parallel')) throw new Error('SEARCH_REQUEST_TIMEOUT');
-        return success ? Response.json({ results: [] }) : new Response(null, { status: 401 });
+        return success ? Response.json({ results: [{ url: 'https://example.test/fact', content: '公开摘要' }] }) : new Response(null, { status: 401 });
       } });
     const result = await scope.search('公开信息');
     assert.equal(result.quotaCharged, true);

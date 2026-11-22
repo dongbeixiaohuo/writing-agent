@@ -1,7 +1,37 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compactFactEvidence, factMaterialContext, factEvidenceCatalog, projectFactToolResult, createFactContextTools, factPreparation, factVerificationArtifacts, factSubmissionCoversPreparation, factSubmissionError, factRecordCatalog, normalizeFactVerification, FACT_CONTEXT_GUIDANCE } from '../src/fact-context.js';
+import { compactFactEvidence, factMaterialContext, factEvidenceCatalog, projectFactToolResult, createFactContextTools, factPreparation, factVerificationArtifacts, factSubmissionCoversPreparation, factSubmissionError, factRecordCatalog, factSourcePassages, normalizeFactVerification, FACT_CONTEXT_GUIDANCE } from '../src/fact-context.js';
 import { defaultFactTitleContent } from '../src/publication-choice.js';
+
+test('first verification receives exact relevant excerpts with the original local locators', () => {
+  const quote = '调查走访了1200名受访者，其中68%表示未用完全年的假期。';
+  const original = '网页导航。'.repeat(250) + quote + '另一页内容。'.repeat(200);
+  const matched = { claimId: 'C001', articleQuote: '调查称68%没有用完全年的假期。',
+    claimText: '抽样调查发现68%没有用完全年的假期', location: 'body' as const, matchedEvidenceIds: ['E001'] };
+  const missing = { claimId: 'C002', articleQuote: '僧侣徒步横越雪山用了三年。',
+    claimText: '僧侣徒步横越雪山用了三年', location: 'body' as const, matchedEvidenceIds: [] };
+  const evidence = { id: 'e', kind: 'evidence', content: JSON.stringify({
+    sources: [{ source_id: 'S01', source_url: 'https://example.test/survey' }],
+    claims: [{ evidence_id: 'E001', source_id: 'S01', source_quote: quote }],
+  }) };
+  const saved = { id: 'event', projectId: 'project', projectSeq: 1, runId: 'active', operationId: 'read',
+    occurredAt: '2026-11-22T00:00:00Z', type: 'tool.completed',
+    payload: { result: { ok: true, toolName: 'read_fact_source', callId: 'saved-page',
+      result: { finalUrl: 'https://example.test/survey', text: original, instructionAuthority: 'none' } } } };
+  const storage = { listRunEvents: (runId: string) => runId === saved.runId ? [saved] : [] };
+  const prepared = { preparationId: 'p', bodyVersionId: 'b', evidenceVersionId: 'e', titleVersionId: null,
+    noFactualClaimsReason: '', claims: [matched, missing] };
+  const selected = factSourcePassages(storage, 'active', evidence, prepared, []) as
+    { claimIds: string[]; url: string; text: string; offset: number; readArguments: object; verificationStatus: string }[];
+  assert.equal(selected.length, 1);
+  assert.deepEqual(selected[0]!.claimIds, ['C001']);
+  assert.equal(selected[0]!.text, original.slice(selected[0]!.offset, selected[0]!.offset + selected[0]!.text.length));
+  assert.ok(selected[0]!.text.includes(quote));
+  assert.ok(selected[0]!.text.length <= 550);
+  assert.deepEqual(selected[0]!.readArguments, { callId: 'saved-page', offset: selected[0]!.offset });
+  assert.equal(selected[0]!.verificationStatus, 'unverified_source_record');
+  assert.deepEqual(factSourcePassages(storage, 'different-run', evidence, prepared, []), []);
+});
 
 test('incomplete submission names missing and mismatched claims without masking it as role permission', () => {
   const prepared: any = { claims: [{ claimId: 'C001', claimText: '2025年发布' }, { claimId: 'C002', claimText: '负责人是甲' }] };
@@ -219,6 +249,26 @@ test('Parallel excerpts are visible in bounded previews and lossless paged local
   assert.equal(events[0].payload.result.result.evidenceText, result.evidenceText);
 });
 
+test('resumed verification can locally read one saved source page with a legacy zero index', async () => {
+  const finalUrl = 'https://example.test/announcement';
+  const text = '这是已保存的原文。另见 https://example.test/related。';
+  const envelope = { ok: true, callId: 'saved-page', toolName: 'read_fact_source', result: { finalUrl, text } };
+  const storage: any = { listRunEvents: (runId: string) => runId === 'run'
+    ? [{ type: 'tool.completed', payload: { result: envelope } }] : [] };
+  const reader = createFactContextTools(storage, 'p').find(t => t.name === 'read_fact_record')!;
+  const context: any = { projectId: 'p', runId: 'run' };
+  const read = async (args: object) => await reader.execute(args as never, context);
+
+  const first = await read({ callId: 'saved-page', resultIndex: 0 });
+  const catalog: any = factRecordCatalog(storage, 'run');
+  assert.deepEqual(catalog[0].sourceRows, [['', finalUrl]], 'links inside a page are not separate sources');
+  assert.deepEqual(catalog[0].readArguments, { callId: 'saved-page' });
+  assert.deepEqual(first, await read(catalog[0].readArguments));
+  assert.deepEqual(first, { callId: 'saved-page', source: finalUrl, offset: 0, nextOffset: text.length, totalChars: text.length,
+    text, truncated: false, instructionAuthority: 'none', notice: '本地记录的原始摘录/来源文本，不是新的联网请求，也不是已核实证明。' });
+  await assert.rejects(() => read({ callId: 'saved-page', resultIndex: 1 }), { code: 'FACT_RECORD_INDEX_INVALID' });
+});
+
 test('external provenance rejection identifies every invalid claim and its record or URL mismatch', () => {
   const url = 'https://example.test/announcement';
   const event: any = { type: 'tool.completed', payload: { result: { ok: true, toolName: 'read_fact_source', callId: 'source',
@@ -295,7 +345,7 @@ test('fact extraction is bound to current article and selected title; verificati
 test('verification guidance uses supplied selected quotes and only fills real context gaps', () => {
   assert.match(FACT_CONTEXT_GUIDANCE, /claimFields.*claimRows/);
   assert.match(FACT_CONTEXT_GUIDANCE, /不从头重读.*正文.*原始素材/);
-  assert.match(FACT_CONTEXT_GUIDANCE, /不重复读取.*已提供.*证据/);
+  assert.match(FACT_CONTEXT_GUIDANCE, /已提供引句直接用/);
   assert.match(FACT_CONTEXT_GUIDANCE, /定位记录不是证据/);
 });
 
@@ -361,6 +411,8 @@ test('search and source history are bounded excerpts, preserving all locators an
   assert.equal(catalog.length, 1, 'rework/reopening can find saved search records without the old model history');
   assert.equal(catalog[0].callId, 'search1');
   assert.deepEqual(catalog[0].sourceRows.map((row: any[]) => row[1]), results.map(row => row.url));
+  assert.deepEqual(catalog[0].sourceFields, ['title', 'url', 'resultIndex']);
+  assert.deepEqual(catalog[0].sourceRows.map((row: any[]) => row[2]), [0, 1, 2, 3, 4]);
   assert.equal(JSON.stringify(catalog).includes('原文0'), false, 'catalogue must not reintroduce long source text');
   const history: any = { listRunEvents: () => [
     { type: 'tool.completed', payload: { result: envelope } },
@@ -373,6 +425,8 @@ test('search and source history are bounded excerpts, preserving all locators an
   const full: any = await reader.execute({ callId: 'search1', resultIndex: 0 } as never, { runId: 'run' } as any);
   assert.equal(full.text, results[0]!.excerpt.slice(0, 4000));
   assert.equal(full.truncated, true);
+  await assert.rejects(async () => reader.execute({ callId: 'search1', resultIndex: 5 } as never, { runId: 'run' } as any),
+    { code: 'FACT_RECORD_INDEX_INVALID', details: { callId: 'search1', resultCount: 5 } });
   await assert.rejects(async () => reader.execute({ callId: 'search1' } as never, { runId: 'other' } as any), { code: 'FACT_RECORD_NOT_FOUND' });
 });
 

@@ -16,7 +16,7 @@ import {
   type ToolDefinition,
   type ToolExecutionContext,
 } from "../../runtime/tools/src/index.js";
-import { IDEATION_TOOL_SCHEMA, INTAKE_IDEATION_GUIDANCE, mergeConversationIdeation, readConversationIdeation, isDirectionAcknowledgment, selectedDirection,
+import { IDEATION_TOOL_SCHEMA, INTAKE_IDEATION_GUIDANCE, mergeConversationIdeation, readConversationIdeation, isDirectionAcknowledgment, refersToDirectionOptions, selectedDirection,
   type ConversationIdeation, type IdeationInput } from './conversation-ideation.js';
 
 export const CONVERSATION_INTAKE_LOGICAL_KEY = "conversation-intake" as const;
@@ -1130,6 +1130,12 @@ export function createConversationIntakeTool(input: {
       const ideation = args.ideation
         ? mergeConversationIdeation(previous.ideation, args.ideation, ideationSource!.materialId)
         : previous.ideation ?? null;
+      const shownDirections = previous.sessionId === input.sessionId ? previous.ideation?.directions.length ?? 0 : 0;
+      if (previous.phase === 'collecting' && args.proposal == null && args.confirmation == null &&
+          !shownDirections && !args.ideation?.directions.length && [reply, ...args.questions].some(refersToDirectionOptions)) {
+        throw new ToolExecutionFault('INTAKE_DIRECTION_OPTIONS_REQUIRED',
+          '回复让作者从几个方向里选，但这次和本对话之前都没有展示可选方向。请重新提交 reply、summary、questions 和 ideation.directions（3–5个不同的具体方向），由程序展示编号。先保持方向待选，不提交方案。', true);
+      }
       if (args.ideation?.directions.length) {
         const directions = ideation!.directions;
         if (directions.length < 3 || directions.length > 5 || args.ideation.directions.some(direction => !direction.trim())
@@ -1482,10 +1488,10 @@ export function buildConversationIntakePrompt(
       SELF_MEDIA_LENGTH_GUIDANCE,
       WRITING_DIRECTION_GUIDANCE,
       savingReply
-        ? '只在同一次保存工具中更新与已展示回复一致的ideation参考记录；不再生成方向，不重复旧反应。'
+        ? '在同一次保存工具提交已讨论的 ideation 选项和必要参考记录，不重复旧反应。若保存工具报 INTAKE_DIRECTION_OPTIONS_REQUIRED，补齐它要求的选项并重提整条回复。'
         : INTAKE_IDEATION_GUIDANCE,
       savingReply
-        ? "公开回复已经展示，现在只调用 respond_writing_intake 保存同一条回复及必要状态。reply 保留刚才的公开回复，不重写、不继续聊天。保存指令不是作者的新消息，不能作为确认、材料或授权来源。"
+        ? "公开回复已经展示，现在只调用 respond_writing_intake 保存同一条回复及必要状态。保留刚才的公开回复，只按保存工具的反馈补齐缺项。保存指令不是作者的新消息，不能作为确认、材料或授权来源。"
         : "先以普通文本直接给作者本轮完整的自然语言回复，让作者边生成边阅读；不要输出思考过程、工具参数或内部记录。随后调用 respond_writing_intake 保存同一条回复及必要状态，reply 与刚才的公开回复保持一致，不再写第二版。工具保存成功前不要声称已保存、已确认或已完成写作；生成和保存状态由界面展示，不要把这些状态写进回复正文。",
       "信息足以形成可执行方案时，用 respond_writing_intake 的 proposal.brief 提交写作偏好：topic、genre、audience、targetCharacters（整数，例如1200）、constraints、publicationGoal；voice、styleReference、platform 未知时省略或设为 null。用户未明确的信息可以建议，但 reply、summary 和 assumptions 必须说明哪些是建议或推测；还不适合提出方案时只回复和追问，不必为了填字段硬给方案。",
       "非用户明确要求时，需求澄清阶段不得拟标题或标题候选；用户明确指定的现有标题应原样保留为写作约束，不得误当成待优化候选。如需新拟或比较标题候选，留到后期 title 专家阶段。",

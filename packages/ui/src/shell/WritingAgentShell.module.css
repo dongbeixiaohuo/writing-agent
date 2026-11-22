@@ -920,17 +920,23 @@
   gap: 12px;
 }
 
-.checkpointRole {
-  display: grid;
+.agentAvatar {
+  display: block;
   flex: none;
-  place-items: center;
   width: 36px;
   height: 36px;
-  border-radius: 11px;
-  color: var(--dsw-alias-label-primary-foreground);
-  background: var(--dsw-alias-brand-primary);
-  font-size: 15px;
-  font-weight: 700;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.checkpointGuide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .checkpointHeader > div:last-child {
@@ -2844,6 +2850,18 @@
 .searchHeading p { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.6; }
 .searchPrivacyBadge { flex-shrink: 0; padding: 5px 9px; border-radius: 999px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-active); font-size: 11px; }
 .searchProviderList { display: grid; gap: 12px; }
+.searchLimits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 12px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 12px 16px 16px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+}
+.searchLimits legend { padding: 0 6px; font-weight: 600; }
+.searchLimits > small { grid-column: 1 / -1; }
 .searchProviderCard { display: grid; gap: 16px; padding: 16px 18px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 14px; background: var(--dsw-specific-popover); }
 label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(0, 1fr) max-content; align-items: center; cursor: pointer; }
 .searchProviderToggle { display: grid; gap: 16px; }
@@ -3116,8 +3134,9 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
 .manuscriptReader > p { color: var(--dsw-alias-label-secondary); font-size: 13px; }
 .manuscriptReader > button { margin-bottom: 20px; }
 .conversationWorking { color: var(--dsw-alias-label-secondary); padding: 14px 0 14px 16px; border-left: 2px solid var(--dsw-alias-label-secondary); font-size: 14px; }
-.conversationWorking p { margin: 7px 0 0; line-height: 1.65; }
+.conversationWorking > p { margin: 5px 0 0 46px; line-height: 1.65; }
 .workingHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.workingIdentity { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .workingHeading strong { color: var(--dsw-alias-label-primary); font-weight: 600; }
 .workingActions { display: flex; align-items: center; gap: 12px; }
 .workingElapsed { font-variant-numeric: tabular-nums; font-size: 12px; }
@@ -3149,22 +3168,6 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
 }
 
 .workPreview > small { display: block; color: var(--dsw-alias-label-secondary); }
-.materialPreview {
-  margin-top: 12px;
-  padding: 12px 16px;
-  border: 1px solid var(--dsw-alias-border-l3);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-1, #f7f8fa);
-  font-size: 13px;
-}
-.materialPreviewHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
-.materialPreviewHeader strong { color: var(--dsw-alias-label-primary); }
-.materialPreviewHeader select { max-width: min(100%, 280px); padding: 5px 28px 5px 8px; color: var(--dsw-alias-label-primary); background: var(--dsw-specific-popover); border: 1px solid var(--dsw-alias-border-l3); border-radius: 6px; font: inherit; }
-.materialPreview > p { color: var(--dsw-alias-label-secondary); }
-.materialPreview details { margin-top: 10px; border-top: 1px solid var(--dsw-alias-border-l3); padding-top: 10px; }
-.materialPreview summary { color: var(--dsw-alias-brand-primary); cursor: pointer; font-weight: 600; }
-.materialExcerpt { max-height: 220px; overflow-y: auto; margin-top: 10px; padding: 0 10px; border-left: 2px solid var(--dsw-alias-border-l3); }
-.materialPreview small { display: block; margin-top: 8px; color: var(--dsw-alias-label-secondary); }
 .stageExecutionList { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; }
 .stageExecutionList > li { display: flex; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border-color, #e5e7eb); }
 .stageExecutionList small { display: block; color: var(--text-secondary, #6b7280); font-size: 12px; }

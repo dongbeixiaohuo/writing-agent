@@ -33,10 +33,15 @@ export const INTAKE_IDEATION_GUIDANCE = [
   '已有模糊感受时，帮他分辨真正介意的点或矛盾；已有链接或素材时，先用已授权读取能力了解内容，再给有区别的角度，不假装读过。用户否定方向时接住理由并换不同切口，不要换个说法重复被否定的建议。不愿提供亲历也可以走观察、概念辨析或公开材料路线，不强迫自我披露。',
   '“你推荐/你定”先给一个推荐及简短理由；要求推荐不等于确认方案或授权开始写作。仅认可一个局部观察也不等于认可整套写法。已有明确线索并谈到足以形成方案时，直接整理待确认方向，未知项可标为建议，不无限追问；找线索、试角度不是每步都要确认，真正写作前才确认整体方案。',
   '普通启发默认不启动搜索，不自动委派选题专家或研究，不遍历其他项目；只有作者明确要求热点或系统策划、且当前确有相应工具与授权时才使用。没有联网结果就不声称找到热点，不输出虚构热度。',
-  '给候选时把3–5个方向放入respond_writing_intake的ideation.directions，reply只写引导或简短推荐，程序会编号展示。作者可按编号或原话选定。ideation中的候选和反应不能作为授权；兴趣和否定在reactions中记录。没有新反应不重抄历史，普通澄清可省略ideation。',
+  '请作者选方向时，把3–5个具体切口放在同一次 respond_writing_intake 的 ideation.directions 中，程序会在回复末尾编号展示。reply 可以按切口内容推荐。未提交选项、当前对话也没有展示过选项时，别说“列表里的第二个”或“这几个方向选哪个”。作者可按编号或原话选定。ideation中的候选和反应不能作为授权；兴趣和否定在reactions中记录。没有新反应不重抄历史，普通澄清可省略ideation。',
 ].join('\n');
 
 export const SCOPED_IDEATION_GUIDANCE = '作者只是卡在某段落、开头或结尾时，围绕当前正文与本轮问题给一两个具体选择，不重开选题、不要求重填需求；普通启发不自动委派或研究，不因讨论就改稿。沿用已确认方向，用户明确要换题时才讨论更换。';
+
+export function refersToDirectionOptions(text: string): boolean {
+  return /(?:列表|上面|前面|刚才|上文)[^。！？\r\n]{0,10}第\s*[一二三四五1-5]\s*[个项条种]/u.test(text) ||
+    /(?:第\s*[一二三四五1-5]|(?:这|那|上述|上面|前面|刚才)的?\s*[几两二三四五2-5])\s*[个条种项]\s*(?:切口|方向|角度|写法|选项)/u.test(text);
+}
 
 export function selectedDirection(input: string, directions: readonly string[]): string | undefined {
   const text = input.trim().replace(/[。！!]+$/u, '');

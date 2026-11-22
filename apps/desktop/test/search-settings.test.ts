@@ -94,22 +94,28 @@ test(`one credential rollback ${failure} failure does not prevent remaining rest
 });
 }
 
-test('search limit persists, old settings default to six, and invalid changes leave credentials and flags intact', async () => {
+test('batch preferences persist independently including values below ten', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-search-limit-'));
   const keys = new Map<string, string>();
   const credentials = new CredentialBroker({ systemBackend: { isAvailable: async () => true,
     read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
   const path = join(root, 'search-settings.json');
   try {
-    writeFileSync(path, JSON.stringify({ parallelEnabled: false, tavilyEnabled: false }));
+    writeFileSync(path, JSON.stringify({ parallelEnabled: false, tavilyEnabled: false, searchLimit: 6 }));
     const store = new SearchSettingsStore(path, credentials);
-    assert.equal((await store.status()).searchLimit, 6);
-    await store.save({ parallelEnabled: false, tavilyEnabled: true, searchLimit: 12, tavilyApiKey: 'test-key' });
-    assert.equal(new SearchSettingsStore(path, credentials).configuration().searchLimit, 12);
+    const budgets = (settings: { researchSearchLimit?: number; supplementSearchLimit?: number; searchLimit?: number }) =>
+      [settings.researchSearchLimit, settings.supplementSearchLimit, settings.searchLimit];
+    assert.deepEqual(budgets(await store.status()), [10, 10, 6]);
+    await store.save({ parallelEnabled: false, tavilyEnabled: true, researchSearchLimit: 2, supplementSearchLimit: 7, searchLimit: 1, tavilyApiKey: 'test-key' });
+    assert.deepEqual(budgets(new SearchSettingsStore(path, credentials).configuration()), [2, 7, 1]);
     await store.save({ parallelEnabled: true, tavilyEnabled: true });
-    assert.equal((await store.status()).searchLimit, 12, 'older API clients must not reset a saved custom limit');
+    assert.deepEqual(budgets(await store.status()), [2, 7, 1], 'older API clients must not reset saved custom limits');
     const before = readFileSync(path, 'utf8');
-    for (const searchLimit of [0, 31, 1.2, NaN]) await assert.rejects(store.save({ parallelEnabled: false, tavilyEnabled: false, searchLimit, tavilyApiKey: 'replacement' }), /SEARCH_SETTINGS_INVALID/);
+    for (const key of ['researchSearchLimit', 'supplementSearchLimit', 'searchLimit'] as const) {
+      for (const value of [0, 31, 10.2, NaN]) await assert.rejects(store.save({
+        parallelEnabled: false, tavilyEnabled: false, [key]: value, tavilyApiKey: 'replacement',
+      }), /SEARCH_SETTINGS_INVALID/);
+    }
     assert.equal(readFileSync(path, 'utf8'), before);
     assert.deepEqual([...keys.values()], ['test-key']);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -123,7 +129,7 @@ test('saved search switches authorize repeated public searches without per-query
   const store = new SearchSettingsStore(join(root, 'search-settings.json'), credentials);
   let requests = 0;
   const scope = createFactSearchTools({ configuration: () => store.configuration(),
-    fetch: async () => { requests++; return Response.json({ results: [] }); } });
+    fetch: async () => { requests++; return Response.json({ results: [{ url: 'https://example.com/archive', content: '公开记录' }] }); } });
   try {
     await store.save({ parallelEnabled: false, tavilyEnabled: true, tavilyApiKey: 'synthetic-key' });
     for (const query of ['国庆节是哪天', '中华人民共和国成立年份']) {
@@ -147,7 +153,7 @@ test('failed revalidation clears old availability; stale verification cannot gre
   const keys = new Map<string, string>();
   const credentials = new CredentialBroker({ systemBackend: { isAvailable: async () => true,
     read: async id => keys.get(id) ?? null, write: async (id, key) => { keys.set(id, key); }, delete: async id => { keys.delete(id); } } });
-  let response = async () => Response.json({ results: [] });
+  let response = async () => Response.json({ results: [{ url: 'https://example.com/archive', content: '公开记录' }] });
   const store = new SearchSettingsStore(join(root, 'search-settings.json'), credentials, { fetch: async () => response() });
   try {
     await store.save({ parallelEnabled: false, tavilyEnabled: true, tavilyApiKey: 'synthetic-key' });
@@ -164,7 +170,7 @@ test('failed revalidation clears old availability; stale verification cannot gre
     const pending = store.verify('tavily');
     await ready;
     await store.save({ parallelEnabled: false, tavilyEnabled: true, tavilyApiKey: 'replacement' });
-    complete(Response.json({ results: [] }));
+    complete(Response.json({ results: [{ url: 'https://example.com/archive', content: '公开记录' }] }));
     assert.notEqual((await pending).verification?.tavily?.status, 'available');
     await assert.rejects(store.verify('unknown' as never), /SEARCH_SETTINGS_INVALID/);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -178,7 +184,7 @@ test('a saved key is not verified; each service is probed directly and key chang
   const urls: string[] = [];
   const store = new SearchSettingsStore(join(root, 'search-settings.json'), credentials, { fetch: async (url, init) => {
     urls.push(String(url));
-    if (String(url).includes('tavily')) return Response.json({ results: [] });
+    if (String(url).includes('tavily')) return Response.json({ results: [{ url: 'https://example.com/archive', content: '公开记录' }] });
     const body = JSON.parse(String(init?.body));
     if (body.method === 'initialize') return Response.json({ id: 1, result: { protocolVersion: '2024-11-05' } });
     if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
@@ -250,7 +256,9 @@ test('failed settings replacement restores the previous Tavily key and flags', a
       deepseekKeyConfigured: false,
       tavilyKeyConfigured: true,
       credentialPersistence: 'system',
-      searchLimit: 6,
+      researchSearchLimit: 10,
+      supplementSearchLimit: 10,
+      searchLimit: 10,
     });
     assert.deepEqual([...keys.values()], [oldKey]);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -277,7 +285,9 @@ test('failed first settings replacement removes the newly created Tavily key', a
       deepseekKeyConfigured: false,
       tavilyKeyConfigured: false,
       credentialPersistence: 'missing',
-      searchLimit: 6,
+      researchSearchLimit: 10,
+      supplementSearchLimit: 10,
+      searchLimit: 10,
     });
     assert.equal(keys.size, 0);
   } finally { rmSync(root, { recursive: true, force: true }); }

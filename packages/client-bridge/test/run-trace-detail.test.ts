@@ -14,10 +14,11 @@ import { requestInputBreakdown } from '../src/request-input-breakdown.js';
 test('fact input counts selected claims and source locators as evidence, not unexplained stage state', () => {
   const state = { preparedClaims: [{ claimId: 'C001', claimText: '年份待查', articleQuote: '原句' }],
     savedSourceRecords: [{ callId: 'search1', sourceRows: [['公告', 'https://example.test']] }], noFactualClaimsReason: '',
+    savedSourcePassages: [{ claimIds: ['C001'], url: 'https://example.test', text: '已存原文节选' }],
     validEvidenceIds: ['E001'], factPhase: 'verify' };
   const request: any = { messages: [{ role: 'system', content: 'check' }, { role: 'user', content: JSON.stringify(state) }] };
   const result = requestInputBreakdown(request);
-  const expectedEvidence = ['preparedClaims', 'savedSourceRecords', 'noFactualClaimsReason', 'validEvidenceIds']
+  const expectedEvidence = ['preparedClaims', 'savedSourceRecords', 'savedSourcePassages', 'noFactualClaimsReason', 'validEvidenceIds']
     .reduce((total, key) => total + JSON.stringify((state as any)[key]).length, 0);
   assert.equal(result.parts.find(p => p.key === 'evidence')?.characters, expectedEvidence);
   assert.equal(result.parts.reduce((n, p) => n + p.characters, 0), result.totalCharacters);
@@ -92,16 +93,15 @@ test('search details retain timestamped dispatch and failure history even before
   } finally { f.close(); }
 });
 
-test('failed source detail explains the ledger gate and next step without inventing a network failure', async () => {
+test('failed source keeps the recorded code and domain in the original input and output without repeating the overview', async () => {
   const f = fixture();
   try {
-    const step = f.event('tool.requested', 'source-op', { toolName: 'read_fact_source', arguments: { url: 'https://example.com/report' } });
+    const step = f.event('tool.requested', 'source-op', { toolName: 'read_fact_source', arguments: { url: 'https://www.sohu.com/a/example' } });
     f.event('tool.failed', 'source-op', { error: { code: 'FACT_SOURCE_NOT_IN_LEDGER' } });
     const detail = await f.bridge.getRunTraceDetail({ ...f.input, stepId: step.id });
-    assert.match(detail.notes.join('\n'), /未匹配.*来源记录/u);
-    assert.match(detail.notes.join('\n'), /未发出网络读取/u);
-    assert.match(detail.notes.join('\n'), /先.*公开搜索/u);
-    assert.doesNotMatch(detail.notes.join('\n'), /模型编造|网站宕机/u);
+    assert.match(detail.sections.find(section => section.id === 'input')!.text, /www\.sohu\.com/u);
+    assert.match(detail.sections.find(section => section.id === 'output')!.text, /FACT_SOURCE_NOT_IN_LEDGER/u);
+    assert.doesNotMatch(detail.notes.join('\n'), /FACT_SOURCE_NOT_IN_LEDGER|处理建议|门禁/u);
   } finally { f.close(); }
 });
 

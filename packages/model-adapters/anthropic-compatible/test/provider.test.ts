@@ -148,6 +148,21 @@ describe("Anthropic-compatible provider", () => {
     });
   });
 
+  it('uses light effort for first-party GLM fact extraction only', () => {
+    for (const [baseURL, supported] of [['https://open.bigmodel.cn/api/anthropic/v1', true], ['https://example.test/v1', false]] as const) {
+      const provider = new AnthropicCompatibleProvider({ id: 'glm', baseURL, credentialRef: 'test/key',
+        resolveCredential: async () => fakeApiKey, models: {} });
+      const request: ModelRequest = { requestId: 'extract', model: 'glm-5.3-flash',
+        messages: [{ role: 'user', content: 'test' }], parameters: { lightReasoning: true } };
+      const extract = provider.snapshotRequest(request).normalizedPayload as Record<string, unknown>;
+      const other = provider.snapshotRequest({ ...request, parameters: {} }).normalizedPayload as Record<string, unknown>;
+      assert.deepEqual(extract.output_config, supported ? { effort: 'low' } : undefined);
+      assert.deepEqual(extract.thinking, supported ? { type: 'enabled' } : undefined);
+      assert.equal(other.output_config, undefined);
+      assert.equal(other.thinking, undefined);
+    }
+  });
+
   it("round-trips streamed tool use/results without putting the key in snapshots", async () => {
     const bodies: Record<string, unknown>[] = [];
     const apiKeyHeaders: Array<string | undefined> = [];

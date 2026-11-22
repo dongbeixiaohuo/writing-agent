@@ -50,6 +50,8 @@ describe("workflow body output contract", () => {
     const article = '# 标题\n\n马叙伦在《石屋续沈》中记载，胡雪岩留下银两，此后每月供给。\n\n双方讨论的是同一个孩子，却未必在解决同一个问题。';
     assert.doesNotThrow(() => assertCleanBodyStageContent('draft', article, undefined, true));
     assert.doesNotThrow(() => assertCleanBodyStageContent('draft',
+      '# 职场谈钱\n\n老板掌握完整分配表。报道里的员工只能看到自己那一格，无法判断这一格是否公平。', undefined, true));
+    assert.doesNotThrow(() => assertCleanBodyStageContent('draft',
       '# 标题\n\n原有的经济来源难以维持，胡筱梅的母亲为子女学费发愁，曾告诉她，如果有人必须停学，只能是她。', undefined, true),
     'ordinary narrative difficulty and speech are not editorial caveats');
     assert.doesNotThrow(() => assertCleanBodyStageContent('draft', `# 标题\n\n${caveats[0]}`), 'legacy workflows retain their existing contract');
@@ -280,12 +282,12 @@ class FactCheckOnlyProvider extends ModelProviderBase {
     const extraction = factPreparationFixtureEvents(request);
     if (extraction) { yield* extraction; return; }
     assert.equal(context.materials, undefined, 'verification uses prepared facts, not original author materials');
-    assert.equal(context.materialCatalog, undefined);
+    assert.deepEqual(context.materialCatalog.map((material: { materialId: string }) => material.materialId), ['material-1']);
     assert.equal(context.bodyVersionId, this.bodyVersionId);
     assert.equal(context.evidenceVersionId, this.evidenceVersionId);
     assert.equal(context.artifacts.find((a: { kind: string }) => a.kind === 'body').content.projection, 'fact_article_catalog');
     assert.ok(context.artifacts.find((a: { id: string }) => a.id === this.evidenceVersionId).content);
-    assert.equal(request.tools?.some(tool => tool.name === 'read_material'), false);
+    assert.ok(request.tools?.some(tool => tool.name === 'read_material'), 'a relevant local source can be read on demand');
     assert.equal(request.tools?.some(tool => tool.name === 'read_artifact_version'), false, 'bound artifacts are already complete');
     const factSubmitted = request.messages.some(
       (message) => message.role === "tool" && message.name === "submit_fact_check",
@@ -1506,7 +1508,7 @@ describe("WritingApplicationService draft closure", () => {
         },
       });
       assert.equal(result.ok, true, JSON.stringify(result));
-      assert.equal(result.modelRequestCount, 31, 'three readers replace one serial reader');
+      assert.equal(result.modelRequestCount, 30, 'includes three reader requests and program-owned completion');
       assert.equal(result.toolCallCount, 29);
       assert.equal(
         storage.listArtifactVersions("project-1", "review", `review_publish:${result.runId}`).length,
@@ -1670,10 +1672,10 @@ describe("WritingApplicationService draft closure", () => {
       if (!result.ok) return;
       assert.equal(result.validationKind, "mock_verified");
       assert.equal(result.publicationReady, true);
-      assert.equal(result.modelRequestCount, 28, 'all three parallel readers share the parent budget');
+      assert.equal(result.modelRequestCount, 27, 'three parallel readers share the parent budget and completion is local');
       assert.equal(result.toolCallCount, 26);
       assert.notEqual(result.artifactVersionId, null);
-      assert.equal(provider.requests.length, 28);
+      assert.equal(provider.requests.length, 27);
       assert.equal(
         JSON.stringify(provider.requests[0]).includes("下班后我沿着河边"),
         true,

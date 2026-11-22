@@ -702,8 +702,17 @@ export class AnthropicCompatibleProvider extends ModelProviderBase {
     const disableThinking = request.parameters.disableConfiguredThinking && thinking &&
       typeof thinking === 'object' && !Array.isArray(thinking) && 'type' in thinking &&
       (thinking.type === 'enabled' || thinking.type === 'adaptive');
-    return this.extraBody === undefined ? body : { ...this.extraBody, ...body,
-      ...(disableThinking ? { thinking: { type: 'disabled' } } : {}) } as WireRequest;
+    // GLM 5.3 requires reasoning to stay enabled. The Messages endpoint uses
+    // the standard effort field. Leave other models and custom endpoints alone.
+    const lightGlm = request.parameters.lightReasoning &&
+      /^glm-5\.3(?:-flash)?$/iu.test(request.model) &&
+      /^https:\/\/(?:open\.bigmodel\.cn|api\.z\.ai)\/api\/anthropic(?:\/v1)?$/iu.test(this.baseURL);
+    const extraOutput = this.extraBody?.output_config;
+    return { ...this.extraBody, ...body,
+      ...(lightGlm ? { thinking: { type: 'enabled' }, output_config: {
+        ...(extraOutput && typeof extraOutput === 'object' && !Array.isArray(extraOutput) ? extraOutput : {}),
+        effort: 'low',
+      } } : disableThinking ? { thinking: { type: 'disabled' } } : {}) } as WireRequest;
   }
 
   private outputTokenLimit(request: ModelRequest): NonNullable<ProviderRequestSnapshot["outputTokenLimit"]> {

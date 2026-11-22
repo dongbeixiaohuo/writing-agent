@@ -28,9 +28,9 @@ const { $schema: _schemaVersion, ...EDITORIAL_PLAN_JSON_SCHEMA } = z.toJSONSchem
 export { EDITORIAL_PLAN_JSON_SCHEMA };
 
 export const EDITORIAL_PLAN_INSTRUCTIONS = [
-  '随研究台账提交editorialPlan。在作者的问题内比较2–3条值得追下去的材料线索；作者已定切口则沿用。readerProblem写读者会想追问什么，readerGain写细节、人物理解、感受或认识上的收获，angle写可展开的内容，不预先替全文定论。',
+  '随研究台账提交editorialPlan。作者未选方向时，在原问题内比较2–3条材料线索。方向已确认时只提这一个方向，选能把它写实、写具体的材料。readerProblem写读者会想追问什么，readerGain写细节、人物理解、感受或认识上的收获，angle写可展开的内容，不预先替全文定论。',
   'selectedAngleId选择最有内容可写的一条，selectionReason指向具体片段为何有意思。每条材料填写evidence_id和materialDecisions的use/omit：保留能让人物与事情具体起来、带来变化或推进阅读的内容；舍弃重复、泛泛背景与凑权威的数字。supportingEvidenceIds引用存在且use的材料。保留引文、出处与必要上下文，供主笔回到原文。',
-  'gaps只记录让文章无法往下写的内容缺口，围绕它补查。未找到就与作者讨论，不擅自换题或改写成查证教程。个人随笔可使用作者亲历和感受；材料不足不能靠编造补齐。研究判断与选材说明只用于内部，不进入正文。',
+  'gaps只记录让文章无法往下写的内容缺口，围绕它补查。未找到时按已确认的方向和能用的材料推进；方向未定才与作者讨论。个人随笔可使用作者亲历和感受；材料不足不能靠编造补齐。研究判断与选材说明只用于内部，不进入正文。',
 ].join('\n');
 
 /** Validate references against the actual IDs in the already-expanded research ledger. */

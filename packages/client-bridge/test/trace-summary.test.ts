@@ -57,7 +57,8 @@ test('parallel reader requests have distinct ordinary persona labels and preserv
 })
 
 test('source HTTP failures retain structured status through the trace and UI explanation, including public HTTP hosts', () => {
-  for (const httpStatus of [403, 404, 429, 503]) {
+  for (const [httpStatus, title] of [[403, '网站拒绝访问'], [404, '页面不存在'],
+    [429, '网站限制请求频率'], [503, '网站服务异常']] as const) {
     const step = runDiagnostics(projection([
       { type: 'run.started', operationId: 'start', payload: {} },
       { type: 'tool.requested', operationId: 'read', payload: { toolName: 'read_fact_source', arguments: { url: 'http://example.com/article' } } },
@@ -65,10 +66,9 @@ test('source HTTP failures retain structured status through the trace and UI exp
     ]), run).trace!.find(s => s.kind === 'tool')!;
     assert.equal(step.httpStatus, httpStatus);
     assert.match(step.inputPreview!, /example.com/);
-    assert.match(step.outputPreview!, new RegExp(`HTTP ${httpStatus}`));
-    assert.doesNotMatch(step.outputPreview!, /未保存.*状态|未记录具体/);
-    assert.match(explainRunFailure(step).title, new RegExp(`HTTP ${httpStatus}`));
-    assert.match(explainRunFailure(step).detail, /不是禁止 http/);
+    assert.equal(explainRunFailure(step).title, title);
+    assert.doesNotMatch(explainRunFailure(step).title + explainRunFailure(step).detail, /HTTP|状态码/);
+    assert.match(explainRunFailure(step).detail, /网站有回应.*没拿到网页正文/);
   }
 });
 
@@ -78,9 +78,9 @@ test('source timeout trace clearly separates a webpage timeout from model and se
     { type:'tool.failed', operationId:'source', payload:{ result:{ ok:false, toolName:'read_fact_source', error:{ code:'FACT_SOURCE_TIMEOUT', message:'来源原文读取等待30秒后超时。', details:{ timeoutMs:30000, timeoutPhase:'transport' } } } } },
   ]), run).trace!.find(s => s.kind === 'tool')!;
   const explanation = explainRunFailure(step);
-  assert.match(explanation.title, /来源原文读取超时/);
-  assert.match(explanation.detail, /不是.*模型.*搜索/);
-  assert.match(explanation.remediation, /摘录.*未.*原文/);
+  assert.match(explanation.title, /等网页打开时超时了/);
+  assert.match(explanation.detail, /没能读到网页正文/);
+  assert.match(explanation.remediation, /先用已有摘录/);
   assert.match(step.outputPreview!, /30秒/);
 });
 
@@ -93,13 +93,19 @@ test('search trace exposes the current provider before completion and fallback a
   const pending = runDiagnostics(projection(events), run).trace!.find(s => s.kind === 'tool')!;
   assert.equal(pending.status, 'pending');
   assert.match(pending.outputPreview!, /Tavily 已发出/);
+  const failedOver = runDiagnostics(projection([...events, { type: 'search.progress', operationId: 'search',
+    payload: { message: 'Parallel 未成功：SEARCH_REQUEST_TIMEOUT。' },
+  }]), run).trace!.find(step => step.kind === 'tool')!;
+  assert.match(failedOver.outputPreview!, /Parallel.*等搜索结果时超时了/u);
+  assert.doesNotMatch(failedOver.outputPreview!, /SEARCH_REQUEST_TIMEOUT/u);
   const done = runDiagnostics(projection([...events, { type: 'tool.completed', operationId: 'search', payload: { result: { ok: true, result: {
     mode: 'external', provider: 'tavily', evidenceText: '公开来源 https://example.com', attempts: [
       { provider: 'parallel', status: 'failed', elapsedMs: 8000, httpRequests: 1, errorCode: 'SEARCH_REQUEST_TIMEOUT' },
       { provider: 'tavily', status: 'completed', elapsedMs: 2000, httpRequests: 1 },
     ],
   } } } }]), run).trace!.find(s => s.kind === 'tool')!;
-  assert.match(done.outputPreview!, /Parallel.*SEARCH_REQUEST_TIMEOUT/);
+  assert.match(done.outputPreview!, /Parallel.*等搜索结果时超时了/);
+  assert.doesNotMatch(done.outputPreview!, /SEARCH_REQUEST_TIMEOUT/u);
   assert.match(done.outputPreview!, /Tavily/);
 });
 
@@ -120,11 +126,11 @@ test('front research searches show their purpose, query and provider rather than
 
 test('new source and reader version guards name the repair instead of suggesting a model outage', () => {
   const source = explainRunFailure({ kind: 'tool', status: 'failed', technicalName: 'submit_writing_proposal', errorCode: 'INTAKE_SOURCE_READ_REQUIRED' });
-  assert.match(source.title, /链接.*未.*读取/);
-  assert.match(source.remediation, /先.*读取/);
+  assert.match(source.title, /链接.*还没读完/);
+  assert.match(source.remediation, /先读这些链接/);
   const reader = explainRunFailure({ kind: 'tool', status: 'failed', technicalName: 'respond_author', errorCode: 'READER_RETEST_STALE' });
-  assert.match(reader.title, /重测.*版本.*变化/);
-  assert.match(reader.remediation, /当前版本.*重测/);
+  assert.match(reader.title, /试读.*稿件改了/);
+  assert.match(reader.remediation, /当前稿件.*试读/);
   assert.doesNotMatch(reader.remediation + source.remediation, /账户|模型配置/);
 });
 
@@ -135,8 +141,8 @@ test('optional research failures explain the external cause and never offer a no
       { type: 'tool.failed', operationId: 'research', payload: { error: { code } } },
     ]), run).trace!.find(s => s.kind === 'tool')!;
     const explanation = explainRunFailure(step);
-    assert.match(explanation.title, /研究.*搜索/);
-    assert.match(explanation.remediation, /继续.*提纲/);
+    assert.match(explanation.title, /找资料|搜索/);
+    assert.match(explanation.remediation, /沿原题继续/);
     assert.doesNotMatch(explanation.remediation, /重试|追加|当前.*提示/);
   }
 });
@@ -272,14 +278,14 @@ test('failure summaries identify the recorded failing layer without guessing an 
   ]), run).trace ?? []
 
   const model = result.find(step => step.kind === 'model')!
-  assert.match(model.outputPreview ?? '', /模型.*首个有效内容/u)
+  assert.match(model.outputPreview ?? '', /模型还没开始回复/u)
   assert.doesNotMatch(model.outputPreview ?? '', /搜索服务/u)
-  assert.match(result.find(step => step.technicalName === 'search_fact_sources')?.outputPreview ?? '', /公开搜索服务.*失败/u)
+  assert.match(result.find(step => step.technicalName === 'search_fact_sources')?.outputPreview ?? '', /搜索服务暂时限制了请求/u)
   const source = result.find(step => step.technicalName === 'read_fact_source')?.outputPreview ?? ''
-  assert.match(source, /未匹配.*来源记录/u)
-  assert.match(source, /未发出网络读取/u)
+  assert.match(source, /不在本轮搜索结果或已保存的核查资料/u)
+  assert.match(source, /没有向该网站发请求/u)
   assert.doesNotMatch(source, /模型编造|网站宕机|搜索服务失败/u)
-  assert.match(result.find(step => step.technicalName === 'submit_fact_check')?.outputPreview ?? '', /事实核查提交.*门禁/u)
+  assert.match(result.find(step => step.technicalName === 'submit_fact_check')?.outputPreview ?? '', /这次核查结果没能保存/u)
 })
 
 test('model output format failure is distinguished from transport silence', () => {
@@ -287,9 +293,9 @@ test('model output format failure is distinguished from transport silence', () =
   assert.match(invalid.title, /格式/);
   assert.doesNotMatch(invalid.title + invalid.detail, /未.*响应|等待时限|超时/u);
   const timeout = explainRunFailure({ kind: 'model', status: 'failed', errorCode: 'TIMEOUT', transportPhase: 'first_response' });
-  assert.match(timeout.title, /未.*返回.*有效内容/u);
+  assert.match(timeout.title, /模型还没开始回复/u);
   const gate = explainRunFailure({ kind: 'tool', status: 'failed', technicalName: 'submit_writing_stage', errorCode: 'STAGE_OUTPUT_INVALID' });
-  assert.match(gate.title + gate.detail, /校验|前置条件/u);
+  assert.match(gate.title + gate.detail, /没能保存.*已保存的上一版内容/u);
   assert.doesNotMatch(gate.title + gate.detail, /模型未响应/u);
 });
 
@@ -297,16 +303,15 @@ test('fact provenance refusals explain missing evidence rather than implying a m
   const context = { kind: 'tool', status: 'failed', technicalName: 'submit_fact_check' } as const;
   const external = explainRunFailure({ ...context, errorCode: 'FACT_EXTERNAL_RECORD_REQUIRED' });
   assert.match(external.title, /查证依据不完整/u);
-  assert.match(external.remediation, /材料对照.*模型复核/u);
-  assert.match(external.remediation, /不需要.*重复搜索/u);
+  assert.match(external.remediation, /先用已经找到的材料核对/u);
   assert.doesNotMatch(external.title, /无响应|超时/u);
-  assert.match(external.detail, /关联校验/u);
+  assert.match(external.detail, /保存的来源里找不到/u);
   assert.doesNotMatch(external.detail, /模型声称/u, 'a parser compatibility fault must not be attributed to the model');
   const selection = explainRunFailure({ ...context, errorCode: 'FACT_CLAIM_SELECTION_REQUIRED' });
-  assert.match(selection.title, /选择原因/u);
-  assert.match(selection.remediation, /不必重新读取全文/u);
+  assert.match(selection.title, /没说清为什么要查/u);
+  assert.match(selection.remediation, /继续用已有的稿件和材料/u);
   const legacy = explainRunFailure({ ...context, errorCode: 'FACT_KEY_EXTERNAL_CHECK_REQUIRED' });
-  assert.match(legacy.detail, /旧规则.*取消/u);
+  assert.match(legacy.detail, /旧版.*取消/u);
   assert.match(legacy.remediation, /无需.*公开证明/u);
 });
 
@@ -331,8 +336,8 @@ test('checkpoint rework gate explains the decision conflict and a usable recover
     { type:'tool.failed', operationId:'gate', payload:{error:{code:'CHECKPOINT_REWORK_REQUIRED'}} },
   ]), run).trace ?? [];
   const failed = trace.find(step => step.status === 'failed');
-  assert.match(failed?.outputPreview ?? '', /当前决策记录要求先修改/u);
-  assert.match(failed?.outputPreview ?? '', /不是模型无响应.*不是搜索故障/u);
+  assert.match(failed?.outputPreview ?? '', /当前这一步还需要修改/u);
+  assert.match(failed?.outputPreview ?? '', /上一条回复理解成了「先改这一步」/u);
 });
 
 test('known source policy and search precondition codes keep their precise recorded boundary', () => {
@@ -352,11 +357,11 @@ test('known source policy and search precondition codes keep their precise recor
   const output = (id: string) => trace.find(step => step.id === `event-${id}`)?.outputPreview ?? ''
   const requestedIndexes = { private: 1, credentials: 3, dns: 5, http: 7, limit: 9, disabled: 11 }
 
-  assert.match(output(String(requestedIndexes.private)), /本机安全规则.*未发出网络读取/u)
-  assert.match(output(String(requestedIndexes.credentials)), /本机安全规则.*未发出网络读取/u)
-  assert.match(output(String(requestedIndexes.dns)), /来源域名解析失败/u)
-  assert.match(output(String(requestedIndexes.http)), /旧记录.*缺少状态码.*未保存具体 HTTP 状态/u)
-  assert.match(output(String(requestedIndexes.limit)), /搜索次数.*上限/u)
+  assert.match(output(String(requestedIndexes.private)), /内网地址.*没有向这个地址发出请求/u)
+  assert.match(output(String(requestedIndexes.credentials)), /登录信息.*没有向这个地址发出请求/u)
+  assert.match(output(String(requestedIndexes.dns)), /没有找到这个网站的地址/u)
+  assert.match(output(String(requestedIndexes.http)), /旧记录只保存了网站没有成功返回/u)
+  assert.match(output(String(requestedIndexes.limit)), /搜索次数已经用完/u)
   assert.doesNotMatch(output(String(requestedIndexes.limit)), /搜索服务请求失败/u)
   assert.match(output(String(requestedIndexes.disabled)), /外部事实搜索已关闭/u)
   assert.doesNotMatch(output(String(requestedIndexes.disabled)), /搜索服务请求失败/u)
@@ -428,3 +433,36 @@ test('tool trace summarizes persisted inputs, replies, evidence, sources, and fa
   assert.match(content?.outputPreview ?? '', /样本量为 120 家企业/u)
   assert.doesNotMatch(JSON.stringify(trace), /do-not-show|Dante|secret\.txt/u)
 })
+
+test('local fact record read failures do not imply a failed online search', () => {
+  for (const errorCode of ['FACT_RECORD_NOT_FOUND', 'FACT_RECORD_INDEX_INVALID']) {
+    const failure = explainRunFailure({ kind: 'tool', status: 'failed', technicalName: 'read_fact_record', errorCode });
+    assert.match(failure.title, /没找到要重新查看的那条资料/u);
+    assert.match(failure.detail, /没有重新联网搜索/u);
+    assert.match(failure.remediation, /回到对话重试核查/u);
+  }
+});
+
+test('recorded failures have plain next steps and unknown outcomes never claim the operation failed', () => {
+  const cases = [
+    ['agent', 'director_decide', 'DIRECTOR_INPUT_VERSION_MISMATCH', /没能接上当前工作/u],
+    ['tool', 'respond_author', 'AUTHOR_OUTPUT_REQUIRED', /还没做完/u],
+    ['tool', 'respond_writing_intake', 'INTAKE_DIRECTION_OPTIONS_REQUIRED', /完整的方向列表/u],
+    ['tool', 'submit_writing_stage', 'BODY_STAGE_CONTAINS_PROCESS_NOTES', /正文没有保存/u],
+    ['tool', 'prepare_fact_check', 'FACT_CLAIM_NOT_IN_ARTICLE', /核查没有对上当前稿件/u],
+    ['model', undefined, 'AUTH_FAILED', /没有通过账号验证/u],
+    ['model', undefined, 'PROVIDER_UNAVAILABLE', /模型服务暂时不可用/u],
+  ] as const;
+  for (const [kind, technicalName, errorCode, expected] of cases) {
+    const explanation = explainRunFailure({ kind, status: 'failed', technicalName, errorCode });
+    assert.match(explanation.title, expected);
+    assert.ok(explanation.detail && explanation.remediation);
+    assert.ok(!Object.values(explanation).join(' ').includes(errorCode));
+  }
+  const unknown = explainRunFailure({ kind: 'tool', status: 'outcome_unknown', technicalName: 'submit_fact_check', errorCode: 'TIMEOUT' });
+  assert.match(unknown.title, /还不知道.*有没有完成/u);
+  assert.match(unknown.remediation, /先.*确认.*再决定是否重试/u);
+  const fallback = explainRunFailure({ kind: 'tool', status: 'failed', errorCode: 'FUTURE_UNKNOWN_ERROR' });
+  assert.match(fallback.detail, /没有更具体的原因/u);
+  assert.doesNotMatch(Object.values(fallback).join(' '), /FUTURE_UNKNOWN_ERROR|网站|模型/u);
+});

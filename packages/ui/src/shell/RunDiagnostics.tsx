@@ -1,5 +1,6 @@
 import React from 'react'
 import type { DiagnosticOperationStatus, RunDiagnosticDecision, RunDiagnosticsView, WritingWorkflowStageId } from '../../../client-bridge/src/protocol.ts'
+import { explainRunFailure } from '../../../client-bridge/src/run-failure-explanation.ts'
 import { stageRoleCopy } from './interaction.ts'
 
 const STATUS: Readonly<Record<DiagnosticOperationStatus, string>> = {
@@ -54,22 +55,32 @@ export function RunDiagnostics({ diagnostics }: { diagnostics: RunDiagnosticsVie
           {group.targets && <ul>{group.targets.map(target => <li key={`${target.id}:${target.versionId ?? ''}`}>
             <span>{compactMaterialLabel(target.label)}</span>
             <small>{tally(target)}{target.versionId ? ` · 版本 ${target.versionId.slice(0, 8)}` : ''}</small>
-            <details className="run-diagnostics-identifiers"><summary>查看完整标识</summary><p>材料 / 稿件 ID：{target.id}<br />版本 ID：{target.versionId ?? '未记录'}</p></details>
-            {target.errorCodes.length > 0 && <small className="run-diagnostics-error">失败 code：{target.errorCodes.join('、')}</small>}
+            <details className="run-diagnostics-identifiers"><summary>查看完整标识</summary><p>材料 / 稿件 ID：{target.id}<br />版本 ID：{target.versionId ?? '未记录'}</p>
+              {target.errorCodes.length > 0 && <p>错误代码：{target.errorCodes.join('、')}</p>}</details>
           </li>)}</ul>}
-          {group.errorCodes.length > 0 && <p className="run-diagnostics-error">失败 code：{group.errorCodes.join('、')}</p>}
+          {group.errorCodes.map(errorCode => {
+            const failure = explainRunFailure({ kind: 'tool', status: group.failed ? 'failed' : 'outcome_unknown', technicalName: group.toolName, errorCode })
+            return <div key={errorCode} className="run-diagnostics-error"><strong>{failure.title}</strong><p>{failure.detail} {failure.remediation}</p>
+              <details className="run-diagnostics-identifiers"><summary>错误代码</summary><p><code>{errorCode}</code></p></details></div>
+          })}
         </details>)}
       </div>}
       {segment.modelRequests.length > 0 && <details className="run-diagnostics-block run-diagnostics-models">
         <summary>模型请求 · {segment.modelRequests.length} 次 · 失败 {segment.modelRequests.filter(request => request.status === 'failed').length} · 结果未知 {segment.modelRequests.filter(request => request.status === 'outcome_unknown').length}</summary>
         <ol>{segment.modelRequests.map((request, index) => <li key={request.id}>
           <span>模型请求 {index + 1} · {STATUS[request.status]} · {request.durationMs === null ? '耗时未确定' : `${(request.durationMs / 1000).toFixed(1)} 秒`}</span>
-          <small>{usage(request.usage)}{request.errorCode ? ` · ${request.errorCode}` : ''}</small>
+          <small>{usage(request.usage)}</small>
+          {(request.status === 'failed' || request.status === 'outcome_unknown') && <small>
+            {explainRunFailure({ kind: 'model', status: request.status, errorCode: request.errorCode, transportPhase: request.transport?.phase }).title}
+          </small>}
           {request.stream && <small>连接（响应头）：{streamTime(request.stream.headersMs)}
             {request.stream.reasoningEvents !== undefined && <> · 推理活动：首次 {streamTime(request.stream.firstReasoningMs)}，最后 {streamTime(request.stream.lastReasoningMs)}，共 {request.stream.reasoningEvents} 次</>}
             {' · '}有效内容：首次 {streamTime(request.stream.firstContentMs)}，最后 {streamTime(request.stream.lastContentMs)}，共 {request.stream.contentEvents} 次 · 总耗时：{request.durationMs === null ? '未确定' : `${(request.durationMs / 1000).toFixed(1)} 秒`}</small>}
           {request.transport && <small>客户端停止等待：{request.transport.phase === 'first_response' ? '首次有效响应超时' : '流式内容停滞'} · 时限 {request.transport.timeoutMs / 1000} 秒（不代表服务商返回错误）</small>}
-          {request.providerHttpStatus && <small>服务商 HTTP 状态：{request.providerHttpStatus}</small>}
+          {(request.errorCode || request.providerHttpStatus) && <details className="run-diagnostics-identifiers"><summary>技术详情</summary>
+            {request.errorCode && <p>错误代码：<code>{request.errorCode}</code></p>}
+            {request.providerHttpStatus && <p>服务商 HTTP 状态：{request.providerHttpStatus}</p>}
+          </details>}
         </li>)}</ol>
       </details>}
     </section>)}

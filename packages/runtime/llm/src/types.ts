@@ -41,6 +41,8 @@ export interface ModelParameters {
   /** Suppress an explicitly configured extended-thinking mode for this request.
    * Adapters without that configured capability leave their wire format alone. */
   readonly disableConfiguredThinking?: boolean;
+  /** Prefer lighter reasoning on endpoints with a known compatible control. */
+  readonly lightReasoning?: boolean;
   readonly temperature?: number;
   readonly maxOutputTokens?: number;
   readonly stop?: readonly string[];

@@ -19,10 +19,13 @@ test('DeepSeek uses a separate key and is explicitly first only when opted in', 
   assert.deepEqual(searchSettingsRoute({ deepseekEnabled: false, parallelEnabled: false, tavilyEnabled: false }), []);
 });
 
-test('query limit is saved with search settings and rejects non-integer or out-of-range values', () => {
-  for (const searchLimit of [0, 31, 1.5, NaN]) assert.notEqual(searchSettingsValidation({ tavilyEnabled: false, tavilyKeyConfigured: false, searchLimit }, ''), null)
-  for (const searchLimit of [1, 6, 30]) assert.equal(searchSettingsValidation({ tavilyEnabled: false, tavilyKeyConfigured: false, searchLimit }, ''), null)
-  assert.deepEqual(searchSettingsInput({ parallelEnabled: true, tavilyEnabled: false, searchLimit: 12 }, ''), { parallelEnabled: true, tavilyEnabled: false, searchLimit: 12 })
+test('batch preference accepts integers from one to thirty for all three phases', () => {
+  for (const key of ['researchSearchLimit','supplementSearchLimit','searchLimit'] as const) {
+    for (const value of [0, 31, 10.5, NaN]) assert.notEqual(searchSettingsValidation({ tavilyEnabled: false, tavilyKeyConfigured: false, [key]: value }, ''), null)
+    for (const value of [1, 9, 10, 20, 30]) assert.equal(searchSettingsValidation({ tavilyEnabled: false, tavilyKeyConfigured: false, [key]: value }, ''), null)
+  }
+  const settings = { parallelEnabled: true, tavilyEnabled: false, researchSearchLimit: 12, supplementSearchLimit: 14, searchLimit: 16 };
+  assert.deepEqual(searchSettingsInput(settings, ''), settings);
 })
 
 test('Tavily requires a key only when enabled without an existing credential', () => {

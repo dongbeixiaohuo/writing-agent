@@ -43,7 +43,7 @@ for (const file of ['ui-settings.json', 'search-settings.json', 'provider.json']
       assert.ok(log.includes(basename(damagedPath)));
       assert.ok(!log.includes('SHOULD_NOT_APPEAR_IN_LOG'));
       if (file === 'ui-settings.json') await host.bridge.updateSettings({ theme: 'dark' });
-      if (file === 'search-settings.json') await host.configureSearch({ parallelEnabled: false, tavilyEnabled: false, searchLimit: 3 });
+      if (file === 'search-settings.json') await host.configureSearch({ parallelEnabled: false, tavilyEnabled: false, searchLimit: 13 });
       if (file === 'provider.json') {
         assert.equal((await host.providerStatus()).configured, false);
         const status = await host.configureProvider({ kind: 'openai_compatible', providerId: 'synthetic-config',
@@ -56,7 +56,7 @@ for (const file of ['ui-settings.json', 'search-settings.json', 'provider.json']
     try {
       assert.equal(reopened.bridge.getSnapshot().startupNotices?.length ?? 0, 0);
       assert.equal(reopened.bridge.getSnapshot().settings.theme, file === 'ui-settings.json' ? 'dark' : 'paper');
-      if (file === 'search-settings.json') assert.equal((await reopened.searchStatus()).searchLimit, 3);
+      if (file === 'search-settings.json') assert.equal((await reopened.searchStatus()).searchLimit, 13);
       if (file === 'provider.json') assert.equal((await reopened.providerStatus()).model, 'offline-fixture');
     } finally { reopened.close(); }
   });

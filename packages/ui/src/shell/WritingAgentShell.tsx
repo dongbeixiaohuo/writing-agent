@@ -84,7 +84,9 @@ import css from './WritingAgentShell.module.css'
 import { ABOUT_DATA_DESCRIPTION, ABOUT_PRODUCT_DESCRIPTION, aboutVersionView } from './about.ts'
 import { conversationFollowTarget, CONVERSATION_FOLLOW_THRESHOLD } from './conversation-follow.ts'
 import { ConversationNavigator } from './ConversationNavigator.tsx'
-import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, stageRoleLabel, runRecordsTabLabel } from './interaction.ts'
+import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, runRecordsTabLabel } from './interaction.ts'
+import { AgentAvatar } from './AgentAvatar.tsx'
+import { agentPersonas, personaForActor } from './agent-personas.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import { runProgressSummary, runDisplayStatus, runSavedStageLabel, runStopReasonLabel } from './run-records.ts'
 import { publicationGateNotice, factVerificationNotice } from './publication-gate.ts'
@@ -218,37 +220,42 @@ function Timeline({ items, brand, footer, diagnostic = false }: { items: readonl
   if (items.length === 0 && footer === undefined) return <p className={css.emptyTimeline}>此会话还没有内容。</p>
   return (
     <div className={css.timeline} aria-live="polite" data-conversation-timeline>
-      {items.filter(item => diagnostic || (item.kind === 'message' ? item.audience !== 'diagnostic' : item.audience === 'conversation')).map(item => item.kind === 'message' ? (
-        <article
-          className={clsx(css.message, item.role === 'user' ? css.userMessage : css.assistantMessage)}
-          data-conversation-message={item.role}
-          data-message-id={item.id}
-          aria-label={item.streaming ? '正在生成的回复' : undefined}
-          aria-busy={item.streaming ? true : undefined}
-          key={item.id}
-        >
-          {item.role === 'assistant' && item.stage && <header className={css.expertHeading} data-expert-stage={item.stage}>
-            <span className={css.expertBadge} aria-hidden="true">{stageRoleCopy(item.stage).role.slice(0, 1)}</span>
-            <div><strong>{stageRoleLabel(item.stage)}</strong><span>{stageRoleCopy(item.stage).action}</span></div>
-          </header>}
-          {item.role === 'assistant' && !item.stage && item.actorLabel && <header className={css.expertHeading} data-actor-label={item.actorLabel}>
-            <span className={css.expertBadge} aria-hidden="true">{item.actorLabel.slice(0, 1)}</span>
-            <div><strong>{item.actorLabel}</strong></div>
-          </header>}
-          <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
-          <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleLabel(item.stage) : item.actorLabel ?? brand.assistantName} · ${item.createdAt}`}
-            {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 处理用时 ${Math.round(item.activeDurationMs / 1000)} 秒`}
+      {items.filter(item => diagnostic || (item.kind === 'message' ? item.audience !== 'diagnostic' : item.audience === 'conversation')).map(item => {
+        if (item.kind === 'tool') return (
+          <div className={css.toolRow} key={item.id}>
+            <span className={clsx(css.toolState, item.state === 'pending' && css.toolPending, item.state === 'failure' && css.toolFailure)}>
+              {item.state === 'success' ? <CheckIcon /> : <ToolIcon />}
+            </span>
+            <strong>{item.label}</strong>
+            <span>· {item.detail}</span>
           </div>
-        </article>
-      ) : (
-        <div className={css.toolRow} key={item.id}>
-          <span className={clsx(css.toolState, item.state === 'pending' && css.toolPending, item.state === 'failure' && css.toolFailure)}>
-            {item.state === 'success' ? <CheckIcon /> : <ToolIcon />}
-          </span>
-          <strong>{item.label}</strong>
-          <span>· {item.detail}</span>
-        </div>
-      ))}
+        )
+        const genericAssistant = !diagnostic && !item.streaming && !item.actorLabel &&
+          brand.assistantName === WRITING_AGENT_BRAND.assistantName ? 'assistant' : undefined
+        const persona = personaForActor(item.stage) ?? personaForActor(item.actorLabel) ?? genericAssistant
+        const author = item.role === 'user' ? '你' : persona ? agentPersonas[persona] : item.actorLabel ?? brand.assistantName
+        return (
+          <article
+            className={clsx(css.message, item.role === 'user' ? css.userMessage : css.assistantMessage)}
+            data-conversation-message={item.role}
+            data-message-id={item.id}
+            aria-label={item.streaming ? '正在生成的回复' : undefined}
+            aria-busy={item.streaming ? true : undefined}
+            key={item.id}
+          >
+            {item.role === 'assistant' && (persona || item.actorLabel) && (
+              <header className={css.expertHeading} data-expert-stage={item.stage} data-actor-label={item.stage ? undefined : item.actorLabel}>
+                {persona ? <AgentAvatar persona={persona} /> : <span className={css.expertBadge} aria-hidden="true">{author.slice(0, 1)}</span>}
+                <div><strong>{author}</strong>{item.stage && <span>{stageRoleCopy(item.stage).action}</span>}</div>
+              </header>
+            )}
+            <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
+            <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${author} · ${item.createdAt}`}
+              {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 处理用时 ${Math.round(item.activeDurationMs / 1000)} 秒`}
+            </div>
+          </article>
+        )
+      })}
       {footer}
     </div>
   )
@@ -352,7 +359,7 @@ export function CheckpointDecisionCard({
   // Normal confirmation is asked once, at the end of the saved timeline result.
   // Keep cancellation available without creating a second conversation card.
   if (isCheckpoint && !isTitleDiscussion) return <div className={css.checkpointActions} data-conversation-recovery="true" aria-label="共创确认操作">
-    <p className={css.checkpointDescription}>{copy.description}</p>
+    <p className={css.checkpointGuide}><AgentAvatar persona={copy.persona} /><span>{copy.description}</span></p>
     <button className={css.textActionNeutral} type="button" disabled={busy || runActive} onClick={() => void stop()}>结束本轮</button>
     {canApproveCheckpoint && <button className={css.primaryAction} type="button" disabled={busy || runActive} onClick={() => void resume()}>
       {busy ? '正在继续…' : copy.primaryAction}
@@ -363,8 +370,8 @@ export function CheckpointDecisionCard({
   return <section className={css.checkpointCard} data-conversation-recovery="true"
     aria-label={searchRecovery ? '搜索恢复决定' : isTitleDiscussion ? '待选标题' : needsInput ? '待补充信息' : isCheckpoint ? '共创决策' : '写作暂停'}>
     <div className={css.checkpointHeader}>
-      <div className={css.checkpointRole} aria-hidden="true">{copy.role.slice(0, 1)}</div>
-      <div><span>{copy.role} · {copy.eyebrow}</span><h2>{copy.title}</h2></div>
+      <AgentAvatar persona={copy.persona} />
+      <div><span>{agentPersonas[copy.persona]} · {copy.eyebrow}</span><h2>{copy.title}</h2></div>
     </div>
     <p className={css.checkpointDescription}>{copy.description}</p>
     {searchRecovery && <p>正在查找：{searchRecovery.query}</p>}
@@ -426,7 +433,7 @@ function PublicationGateNoticeCard({
 export function RunRecords({ records, activeRunId, liveActivity, loadDetail }: { records: readonly RunRecordView[]; activeRunId?: string | null; liveActivity?: BridgeSnapshot['liveActivity']; loadDetail?: RunTraceProps['loadDetail'] }) {
   if (records.length === 0) return <div className={css.emptyRunRecords}><strong>还没有运行记录</strong><span>提交第一条写作指令后，这里会显示每个阶段的真实进度、用量和结果。</span></div>
   return <div className={css.runRecords}>
-    <div className={css.runRecordsIntro}><h2>运行记录</h2><p>按时间查看 Agent、模型和工具的实际执行过程。选择一步查看当时的输入、回复、工具参数、结果与耗时；只有实际调用了搜索才会显示搜索记录。详情按需读取，历史缺失不会补造。</p></div>
+    <div className={css.runRecordsIntro}><h2>运行记录</h2><p>点开任意一步，查看助手做了什么、用了多久。遇到问题时，这里会说明发生了什么和接下来可以怎么做。</p></div>
     <RunTrace records={records} activeRunId={activeRunId} liveActivity={liveActivity} loadDetail={loadDetail} />
     <details><summary>写作阶段与累计用量</summary>
     {[...records].reverse().map(run => <article className={css.runRecordCard} key={run.id}>
