@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ajv } from 'ajv';
 import { parsePrewriting, prewritingContent, PREWRITING_JSON_SCHEMA, draftWritingPlan, outlineWithoutTrialProse, validateReadingRoute, READING_SELECTION_JSON_SCHEMA, READING_DRAFT_INSTRUCTIONS, type PrewritingAssessment } from '../src/prewriting.js';
-import { createWritingWorkflowTools, stageArtifact, stageMarker, isReadingFirstRun, workflowStagesForRun } from '../src/workflow-tools.js';
+import { createWritingWorkflowTools, stageArtifact, stageMarker, isReadingFirstRun, usesFocusedReview, workflowStagesForRun } from '../src/workflow-tools.js';
 import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { editorialPlanFixture } from './collaboration-fixture.js';
 import { stageArtifactContext } from '../src/agent-context.js';
@@ -23,7 +23,7 @@ it('selects source bookmarks without requiring an essay, chapter obligations or 
   const plan = parsePrewriting(selection, JSON.stringify(ledger), '选材完成。', true);
   validateReadingRoute(plan, [{ url: 'https://example.org/source', text: ledger.claims[0]!.source_quote }]);
   validateReadingRoute(plan, [{ url: 'https://example.org/source', text: '希望安排家人\n 居住在附近。' }]);
-  assert.deepEqual(draftWritingPlan(plan), { promise: selection.promise, readingRoute: { question: selection.readingRoute.question,
+  assert.deepEqual(draftWritingPlan(plan), { promise: selection.promise, readerPayoff: selection.readerPayoff, readingRoute: { question: selection.readingRoute.question,
     moments: [{ sourceUrl: 'https://example.org/source', quote: '希望安排家人居住在附近。' }] } });
   assert.doesNotMatch(JSON.stringify(draftWritingPlan(plan)), /看各人如何回应/u, 'editorial interest notes stay out of the writer input');
   assert.throws(() => validateReadingRoute(plan, [{ url: 'https://example.org/source', text: '另一段原文' }]), /exact passage/);
@@ -38,7 +38,7 @@ it('assigns source assessment to research and fact checking instead of the artic
   assert.doesNotMatch(READING_DRAFT_INSTRUCTIONS, /材料限制并入相关叙述/u);
 });
 
-it('runs one cold read into scoped revision and preserves the route across continuation', () => {
+it('runs targeted persuasion review into scoped revision and carries that contract across continuation', () => {
   const path = mkdtempSync(join(tmpdir(), 'reading-route-'));
   const storage = openWorkspaceStorage({ workspacePath: path });
   try {
@@ -57,21 +57,50 @@ it('runs one cold read into scoped revision and preserves the route across conti
     submit('research', JSON.stringify({ ...ledger, claims: [{ ...ledger.claims[0], source_url: url }] }));
     submit('outline', '选材完成。', { prewriting: { decision: 'ready', promise: '写住所安排。', readerPayoff: '理解选择。', reason: '有具体内容。', queries: [], questions: [], readingRoute: { question: '家人如何回应？', moments: [{ sourceUrl: url, quote, interest: '安排与回应之间的差别。' }] } } });
     assert.ok(isReadingFirstRun(storage, 'p', 'r'));
+    assert.ok(usesFocusedReview(storage, 'p', 'r'));
     assert.ok(!workflowStagesForRun(storage, 'p', 'r', 'quick').includes('review_publish'));
     assert.throws(() => submit('draft', '# 原标题\n\n这是一则后人记述，细节未必都能核实，尤其不能据此猜测当事人的想法。'),
       (error: any) => error.code === 'BODY_STAGE_CONTAINS_EDITORIAL_CAVEATS');
-    const body = '# 原标题\n\n值得保留的动作。\n\n重复的一句。';
+    const body = '# 原标题\n\n值得保留的动作。\n\n住得近就一定相处得好。';
     submit('draft', body);
-    submit('review_editor', '保住动作，删掉重复。', { findings: [{ quote: '重复的一句。', kind: 'reader_value', severity: 'required', issue: '没有推进。', repairTarget: '删掉重复，让动作更突出。', evidenceIds: [] }], reading: { verdict: 'revise', takeaway: '看到了具体动作。', quote: '重复的一句。', reason: '结尾重复。', repairTarget: '删掉重复。', queries: [], questions: [] } });
+    submit('review_editor', '论点审稿', { findings: [{ quote: '住得近就一定相处得好。', kind: 'inference', severity: 'required',
+      issue: '见面方便不能推出一定相处得好。', repairTarget: '落到安排给见面提供的实际便利。', evidenceIds: [] }] });
     assert.equal(workflow.progress('r').nextStage, 'central_revision');
     const base = stageArtifact(storage, 'p', 'r', 'draft')!;
-    submit('central_revision', body, { paragraphEdits: { baseBodyVersionId: base.id, edits: [{ paragraphId: 'p3', replacement: '' }] } });
-    assert.equal(stageArtifact(storage, 'p', 'r', 'central_revision')!.content, '# 原标题\n\n值得保留的动作。\n\n');
+    const findingId = workflow.revisionWork('r', base.id)!.closure.findings[0]!.id;
+    submit('central_revision', body, { reviewEdits: { baseBodyVersionId: base.id,
+      edits: [{ findingId, kind: 'hypothesis', condition: '住得近', consequence: '见面可能方便些' }] } });
+    assert.equal(stageArtifact(storage, 'p', 'r', 'central_revision')!.content, '# 原标题\n\n值得保留的动作。\n\n如果住得近，见面可能方便些。');
     assert.equal(workflow.progress('r').nextStage, 'language_review');
     storage.finishRun({ projectId: 'p', runId: 'r', operationId: 'interrupt', status: 'cancelled', stopReason: 'test', payload: {} });
     storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r2', purpose: 'test', planVersion: 'test', operationId: 'continue' });
     assert.equal(workflow.progress('r2').nextStage, 'language_review');
     assert.ok(isReadingFirstRun(storage, 'p', 'r2'));
+    assert.ok(usesFocusedReview(storage, 'p', 'r2'));
+
+    const revised = stageArtifact(storage, 'p', 'r2', 'central_revision')!;
+    assert.deepEqual(workflow.protectedHypotheses('r2'), ['如果住得近，见面可能方便些。']);
+    const edit = { kind: 'wording', quote: '值得保留的动作', replacement: '看得见的动作', reason: '用词贴近上下文。' };
+    const lintEdits = { baseBodyVersionId: revised.id, edits: [edit] };
+    const finalBody = revised.content.replace(edit.quote, edit.replacement);
+    storage.recordRunEvent({ projectId: 'p', runId: 'r2', operationId: 'lint-dispatch', type: 'tool.completed',
+      payload: { result: { toolName: 'director_decide', result: { collaboration: {
+        actor: 'language_review', stage: 'language_review', status: 'dispatched', decisionId: 'lint-dispatch',
+        expectedBodyVersionId: revised.id, inputVersionIds: [revised.id],
+      } } } } });
+    storage.recordRunEvent({ projectId: 'p', runId: 'r2', operationId: 'lint-save', type: 'tool.requested',
+      payload: { actor: 'language_review', toolName: 'submit_writing_stage',
+        arguments: { stage: 'language_review', content: revised.content, lintEdits } } });
+    assert.equal(workflow.recoverLanguageReview('r2', storage.listRunEvents('r2')), null, 'dispatch alone is not a saved lint');
+    const saved = storage.commitArtifactVersion({ projectId: 'p', kind: 'body', logicalKey: 'main', operationId: 'lint-save:artifact',
+      baseVersionId: revised.id, content: finalBody, reason: 'workflow:language_review', requestSnapshotId: null,
+      expectedProjectRevision: storage.inspectProject('p')!.revision, actor: { kind: 'agent', id: 'writing-pack/writer', runId: 'r2' } });
+    assert.ok(saved.ok);
+    const recovered = workflow.recoverLanguageReview('r2', storage.listRunEvents('r2'));
+    assert.ok(recovered, 'a body saved before the final stage receipt can be reconciled');
+    assert.deepEqual(JSON.parse(recovered.content).lintEdits, lintEdits);
+    assert.equal(stageArtifact(storage, 'p', 'r2', 'language_review')?.content, finalBody);
+    assert.equal(workflow.progress('r2').nextStage, 'fact_check');
   } finally { storage.close(); rmSync(path, { recursive: true, force: true }); }
 });
 

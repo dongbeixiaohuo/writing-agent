@@ -9,21 +9,23 @@ import type { JsonValue, StoragePort } from "../../writing-core/src/index.js";
 import { FactClaimStatusSchema, FactClaimTypeSchema } from "../../writing-core/src/index.js";
 import { workflowStageSequence, type WritingWorkflowStage } from "../../writing-pack/src/index.js";
 import { buildExpertInstructions, LANGUAGE_REVIEW_SEMANTIC_CONTRACT } from '../../writing-pack/src/expert-instructions.js';
-import { PREWRITING_INSTRUCTIONS, PREWRITING_JSON_SCHEMA, draftWritingPlan, READING_SELECTION_INSTRUCTIONS,
+import { PREWRITING_INSTRUCTIONS, PREWRITING_JSON_SCHEMA, bindConfirmedReadingPlan, confirmedWritingFocus, draftWritingPlan, READING_SELECTION_INSTRUCTIONS,
   CONFIRMED_READING_SELECTION_INSTRUCTIONS, READING_SELECTION_JSON_SCHEMA, READING_DRAFT_INSTRUCTIONS } from './prewriting.js';
 import { researchReadings } from './research-readings.js';
 import { redevelopmentReference, redevelopmentProblems, redevelopmentHistory } from './revision-context.js';
 import { articleParagraphs, paragraphEditsOutputSchema, paragraphRepairScope } from './paragraph-revision.js';
+import { FINAL_LINT_INSTRUCTIONS, FOCUSED_REVISION_INSTRUCTIONS, LINT_EDITS_SCHEMA, PERSUASION_REVIEW_INSTRUCTIONS, REVIEW_EDITS_SCHEMA } from './focused-review.js';
 import { PARAGRAPH_REVISION_SUBMISSION, READING_EDITOR_INSTRUCTIONS, READING_REVISION_INSTRUCTIONS, readingAuditPrompt } from './review-closure-prompts.js';
-import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, isReadOnlyRevisionAudit, isReadingFirstRun, workflowStagesForRun, stageArtifact, stageMarker, type WritingWorkflowTools } from "./workflow-tools.js";
+import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, isReadOnlyRevisionAudit, isReadingFirstRun, usesFocusedReview, workflowStagesForRun, stageArtifact, stageMarker, type WritingWorkflowTools } from "./workflow-tools.js";
 import { EDITORIAL_PLAN_INSTRUCTIONS } from './editorial-plan.js';
 import { REVISION_COMPARISON_INSTRUCTIONS, JSON_SCHEMA as REVISION_COMPARISON_SCHEMA } from './revision-comparison.js';
 import { PUBLICATION_REVIEW_INSTRUCTIONS, publicationReviewEvidence, publicationReviewSourceSlices } from './publication-review-context.js';
 import { FINDINGS_SUBMISSION, COLD_REVIEW_SUBMISSION, RESOLUTION_SUBMISSION, REDEVELOPMENT_SUBMISSION, finalRevisionAuditPrompt } from './review-closure-prompts.js';
-import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA, COLD_FINDINGS_JSON_SCHEMA, COLD_READING_JSON_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA, READING_JSON_SCHEMA, needsArticleRedevelopment } from './review-closure.js';
+import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA, COLD_FINDINGS_JSON_SCHEMA, COLD_READING_JSON_SCHEMA, PERSUASION_FINDINGS_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA, READING_JSON_SCHEMA, needsArticleRedevelopment } from './review-closure.js';
 import { getPublicationCandidates, savePublicationCandidates, isPublicationSelectionCurrent, isUsablePublicationTitle,
   PUBLICATION_SELECTION_WAIT_REASON, selectedPublicationContext, type PublicationCandidate } from './publication-choice.js';
 import { createFactSourceTool, factToolFailureLoopKey } from './fact-web.js';
+import { usesPublicSources, withResearchSupplement } from './research-supplement.js';
 import { createFactSearchTools, type FactSearchConfiguration } from './fact-search.js';
 import { checkpointIntentReceipt } from './conversation-intent.js';
 import { confirmedWritingDirection } from './conversation-intake.js';
@@ -52,7 +54,7 @@ function expectedArtifact(stage: CollaborationStage): ArtifactExpectation {
 function stageInstruction(stage: WritingWorkflowStage, basePrompt: string, researchSearchEnabled = false, editorialPlanRequired = false, confirmedDirection = false): string {
   if (stage === 'review_reader') return '三个隔离模拟读者只给口语感受，不是编辑审校，不给修改建议；程序合并为一个成果和一次作者确认。';
   if (stage === "research") return (researchSearchEnabled
-    ? '已配置前置搜索search_research_sources与原文阅读read_fact_source：先整理授权材料，只为影响核心认识的具体事实缺口搜索，最多2条简短查询（不占末尾事实核查额度）。搜索具体行动、经历和后果，别只搜别人怎样评价这个题目。摘录是线索，决定核心判断的材料可沿已知URL读取原文，找能展开认识的细节；不必把所有网页读一遍。保留实际URL与连续引句，不把搜索摘录写成读过全文。失败后不盲目重试，必要信息仍缺再问作者。'
+    ? '先读已有材料。只在缺少能把原题写具体的场景、行动、回应或后果时，用search_research_sources与read_fact_source找对应素材。搜到够写就停，已有材料够写可以直接提交。同一方向找不到合适素材就用已有材料继续。preferredBatchSize只供安排，实际按缺口决定。保留实际URL和引句。'
     : '当前为材料整理模式，没有外部搜索工具：从本次授权材料提取正文所需证据；多来源矛盾只对照实际提供的内容，不臆造检索或核验结果。')
     + '只提交研究账本，content直接用对象' + (editorialPlanRequired ? '{sources,claims,notes,editorialPlan}' : '{sources,claims,notes}') + '，不要转成带转义的JSON字符串。sources按来源列一次source_id、source_title、source_publisher、accessed_at及可选source_url；每条claim用source_id引用，填写claim_type、claim_text、source_quote、reliability、use_boundary、verification_status。evidence_id可省略，由程序编号；确需保留旧编号时明确填写。仅illustrative允许空引句，其余必须引用连续原文；用户材料不能自动标为已外部核实。无事实时sources和claims用空数组，notes说明原因。'
     + (confirmedDirection ? '沿writingRequirements.topic和作者明确补充的要求整理材料；某条素材缺依据就在原方向内补查或换素材，提交仍可用的内容。' : '关键前提存在必要证据缺口时暂停提问，不用猜测补足。')
@@ -71,6 +73,8 @@ function stageInstruction(stage: WritingWorkflowStage, basePrompt: string, resea
 /** The runtime, not a nested provider, owns every request, tool, budget and cancellation. */
 export function createWritingCollaboration(options: {
   factSearchConfiguration?: () => FactSearchConfiguration;
+  researchSearch: ReturnType<typeof createFactSearchTools>;
+  supplementSearch: ReturnType<typeof createFactSearchTools>;
   storage: StoragePort & SessionStore;
   projectId: string;
   workflow: WritingWorkflowTools;
@@ -84,7 +88,7 @@ export function createWritingCollaboration(options: {
 }) {
   const { storage, projectId, workflow } = options;
   const factSearch = createFactSearchTools({ storage, configuration: options.factSearchConfiguration ?? (() => ({ parallelEnabled: false, tavilyEnabled: false })) });
-  const researchSearch = createFactSearchTools({ storage, purpose: 'research', configuration: options.factSearchConfiguration ?? (() => ({ parallelEnabled: false, tavilyEnabled: false })) });
+  const { researchSearch, supplementSearch } = options;
   const state = (runId: string) => {
     const confirmedBodyVersionId = workflow.recoverConfirmedBody(runId);
     const events = storage.listRunEvents(runId);
@@ -158,7 +162,7 @@ export function createWritingCollaboration(options: {
       if (current.current !== null) throw new ToolExecutionFault("DIRECTOR_NOT_ACTIVE", "The assigned expert must return before the director can decide");
       if (current.editorialRecovery) {
         const recovery = current.editorialRecovery;
-        const target = recovery.route === 'outline' ? 'outline' : recovery.route === 'research' && researchSearch.enabled() && researchSearch.budget(context.runId).remaining > 0 ? 'research' : null;
+        const target = recovery.route === 'outline' ? 'outline' : recovery.route === 'research' && researchSearch.budget(context.runId).canSearch ? 'research' : null;
         if (!(target ? args.action === 'rework' && args.stage === target || args.action === 'ask' : args.action === 'ask')) {
           throw new ToolExecutionFault('EDITORIAL_RECOVERY_REQUIRED', target ? `The core reading promise needs rework ${target} or author discussion, not word changes.` : 'The core promise requires author discussion; do not silently change the topic or continue drafting.');
         }
@@ -170,7 +174,7 @@ export function createWritingCollaboration(options: {
         throw new ToolExecutionFault('PREWRITING_REPAIR_REQUIRED', 'The outline editor found a core evidence/direction gap. Research the gap within the existing search budget, or discuss a concrete change of angle. Do not dispatch an outline or draft to bypass it.');
       }
       if (current.prewritingReturn && args.action === 'rework' &&
-          (JSON.parse(current.prewritingReturn.content).assessment.decision !== 'research' || !researchSearch.enabled() || researchSearch.budget(context.runId).remaining === 0)) {
+          (JSON.parse(current.prewritingReturn.content).assessment.decision !== 'research' || !researchSearch.budget(context.runId).canSearch)) {
         throw new ToolExecutionFault('PREWRITING_DISCUSSION_REQUIRED', 'Further research is unavailable or would not resolve the direction. Ask the concrete angle question from the assessment; do not repeat research without a usable search.');
       }
       if (args.reason.trim().length === 0) throw new ToolExecutionFault("DIRECTOR_REASON_REQUIRED", "A concise decision summary is required");
@@ -294,6 +298,7 @@ export function createWritingCollaboration(options: {
     const findingsRequired = workflow.reviewFindingsRequired(runId);
     const readerValueRequired = workflow.readerValueRequired(runId);
     const readingFirst = isReadingFirstRun(storage, projectId, runId);
+    const focusedReview = usesFocusedReview(storage, projectId, runId);
     const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
     const draftBriefVersion = briefId ? storage.getWritingBriefVersion(briefId) : null;
     const writingBrief = draftBriefVersion?.brief;
@@ -301,6 +306,7 @@ export function createWritingCollaboration(options: {
     const conversationalBrief = ['conversation-user', 'conversation-intake'].includes(draftBriefVersion?.actor.id ?? '');
     const authorWords = storage.listMaterials(projectId).filter(material => options.materialIds.includes(material.id) &&
       (material.id.startsWith('intake-user-') || material.role === 'user_firsthand')).map(material => material.content);
+    const confirmedFocus = confirmedDirection ? confirmedWritingFocus(confirmedDirection, authorWords) : undefined;
     // Keep the author's later clarification when a task resumes; cold readers
     // receive these words without the assistants' earlier interpretations.
     const authorReplies = [...new Set([
@@ -341,7 +347,8 @@ export function createWritingCollaboration(options: {
       const selectedStyle = projectStyleSelection(storage, projectId);
       const readTools = ['read_artifact_version', ...(materials.length ? ['read_material'] : [])];
       const authorContext = inlineMaterialContext(authorInputs);
-      const sourceReadings = researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection && readerValueRequired));
+      const sourceReadings = withResearchSupplement(storage, runId, research,
+        researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection && readerValueRequired)));
       const sourceReadTools = materials.some(material => !authorContext.some(item => {
         const slice = item as { materialId: string; truncated: boolean; content: string };
         return slice.materialId === material.id && !slice.truncated && slice.content === material.content;
@@ -357,7 +364,7 @@ export function createWritingCollaboration(options: {
           outlineOutputSchema: { type: 'object', properties: { content: { type: 'string' }, prewriting: readerValueRequired ? READING_SELECTION_JSON_SCHEMA : PREWRITING_JSON_SCHEMA },
             required: ['content', 'prewriting'], additionalProperties: false },
           directionToAssess: confirmedDirection ?? (authorInputs.length ? authorInputs.map(m => m.content).join('\n') : brief?.topic),
-          writingRequirements: { ...writingRequirements, authorAuthorization: brief?.authorAuthorization },
+          writingRequirements: { ...writingRequirements, authorAuthorization: brief?.authorAuthorization }, confirmedFocus,
           outputGuidance: { articleTargetCharacters: target, outlineTargetCharacters: Math.min(1600, Math.max(200, Math.round(target * 0.4))) },
           ...(!confirmedDirection ? { authorDiscussion: options.authorReviewDiscussion } : {}),
           authorWords,
@@ -367,7 +374,8 @@ export function createWritingCollaboration(options: {
           sourceReadings,
           recoveryFeedback: inputs.filter(id => id !== research.id).map(id => storage.getArtifactVersion(id)).filter(v => v?.kind === 'review' || v?.reason === 'revision-required').map(v => ({ id: v!.id, content: JSON.parse(v!.content) })),
           materials: authorContext, materialCatalog: factMaterialContext(materials).materialCatalog,
-          researchSearchBudget: researchSearch.budget(runId), externalSearchEnabled: researchSearch.enabled(),
+          supplementSearchBudget: supplementSearch.progress(runId), externalSearchEnabled: supplementSearch.enabled(),
+          canSupplementResearch: Boolean(confirmedDirection && usesPublicSources(brief) && supplementSearch.automatic() && supplementSearch.budget(runId).canSearch),
         })}`,
         allowedTools: ['submit_writing_stage', ...readTools], modelTools: sourceReadTools, toolChoice: sourceReadTools.length ? 'auto' : 'none',
         roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'prewriting'], required: ['prewriting'], stringFields: ['content'] } },
@@ -389,8 +397,14 @@ export function createWritingCollaboration(options: {
     if (assignment?.stage === 'draft' && readingFirst) {
       const materials = storage.listMaterials(projectId).filter(m => options.materialIds.includes(m.id));
       const selectedStyle = projectStyleSelection(storage, projectId);
-      const plan = workflow.prewritingApproval(runId)!;
-      const sourceReadings = researchReadings(storage, projectId, stageArtifact(storage, projectId, runId, 'research'), materials, Boolean(confirmedDirection));
+      const savedPlan = workflow.prewritingApproval(runId)!;
+      const research = stageArtifact(storage, projectId, runId, 'research')!;
+      const originalReadings = researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection));
+      const availableReadings = withResearchSupplement(storage, runId, research, originalReadings);
+      const plan = confirmedFocus ? bindConfirmedReadingPlan(savedPlan, { direction: confirmedFocus.question,
+        sources: availableReadings, focus: confirmedFocus }) : savedPlan;
+      const sourceReadings = availableReadings.filter(reading => originalReadings.includes(reading) ||
+        plan.readingRoute?.moments.some(moment => moment.sourceUrl === reading.url));
       const additionalMaterials = inlineMaterialContext(materials.filter(material => !material.id.startsWith('intake-user-') &&
         material.role !== 'user_firsthand' && !sourceReadings.some(source => source.url === material.sourceReference)));
       return {
@@ -398,7 +412,7 @@ export function createWritingCollaboration(options: {
         systemPrompt: READING_DRAFT_INSTRUCTIONS + (selectedStyle ? `\n${STYLE_APPLICATION_POLICY}` : ''),
         userMessage: `请按作者要求写作。\n${styleContext(selectedStyle, 'draft')}\nCOLLABORATION_STATE=${JSON.stringify({
           actor: 'draft', stage: 'draft', ready: true, nextStage: 'draft', finished: false,
-          writingRequirements, authorReplies, authorClarifications,
+          writingRequirements, confirmedFocus, authorReplies, authorClarifications,
           authorWords,
           sourceReadings,
           ...(additionalMaterials.length ? { materials: additionalMaterials } : {}),
@@ -413,10 +427,24 @@ export function createWritingCollaboration(options: {
     if (assignment?.stage === 'review_editor') {
       const body = stageArtifact(storage, projectId, runId, 'draft');
       if (!body || !inputs.includes(body.id)) throw new ToolExecutionFault('REVIEW_DRAFT_MISSING', 'Cold reading requires the exact workflow draft');
+      if (focusedReview) return {
+        scopeId: `review_editor:${assignment.decisionId}:${body.id}`, actor: 'review_editor', expectedBodyVersionId: body.id,
+        systemPrompt: PERSUASION_REVIEW_INSTRUCTIONS,
+        userMessage: `请指出会让目标读者不信服的地方。\nCOLLABORATION_STATE=${JSON.stringify({
+          actor: 'review_editor', stage: 'review_editor', writingRequirements, confirmedFocus, authorWords, authorReplies, authorClarifications,
+          artifacts: [{ id: body.id, kind: 'body', content: body.content }],
+          reviewOutputSchema: { type: 'object', properties: { findings: PERSUASION_FINDINGS_SCHEMA },
+            required: ['findings'], additionalProperties: false },
+        })}`,
+        allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
+        textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'review_editor', content: '论点审稿' }, format: 'json_object' },
+        roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'findings'], required: ['findings'], stringFields: ['content'] } },
+        authorizeTool: call => call.name === 'submit_writing_stage' && (call.arguments as { stage?: string }).stage === 'review_editor',
+      };
       const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
       const briefVersion = briefId ? storage.getWritingBriefVersion(briefId) : null;
       const brief = briefVersion?.brief;
-      const authorWords = storage.listMaterials(projectId).filter(m => options.materialIds.includes(m.id) && m.id.startsWith('intake-user-'))
+      const intakeWords = storage.listMaterials(projectId).filter(m => options.materialIds.includes(m.id) && m.id.startsWith('intake-user-'))
         .map(m => m.content);
       const scopeId = `review_editor:${assignment.decisionId}:${body.id}`;
       return { scopeId, actor: 'review_editor', expectedBodyVersionId: body.id,
@@ -427,7 +455,8 @@ export function createWritingCollaboration(options: {
           ...(findingsRequired ? { reviewOutputSchema: readerValueRequired ? { ...reviewOutputSchema,
             properties: { ...reviewOutputSchema.properties, findings: { ...COLD_FINDINGS_JSON_SCHEMA, ...(readingFirst ? { maxItems: 3 } : {}) }, reading: COLD_READING_JSON_SCHEMA }, required: [...reviewOutputSchema.required, 'reading'] } : { ...reviewOutputSchema, properties: { ...reviewOutputSchema.properties, findings: COLD_FINDINGS_JSON_SCHEMA } } } : {}),
           writingRequirements: { audience: brief?.audience, platform: brief?.platform, genre: brief?.genre,
-            topic: authorWords.length && ['conversation-user', 'conversation-intake'].includes(briefVersion?.actor.id ?? '') ? undefined : brief?.topic, authorWords, authorReplies, authorClarifications },
+            topic: intakeWords.length && ['conversation-user', 'conversation-intake'].includes(briefVersion?.actor.id ?? '') ? undefined : brief?.topic,
+            authorWords: intakeWords, authorReplies, authorClarifications },
           artifacts: [{ id: body.id, kind: 'body', content: body.content }] })}`,
         allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
         ...(findingsRequired ? { roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'findings', 'reading'], required: ['findings', ...(readerValueRequired ? ['reading'] : [])], stringFields: ['content'] } } } : {}),
@@ -480,23 +509,45 @@ export function createWritingCollaboration(options: {
       const selectedStyle = projectStyleSelection(storage, projectId);
       const authorized = storage.listMaterials(projectId).filter(m => options.materialIds.includes(m.id));
       const research = stageArtifact(storage, projectId, runId, 'research');
+      const field = focusedReview ? 'reviewEdits' : 'paragraphEdits';
       return {
         scopeId: `paragraph-revision:${assignment.decisionId}:${repairBody.id}`, actor: 'central_revision', expectedBodyVersionId: repairBody.id,
-        systemPrompt: [readingFirst ? READING_REVISION_INSTRUCTIONS : PARAGRAPH_REVISION_SUBMISSION,
-          scope.duplicateParagraphIds.length ? '旧审校引文已无法定位当前稿。本轮只删除 duplicateParagraphIds 中与上一段逐字相同的重复段，每段的 replacement 必须为空字符串。其余段落原样保留。'
+        systemPrompt: [focusedReview ? FOCUSED_REVISION_INSTRUCTIONS : readingFirst ? READING_REVISION_INSTRUCTIONS : PARAGRAPH_REVISION_SUBMISSION,
+          !focusedReview && scope.duplicateParagraphIds.length ? '旧审校引文已无法定位当前稿。本轮只删除 duplicateParagraphIds 中与上一段逐字相同的重复段，每段的 replacement 必须为空字符串。其余段落原样保留。'
             : scope.editableParagraphIds.length ? '' : '当前稿没有可安全修改的段落。本轮提交空的 edits 数组，保留现稿。'].filter(Boolean).join('\n'),
         userMessage: `修订当前文章的问题段落。\n${styleContext(selectedStyle, 'central_revision')}\nCOLLABORATION_STATE=${JSON.stringify({
           actor: 'central_revision', stage: 'central_revision', revisionMode: 'paragraphs', ready: current.ready, finished: false,
           nextStage: current.nextStage, inputVersionIds: inputs, unreadArtifactVersionIds: [],
-          authorReplies, authorClarifications, taskInstruction: assignment.reason, baseBodyVersionId: repairBody.id, paragraphScope: scope,
-          sourceReadings: researchReadings(storage, projectId, research, authorized),
+          confirmedFocus, authorReplies, authorClarifications, ...(!focusedReview ? { taskInstruction: assignment.reason } : {}),
+          baseBodyVersionId: repairBody.id, paragraphScope: scope,
+          ...(focusedReview ? { sources: workflow.lintSources(runId) } : { sourceReadings: researchReadings(storage, projectId, research, authorized) }),
           revisionFeedback: { findings: revisionWork.closure.findings },
-          revisionOutputSchema: { type: 'object', properties: { paragraphEdits: paragraphEditsOutputSchema(repairBody.id, scope) }, required: ['paragraphEdits'], additionalProperties: false },
+          revisionOutputSchema: { type: 'object', properties: { [field]: focusedReview
+            ? REVIEW_EDITS_SCHEMA : paragraphEditsOutputSchema(repairBody.id, scope) }, required: [field], additionalProperties: false },
         })}`,
         allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
         textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'central_revision', content: repairBody.content }, format: 'json_object' },
-        roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'paragraphEdits'], required: ['paragraphEdits'], stringFields: ['content'] } },
+        roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', field], required: [field], stringFields: ['content'] } },
         authorizeTool: call => call.name === 'submit_writing_stage' && (call.arguments as {stage?:string}).stage === 'central_revision',
+      };
+    }
+    if (assignment?.stage === 'language_review' && focusedReview) {
+      const body = stageArtifact(storage, projectId, runId, 'central_revision');
+      if (!body || body.id !== current.expectedBodyVersionId || !inputs.includes(body.id)) {
+        throw new ToolExecutionFault('BASE_VERSION_CONFLICT', '终稿检查需要使用这次任务绑定的修订稿。');
+      }
+      return {
+        scopeId: `language-lint:${assignment.decisionId}:${body.id}`, actor: 'language_review', expectedBodyVersionId: body.id,
+        disableConfiguredThinking: true, systemPrompt: FINAL_LINT_INSTRUCTIONS,
+        userMessage: `请检查这版文章。\nCOLLABORATION_STATE=${JSON.stringify({
+          actor: 'language_review', stage: 'language_review', baseBodyVersionId: body.id, body: body.content, confirmedFocus,
+          sources: workflow.lintSources(runId), protectedHypotheses: workflow.protectedHypotheses(runId),
+          lintOutputSchema: { type: 'object', properties: { lintEdits: LINT_EDITS_SCHEMA }, required: ['lintEdits'], additionalProperties: false },
+        })}`,
+        allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
+        textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'language_review', content: body.content }, format: 'json_object' },
+        roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'lintEdits'], required: ['lintEdits'], stringFields: ['content'] } },
+        authorizeTool: call => call.name === 'submit_writing_stage' && (call.arguments as { stage?: string }).stage === 'language_review',
       };
     }
     const redevelopment = assignment?.stage === 'central_revision' && reviewClosure !== null && needsArticleRedevelopment(reviewClosure.findings);
@@ -618,9 +669,9 @@ export function createWritingCollaboration(options: {
     };
     const summary = { actor, stage: assignment?.stage ?? null, nextStage: current.nextStage, inputVersionIds: inputs, ready: current.ready, finished: current.finished,
       ...(current.prewritingReturn ? { prewritingReturn: JSON.parse(current.prewritingReturn.content).assessment,
-        researchSearchBudget: researchSearch.budget(runId), externalSearchEnabled: researchSearch.enabled() } : {}),
+        researchSearchBudget: researchSearch.progress(runId), externalSearchEnabled: researchSearch.enabled() } : {}),
       ...(actor === 'director' && current.editorialRecovery ? { editorialRecovery: current.editorialRecovery,
-        researchSearchBudget: researchSearch.budget(runId), externalSearchEnabled: researchSearch.enabled() } : {}),
+        researchSearchBudget: researchSearch.progress(runId), externalSearchEnabled: researchSearch.enabled() } : {}),
       ...(actor === 'director' && current.revisionReturn ? { revisionReturn: {
         reportId: current.revisionReturn.id, bodyVersionId: JSON.parse(current.revisionReturn.content).bodyVersionId } } : {}),
       ...(assignment?.stage === 'central_revision' && reviewClosure ? {
@@ -633,6 +684,7 @@ export function createWritingCollaboration(options: {
         type: 'object', properties: { content: { type: 'string' }, ...(!redevelopment ? { resolutions: RESOLUTIONS_JSON_SCHEMA } : {}) },
         required: redevelopment ? ['content'] : ['content', 'resolutions'], additionalProperties: false,
       } } : {}),
+      confirmedFocus,
       writingRequirements: actor === 'research' || actor === 'draft' ? writingRequirements
         : writingBrief ? { audience: writingBrief.audience, platform: writingBrief.platform } : undefined,
       ...(['research', 'draft', 'central_revision'].includes(actor) ? { authorWords, authorReplies, authorClarifications } : {}),
@@ -647,10 +699,10 @@ export function createWritingCollaboration(options: {
         allowedSelectionIds: comparisonCandidates.allowOriginal ? [comparisonCandidates.original.id, comparisonCandidates.revised.id] : [comparisonCandidates.revised.id],
         instruction: comparisonCandidates.allowOriginal ? '选择阅读效果更好的版本再作最小润色；允许保留初稿。' : '原稿只供比较；保留作者已确认或返工修正的内容，不回退旧稿。',
       } } : {}),
-      ...(assignment?.stage === 'research' ? { researchSearchBudget: researchSearch.budget(runId), externalSearchEnabled: researchSearch.enabled() } : {}),
+      ...(assignment?.stage === 'research' ? { researchSearchBudget: researchSearch.progress(runId), externalSearchEnabled: researchSearch.enabled() } : {}),
       unreadArtifactVersionIds: workflow.unreadReadinessArtifactIds(runId),
       ...(assignment?.stage === "fact_check" ? { currentBodyVersionId: storage.inspectProject(projectId)?.latestBodyVersionId ?? null,
-        validEvidenceIds: evidenceIdsFromLedger(artifacts.find(item => item.kind === 'evidence')?.content ?? ''), searchBudget: factSearch.budget(runId) } : {}),
+        validEvidenceIds: evidenceIdsFromLedger(artifacts.find(item => item.kind === 'evidence')?.content ?? ''), searchBudget: factSearch.progress(runId) } : {}),
       ...(assignment?.stage ? { taskInstruction: approvedPlan?.promise ?? assignment.reason, expectedArtifact: assignment.expectedArtifact ?? expectedArtifact(assignment.stage) } : {}),
       completedStages: workflow.progress(runId).completedStages,
       artifacts: isFactCheck ? prepared ? factVerificationArtifacts(artifacts, prepared) : factExtractionArtifacts(artifacts)
@@ -682,12 +734,14 @@ export function createWritingCollaboration(options: {
     const materialReadTools = !current.ready || isFactCheck || needsSourceAccess ? ['read_material'] : [];
     const artifactReadTools = redevelopment ? [] : isFactCheck ? ['read_fact_evidence', 'read_fact_record'] : inputs.length && (workflow.unreadReadinessArtifactIds(runId).length > 0 || artifactContext.needsArtifactAccess) ? ['read_artifact_version'] : [];
     const discussionReadTools = !redevelopment && includeDiscussion && Array.isArray(options.authorReviewDiscussion) && options.authorReviewDiscussion.length ? ['read_review_discussion'] : [];
+    const researchBudget = assignment?.stage === 'research' ? researchSearch.budget(runId) : null;
+    const canSearchResearch = researchBudget?.canSearch;
     const researchTools = assignment?.stage === 'research' && researchSearch.enabled()
-      ? [...(researchSearch.budget(runId).remaining > 0 ? ['search_research_sources'] : []), 'read_fact_source'] : [];
+      ? [...(canSearchResearch ? ['search_research_sources'] : []), 'read_fact_source'] : [];
     const researchWithinDirection = actor === 'research' && Boolean(confirmedDirection);
     const allowedTools = isFactCheck && !prepared ? ['prepare_fact_check'] : actor === "director" ? [...materialReadTools, ...artifactReadTools, ...discussionReadTools, "assess_writing_readiness", "director_decide"] : actor === 'title'
       ? [...artifactReadTools, 'submit_publication_candidates']
-      : [...materialReadTools, ...artifactReadTools, ...discussionReadTools, ...researchTools, ...(isFactCheck || researchWithinDirection ? [] : ["assess_writing_readiness"]), ...(assignment?.stage === "fact_check" ? ['read_fact_article', "submit_fact_check", ...(factSearch.enabled() ? [...(factSearch.budget(runId).remaining > 0 ? ['search_fact_sources'] : []), 'read_fact_source'] : [])] : ["submit_writing_stage"])];
+      : [...materialReadTools, ...artifactReadTools, ...discussionReadTools, ...researchTools, ...(isFactCheck || researchWithinDirection ? [] : ["assess_writing_readiness"]), ...(assignment?.stage === "fact_check" ? ['read_fact_article', "submit_fact_check", ...(factSearch.enabled() ? [...(factSearch.budget(runId).canSearch ? ['search_fact_sources'] : []), 'read_fact_source'] : [])] : ["submit_writing_stage"])];
     const commonPrompt = options.systemPrompt.split("\n").filter((line) => /^(?:材料安全：|文体规则：|作者声音：|方向决定状态：|没有已授权的一手|只有这些材料)/u.test(line))
       .map(line => selectedStyle === undefined ? line : line.replace(/风格决定状态：[^。]*。/u, selectedStyle === null ? '风格决定状态：用户已在项目设置取消指定风格。' : '风格决定状态：用户已在项目设置明确选定，下文提供按阶段筛选的参考。')).join("\n");
     let rolePrompt = actor === "director"
@@ -695,6 +749,7 @@ export function createWritingCollaboration(options: {
       : actor === 'title'
         ? '你是独立标题专家。只基于绑定的当前最终正文生成少量真实且有差异的标题候选；调用 submit_publication_candidates 保存。不得改写正文，不得自行选择或声称用户已确认。'
         : stageInstruction(assignment!.stage as WritingWorkflowStage, options.systemPrompt, researchSearch.enabled(), workflow.requireEditorialPlan, Boolean(confirmedDirection));
+    if (confirmedFocus && actor === 'director') rolePrompt += '\n所有派发沿 confirmedFocus 的主问题推进。材料中的旁支、一个案例的细节和后来发现的核查问题，都不能替作者改选题。';
     if (actor === "director") rolePrompt += "\n区分新任务编辑现稿与同run返工：项目已有正文或旧run事实blocked，不代表本run完成过阶段。rework只能选择本run completedStages中且前置均完成的阶段。新run即使要求修改已有稿件，也应读取现稿、评估ready，从nextStage=research按原流程推进；只有本run已完成central_revision后再次收到删改授权，才使用rework central_revision。项目历史factCheck不是新run的阶段完成凭据。例外：若本run的completedStages非空，说明程序已把同会话上一中断run的连续完成阶段连同其有效产物承接进本run，它们就是本run自己的完成记录——直接从当前nextStage继续，不要再从research重来，也不要重新生成已承接的产物。";
     if (assignment?.stage === "fact_check") rolePrompt += `\n唯一事实核查对象是 CURRENT_BODY_VERSION=${storage.inspectProject(projectId)?.latestBodyVersionId ?? "missing"}。extract阶段artifacts提供正文全文；verify阶段preparedClaims提供其中待核实条目及原句，正文仅留目录，必要时按需读取。不得核查历史正文、评审报告、用户解释中的旧稿或版本技术说明。证据只从绑定的evidence和授权材料取。`;
     const drafted = storage.listArtifactVersions(projectId, "report", `workflow:${runId}:draft`).length > 0;
@@ -709,7 +764,7 @@ export function createWritingCollaboration(options: {
       ...(actor === 'director' ? ['director_decide省略inputVersionIds，程序自动绑定；research的空产物列表合法，不向作者索取内部ID。每阶段保存或输入变化后重新判断充分性；已有完整材料直接使用，不机械沿用上阶段结论。'] : []),
     ].join('\n');
     if (actor === 'director') rolePrompt += `\n精简交接：reason建议在${outputGuidance.delegationTargetCharacters}字内，只说明本阶段的关键目标、作者最新取舍与必要边界。专家已收到完整的当前方向、材料与产物，不要重复粘贴它们、逐条重述证据、写一份提纲再让提纲专家重写；不得要求提纲展示证据编号。保留确有必要的复杂要求，不以精简为由丢掉作者约束。`;
-    if (assignment?.stage === 'research') rolePrompt += workflow.requireEditorialPlan ? `\n${EDITORIAL_PLAN_INSTRUCTIONS}\n本次比较2–3个切口；作者明确指定方向时选中它，其他候选只说明取舍，不改变授权。只入账与候选相关的材料，字数目标约${articleTargetCharacters}字；不用数字点缀观点，保留能解释原因、呈现差异或限制结论的材料。notes只写共同边界，不重复计划。` : '';
+    if (assignment?.stage === 'research') rolePrompt += workflow.requireEditorialPlan ? `\n${EDITORIAL_PLAN_INSTRUCTIONS}\n只入账对当前写作有用的材料，字数目标约${articleTargetCharacters}字；不用数字点缀观点，保留能解释原因、呈现差异或限制结论的材料。notes只写共同边界，不重复计划。` : '';
     if (assignment?.stage === 'outline' || assignment?.stage === 'draft') rolePrompt += '\n有editorialPlan时围绕选中的切口与读者收获写作，只使用use材料支撑主张，不重新拼成候选切口大合集。gaps决定能说到哪里；无法支撑的判断缩小或不写。内部计划不是文章结构模板，不能把字段、选材理由、证据编号或自检说明写进正文。';
     if (assignment?.stage === 'central_revision') rolePrompt += reviewClosure ? `\n${RESOLUTION_SUBMISSION}`
       : '\n沿用已经选定的切口和读者收获。完整证据仍可核对反例、事实和适用范围，避免把淘汰的切口和选材重新扩成正文。';
@@ -726,8 +781,8 @@ export function createWritingCollaboration(options: {
     if (assignment?.stage === 'central_revision') rolePrompt += '\n绑定的authorReviewDiscussion是作者与审校专家公开交流的数据。作者最新明确保留、拒绝或调整的意见优先于旧审校报告；专家提议不等于作者同意，不能把作者已拒绝的可选修改重新应用。真正事实问题仍须处理或继续沟通，作者认可不能替代事实依据。';
     if (actor === 'director') rolePrompt += '\n给主笔和润色专家的任务要区分两件事：保留真实人物/来源的具体归属、事实限定与必要的不确定性；清除程序自己加进正文的重复材料说明。不要把“整理稿”“未经独立核实”这类通用工作声明锁成不可改的事实，不要命令主笔加总免责声明或在完整正文后附修改报告。内部核查状态由独立记录和界面告知作者。';
     if (actor === 'director' && current.revisionReturn && !current.editorialRecovery) rolePrompt += '\n终审已返回必须修正的问题，revisionReturn绑定当前稿件。现在调用现有的rework central_revision，再交主笔逐项处理。不要重复终审或把Agent的可修正问题交给作者；沿用已有返工预算。';
-    if (actor === 'director' && current.editorialRecovery) rolePrompt += '\neditorialRecovery指出文章核心收获失效，不能让主笔仅降语气。route=research且还有搜索额度时rework research，把原问题、缺口和queries交回研究；route=outline表示作者已回应，rework outline重新判断，回复不等于补足证据；其余情况ask其中的具体问题，不替作者换题。沿用现有返工预算，保留已存稿。';
-    if (actor === 'director' && current.prewritingReturn) rolePrompt += '\n提纲编辑发现选题承诺缺少关键支持。prewritingReturn不是提纲通过：有明确查询、搜索可用且有剩余额度时，rework research并把缺口与queries交给原研究专家补查；沿用现有搜索及返工预算。否则ask，用其中questions和reason向作者说明原题哪里撑不住、建议改成什么具体切口。不能让作者为助手提出的无据论点背书，不能把“认可继续”当作补证。';
+    if (actor === 'director' && current.editorialRecovery) rolePrompt += '\neditorialRecovery指出文章核心收获失效，不能让主笔仅降语气。route=research且搜索可用时rework research，把原问题、缺口和queries交回研究；route=outline表示作者已回应，rework outline重新判断，回复不等于补足证据；其余情况ask其中的具体问题，不替作者换题。沿用现有返工预算，保留已存稿。';
+    if (actor === 'director' && current.prewritingReturn) rolePrompt += '\n提纲编辑发现选题承诺缺少关键支持。prewritingReturn不是提纲通过：有明确查询且搜索可用时，rework research并把缺口与queries交给原研究专家补查；沿用现有返工预算。否则ask，用其中questions和reason向作者说明原题哪里撑不住、建议改成什么具体切口。不能让作者为助手提出的无据论点背书，不能把“认可继续”当作补证。';
     const stage = assignment?.stage;
     const stageFields = stage === 'central_revision' && reviewClosure ? { allowed: ['stage', 'content', 'resolutions'], required: redevelopment ? [] : ['resolutions'], stringFields: ['content'] }
       : stage === 'language_review' && comparisonCandidates ? { allowed: ['stage', 'content', 'comparison'], required: ['comparison'], stringFields: ['content'] }
@@ -796,15 +851,16 @@ export function createWritingCollaboration(options: {
       userMessage: isFactCheck ? `核对当前文章的重要事实，不重新审稿。\nCOLLABORATION_STATE=${JSON.stringify({
         actor, stage: 'fact_check', ready: current.ready, finished: current.finished, nextStage: current.nextStage, inputVersionIds: inputs,
         artifacts: summary.artifacts, selectedPublication: summary.selectedPublication,
+        ...(prepared ? factMaterialContext(authorizedMaterials) : {}),
         factPhase: prepared ? 'verify' : 'extract',
         ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
-          savedSourceRecords: factRecordCatalog(storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.budget(runId),
+          savedSourceRecords: factRecordCatalog(storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.progress(runId),
       })}` : redevelopment ? `请依据作者要求和来源写出完整文章。\n${styleContext(selectedStyle, actor)}\nCOLLABORATION_STATE=${JSON.stringify(userState)}` : `${(actor === "director" ? directorMessage : actor === 'title' ? assignment!.reason : options.expertMessage).split("\n").filter((line) => !line.startsWith("必须先用 read_material") && !(selectedStyle !== undefined && line.startsWith('风格参考档案')))
         .map(line => approvedPlan && !confirmedDirection && line.startsWith('主题：') ? `主题：${approvedPlan.promise}`
           : intakeRequirements && line.startsWith('主题：') ? '主题以作者原话、最新明确要求及当前确认的提纲为准。'
           : intakeRequirements && line.startsWith('约束：')
             ? '具体写作要求以作者原话、最新讨论及当前确认的提纲为准。' : line).join("\n")}\n${styleContext(selectedStyle, actor)}\nCOLLABORATION_STATE=${JSON.stringify(userState)}`,
-      allowedTools: finishing ? ['director_decide'] : isFactCheck ? factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled()) : allowedTools,
+      allowedTools: finishing ? ['director_decide'] : isFactCheck ? factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled(), authorizedMaterials.length > 0) : allowedTools,
       ...(stageFields ? { roleToolFields: { submit_writing_stage: stageFields } } : {}),
       ...(isFactCheck ? { projectHistory: projectFactHistory, toolFailureLoopKey: factToolFailureLoopKey } : {}),
       ...(redevelopment ? { projectHistory: redevelopmentHistory } : {}),
@@ -843,14 +899,13 @@ export function createWritingCollaboration(options: {
       authorizeTool(call) {
         const args = call.arguments as Record<string, unknown>;
         if (call.name === "read_artifact_version") return !redevelopment && inputs.includes(String(args.versionId));
-        if (call.name === "read_material") return options.materialIds.includes(String(args.materialId));
+        if (call.name === "read_material") return isFactCheck ? authorizedVersions.get(String(args.materialId)) === args.contentVersionId
+          : options.materialIds.includes(String(args.materialId));
         if (call.name === 'read_review_discussion') return !redevelopment && (actor === 'director' || assignment?.stage === 'central_revision');
         if (call.name === "submit_writing_stage") return args.stage === assignment?.stage;
         if (call.name === 'submit_publication_candidates') return actor === 'title';
         if (call.name === 'read_fact_source') return assignment?.stage === 'research' ? researchSearch.enabled() : assignment?.stage === 'fact_check' && factSearch.enabled();
         if (call.name === 'search_fact_sources') return assignment?.stage === 'fact_check' && factSearch.enabled();
-        // tool.requested is already recorded at authorization time. The tool
-        // excludes that operation when enforcing quota; do not charge it twice.
         if (call.name === 'search_research_sources') return assignment?.stage === 'research' && researchSearch.enabled();
         if (['read_fact_evidence', 'read_fact_record', 'read_fact_article', 'prepare_fact_check'].includes(call.name)) return isFactCheck;
         if (call.name === "submit_fact_check") {

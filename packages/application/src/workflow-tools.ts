@@ -32,13 +32,16 @@ import { COMPACT_RESEARCH_SCHEMA, expandResearchEvidence } from './research-evid
 import { normalizeFactVerification } from './fact-context.js';
 import { factSearchLimitations } from './fact-search-recovery.js';
 import { parseEditorialPlan } from './editorial-plan.js';
-import { PREWRITING_JSON_SCHEMA, parsePrewriting, prewritingContent, validateReadingRoute, type PrewritingAssessment } from './prewriting.js';
+import { PREWRITING_JSON_SCHEMA, confirmedWritingFocus, parsePrewriting, prewritingContent, validateReadingRoute, type PrewritingAssessment } from './prewriting.js';
 import { confirmedWritingDirection } from './conversation-intake.js';
 import { researchReadings } from './research-readings.js';
+import { usesPublicSources, withResearchSupplement, type OutlineSupplement } from './research-supplement.js';
 import { JSON_SCHEMA as REVISION_COMPARISON_SCHEMA, parseRevisionComparison } from './revision-comparison.js';
 import { applyParagraphEdits, PARAGRAPH_EDITS_SCHEMA, quoteParagraphIds } from './paragraph-revision.js';
+import { applyLintEdits, applyReviewEdits, LINT_EDITS_SCHEMA, REVIEW_EDITS_SCHEMA, type LintSource } from './focused-review.js';
+import { inlineMaterialContext } from './material-context.js';
 import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA,
-  validateReviewFindings, validateColdReviewFindings, parseReadingAssessment, parseReviewResolutions, parseRevisionAudit, READING_JSON_SCHEMA, needsArticleRedevelopment,
+  validateReviewFindings, validateColdReviewFindings, validatePersuasionFindings, parseReadingAssessment, parseReviewResolutions, parseRevisionAudit, READING_JSON_SCHEMA, needsArticleRedevelopment,
   type ReadingAssessment, type ReviewFinding, type BoundReviewFinding } from './review-closure.js';
 type BodyStage = Extract<ContentStage, "draft" | "central_revision" | "language_review">;
 
@@ -52,6 +55,8 @@ interface SubmitWritingStageArgs {
   readonly prewriting?: JsonValue;
   readonly reading?: JsonValue;
   readonly paragraphEdits?: JsonValue;
+  readonly reviewEdits?: JsonValue;
+  readonly lintEdits?: JsonValue;
 }
 
 interface SubmitFactCheckArgs {
@@ -93,6 +98,8 @@ export interface WritingWorkflowTools {
   reviewClosure(runId: string): ReviewClosure | null;
   revisionWork(runId: string, bodyVersionId: string | null): { closure: ReviewClosure; returnReportId: string | null } | null;
   reviewFindingsRequired(runId: string): boolean;
+  lintSources(runId: string): LintSource[];
+  protectedHypotheses(runId: string): string[];
   pendingRevisionReturn(runId: string): ArtifactVersion | null;
   hasRevisionReturnForAssignment(runId: string, dispatchSeq: number, bodyVersionId: string | null, events: readonly RuntimeEvent[]): boolean;
   readonly definitions: readonly ToolDefinition<never, JsonValue>[];
@@ -220,7 +227,9 @@ export function bodyArticleBaseline(content: string): string {
 
 const EDITORIAL_CAVEAT_PATTERNS = [
   /(?:细节|记载|记述|故事|传闻|传说|史料|记录|证据)[^。！？\n]{0,24}(?:未必|很难|难以|无法|不能|不可)[^。！？\n]{0,16}(?:核实|证实|确认|断定)/u,
-  /(?:不能|不宜|无法|难以|不足以)[^。！？\n]{0,12}(?:据此|直接|用来)?[^。！？\n]{0,12}(?:推断|认定|猜测|扩写|判断|证明|当作|归因|算作|算到|算在)/u,
+  /(?:不能|不宜|无法|难以|不足以)[^。！？\n]{0,24}(?:推断|认定|猜测|扩写|证明|当作|归因|算作|算到|算在)/u,
+  /(?:材料|证据|报道|记载|回忆|转述|史料)[^。！？；：，,\n]{0,20}(?:不能|不宜|无法|难以|不足以)[^。！？；：，,\n]{0,16}判断/u,
+  /(?:不能|不宜|无法|难以|不足以)[^。！？；：\n]{0,8}(?:据此|凭[^。！？；：\n]{1,10}(?:材料|证据|报道|记载|回忆|转述|史料))[^。！？；：\n]{0,8}判断/u,
   /(?:细节|记载|记述|故事|传闻|传说|史料|记录|证据|材料|文本)[^。！？\n]{0,16}(?:不能|无法|难以)[^。！？\n]{0,12}告诉/u,
   /(?:不能|不宜|无法|难以)[^。！？\n]{0,6}据此[^。！？\n]{0,6}说/u,
   /(?:材料|记述|记载|报道|回忆|细节|史料|记录|证据|文本)[^。！？\n]{0,20}(?:没有|并未|无从|无法|难以|不能)[^。！？\n]{0,20}(?:答案|留下|给出|回答|告诉|说明)/u,
@@ -339,6 +348,7 @@ interface WorkflowStageMarkerPayload {
   readonly stage: WritingWorkflowStage;
   readonly artifactVersionId: string;
   readonly carriedFromMarkerId?: string;
+  readonly focusedReview?: boolean;
 }
 
 interface WritingReviewEnvelope {
@@ -405,6 +415,11 @@ function stageMarkerLineage(storage: StoragePort, marker: ArtifactVersion | null
 export function isReadingFirstRun(storage: StoragePort, projectId: string, runId: string): boolean {
   return stageMarkerLineage(storage, stageMarker(storage, projectId, runId, 'outline'))
     .some(marker => JSON.parse(marker.content).readingFirst === true);
+}
+
+export function usesFocusedReview(storage: StoragePort, projectId: string, runId: string): boolean {
+  return stageMarkerLineage(storage, stageMarker(storage, projectId, runId, 'outline'))
+    .some(marker => markerPayload(marker)?.focusedReview === true);
 }
 
 /** One cold read owns prose revision. Extra publication/simulated reviews do
@@ -905,6 +920,8 @@ const WRITING_STAGE_SCHEMA = {
     resolutions: RESOLUTIONS_JSON_SCHEMA,
     audit: REVISION_AUDIT_JSON_SCHEMA,
     paragraphEdits: PARAGRAPH_EDITS_SCHEMA,
+    reviewEdits: REVIEW_EDITS_SCHEMA,
+    lintEdits: LINT_EDITS_SCHEMA,
     stage: {
       type: "string",
       enum: [
@@ -1024,6 +1041,7 @@ export function createWritingWorkflowTools(options: {
   readonly enforceContinuationReads?: boolean;
   readonly requiredInitialArtifactIds?: readonly string[];
   readonly completedArtifactReadIds?: (runId: string) => readonly string[];
+  readonly supplementOutline?: OutlineSupplement;
 }): WritingWorkflowTools {
   const {
     storage,
@@ -1092,6 +1110,24 @@ export function createWritingWorkflowTools(options: {
   };
   const reviewFindingsRequired = (runId: string) => Boolean(options.requireEditorialPlan &&
     JSON.parse(stageArtifact(storage, projectId, runId, 'research')?.content ?? '{}').editorialPlan);
+  const lintSources = (runId: string): LintSource[] => {
+    const research = stageArtifact(storage, projectId, runId, 'research');
+    if (!research) return [];
+    const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
+    const brief = briefId ? storage.getWritingBriefVersion(briefId) : null;
+    const materials = storage.listMaterials(projectId).filter(material => brief?.brief.materialIds.includes(material.id));
+    const readings = withResearchSupplement(storage, runId, research, researchReadings(storage, projectId, research,
+      materials, Boolean(confirmedWritingDirection(storage, projectId, brief))), prewritingApproval(runId) ?? undefined);
+    const local = inlineMaterialContext(materials.filter(material => !material.id.startsWith('intake-user-') &&
+      !readings.some(reading => reading.url === material.sourceReference)));
+    return [...readings.map(reading => ({ id: reading.url, text: reading.text, instructionAuthority: 'none' as const })),
+      ...local.flatMap(item => item && typeof item === 'object' && !Array.isArray(item) && typeof item.materialId === 'string' &&
+        typeof item.content === 'string' ? [{ id: item.materialId, text: item.content, instructionAuthority: 'none' as const }] : [])];
+  };
+  const protectedHypotheses = (runId: string): string[] => {
+    const original = stageMarkerLineage(storage, stageMarker(storage, projectId, runId, 'central_revision')).at(-1);
+    return original ? JSON.parse(original.content).protectedHypotheses ?? [] : [];
+  };
   function revisionReturnOwners(runId: string): Set<string> {
     const owners = new Set([runId]);
     for (const stage of ['review_editor', 'review_publish', 'central_revision'] as const) {
@@ -1158,15 +1194,21 @@ export function createWritingWorkflowTools(options: {
     }
     return { closure: { ...closure, findings, reportVersionIds: [...new Set([...closure.reportVersionIds, report.id])] }, returnReportId: report.id };
   }
-  function paragraphSubmission(runId: string, bodyVersionId: string | null, args: Partial<SubmitWritingStageArgs>) {
-    if (args.paragraphEdits === undefined) return null;
+  function paragraphSubmission(runId: string, bodyVersionId: string | null, args: Partial<SubmitWritingStageArgs>, reconcileRecorded = false) {
+    if (args.paragraphEdits === undefined && args.reviewEdits === undefined) return null;
     const base = bodyVersionId ? storage.getArtifactVersion(bodyVersionId) : null;
     const work = revisionWork(runId, bodyVersionId);
     if (args.stage !== 'central_revision' || !base || base.projectId !== projectId || base.kind !== 'body' ||
         args.content !== base.content || !work || (!work.returnReportId && !isReadingFirstRun(storage, projectId, runId))) {
       throw new ToolExecutionFault('PARAGRAPH_EDITS_INVALID', 'Paragraph repair requires the bound current article and its audit.', true);
     }
-    return applyParagraphEdits(base.content, base.id, args.paragraphEdits, work.closure.findings);
+    if (args.reviewEdits !== undefined) {
+      if (args.paragraphEdits !== undefined || !usesFocusedReview(storage, projectId, runId)) {
+        throw new ToolExecutionFault('REVIEW_EDITS_INVALID', '仅本轮论点审稿对应的修订可以提交这些局部修改。', true);
+      }
+      return applyReviewEdits(base.content, base.id, args.reviewEdits, work.closure.findings, lintSources(runId), reconcileRecorded);
+    }
+    return { ...applyParagraphEdits(base.content, base.id, args.paragraphEdits, work.closure.findings), protectedHypotheses: [] };
   }
   function pendingRevisionReturn(runId: string): ArtifactVersion | null {
     const owners = revisionReturnOwners(runId);
@@ -1304,14 +1346,17 @@ export function createWritingWorkflowTools(options: {
     const body = latestBodyId ? storage.getArtifactVersion(latestBodyId) : null;
     if (!body || body.projectId !== projectId || body.kind !== 'body' || body.logicalKey !== 'main') return null;
     const report = storage.listArtifactVersions(projectId, 'report', `revision-comparison:${runId}`).at(-1);
+    const currentMarker = stageMarker(storage, projectId, runId, 'language_review');
+    const focused = usesFocusedReview(storage, projectId, runId);
     const request = events.findLast(event => isSubmission(event) && (body.operationId === `${event.operationId}:artifact` ||
-      (body.id === assignment.expectedBodyVersionId && report?.operationId === `${event.operationId}:comparison`)));
+      (body.id === assignment.expectedBodyVersionId && (focused ? currentMarker?.operationId === `${event.operationId}:marker`
+        : report?.operationId === `${event.operationId}:comparison`))));
     if (!request || events.some(event => event.operationId === request.operationId && event.type === 'tool.completed')) return null;
     const args = request.payload.arguments as Partial<SubmitWritingStageArgs> | undefined;
-    if (args?.stage !== 'language_review' || args.content !== body.content || args.comparison === undefined) return null;
+    if (args?.stage !== 'language_review') return null;
 
     const operationId = request.operationId;
-    const marker = stageMarker(storage, projectId, runId, 'language_review');
+    const marker = currentMarker;
     if (marker) {
       const binding = markerPayload(marker);
       if (marker.operationId !== `${operationId}:marker` || binding?.artifactVersionId !== body.id ||
@@ -1322,6 +1367,22 @@ export function createWritingWorkflowTools(options: {
     const newBody = body.operationId === `${operationId}:artifact` && body.reason === 'workflow:language_review' &&
       body.actor.kind === 'agent' && body.actor.runId === runId && body.createdEventSeq > request.projectSeq &&
       body.parentVersionIds.length === 1 && body.parentVersionIds[0] === assignment.expectedBodyVersionId;
+    if (focused) {
+      const base = stageArtifact(storage, projectId, runId, 'central_revision');
+      if (!base || base.id !== assignment.expectedBodyVersionId || args.content !== base.content ||
+          !assignment.inputVersionIds?.includes(base.id) || (!newBody && !(marker && body.id === base.id))) return null;
+      try {
+        const lint = applyLintEdits(base.content, base.id, args.lintEdits, lintSources(runId), protectedHypotheses(runId));
+        if (lint.content !== body.content) return null;
+        if (marker) return canonicalJson(JSON.parse(marker.content).lintEdits) === canonicalJson(lint.edits) ? marker : null;
+        markStage(storage, { projectId, runId, operationId }, 'language_review', body.id, undefined, undefined, body.id,
+          { lintEdits: lint.edits });
+        return stageMarker(storage, projectId, runId, 'language_review');
+      } catch {
+        return null; // The normal stage retry retains the already-saved body.
+      }
+    }
+    if (args.content !== body.content || args.comparison === undefined) return null;
     // An unchanged submission has no new body version. Its own comparison
     // receipt is enough to prove progress when the bound body is still current.
     if (!newBody && !(hasReport && body.id === assignment.expectedBodyVersionId)) return null;
@@ -1366,7 +1427,7 @@ export function createWritingWorkflowTools(options: {
     const body = bodyId ? storage.getArtifactVersion(bodyId) : null;
     const args = request.payload.arguments as Partial<SubmitWritingStageArgs> | undefined;
     let paragraphRepair: ReturnType<typeof paragraphSubmission> = null;
-    try { paragraphRepair = args ? paragraphSubmission(runId, assignment.expectedBodyVersionId, args) : null; } catch { return null; }
+    try { paragraphRepair = args ? paragraphSubmission(runId, assignment.expectedBodyVersionId, args, true) : null; } catch { return null; }
     if (!body || args?.stage !== 'central_revision' || (paragraphRepair?.content ?? args.content) !== body.content ||
         !closure.reviewVersionIds.every(id => assignment.inputVersionIds.includes(id))) return null;
     const ownBody = body.operationId === `${request.operationId}:artifact` && body.actor.kind === 'agent' && body.actor.runId === runId &&
@@ -1387,12 +1448,16 @@ export function createWritingWorkflowTools(options: {
         const saved = JSON.parse(marker.content);
         return marker.operationId === `${request.operationId}:marker` && saved.artifactVersionId === body.id &&
           canonicalJson(saved.resolutions ?? null) === canonicalJson(resolutions ?? null) &&
+          canonicalJson(saved.reviewEdits ?? null) === canonicalJson(args.reviewEdits ?? null) &&
+          canonicalJson(saved.protectedHypotheses ?? []) === canonicalJson(paragraphRepair?.protectedHypotheses ?? []) &&
           (resolutions !== undefined || saved.revisionMode === (paragraphRepair ? 'paragraphs' : 'redevelop')) &&
           canonicalJson(saved.reviewVersionIds) === canonicalJson(closure.reviewVersionIds) ? marker : null;
       }
       markStage(storage, { projectId, runId, operationId: request.operationId }, 'central_revision', body.id, undefined, undefined, body.id,
         { ...(resolutions ? { resolutions } : { revisionMode: paragraphRepair ? 'paragraphs' : 'redevelop' }),
-          ...(paragraphRepair ? { paragraphEdits: args.paragraphEdits, baseBodyVersionId: assignment.expectedBodyVersionId } : {}), reviewVersionIds: closure.reviewVersionIds });
+          ...(paragraphRepair ? { baseBodyVersionId: assignment.expectedBodyVersionId,
+            ...(args.reviewEdits === undefined ? { paragraphEdits: args.paragraphEdits } : { reviewEdits: args.reviewEdits,
+              protectedHypotheses: paragraphRepair.protectedHypotheses }) } : {}), reviewVersionIds: closure.reviewVersionIds });
       return stageMarker(storage, projectId, runId, 'central_revision');
     } catch { return null; }
   }
@@ -1614,7 +1679,26 @@ export function createWritingWorkflowTools(options: {
         throw new ToolExecutionFault('TOOL_INPUT_INVALID', 'Only research accepts structured content; this stage requires a complete Markdown string.');
       }
       const paragraphRepair = paragraphSubmission(context.runId, context.expectedBodyVersionId, args);
-      let content = paragraphRepair?.content ?? (typeof args.content === 'string' ? args.content : JSON.stringify(args.content));
+      const focused = usesFocusedReview(storage, projectId, context.runId);
+      const focusedCritic = focused && args.stage === 'review_editor';
+      const focusedLint = focused && args.stage === 'language_review';
+      let lint: ReturnType<typeof applyLintEdits> | undefined;
+      if (focusedLint) {
+        const base = stageArtifact(storage, projectId, context.runId, 'central_revision');
+        if (!base || base.id !== context.expectedBodyVersionId || args.content !== base.content) {
+          throw new ToolExecutionFault('BASE_VERSION_CONFLICT', '终稿检查需要使用这次任务绑定的修订稿。');
+        }
+        if (args.audit !== undefined || args.comparison !== undefined) {
+          throw new ToolExecutionFault('FINAL_LINT_INVALID', '终稿检查只提交局部修改。', true);
+        }
+        lint = applyLintEdits(base.content, base.id, args.lintEdits, lintSources(context.runId), protectedHypotheses(context.runId));
+      } else if (args.lintEdits !== undefined) {
+        throw new ToolExecutionFault('FINAL_LINT_INVALID', '只有终稿检查可以提交这组局部修改。', true);
+      }
+      if (focused && args.stage === 'central_revision' && args.reviewEdits === undefined) {
+        throw new ToolExecutionFault('REVIEW_EDITS_INVALID', '仅提交绑定审稿原句的局部修改，没出处的反例用假设。', true);
+      }
+      let content = lint?.content ?? paragraphRepair?.content ?? (typeof args.content === 'string' ? args.content : JSON.stringify(args.content));
       // A locally persisted return is an idempotent handoff, not a completed
       // language stage. Reconcile it before its new findings join the next pass.
       const priorReturn = args.stage === 'language_review' ? storage.listArtifactVersions(projectId, 'report', `revision-return:${context.runId}`)
@@ -1654,11 +1738,14 @@ export function createWritingWorkflowTools(options: {
       }
       if (args.stage === 'research' && options.requireEditorialPlan) {
         const ledger = JSON.parse(evidenceLedgerContent(content));
+        const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
+        const briefVersion = briefId ? storage.getWritingBriefVersion(briefId) : null;
+        const allowSingleAngle = Boolean(confirmedWritingDirection(storage, projectId, briefVersion));
         try {
-          parseEditorialPlan(ledger.editorialPlan, new Set(evidenceIdsFromLedger(JSON.stringify(ledger))));
+          parseEditorialPlan(ledger.editorialPlan, new Set(evidenceIdsFromLedger(JSON.stringify(ledger))), { allowSingleAngle });
         } catch (error) {
           throw new ToolExecutionFault('EDITORIAL_PLAN_INVALID', error instanceof Error ? error.message : 'A grounded editorial plan is required', true,
-            { correction: 'Include editorialPlan with 2–3 different angles, selectedAngleId, selectionReason, materialDecisions for every evidence ID, and gaps. An author-selected hypothesis is not established fact. Record unsupported core premises instead of turning them into a source-criticism article.' });
+            { correction: 'Include editorialPlan with the author-confirmed angle or 2–3 angles if none is confirmed. Include selectedAngleId, selectionReason, materialDecisions for every evidence ID, and gaps. An author-selected hypothesis is not established fact. Record unsupported core premises instead of turning them into a source-criticism article.' });
         }
       }
       if (args.prewriting !== undefined && args.stage !== 'outline') throw new ToolExecutionFault('PREWRITING_UNEXPECTED', 'Only the outline editor submits prewriting.');
@@ -1670,13 +1757,21 @@ export function createWritingWorkflowTools(options: {
         const readingSelection = readerValueRequired(context.runId);
         const confirmedDirection = readingSelection ? confirmedWritingDirection(storage, projectId, briefVersion) : undefined;
         const materials = storage.listMaterials(projectId).filter(material => !confirmedDirection || briefVersion!.brief.materialIds.includes(material.id));
-        const sources = researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection));
+        const focus = confirmedDirection ? confirmedWritingFocus(confirmedDirection, materials.filter(material =>
+          material.id.startsWith('intake-user-') || material.role === 'user_firsthand').map(material => material.content)) : undefined;
+        const sources = withResearchSupplement(storage, context.runId, research,
+          researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection)));
         try {
           prewriting = parsePrewriting(args.prewriting, research.content, content, readingSelection,
-            confirmedDirection ? { direction: confirmedDirection, sources } : undefined);
+            confirmedDirection ? { direction: confirmedDirection, sources, ...(focus ? { focus } : {}) } : undefined);
           if (!confirmedDirection) validateReadingRoute(prewriting, sources);
         }
         catch (error) { throw new ToolExecutionFault('PREWRITING_INVALID', error instanceof Error ? error.message : 'Prewriting assessment required', true); }
+        if (confirmedDirection && usesPublicSources(briefVersion?.brief)) {
+          const supplement = options.supplementOutline?.(context, prewriting, sources, research, focus);
+          // Re-entry skips already attempted queries.
+          if (supplement) return supplement.then(result => result ?? submitWritingStage.execute(args, context));
+        }
         content = prewritingContent(prewriting, content);
         if (prewriting.decision !== 'ready') {
           const report = savePrewriting(context, prewriting, null);
@@ -1695,15 +1790,24 @@ export function createWritingWorkflowTools(options: {
       const closure = args.stage === 'central_revision'
         ? revisionWork(context.runId, context.expectedBodyVersionId)?.closure ?? null : reviewClosure(context.runId);
       const reviewStage = args.stage === 'review_editor' || args.stage === 'review_publish';
+      if (focusedCritic && args.reading !== undefined) {
+        throw new ToolExecutionFault('REVIEW_FINDINGS_INVALID', '本轮审稿只提交最多两条论点漏洞或现实反例。', true);
+      }
       if (args.reading !== undefined && args.stage !== 'review_editor') throw new ToolExecutionFault('READING_ASSESSMENT_UNEXPECTED', 'Only the cold editor submits the initial reading assessment.');
-      const reading = args.stage === 'review_editor' && (readerValueRequired(context.runId) || args.reading !== undefined)
+      const reading = args.stage === 'review_editor' && !focusedCritic && (readerValueRequired(context.runId) || args.reading !== undefined)
         ? parseReadingAssessment(args.reading, stageArtifact(storage, projectId, context.runId, 'draft')!.content, 'REVIEW_FINDINGS_INVALID', true) : undefined;
-      const findings = reviewStage && (reviewFindingsRequired(context.runId) || args.findings !== undefined)
+      const findings = focusedCritic ? validatePersuasionFindings(args.findings,
+        stageArtifact(storage, projectId, context.runId, 'draft')!.content)
+        : reviewStage && (reviewFindingsRequired(context.runId) || args.findings !== undefined)
         ? args.stage === 'review_editor'
           ? validateColdReviewFindings(args.findings, stageArtifact(storage, projectId, context.runId, 'draft')!.content, reading)
           : validateReviewFindings(args.findings, stageArtifact(storage, projectId, context.runId, 'draft')!.content,
             new Set(evidenceIdsFromLedger(stageArtifact(storage, projectId, context.runId, 'research')?.content ?? '')))
         : undefined;
+      if (focusedCritic && findings) {
+        content = findings.length ? findings.map(({ issue, repairTarget }, index) => `${index + 1}. ${issue}\n\n   ${repairTarget}`).join('\n\n')
+          : '没有发现需要处理的论点漏洞。';
+      }
       if (args.findings !== undefined && !reviewStage) throw new ToolExecutionFault('REVIEW_FINDINGS_UNEXPECTED', 'Only independent reviews submit findings.');
       if (args.resolutions !== undefined && args.stage !== 'central_revision') throw new ToolExecutionFault('REVIEW_RESOLUTIONS_UNEXPECTED', 'Only central revision submits resolutions.');
       if (args.audit !== undefined && args.stage !== 'language_review') throw new ToolExecutionFault('REVISION_AUDIT_UNEXPECTED', 'Only final review submits audit.');
@@ -1712,7 +1816,7 @@ export function createWritingWorkflowTools(options: {
         ? parseReviewResolutions(args.resolutions, closure.findings, content) : undefined;
       let audit: ReturnType<typeof parseRevisionAudit> | undefined;
       const readOnlyAudit = args.stage === 'language_review' && isReadOnlyRevisionAudit(storage, projectId, context.runId);
-      if (args.stage === 'language_review' && closure) {
+      if (args.stage === 'language_review' && closure && !focusedLint) {
         const currentBody = stageArtifact(storage, projectId, context.runId, 'central_revision');
         if (!currentBody || currentBody.id !== context.expectedBodyVersionId) {
           throw new ToolExecutionFault('BASE_VERSION_CONFLICT', 'Final review requires the exact central revision bound to this assignment.');
@@ -1727,7 +1831,7 @@ export function createWritingWorkflowTools(options: {
             message: '终审发现文章还需要完善，正在安排下一步。当前稿件已保留。' };
         }
       }
-      const candidates = args.stage === 'language_review' ? revisionCandidates(context.runId) : null;
+      const candidates = args.stage === 'language_review' && !focusedLint ? revisionCandidates(context.runId) : null;
       const comparison = candidates ? parseRevisionComparison(args.comparison, readOnlyAudit ? { ...candidates, allowOriginal: false } : candidates, content) : null;
       if (args.comparison !== undefined && !candidates) throw new ToolExecutionFault('REVISION_COMPARISON_UNEXPECTED', 'Comparison is only accepted for the bound final review.');
       if (
@@ -1746,9 +1850,13 @@ export function createWritingWorkflowTools(options: {
         commitRevisionComparison(storage, context, artifact.id, revisionComparisonContent(context.runId, candidates, artifact.id, comparison,
           audit && closure ? { ...audit, reviewVersionIds: closure.reviewVersionIds } : undefined));
       }
-      markStage(storage, context, args.stage, artifact.id, undefined, undefined, comparison || resolutions || args.stage === 'central_revision' && closure ? artifact.id : undefined,
-        { ...(prewriting?.readingRoute ? { readingFirst: true } : {}), ...(args.stage === 'central_revision' && closure ? { ...(resolutions ? { resolutions } : { revisionMode: paragraphRepair ? 'paragraphs' : 'redevelop' }),
-          ...(paragraphRepair ? { paragraphEdits: args.paragraphEdits, baseBodyVersionId: context.expectedBodyVersionId } : {}), reviewVersionIds: closure.reviewVersionIds } : {}),
+      markStage(storage, context, args.stage, artifact.id, undefined, undefined, lint || comparison || resolutions || args.stage === 'central_revision' && closure ? artifact.id : undefined,
+        { ...(prewriting?.readingRoute ? { readingFirst: true, focusedReview: true } : {}),
+          ...(lint ? { lintEdits: lint.edits } : {}),
+          ...(args.stage === 'central_revision' && closure ? { ...(resolutions ? { resolutions } : { revisionMode: paragraphRepair ? 'paragraphs' : 'redevelop' }),
+          ...(paragraphRepair ? { baseBodyVersionId: context.expectedBodyVersionId,
+            ...(args.reviewEdits === undefined ? { paragraphEdits: args.paragraphEdits } : { reviewEdits: args.reviewEdits,
+              protectedHypotheses: paragraphRepair.protectedHypotheses }) } : {}), reviewVersionIds: closure.reviewVersionIds } : {}),
           ...(args.stage === 'research' && options.requireEditorialPlan ? { prewritingRequired: true, readerValueRequired: true } : {}) });
       const nextStage = expectedStage(storage, context.projectId, context.runId, mode);
       const awaitingUserConfirmation =
@@ -2039,6 +2147,8 @@ export function createWritingWorkflowTools(options: {
     reviewClosure,
     revisionWork,
     reviewFindingsRequired,
+    lintSources,
+    protectedHypotheses,
     pendingRevisionReturn,
     hasRevisionReturnForAssignment,
     recoverCentralRevision,

@@ -4,6 +4,7 @@ import type {
   SearchSettingsView,
 } from '../../../client-bridge/src/desktop-bridge.ts'
 import css from './WritingAgentShell.module.css'
+import { DEFAULT_SEARCH_LIMIT, MIN_SEARCH_LIMIT, MAX_SEARCH_LIMIT, type SearchLimits } from '../../../writing-core/src/search-limits.ts'
 import {
   searchSettingsInput,
   searchSettingsValidation,
@@ -47,7 +48,7 @@ export function SearchSettings({ host }: { host: DesktopHostConfiguration | unde
 
   const validation = settings === null ? null : searchSettingsValidation(settings, apiKey, deepseekApiKey)
   const route = settings === null ? [] : searchSettingsRoute(settings)
-  const update = (patch: Partial<Pick<SearchSettingsView, 'deepseekEnabled' | 'parallelEnabled' | 'tavilyEnabled' | 'searchLimit'>>): void => {
+  const update = (patch: Partial<Pick<SearchSettingsView, 'deepseekEnabled' | 'parallelEnabled' | 'tavilyEnabled'>> & SearchLimits): void => {
     setSettings(current => current === null ? current : { ...current, ...patch })
     setNotice(null)
     setError(null)
@@ -141,9 +142,17 @@ export function SearchSettings({ host }: { host: DesktopHostConfiguration | unde
 
       {route.length > 0 && <div className={css.searchRouteNotice} role="status"><strong>搜索顺序</strong><span>{route.join(' → ')}；仅失败时切换到下一个已启用服务</span></div>}
       <p className={css.settingHint}>连接验证会向所选服务发送固定公开查询“中华人民共和国成立日期 1949年10月1日”，不读取你的文章；DeepSeek 每次成功验证消耗一次计费搜索请求，Tavily 每次验证消耗一次 basic 搜索用量。点击“保存并验证”会测试已启用服务，价格和额度以官方账户为准。DeepSeek 检索词最多128个字符，默认只取5条摘要，不额外调用付费 Fetch。可用标记仅代表本次启动中最近一次验证，修改配置或重启后需重新验证。</p>
-      <label className={css.formField}><span>每轮事实核查搜索上限</span><input aria-label="每轮事实核查搜索上限" type="number" min={1} max={30} step={1} disabled={busy} value={Number.isNaN(settings.searchLimit) ? '' : settings.searchLimit ?? 6} onChange={event => update({ searchLimit: event.target.value === '' ? NaN : Number(event.target.value) })} />
-        <small className={css.settingHint}>默认 6 次，可设置 1—30 次。额度用尽时由你选择追加3次或不追加；恢复、返工不重置额度。服务商用量以其账户记录为准。</small></label>
-      <p className={css.settingHint}>相同查询复用结果；纯传输超时不占核查额度，但网络尝试另有保护上限（搜索上限加3次）。单 HTTP 最多20秒、单服务最多30秒、整次检索含回退最多60秒。失败后可选择重试或不再搜索；不自动反复重试，停止后不继续回退。检索次数不等于HTTP请求数，Parallel还包括MCP握手。</p>
+      <fieldset className={css.searchLimits}>
+        <legend>查询批次参考</legend>
+        {([['researchSearchLimit', '写前研究'], ['supplementSearchLimit', '写前补查'], ['searchLimit', '终稿事实核查']] as const).map(([key, label]) =>
+          <label className={css.formField} key={key}><span>{label}</span><input aria-label={label} type="number"
+            min={MIN_SEARCH_LIMIT} max={MAX_SEARCH_LIMIT} step={1} disabled={busy}
+            value={Number.isNaN(settings[key]) ? '' : settings[key] ?? DEFAULT_SEARCH_LIMIT}
+            onChange={event => update({ [key]: event.target.value === '' ? NaN : Number(event.target.value) })} /></label>
+        )}
+        <small className={css.settingHint}>批次参考用于安排查询。已有材料够用时可以直接继续，具体缺口查清就停。运行记录按实际发出的独立查询计数，缓存、重复词和重试不增加独立数。</small>
+      </fieldset>
+      <p className={css.settingHint}>查询已发出但没有结果或响应超时，仍记为一次实际查询。服务回退和 Parallel 握手产生的额外 HTTP 请求不增加独立次数。单 HTTP 最多 20 秒、单服务最多 30 秒、整次检索含回退最多 60 秒。</p>
       <p className={css.settingHint}>开启并保存即允许自动搜索公开事实，不再逐次弹窗。检索词会发送给已启用的服务；请勿将私人或客户机密作为检索内容。具体检索词、服务、耗时与结果可在运行记录查看；关闭全部服务后不再联网，仅使用已有材料与模型复核。公开 HTTP 和 HTTPS 来源均可读取。已保存的历史核查结果不会自动更新。</p>
       {route.length === 0 && <div className={css.searchWarning} role="status"><strong>未启用外部搜索</strong><span>仅由大模型结合已有材料和自身知识再做一次事实性核查，未联网验证。文章仍可能存在事实性错误，请注意核对重要信息。</span></div>}
       {settings.credentialPersistence === 'session' && (settings.tavilyKeyConfigured || settings.deepseekKeyConfigured) && <div className={css.searchWarning} role="status"><strong>搜索 Key 仅本次启动可用</strong><span>部分搜索凭据未能保存至系统凭据库，重启桌面应用后可能需重新填写。</span></div>}

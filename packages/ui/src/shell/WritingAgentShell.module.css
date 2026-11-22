@@ -2844,6 +2844,18 @@
 .searchHeading p { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 1.6; }
 .searchPrivacyBadge { flex-shrink: 0; padding: 5px 9px; border-radius: 999px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-active); font-size: 11px; }
 .searchProviderList { display: grid; gap: 12px; }
+.searchLimits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 12px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 12px 16px 16px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+}
+.searchLimits legend { padding: 0 6px; font-weight: 600; }
+.searchLimits > small { grid-column: 1 / -1; }
 .searchProviderCard { display: grid; gap: 16px; padding: 16px 18px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 14px; background: var(--dsw-specific-popover); }
 label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(0, 1fr) max-content; align-items: center; cursor: pointer; }
 .searchProviderToggle { display: grid; gap: 16px; }

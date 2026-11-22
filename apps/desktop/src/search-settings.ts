@@ -5,13 +5,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CredentialBroker } from '../../../packages/runtime/credentials/src/index.js';
 import type { SearchSettingsInput, SearchSettingsView, SearchConnectionView } from '../../../packages/client-bridge/src/desktop-bridge.js';
-import { createFactSearchTools, SEARCH_TEST_QUERY, FACT_SEARCH_LIMIT, MAX_FACT_SEARCH_LIMIT, type SearchProvider, type FactSearchConfiguration } from '../../../packages/application/src/fact-search.js';
+import { createFactSearchTools, SEARCH_TEST_QUERY, type SearchProvider, type FactSearchConfiguration } from '../../../packages/application/src/fact-search.js';
+import { DEFAULT_SEARCH_LIMIT, MIN_SEARCH_LIMIT, MAX_SEARCH_LIMIT, SEARCH_LIMIT_KEYS } from '../../../packages/writing-core/src/search-limits.js';
 
+const limit = z.number().int().min(MIN_SEARCH_LIMIT).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT);
 const flags = z.object({ parallelEnabled: z.boolean(), tavilyEnabled: z.boolean(), deepseekEnabled: z.boolean().default(false),
-  searchLimit: z.number().int().min(1).max(MAX_FACT_SEARCH_LIMIT).default(FACT_SEARCH_LIMIT) }).strict();
+  researchSearchLimit: limit, supplementSearchLimit: limit, searchLimit: limit }).strict();
+
 const inputSchema = flags.extend({ tavilyApiKey: z.string().max(2048).optional(), deepseekApiKey: z.string().max(2048).optional() });
 export class SearchSettingsStore {
-  #flags = { parallelEnabled: false, tavilyEnabled: false, deepseekEnabled: false, searchLimit: FACT_SEARCH_LIMIT };
+  #flags = flags.parse({ parallelEnabled: false, tavilyEnabled: false });
   readonly #credentialId: string;
   readonly #deepseekCredentialId: string;
   #saving = false;
@@ -75,7 +78,7 @@ export class SearchSettingsStore {
     try {
       const parsed = inputSchema.safeParse({ ...input,
         ...(input.deepseekEnabled === undefined ? { deepseekEnabled: this.#flags.deepseekEnabled } : {}),
-        ...(input.searchLimit === undefined ? { searchLimit: this.#flags.searchLimit } : {}) });
+        ...Object.fromEntries(SEARCH_LIMIT_KEYS.map(key => [key, input[key] === undefined ? this.#flags[key] : input[key]])) });
       if (!parsed.success) throw new Error('SEARCH_SETTINGS_INVALID');
       const updates = [
         { id: this.#credentialId, key: parsed.data.tavilyApiKey?.trim(), enabled: parsed.data.tavilyEnabled },
@@ -85,7 +88,8 @@ export class SearchSettingsStore {
         if (update.enabled && !update.key && !(await this.credentials.resolve(`managed:${update.id}`))) throw new Error('SEARCH_API_KEY_REQUIRED');
       }
       const value = { parallelEnabled: parsed.data.parallelEnabled, tavilyEnabled: parsed.data.tavilyEnabled,
-        deepseekEnabled: parsed.data.deepseekEnabled, searchLimit: parsed.data.searchLimit };
+        deepseekEnabled: parsed.data.deepseekEnabled, researchSearchLimit: parsed.data.researchSearchLimit,
+        supplementSearchLimit: parsed.data.supplementSearchLimit, searchLimit: parsed.data.searchLimit };
       mkdirSync(dirname(this.path), { recursive: true });
       const temp = `${this.path}.${randomUUID()}.tmp`;
       writeFileSync(temp, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 });

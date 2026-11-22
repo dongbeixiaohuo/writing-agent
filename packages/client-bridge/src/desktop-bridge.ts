@@ -314,6 +314,8 @@ export type DesktopPublicationSaveResult =
 export interface SearchSettingsInput {
   readonly deepseekEnabled?: boolean;
   readonly deepseekApiKey?: string;
+  readonly researchSearchLimit?: number;
+  readonly supplementSearchLimit?: number;
   readonly searchLimit?: number;
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;
@@ -322,6 +324,8 @@ export interface SearchSettingsInput {
 export interface SearchSettingsView {
   readonly deepseekEnabled?: boolean;
   readonly deepseekKeyConfigured?: boolean;
+  readonly researchSearchLimit?: number;
+  readonly supplementSearchLimit?: number;
   readonly searchLimit?: number;
   readonly parallelEnabled: boolean;
   readonly tavilyEnabled: boolean;

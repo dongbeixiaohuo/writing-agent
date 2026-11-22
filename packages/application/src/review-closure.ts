@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ToolExecutionFault } from '../../runtime/tools/src/index.js';
 import { articleParagraphs, quoteParagraphIds } from './paragraph-revision.js';
+import { MAX_PERSUASION_FINDINGS, isArticleHeading } from './focused-review.js';
 
 const nonBlank = z.string().regex(/\S/u, 'Expected non-blank text');
 const recoverySchema = z.strictObject({
@@ -29,6 +30,9 @@ const findingSchema = z.strictObject({
 });
 const findingsSchema = z.array(findingSchema).max(12);
 const coldFindingsSchema = z.array(findingSchema.omit({ recovery: true }).extend({ evidenceIds: z.array(nonBlank).max(0) })).max(12);
+const persuasionFindings = z.array(coldFindingsSchema.element.omit({ paragraphIds: true }).extend({
+  kind: z.literal('inference'),
+})).max(MAX_PERSUASION_FINDINGS);
 const coldReadingSchema = readingSchema.extend({ verdict: z.enum(['delivered', 'revise']), queries: z.array(nonBlank).max(0), questions: z.array(nonBlank).max(0) });
 const resolutionsSchema = z.array(z.strictObject({
   findingId: nonBlank.max(200),
@@ -59,6 +63,7 @@ function toolSchema(schema: z.ZodType) {
 const publicFindingsSchema = z.array(findingSchema.omit({ paragraphIds: true })).max(12);
 export const JSON_SCHEMA = toolSchema(publicFindingsSchema);
 export const COLD_FINDINGS_JSON_SCHEMA = toolSchema(z.array(coldFindingsSchema.element.omit({ paragraphIds: true })).max(12));
+export const PERSUASION_FINDINGS_SCHEMA = toolSchema(persuasionFindings);
 export const COLD_READING_JSON_SCHEMA = toolSchema(coldReadingSchema);
 export const READING_JSON_SCHEMA = { ...toolSchema(readingSchema), allOf: [{
   if: { properties: { verdict: { enum: ['delivered', 'revise'] } }, required: ['verdict'] },
@@ -161,6 +166,23 @@ export function validateReviewFindings(value: unknown, body: string, evidenceIds
 
 export function validateColdReviewFindings(value: unknown, body: string, reading?: ReadingAssessment): ReviewFinding[] {
   return validateReviewFindings(parseContract(coldFindingsSchema, value, 'REVIEW_FINDINGS_INVALID', 'findings'), body, new Set(), reading);
+}
+
+export function validatePersuasionFindings(value: unknown, body: string): ReviewFinding[] {
+  const findings = parseContract(persuasionFindings, value, 'REVIEW_FINDINGS_INVALID', 'findings');
+  const paragraphs = articleParagraphs(body);
+  const covered = new Set<string>();
+  for (const [index, { quote }] of findings.entries()) {
+    const start = body.indexOf(quote);
+    const paragraphIndex = paragraphs.findIndex(p => p.start <= start && start + quote.length <= p.end);
+    const paragraph = paragraphs[paragraphIndex];
+    if (!paragraph || body.indexOf(quote, start + 1) !== -1 || isArticleHeading(paragraph, paragraphIndex) ||
+        covered.has(quote)) {
+      invalid('REVIEW_FINDINGS_INVALID', '每条意见只使用一处不同、可唯一定位的正文原句。', `findings.${index}.quote`);
+    }
+    covered.add(quote);
+  }
+  return findings;
 }
 
 export function parseReviewResolutions(value: unknown, findings: readonly BoundReviewFinding[], content: string) {

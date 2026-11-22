@@ -112,38 +112,41 @@ test('DeepSeek empty or malformed results do not claim external evidence or a ve
   }
 });
 
-test('pre-outline research is optional, bounded to two queries and isolated from final fact-check quota', async () => {
+test('research, supplementation and final verification count independently and can continue past the batch preference', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-research-search-'));
   const storage = openWorkspaceStorage({ workspacePath: root });
   let requests = 0;
-  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: true, searchLimit: 6,
+  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: true, searchLimit: 13, supplementSearchLimit: 12,
     authorizationMode: 'enabled_services' as const, getTavilyKey: async () => 'synthetic' });
-  const factory = (purpose: 'research' | 'fact_check') => search.createFactSearchTools({ storage, purpose, configuration,
+  const factory = (purpose: 'research' | 'supplement' | 'fact_check') => search.createFactSearchTools({ storage, purpose, configuration,
     fetch: async () => { requests++; return Response.json({ results: [{ url: 'https://example.com/fact', content: '公开背景' }] }); } });
   try {
     storage.createProject({ projectId: 'p', operationId: 'p', name: 'test', mode: 'quick', actor: { kind: 'user', id: 'u' } });
     storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'writing' });
     storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', planVersion: 'test' });
-    for (let i = 0; i < 3; i++) {
-      const operationId = `research-${i}`, scope = factory('research'), name = scope.definitions[0]!.name;
-      assert.equal(name, 'search_research_sources');
-      storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId, type: 'tool.requested', payload: { toolName: name, arguments: { query: `query ${i}` } } });
+    for (const [purpose, limit] of [['research', 10], ['supplement', 12], ['fact_check', 13]] as const) for (let i = 0; i <= limit; i++) {
+      const operationId = `${purpose}-${i}`, scope = factory(purpose), name = scope.definitions[0]!.name;
+      assert.equal(name, purpose === 'fact_check' ? 'search_fact_sources' : 'search_research_sources');
+      storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId, type: 'tool.requested', payload: { toolName: name,
+        ...(purpose === 'supplement' ? { origin: search.OUTLINE_SEARCH_ORIGIN } : {}), arguments: { query: `query ${i}` } } });
       const result = await scope.search(`query ${i}`, undefined, 'r', { projectId: 'p', runId: 'r', operationId,
         abortSignal: new AbortController().signal, expectedBodyVersionId: null,
         permissionGrant: createToolPermissionGrant({ projectId: 'p', runId: 'r', permissions: ['network:https:read'] }) });
       storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId, type: 'tool.completed', payload: { result: { toolName: name, ok: true, result } } });
       assert.equal(result.recoveryRequired, undefined, 'optional research must not add a quota confirmation checkpoint');
-      if (i === 2) {
-        assert.equal(result.failureCode, 'SEARCH_LIMIT_REACHED');
-        assert.doesNotMatch(result.notice, /请选择|追加|重试/);
-        assert.match(result.notice, /继续.*提纲/);
-      }
+      assert.equal(result.mode, 'external');
+      assert.equal(result.searchOrdinal, i + 1);
+      assert.equal(scope.progress('r').used, i + 1);
+      assert.equal(scope.progress('r').canSearch, true);
+      assert.ok(!('target' in scope.progress('r')));
     }
-    assert.equal(requests, 2);
+    assert.equal(requests, 38);
     assert.equal(factory('research').budget('r').remaining, 0, 'resume does not reset research budget');
+    assert.equal(factory('supplement').budget('r').remaining, 0);
     assert.doesNotMatch(factory('research').budget('r').notice ?? '', /等待用户|追加/);
-    assert.equal(factory('fact_check').budget('r').remaining, 6);
-    assert.equal(factory('fact_check').budget('r').attemptsUsed, 0);
+    assert.equal(factory('fact_check').budget('r').target, 13);
+    assert.equal(factory('fact_check').budget('r').used, 14);
+    assert.equal(factory('fact_check').budget('r').canSearch, true);
   } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -156,7 +159,7 @@ test('failed optional research is cached without asking for a retry or blocking 
   assert.equal(result.mode, 'unavailable');
   assert.equal(result.recoveryRequired, undefined);
   assert.doesNotMatch(result.notice, /请选择|追加|重试/);
-  assert.match(result.notice, /继续.*提纲/);
+  assert.match(result.notice, /未取得结果/);
   assert.equal((await scope.search('public background')).cacheHit, true);
   assert.equal(requests, 1);
 });
@@ -167,29 +170,29 @@ test('search defaults tolerate cross-border latency and the host can configure t
   assert.equal(search.DEFAULT_SEARCH_TIMEOUT_MS, 60_000);
   let requests = 0;
   const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
-    searchLimit: 2, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
+    searchLimit: 12, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
     fetch: async () => { requests++; return Response.json({ results: [] }); } });
-  await scope.search('first'); await scope.search('second');
-  assert.equal((await scope.search('third')).failureCode, 'SEARCH_LIMIT_REACHED');
-  assert.equal(scope.budget('direct').limit, 2);
-  assert.equal(requests, 2);
+  for (let i = 0; i < 12; i++) await scope.search(`query ${i}`);
+  assert.equal((await scope.search('extra')).failureCode, 'SEARCH_NO_RESULTS');
+  assert.equal(scope.budget('direct').limit, 12);
+  assert.equal(requests, 13);
 });
 
-test('pure transport timeouts do not consume query budget, but failures are cached and attempts remain bounded', async () => {
+test('dispatched timeouts count once per query, with repeat calls served from cache', async () => {
   let requests = 0;
   const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
-    searchLimit: 1, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
+    searchLimit: 10, authorizationMode: 'enabled_services', getTavilyKey: async () => 'test-key' }),
     requestTimeoutMs: 5, overallTimeoutMs: 30,
     fetch: async () => { requests++; return await new Promise<Response>(() => undefined); } });
   const timer = setTimeout(() => undefined, 2000);
   try {
     const first = await scope.search('timeout');
-    assert.equal(first.quotaCharged, false);
-    assert.equal(scope.budget('direct').used, 0);
+    assert.equal(first.quotaCharged, true);
+    assert.equal(scope.budget('direct').used, 1);
     assert.equal((await scope.search('timeout')).cacheHit, true);
-    for (let i = 0; i < 3; i++) await scope.search(`another timeout ${i}`);
-    assert.equal((await scope.search('attempt cap')).failureCode, 'SEARCH_LIMIT_REACHED');
-    assert.equal(requests, 4);
+    for (let i = 0; i < 12; i++) await scope.search(`another timeout ${i}`);
+    assert.equal((await scope.search('distinct timeout')).failureCode, 'SEARCH_REQUEST_TIMEOUT');
+    assert.equal(requests, 14);
   } finally { clearTimeout(timer); }
 });
 
@@ -229,17 +232,17 @@ test('search budget and evidence survive runtime recreation; cached queries cons
     assert.equal((await invoke('fact 0')).searchOrdinal, 1);
     assert.equal(scope().isDiscoveredSource('https://example.com/fact', 'r'), true);
     assert.equal(scope().isDiscoveredSource('http://example.com/public-fact', 'r'), true, 'HTTP search sources survive runtime recreation');
-    for (let i = 0; i < 8; i++) assert.equal((await invoke('fact 0')).cacheHit, true);
-    for (let i = 1; i < 6; i++) assert.equal((await invoke(`fact ${i}`)).searchOrdinal, i + 1);
-    assert.equal((await invoke('fact 6')).failureCode, 'SEARCH_LIMIT_REACHED');
-    assert.equal(requests, 6);
+    for (let i = 0; i < 8; i++) assert.equal((await invoke(' FACT   ０ ')).cacheHit, true);
+    for (let i = 1; i < 10; i++) assert.equal((await invoke(`fact ${i}`)).searchOrdinal, i + 1);
+    assert.equal((await invoke('fact 10')).searchOrdinal, 11);
+    assert.equal(requests, 11);
     const progress = storage.listRunEvents('r').filter(e => e.type === 'search.progress');
     assert.ok(progress.some(e => String(e.payload.message).includes('Tavily 已发出')));
     assert.doesNotMatch(JSON.stringify(progress), /test-key/);
   } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('enabled-services authorization replaces an old denied receipt without dropping search limits', async () => {
+test('enabled-services authorization replaces an old denied receipt without adding an attempt', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-search-consent-'));
   const storage = openWorkspaceStorage({ workspacePath: root });
   let requests = 0;
@@ -248,6 +251,8 @@ test('enabled-services authorization replaces an old denied receipt without drop
     storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'fact-check' });
     storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', planVersion: 'test' });
     storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId: 'old-search', type: 'tool.requested', payload: { toolName: 'search_fact_sources', arguments: { query: 'public fact' } } });
+    storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId: 'old-search', type: 'search.attempt_started',
+      payload: { query: 'public fact', ordinal: 1 } });
     storage.recordRunEvent({ projectId: 'p', runId: 'r', operationId: 'old-search', type: 'tool.completed', payload: {
       result: { toolName: 'search_fact_sources', ok: true, result: { mode: 'unavailable', authorization: 'denied', failureCode: 'SEARCH_NOT_AUTHORIZED', route: ['tavily'] } },
     } });
@@ -260,12 +265,12 @@ test('enabled-services authorization replaces an old denied receipt without drop
       permissionGrant: createToolPermissionGrant({ projectId: 'p', runId: 'r', permissions: ['network:https:read'] }) };
     const invoke = (query: string) => scope.search(query, undefined, 'r', context);
     const result = await invoke('public fact');
-    assert.equal(result.mode, 'external');
+    assert.equal(result.failureCode, 'SEARCH_NO_RESULTS');
     assert.equal(result.authorizationMs, 0);
     assert.equal((await invoke('public fact')).cacheHit, true);
-    for (let i = 0; i < 7; i++) await invoke(`another fact ${i}`);
-    assert.equal(requests, 6, 'a historical refusal without a network attempt does not consume the six-search run limit');
-    assert.equal((await invoke('over limit')).failureCode, 'SEARCH_LIMIT_REACHED');
+    for (let i = 0; i < 11; i++) await invoke(`another fact ${i}`);
+    assert.equal(requests, 12);
+    assert.equal(scope.budget('r').used, 12, 'historical refusal is not a dispatched query');
   } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -304,10 +309,10 @@ for (const failure of ['denied', 'timeout', 'failed'] as const) {
       automatic = true;
       scope = makeScope();
       assert.equal(scope.budget('r').used, 0, 'a recreated runtime must not count persisted approval failures');
-      for (let i = 0; i < 6; i++) assert.equal((await invoke(`fact ${i}`)).searchOrdinal, i + 1);
-      assert.equal((await invoke('over limit')).failureCode, 'SEARCH_LIMIT_REACHED');
-      assert.equal(requests, 6);
-      assert.equal(makeScope().budget('r').used, 6, 'only the real provider attempts survive accounting replay');
+      for (let i = 0; i < 10; i++) assert.equal((await invoke(`fact ${i}`)).searchOrdinal, i + 1);
+      assert.equal((await invoke('another fact')).searchOrdinal, 11);
+      assert.equal(requests, 11);
+      assert.equal(makeScope().budget('r').used, 11, 'only the real provider attempts survive accounting replay');
     } finally { storage.close(); rmSync(root, { recursive: true, force: true }); }
   });
 }
@@ -319,7 +324,7 @@ test('time spent approving a query does not consume the provider search deadline
       getTavilyKey: async () => 'test-key',
       authorizeQuery: async () => { await new Promise(resolve => setTimeout(resolve, 160)); return true; } }),
     overallTimeoutMs: 100,
-    fetch: async () => { requests++; return Response.json({ results: [] }); },
+    fetch: async () => { requests++; return Response.json({ results: [{ url: 'https://example.test/fact', content: '公开摘要' }] }); },
   });
   const result = await scope.search('public fact');
   assert.equal(result.provider, 'tavily', 'author approval must not silently prevent Tavily dispatch');
@@ -333,7 +338,7 @@ test('slow Parallel handshake reserves a real opportunity for the enabled Tavily
     requestTimeoutMs: 200, overallTimeoutMs: 300,
     fetch: async (url, init) => {
       calls.push(String(url));
-      if (String(url).includes('tavily')) return Response.json({ results: [] });
+      if (String(url).includes('tavily')) return Response.json({ results: [{ url: 'https://example.test/fact', content: '公开摘要' }] });
       await new Promise(resolve => setTimeout(resolve, 120));
       const body = JSON.parse(String(init?.body));
       if (body.method === 'initialize') return Response.json({ id: 1, result: { protocolVersion: '2024-11-05' } });
@@ -431,7 +436,7 @@ test('Tavily uses an authorization header and returns bounded untrusted evidence
 test('Parallel failure falls back only to enabled Tavily, failures never imply verification', async () => {
   const urls: string[] = [];
   const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: true, authorizeQuery: async () => true, getTavilyKey: async () => 'test-key' }),
-    fetch: async url => { urls.push(String(url)); return String(url).includes('parallel') ? new Response('no', { status: 429 }) : Response.json({ results: [] }); } });
+    fetch: async url => { urls.push(String(url)); return String(url).includes('parallel') ? new Response('no', { status: 429 }) : Response.json({ results: [{ url: 'https://example.test/fact', content: '公开摘要' }] }); } });
   const result = await scope.search('public fact');
   assert.equal(result.provider, 'tavily');
   assert.equal(urls.length, 2);
@@ -466,15 +471,15 @@ test('model-only instructions distinguish knowledge review from external evidenc
   assert.match(scope.instructions(), /不确定/);
 });
 
-test('search is bounded per run, cancellation does not trigger paid fallback', async () => {
+test('search may continue past the target, cancellation does not trigger paid fallback', async () => {
   let calls = 0;
   const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true, authorizeQuery: async () => true, getTavilyKey: async () => 'test' }),
     fetch: async () => { calls++; return Response.json({ results: [] }); } });
-  for (let i = 0; i < 7; i++) await scope.search(`query ${i}`);
-  assert.equal(calls, 6);
+  for (let i = 0; i < 11; i++) await scope.search(`query ${i}`);
+  assert.equal(calls, 11);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(scope.search('new run', controller.signal, 'r2'));
-  assert.equal(calls, 6);
+  assert.equal(calls, 11);
 });
 
 test('search aborts promptly while host authorization ignores the supplied signal', async () => {

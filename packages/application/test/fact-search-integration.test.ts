@@ -65,7 +65,7 @@ test('three different unavailable original pages do not block a fact check backe
   }
   try {
     const app = new WritingApplicationService({ storage, provider:new Provider(), factSearchConfiguration:()=>({ parallelEnabled:false, tavilyEnabled:true,
-      authorizationMode:'enabled_services', getTavilyKey:async ()=>'test-key' }) });
+      authorizeQuery: async () => true, getTavilyKey:async ()=>'test-key' }) });
     const result = await app.runFactCheck({ projectId:'project-1', expectedProjectRevision:body.projectRevision, model:'mock', parameters:{},
       budget:{ maxModelRequests:4, maxToolCalls:6, maxRetriesPerRequest:0, maxMajorRevisions:0 } });
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -91,7 +91,7 @@ for (const action of ['retry', 'continue'] as const) test(`search timeout pauses
   let searches = 0, failSearch = true, searchEnabled = true;
   globalThis.fetch = async () => { searches++; if (failSearch) throw new Error('SEARCH_REQUEST_TIMEOUT'); return Response.json({ results: [] }); };
   const requests: ModelRequest[] = [];
-  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: searchEnabled, authorizationMode: 'enabled_services' as const, getTavilyKey: async () => 'test-key' });
+  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: searchEnabled, authorizeQuery: async () => true as const, getTavilyKey: async () => 'test-key' });
   class Provider extends ModelProviderBase {
     constructor(private readonly resuming: boolean) { super('search-decisions', '1', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
     protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
@@ -118,7 +118,7 @@ for (const action of ['retry', 'continue'] as const) test(`search timeout pauses
     assert.equal(storage.getRun(first.runId)?.stopReason, 'FACT_SEARCH_DECISION_REQUIRED');
     assert.equal(searches, 1);
     const waiting = storage.listRunEvents(first.runId).findLast(e => e.type === 'run.waiting_user')!;
-    assert.equal((waiting.payload.searchRecovery as any).used, 0);
+    assert.equal((waiting.payload.searchRecovery as any).used, 1);
     failSearch = false;
     const rebuilt = new WritingApplicationService({ storage, provider: new Provider(true), factSearchConfiguration: configuration });
     searchEnabled = false;
@@ -327,7 +327,7 @@ test('Parallel MCP excerpts survive preview, local readback and a single fact su
   }
   try {
     const app = new WritingApplicationService({ storage, provider: new ParallelProvider(), factSearchConfiguration: () => ({
-      parallelEnabled: true, tavilyEnabled: false, authorizationMode: 'enabled_services' }) });
+      parallelEnabled: true, tavilyEnabled: false, authorizeQuery: async () => true }) });
     const result = await app.runFactCheck({ projectId: 'project-1', expectedProjectRevision: body.projectRevision, model: 'mock', parameters: {},
       budget: { maxModelRequests: 6, maxToolCalls: 6, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -452,7 +452,7 @@ test('targeted verification of a suspect year exposes the material error without
   globalThis.fetch = async () => { searches++; return Response.json({ results: [{ title: '原始发布公告', url: 'https://example.test/announcement', content: '示例项目于2024年正式发布。' }] }); };
   try {
     const app = new WritingApplicationService({ storage, provider: new SourceErrorProvider(), factSearchConfiguration: () => ({ parallelEnabled: false,
-      tavilyEnabled: true, authorizationMode: 'enabled_services', getTavilyKey: async () => 'fixture-key' }) });
+      tavilyEnabled: true, authorizeQuery: async () => true, getTavilyKey: async () => 'fixture-key' }) });
     const result = await app.runFactCheck({ projectId: 'project-1', expectedProjectRevision: evidence.projectRevision, model: 'mock', parameters: {},
       budget: { maxModelRequests: 6, maxToolCalls: 6, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -541,7 +541,7 @@ test('runFactCheck exposes and authorizes external fact search only when enabled
     assert.deepEqual(first.tools?.map(tool => tool.name), ['prepare_fact_check'])
     assert.ok(fixture.provider.requests[1]?.tools?.some(tool => tool.name === 'search_fact_sources'))
     const systemPrompt = fixture.provider.requests[1]!.messages.find(message => message.role === 'system')?.content ?? ''
-    assert.match(systemPrompt, /需要联网.*公开事实/u)
+    assert.match(systemPrompt, /只对仍存疑.*正文实际写出.*search_fact_sources/u)
     assert.match(systemPrompt, /search_fact_sources/)
     const searchResult = fixture.provider.requests.flatMap(request => request.messages)
       .find(message => message.role === 'tool' && message.name === 'search_fact_sources')
@@ -603,10 +603,10 @@ test('fact retry reuses extraction and all saved searches in the same run after 
         name = 'search_fact_sources'; args = { query: `公开事实${searches + 1}` };
       } else {
         assert.equal(state.factPhase, 'verify', 'no second full-article extraction after an unchanged-input retry');
-        assert.equal(state.searchBudget.used, 6);
-        assert.equal(state.searchBudget.remaining, 0);
-        assert.equal(request.tools?.some(t => t.name === 'search_fact_sources'), false);
-        assert.equal(state.savedSourceRecords.length, 6, 'same-preparation sources must be discoverable without the old conversation');
+        assert.equal(state.searchBudget.used, 10);
+        assert.equal(state.searchBudget.target, undefined);
+        assert.equal(request.tools?.some(t => t.name === 'search_fact_sources'), true);
+        assert.equal(state.savedSourceRecords.length, 10, 'same-preparation sources must be discoverable without the old conversation');
         const read = request.messages.find(m => m.role === 'tool' && m.name === 'read_fact_record');
         if (!read) { name = 'read_fact_record'; args = { callId: state.savedSourceRecords[0].callId, resultIndex: 0 }; }
         else {
@@ -621,23 +621,21 @@ test('fact retry reuses extraction and all saved searches in the same run after 
   try {
     const first = new WritingApplicationService({ storage, provider: new InterruptedProvider(false), factSearchConfiguration: configuration });
     const stopped = await first.runFactCheck({ projectId: 'project-1', expectedProjectRevision: seeded.projectRevision,
-      model: 'mock', parameters: {}, budget: { maxModelRequests: 7, maxToolCalls: 7, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
+      model: 'mock', parameters: {}, budget: { maxModelRequests: 11, maxToolCalls: 11, maxRetriesPerRequest: 0, maxMajorRevisions: 0 } });
     assert.equal(stopped.ok, false);
-    assert.equal(storage.getRun(stopped.runId)?.status, 'waiting_user');
-    assert.equal(searches, 6);
+    assert.equal(storage.getRun(stopped.runId)?.status, 'budget_exhausted');
+    assert.equal(searches, 10);
     const resumedApp = new WritingApplicationService({ storage, provider: new InterruptedProvider(true), factSearchConfiguration: configuration });
-    const waiting = storage.listRunEvents(stopped.runId).findLast(e => e.type === 'run.waiting_user')!;
     const resumeInput = { projectId: 'project-1', runId: stopped.runId, operationId: 'explicit-fact-retry', decision: 'resume' as const,
-      factSearchDecision: { requestId: (waiting.payload.searchRecovery as any).requestId, action: 'continue' as const },
       expectedProjectRevision: storage.inspectProject('project-1')!.revision, model: 'mock', parameters: {} };
     assert.throws(() => resumedApp.resumeFactCheck({ ...resumeInput, sessionId: 'another-session' }), { code: 'RUN_SCOPE_INVALID' });
-    assert.equal(storage.getRun(stopped.runId)?.status, 'waiting_user', 'invalid recovery cannot mutate the paused run');
+    assert.equal(storage.getRun(stopped.runId)?.status, 'budget_exhausted', 'invalid recovery cannot mutate the paused run');
     assert.equal(storage.listRunEvents(stopped.runId).some(e => e.type === 'run.resumed'), false);
     const handle = resumedApp.resumeFactCheck(resumeInput);
     const result = await handle.result;
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.runId, stopped.runId);
-    assert.equal(searches, 6, 'retry cannot issue any extra network search');
+    assert.equal(searches, 10, 'retry cannot issue any extra network search');
     assert.equal(storage.listRuns('project-1').length, 1);
     assert.equal(requests.filter(r => JSON.parse(r.messages.find(m => m.role === 'user')!.content).factPhase === 'extract').length, 1);
     assert.equal(storage.listRunEvents(stopped.runId).filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'prepare_fact_check').length, 1);

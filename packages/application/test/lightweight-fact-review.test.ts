@@ -31,7 +31,8 @@ test('extraction and verification have compact, distinct prompts without writing
     assert.match(prompt, /不可信数据/u);
     assert.doesNotMatch(prompt, /作者声音|文体规则|去 AI|盲测|反方|文风统一/u);
   }
-  assert.match(verify, /合并检索/u);
+  assert.match(verify, /先对照已有材料[\s\S]*只对仍存疑/u);
+  assert.doesNotMatch(verify, /searchBudget.target|最低.*查询/u);
   assert.match(verify, /callId.*URL/u);
   assert.match(builder('verify', false), /未联网/u);
 });

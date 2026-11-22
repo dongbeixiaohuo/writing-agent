@@ -29,15 +29,23 @@ for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing 
   const storage = openWorkspaceStorage({ workspacePath });
   const originalFetch = globalThis.fetch;
   let searches = 0, fail = action !== 'extend', resumed = false;
+  const initialSearches = action === 'extend' ? 10 : 1;
   const turns: unknown[] = [];
-  globalThis.fetch = async () => { searches++; if (fail) throw new Error('SEARCH_REQUEST_TIMEOUT'); return Response.json({ results: [] }); };
+  globalThis.fetch = async (_input, init) => {
+    const query = JSON.parse(String(init?.body)).query;
+    if (query.startsWith('公开年份')) {
+      searches++;
+      if (fail) throw new Error('SEARCH_REQUEST_TIMEOUT');
+    }
+    return Response.json({ results: [] });
+  };
   class Provider extends BridgeWritingProvider {
     protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       const state = collaborationState(request) as any;
       turns.push({ actor: state?.actor, stage: state?.stage, phase: state?.factPhase, tools: request.tools?.map(t => t.name) });
       if (state?.actor === 'fact_check' && state.factPhase === 'verify') {
-        if (!searches || state.searchBudget.retryQuery || (resumed && action === 'extend' && searches === 1)) {
-          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'search_fact_sources', argumentsDelta: JSON.stringify({ query: searches && action === 'extend' ? '另一个公开年份' : '公开年份' }) };
+        if (searches < initialSearches || state.searchBudget.retryQuery || (resumed && action === 'extend' && searches === initialSearches)) {
+          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'search_fact_sources', argumentsDelta: JSON.stringify({ query: action === 'extend' ? `公开年份 ${searches}` : '公开年份' }) };
           yield { type: 'completed', finishReason: 'tool_calls' }; return;
         }
         if (resumed) assert.equal(state.stage, 'fact_check');
@@ -45,7 +53,7 @@ for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing 
       yield* super.providerStream(request);
     }
   }
-  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: true, searchLimit: action === 'extend' ? 1 : 6,
+  const configuration = () => ({ parallelEnabled: false, tavilyEnabled: true, searchLimit: 10,
     authorizationMode: 'enabled_services' as const, getTavilyKey: async () => 'test-key' });
   const service = new WritingApplicationService({ storage, provider: new Provider(), factSearchConfiguration: configuration });
   seedProject(service, 'project-search', '搜索恢复');
@@ -54,9 +62,9 @@ for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing 
   try {
     await bridge.handshake();
     const started = await bridge.sendMessage('按已确认简报生成草稿', { operationId: 'start-search' });
-    try { await waitUntil(() => bridge.getSnapshot().recoverableRuns.some(r => r.stopReason === 'FACT_SEARCH_DECISION_REQUIRED'), 5000); }
+    try { await waitUntil(() => bridge.getSnapshot().recoverableRuns.some(r => r.stopReason === 'FACT_SEARCH_DECISION_REQUIRED'), 15000); }
     catch { throw new Error(JSON.stringify({ run: storage.getRun(started.runId), turns, last: bridge.getSnapshot().lastError })); }
-    assert.equal(searches, 1);
+    assert.equal(searches, initialSearches);
     const pending = bridge.getSnapshot().recoverableRuns.find(r => r.runId === started.runId)!;
     assert.equal(pending.inputRequest?.kind, 'search_recovery');
     assert.equal(pending.inputRequest?.searchRecovery?.kind, action === 'extend' ? 'limit' : 'timeout');
@@ -76,7 +84,7 @@ for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing 
     await renderer.resumeRun(started.runId, 'resume', { operationId: 'resume-search', factSearchDecision: { requestId, action } });
     await waitUntil(() => storage.getRun(started.runId)?.status === 'completed', 5000);
     await bridge.refresh();
-    assert.equal(searches, action === 'continue' ? 1 : 2);
+    assert.equal(searches, action === 'continue' ? initialSearches : initialSearches + 1);
     assert.equal(storage.listRuns('project-search').length, 1, 'one writing run, no extra author classification or intake');
     assert.equal(bridge.getSnapshot().recoverableRuns.length, 0);
     assert.equal(bridge.getSnapshot().deliveryWorkspace.formalExportEnabled, true);
@@ -84,8 +92,8 @@ for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing 
     assert.deepEqual(events.filter(e => e.type === 'run.resumed').map(e => e.payload.factSearchDecision), [{ requestId, action }]);
     if (action === 'extend') {
       const lastSearch = events.findLast(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'search_fact_sources');
-      assert.equal((lastSearch?.payload.result as any)?.result.searchLimit, 4, 'one extension adds exactly three searches');
-      assert.equal((lastSearch?.payload.result as any)?.result.searchOrdinal, 2, 'saved searches remain charged after reopen');
+      assert.equal((lastSearch?.payload.result as any)?.result.searchLimit, 13, 'one extension adds exactly three searches');
+      assert.equal((lastSearch?.payload.result as any)?.result.searchOrdinal, 11, 'saved searches remain charged after reopen');
     }
     assert.equal(events.filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'prepare_fact_check').length, 1);
     assert.equal(events.filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'submit_writing_stage' && (e.payload.result as any)?.result?.stage === 'language_review').length, 1);

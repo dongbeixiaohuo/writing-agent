@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { ConversationStreamPreview, requestMaterialPreviews, type MaterialPreview } from './conversation-stream.js';
 import { deliveredInlineMaterialIds } from './material-context.js';
 import { projectRevisionComparisons, type RevisionComparisonView } from './revision-comparison.js';
-import { factReviewPrompt, factReviewTools, projectFactHistory, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionError, factRecordCatalog } from './fact-context.js';
+import { factMaterialContext, factReviewPrompt, factReviewTools, projectFactHistory, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionError, factRecordCatalog } from './fact-context.js';
 import { validateFactSearchDecision, FACT_SEARCH_DECISION_REQUIRED, type FactSearchDecision } from './fact-search-recovery.js';
 import { pendingWorkflowHandoffs, recordHandoffFailure, isWorkflowHandoffSourceCommitted } from './workflow-handoff.js';
 import { finalLockedTitle } from '../../writing-core/src/index.js';
 
 import { createFactSearchTools, type FactSearchConfiguration } from './fact-search.js';
+import { createOutlineSupplement } from './research-supplement.js';
 import { createFactSourceTool, factToolFailureLoopKey } from './fact-web.js';
 import { createAuthorWebTool, authorizedAuthorWebUrls, AUTHOR_WEB_INSTRUCTIONS, type AuthorWebFetcher } from './author-web.js';
 import {
@@ -1429,11 +1430,14 @@ export class WritingApplicationService {
         contentVersionId: material.contentVersionId,
       };
     });
+    const researchSearch = createFactSearchTools({ storage: this.#storage, purpose: 'research', configuration: this.#factSearchConfiguration });
+    const supplementSearch = createFactSearchTools({ storage: this.#storage, purpose: 'supplement', configuration: this.#factSearchConfiguration });
     const workflow = createWritingWorkflowTools({
       storage: this.#storage,
       projectId,
       mode: project.mode,
       requireEditorialPlan: true,
+      supplementOutline: createOutlineSupplement(this.#storage, projectId, supplementSearch),
       interactionMode: briefVersion.brief.interactionMode,
       requiredMaterialIds: briefVersion.brief.materialIds,
       completedMaterialIds: (runId) =>
@@ -1529,6 +1533,8 @@ export class WritingApplicationService {
       .join("\n\n");
     const collaboration = createWritingCollaboration({ storage: this.#storage, projectId, workflow,
       factSearchConfiguration: this.#factSearchConfiguration,
+      researchSearch,
+      supplementSearch,
       authorReviewDiscussion: recentAuthorConversationHistory(this.#storage, projectId, input.sessionId),
       systemPrompt: prompt.systemPrompt, directorMessage: assembledUserMessage,
       expertMessage: [prompt.userMessage, latestInstruction, originalInstructionBoundary, inputHistoryBoundary].filter(Boolean).join("\n\n"),
@@ -1822,6 +1828,8 @@ export class WritingApplicationService {
     if ((currentBrief?.interactionMode === 'co_creation' || (project.currentTitleVersionId && this.#storage.getArtifactVersion(project.currentTitleVersionId)?.reason === 'author-publication-selection')) && !isPublicationSelectionCurrent(this.#storage, projectId)) {
       throw new ApplicationServiceError('PUBLICATION_SELECTION_REQUIRED', '请先在主对话选择或确认发布标题，再核查最终标题与正文。');
     }
+    const materials = this.#storage.listMaterials(projectId).filter(material => !currentBrief || currentBrief.materialIds.includes(material.id));
+    const localMaterialContext = factMaterialContext(materials);
     const factBinding = () => {
       const current = this.#storage.inspectProject(projectId);
       if (current?.latestBodyVersionId !== body.id || current.currentEvidenceVersionId !== evidence.id) return null;
@@ -1832,6 +1840,7 @@ export class WritingApplicationService {
     };
     const tools = ToolRegistry.create([
       ...createFactContextTools(this.#storage, projectId, factBinding),
+      ...createBuiltinReadTools({ materials: this.#storage, versions: this.#storage }).filter(tool => tool.name === "read_material"),
       ...(factSearch.enabled() ? [...factSearch.definitions, createFactSourceTool({ storage: this.#storage, projectId,
         searchEnabled: factSearch.enabled, isDiscoveredSource: factSearch.isDiscoveredSource }) as unknown as ToolDefinition<never, JsonValue>] : []),
       ...workflow.definitions,
@@ -1852,9 +1861,14 @@ export class WritingApplicationService {
             ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason } : {}) }),
           userMessage: JSON.stringify({ ...factInput, artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),
             selectedPublication: selectedPublicationContext(this.#storage, projectId), factPhase: prepared ? 'verify' : 'extract',
-            ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
-              savedSourceRecords: factRecordCatalog(this.#storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.budget(runId) }),
-          allowedTools: factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled()),
+            ...(prepared ? { ...localMaterialContext, preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
+              savedSourceRecords: factRecordCatalog(this.#storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.progress(runId) }),
+          allowedTools: factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled(), materials.length > 0),
+          authorizeTool: call => {
+            if (call.name !== 'read_material') return true;
+            const args = call.arguments as { materialId: string; contentVersionId: string };
+            return materials.some(material => material.id === args.materialId && material.contentVersionId === args.contentVersionId);
+          },
           projectHistory: projectFactHistory,
           toolFailureLoopKey: factToolFailureLoopKey,
           projectToolResult: (message, context) => projectFactToolResult(message, context, prepared ? {
@@ -1902,7 +1916,10 @@ export class WritingApplicationService {
       displayInstruction: "重新核查当前稿件",
       ...(input.operationId === undefined ? {} : { operationId: input.operationId }),
       ...(recoveredRun ? { sessionId: recoveredRun.sessionId } : input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-      ...(input.budget === undefined ? {} : { budget: input.budget }),
+      ...(input.budget ? { budget: input.budget } : factSearch.automatic() ? {
+        budget: { maxModelRequests: Math.max(26, factSearch.configuredTarget() + 16), maxToolCalls: Math.max(34, factSearch.configuredTarget() + 24),
+          maxRetriesPerRequest: 2, maxMajorRevisions: 0 },
+      } : {}),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     };
     if (resume) {

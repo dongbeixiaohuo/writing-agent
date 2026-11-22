@@ -295,7 +295,7 @@ test('fact extraction is bound to current article and selected title; verificati
 test('verification guidance uses supplied selected quotes and only fills real context gaps', () => {
   assert.match(FACT_CONTEXT_GUIDANCE, /claimFields.*claimRows/);
   assert.match(FACT_CONTEXT_GUIDANCE, /不从头重读.*正文.*原始素材/);
-  assert.match(FACT_CONTEXT_GUIDANCE, /不重复读取.*已提供.*证据/);
+  assert.match(FACT_CONTEXT_GUIDANCE, /已提供引句直接用/);
   assert.match(FACT_CONTEXT_GUIDANCE, /定位记录不是证据/);
 });
 

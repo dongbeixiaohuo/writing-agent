@@ -9,6 +9,24 @@ function sourceKey(url: string): string {
   try { const parsed = new URL(url); parsed.hash = ''; return parsed.href; } catch { return url; }
 }
 
+export interface ResearchReading {
+  url: string;
+  finalUrl: string;
+  text: string;
+  bodyHash: string;
+  truncated: boolean;
+  instructionAuthority: 'none';
+  supplementEvidence?: { kind: 'documented_rule' | 'calculation_example' | 'reported_context'; useBoundary: string };
+}
+
+export function hasBonusCalculationDetails(text: string) {
+  const payoff = '奖金|绩效工资|奖励(?:比例|基数|(?:的)?(?:分配)?方案)|奖池|13薪';
+  const factor = '系数|权重|提成|奖励比例|达成率|乘以|计算公式|×';
+  const link = '[^。！？；;\n]{0,110}';
+  return /基数|奖池|奖金包|目标奖|年度总收益|毛利额|部门绩效|个人(?:绩效|综合系数)|考核等级/u.test(text) &&
+    new RegExp(`(?:${payoff})${link}(?:${factor})|(?:${factor})${link}(?:${payoff})`, 'u').test(text);
+}
+
 /** Keep the passages the researcher actually read. A claim table is an index,
  * not a replacement for the people, sequence and detail in the source. */
 export function researchReadings(storage: Pick<SessionStore, 'listRunEvents'>, projectId: string, research: ArtifactVersion | null,
@@ -24,7 +42,7 @@ export function researchReadings(storage: Pick<SessionStore, 'listRunEvents'>, p
     e.runId === runId && e.projectSeq < research.createdEventSeq);
   const requests = new Map(events.filter(e => e.type === 'tool.requested' && e.payload.actor === 'research' &&
     e.payload.toolName === 'read_fact_source').map(e => [e.operationId, e]));
-  const passages: { url: string; finalUrl: string; text: string; bodyHash: string; truncated: boolean; instructionAuthority: 'none' }[] = [];
+  const passages: ResearchReading[] = [];
   const seen = new Set<string>();
   let remaining = 20_000;
   for (const event of [...events].reverse()) {

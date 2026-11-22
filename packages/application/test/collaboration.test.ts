@@ -137,7 +137,7 @@ for (const interruptedCommit of [false, true]) for (const action of ['resume_che
   } finally { bridge?.dispose(); f.close(); }
 });
 
-for (const parallelEnabled of [false, true]) it(`full workflow separates search quotas and scopes source reading (enabled=${parallelEnabled})`, async () => {
+for (const parallelEnabled of [false, true]) it(`full workflow keeps research and final searches separate and scopes source reading (enabled=${parallelEnabled})`, async () => {
   const provider = new CollaborationProvider();
   const f = setup(provider);
   try {
@@ -156,11 +156,11 @@ for (const parallelEnabled of [false, true]) it(`full workflow separates search 
         parallelEnabled && collaborationState(request)?.stage === 'research');
     }
     const verification = checks.find(request => (collaborationState(request) as any)?.factPhase === 'verify')!;
-    assert.match(verification.messages[0]!.content, parallelEnabled ? /需要联网.*公开事实/u : /未启用外部搜索.*未联网/u);
+    assert.match(verification.messages[0]!.content, parallelEnabled ? /只对仍存疑.*正文实际写出.*search_fact_sources/u : /未启用外部搜索.*未联网/u);
   } finally { f.close(); }
 });
 
-it('optional front research uses configured Tavily before the outline and keeps final quota intact', async () => {
+it('optional front research uses configured Tavily before the outline without forcing a final search', async () => {
   class ResearchProvider extends CollaborationProvider {
     searches = 0;
     protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
@@ -477,14 +477,15 @@ it('scopes research to supplied evidence without demanding unavailable searches 
   } finally { f.close(); }
 });
 
-it('fact check uses selected facts and evidence, without repeating writing instructions or original materials', async () => {
+it('fact check offers local material readback without resending the writing packet', async () => {
   const provider = new CollaborationProvider(); const f = setup(provider, 'autonomous', 1);
   try {
     const result = await f.app.runDraft({ ...f.input, userInstruction: '数字如有冲突请标明，保留我的判断。' });
     assert.equal(result.ok, true);
     const request = provider.requests.find(r => collaborationState(r)?.actor === 'fact_check')!;
     const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
-    assert.equal(state.materialCatalog, undefined);
+    assert.ok(state.materialCatalog.some((item: { materialId: string }) => item.materialId === "m-0"));
+    assert.doesNotMatch(request.messages[1]!.content, /写安静的观察，要求 0/u);
     assert.equal(state.factPhase, 'verify');
     assert.equal(state.artifacts.find((a: any) => a.kind === 'body').content.projection, 'fact_article_catalog');
     assert.ok(request.tools?.some(t => t.name === 'read_fact_article'));
@@ -495,7 +496,7 @@ it('fact check uses selected facts and evidence, without repeating writing instr
     assert.ok(request.messages[0]!.content.length < 1400);
     assert.doesNotMatch(request.messages[1]!.content, /必须先用 read_material|约 800 字符/);
     assert.ok(!request.tools?.some(t => t.name === 'read_artifact_version'), 'no reread tool when bound artifacts already provided in full');
-    assert.equal(request.tools?.some(t => t.name === 'read_material'), false, 'specialist compares prepared facts, not the original writing packet');
+    assert.ok(request.tools?.some(t => t.name === 'read_material'), 'the specialist may read the needed local passage');
   } finally { f.close(); }
 });
 
@@ -523,7 +524,8 @@ it('lets research inspect source pages while retaining URL authorization and the
     assert.ok(f.storage.listRunEvents(result.runId).some(e => e.type === 'tool.failed' &&
       (e.payload.result as any).error.code === 'FACT_SOURCE_NOT_IN_LEDGER'), 'unknown URLs must be rejected before network access');
     const research = provider.requests.find(r => collaborationState(r)?.stage === 'research')!;
-    assert.equal((collaborationState(research) as any).researchSearchBudget.limit, 2);
+    assert.equal((collaborationState(research) as any).researchSearchBudget.used, 0);
+    assert.equal((collaborationState(research) as any).researchSearchBudget.target, undefined);
   } finally { f.close(); }
 });
 
@@ -1807,7 +1809,7 @@ it('scales outline and research guidance to the article without imposing a trunc
     await f.app.runDraft(f.input);
     const outline=provider.requests.find(r=>collaborationState(r)?.actor==='outline')!;
     const research=provider.requests.find(r=>collaborationState(r)?.actor==='research')!;
-    assert.match(research.messages[0]!.content,/只入账与候选相关的材料.*能解释原因、呈现差异或限制结论/u);
+    assert.match(research.messages[0]!.content,/只入账对当前写作有用的材料.*能解释原因、呈现差异或限制结论/u);
     const state=JSON.parse(outline.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
     assert.equal(state.outputGuidance.articleTargetCharacters,800);
     assert.ok(state.outputGuidance.outlineTargetCharacters<=800);
@@ -2313,7 +2315,7 @@ for (const decision of ['research', 'discuss']) it(`keeps the confirmed directio
     assert.ok(draftRequest);
     const state = JSON.parse(draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=')[1]!);
     assert.equal(state.writingRequirements.topic, '安静');
-    assert.deepEqual(state.writingPlan, { promise: '安静', readingRoute: { question: '安静', moments: [] } });
+    assert.deepEqual(state.writingPlan, { promise: '安静', readerPayoff: '安静', readingRoute: { question: '安静', moments: [] } });
     assert.doesNotMatch(draftRequest.messages[1]!.content, /助手自行提出的方向|是否改为只比较家庭规模/u);
     assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, null);
   } finally { f.close(); }

@@ -202,9 +202,10 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   const result = envelope?.ok === true ? object(envelope.result) : null
   if (toolName === 'search_fact_sources' || toolName === 'search_research_sources') {
     const provider = result?.provider === 'deepseek' ? 'DeepSeek' : result?.provider === 'parallel' ? 'Parallel' : result?.provider === 'tavily' ? 'Tavily' : null
-    const mode = result?.mode === 'external' ? `${provider ?? '外部'} 搜索已返回` : result?.mode === 'unavailable' ? '搜索不可用' : '仅模型复核，未联网搜索'
     const hosts = safeSourceHosts(result?.evidenceText)
     const failure = safeCode(result?.failureCode)
+    const mode = result?.mode === 'external' ? `${provider ?? '外部'} 搜索已返回`
+      : failure === 'SEARCH_NO_RESULTS' ? '未取得可用结果' : result?.mode === 'unavailable' ? '搜索不可用' : '仅模型复核，未联网搜索'
     const evidence = safePreview(result?.evidenceText)
     const notice = safePreview(result?.notice)
     const attempts = Array.isArray(result?.attempts) ? result.attempts.map(item => {
@@ -212,9 +213,9 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
       const service = attempt?.provider === 'deepseek' ? 'DeepSeek' : attempt?.provider === 'tavily' ? 'Tavily' : attempt?.provider === 'parallel' ? 'Parallel' : null
       return service ? `${service}：${count(attempt?.httpRequests) ?? 0} 个 HTTP 请求 · ${attempt?.status === 'completed' ? '成功' : safeCode(attempt?.errorCode) ?? '失败'}` : null
     }).filter(Boolean).join(' → ') : ''
-    const quota = result?.quotaCharged === false ? ' · 不占检索额度' : result?.quotaCharged === true ? ' · 计入1次检索' : ''
+    const quota = result?.quotaCharged === false ? ' · 独立查询次数未增加' : result?.quotaCharged === true ? ' · 计入1次独立查询' : ''
     const recovery = object(result?.recoveryRequired)
-    const decision = recovery ? ` · 等待选择${recovery.kind === 'limit' ? '追加3次或不追加' : '重试或不再搜索'}（检索 ${count(recovery.used)}/${count(recovery.limit)}；网络尝试 ${count(recovery.attemptsUsed)}/${count(recovery.attemptsLimit)}）` : ''
+    const decision = recovery ? ` · 等待选择${recovery.kind === 'limit' ? '追加3次或不追加' : '重试或不再搜索'}（独立查询 ${count(recovery.used)} 次，目标 ${count(recovery.limit)} 次；已发查询尝试 ${count(recovery.attemptsUsed)} 次）` : ''
     return `${mode}${result?.cacheHit === true ? ' · 使用缓存，无新请求' : quota}${attempts ? ` · ${attempts}` : ''}${decision}${result?.authorization === 'timeout' ? ' · 等待授权超时，未调用搜索服务' : ''}${hosts.length ? ` · 来源域名（未核实）：${hosts.join('、')}` : ''}${failure ? ` · ${failure}` : ''}${evidence ? ` · 证据：${evidence}` : ''}${notice ? ` · 说明：${notice}` : ''}`
   }
   if (toolName === 'read_material') return '已读取指定材料版本'
