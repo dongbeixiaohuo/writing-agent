@@ -24,12 +24,15 @@ import { DesktopClientBridge } from '../src/desktop-bridge.js';
 
 const actor = { kind: "user", id: "bridge-test" } as const;
 
-for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing desktop bridge preserves fact expert across search ${action} after reopen`, async () => {
+for (const action of ['retry', 'continue', 'beyond-preference'] as const) it(action === 'beyond-preference'
+  ? 'full writing desktop bridge continues past ten searches and saves without a quota checkpoint'
+  : `full writing desktop bridge preserves fact expert across search ${action} after reopen`, async () => {
   const workspacePath = mkdtempSync(join(tmpdir(), 'wa-bridge-search-recovery-'));
   const storage = openWorkspaceStorage({ workspacePath });
   const originalFetch = globalThis.fetch;
-  let searches = 0, fail = action !== 'extend', resumed = false;
-  const initialSearches = action === 'extend' ? 10 : 1;
+  const beyondPreference = action === 'beyond-preference';
+  let searches = 0, fail = !beyondPreference, resumed = false;
+  const initialSearches = beyondPreference ? 11 : 1;
   const turns: unknown[] = [];
   globalThis.fetch = async (_input, init) => {
     const query = JSON.parse(String(init?.body)).query;
@@ -44,8 +47,8 @@ for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing 
       const state = collaborationState(request) as any;
       turns.push({ actor: state?.actor, stage: state?.stage, phase: state?.factPhase, tools: request.tools?.map(t => t.name) });
       if (state?.actor === 'fact_check' && state.factPhase === 'verify') {
-        if (searches < initialSearches || state.searchBudget.retryQuery || (resumed && action === 'extend' && searches === initialSearches)) {
-          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'search_fact_sources', argumentsDelta: JSON.stringify({ query: action === 'extend' ? `公开年份 ${searches}` : '公开年份' }) };
+        if (searches < initialSearches || state.searchBudget.retryQuery) {
+          yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: 'search_fact_sources', argumentsDelta: JSON.stringify({ query: beyondPreference ? `公开年份 ${searches}` : '公开年份' }) };
           yield { type: 'completed', finishReason: 'tool_calls' }; return;
         }
         if (resumed) assert.equal(state.stage, 'fact_check');
@@ -62,12 +65,24 @@ for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing 
   try {
     await bridge.handshake();
     const started = await bridge.sendMessage('按已确认简报生成草稿', { operationId: 'start-search' });
+    if (beyondPreference) {
+      await waitUntil(() => storage.getRun(started.runId)?.status === 'completed', 15000);
+      await bridge.refresh();
+      assert.equal(searches, 11);
+      assert.equal(bridge.getSnapshot().recoverableRuns.length, 0);
+      assert.equal(bridge.getSnapshot().deliveryWorkspace.formalExportEnabled, true);
+      const events = storage.listRunEvents(started.runId);
+      assert.ok(!events.some(e => e.payload.stopReason === 'FACT_SEARCH_DECISION_REQUIRED'));
+      const lastSearch = events.findLast(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'search_fact_sources');
+      assert.equal((lastSearch?.payload.result as any)?.result.searchOrdinal, 11);
+      return;
+    }
     try { await waitUntil(() => bridge.getSnapshot().recoverableRuns.some(r => r.stopReason === 'FACT_SEARCH_DECISION_REQUIRED'), 15000); }
     catch { throw new Error(JSON.stringify({ run: storage.getRun(started.runId), turns, last: bridge.getSnapshot().lastError })); }
     assert.equal(searches, initialSearches);
     const pending = bridge.getSnapshot().recoverableRuns.find(r => r.runId === started.runId)!;
     assert.equal(pending.inputRequest?.kind, 'search_recovery');
-    assert.equal(pending.inputRequest?.searchRecovery?.kind, action === 'extend' ? 'limit' : 'timeout');
+    assert.equal(pending.inputRequest?.searchRecovery?.kind, 'timeout');
     assert.equal(bridge.getSnapshot().activeRunId, null);
     bridge.dispose();
     const rebuilt = new WritingApplicationService({ storage, provider: new Provider(), factSearchConfiguration: configuration });
@@ -90,11 +105,6 @@ for (const action of ['retry', 'continue', 'extend'] as const) it(`full writing 
     assert.equal(bridge.getSnapshot().deliveryWorkspace.formalExportEnabled, true);
     const events = storage.listRunEvents(started.runId);
     assert.deepEqual(events.filter(e => e.type === 'run.resumed').map(e => e.payload.factSearchDecision), [{ requestId, action }]);
-    if (action === 'extend') {
-      const lastSearch = events.findLast(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'search_fact_sources');
-      assert.equal((lastSearch?.payload.result as any)?.result.searchLimit, 13, 'one extension adds exactly three searches');
-      assert.equal((lastSearch?.payload.result as any)?.result.searchOrdinal, 11, 'saved searches remain charged after reopen');
-    }
     assert.equal(events.filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'prepare_fact_check').length, 1);
     assert.equal(events.filter(e => e.type === 'tool.completed' && (e.payload.result as any)?.toolName === 'submit_writing_stage' && (e.payload.result as any)?.result?.stage === 'language_review').length, 1);
   } finally { renderer?.dispose(); bridge.dispose(); globalThis.fetch = originalFetch; storage.close(); rmSync(workspacePath, { recursive: true, force: true }); }

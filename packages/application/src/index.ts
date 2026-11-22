@@ -1829,7 +1829,7 @@ export class WritingApplicationService {
       throw new ApplicationServiceError('PUBLICATION_SELECTION_REQUIRED', '请先在主对话选择或确认发布标题，再核查最终标题与正文。');
     }
     const materials = this.#storage.listMaterials(projectId).filter(material => !currentBrief || currentBrief.materialIds.includes(material.id));
-    const localMaterialContext = factMaterialContext(materials);
+    const { materialCatalog } = factMaterialContext(materials);
     const factBinding = () => {
       const current = this.#storage.inspectProject(projectId);
       if (current?.latestBodyVersionId !== body.id || current.currentEvidenceVersionId !== evidence.id) return null;
@@ -1861,7 +1861,7 @@ export class WritingApplicationService {
             ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason } : {}) }),
           userMessage: JSON.stringify({ ...factInput, artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),
             selectedPublication: selectedPublicationContext(this.#storage, projectId), factPhase: prepared ? 'verify' : 'extract',
-            ...(prepared ? { ...localMaterialContext, preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
+            ...(prepared ? { materialCatalog, preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
               savedSourceRecords: factRecordCatalog(this.#storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.progress(runId) }),
           allowedTools: factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled(), materials.length > 0),
           authorizeTool: call => {

@@ -282,12 +282,12 @@ class FactCheckOnlyProvider extends ModelProviderBase {
     const extraction = factPreparationFixtureEvents(request);
     if (extraction) { yield* extraction; return; }
     assert.equal(context.materials, undefined, 'verification uses prepared facts, not original author materials');
-    assert.equal(context.materialCatalog, undefined);
+    assert.deepEqual(context.materialCatalog.map((material: { materialId: string }) => material.materialId), ['material-1']);
     assert.equal(context.bodyVersionId, this.bodyVersionId);
     assert.equal(context.evidenceVersionId, this.evidenceVersionId);
     assert.equal(context.artifacts.find((a: { kind: string }) => a.kind === 'body').content.projection, 'fact_article_catalog');
     assert.ok(context.artifacts.find((a: { id: string }) => a.id === this.evidenceVersionId).content);
-    assert.equal(request.tools?.some(tool => tool.name === 'read_material'), false);
+    assert.ok(request.tools?.some(tool => tool.name === 'read_material'), 'a relevant local source can be read on demand');
     assert.equal(request.tools?.some(tool => tool.name === 'read_artifact_version'), false, 'bound artifacts are already complete');
     const factSubmitted = request.messages.some(
       (message) => message.role === "tool" && message.name === "submit_fact_check",

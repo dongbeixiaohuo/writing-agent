@@ -851,7 +851,7 @@ export function createWritingCollaboration(options: {
       userMessage: isFactCheck ? `核对当前文章的重要事实，不重新审稿。\nCOLLABORATION_STATE=${JSON.stringify({
         actor, stage: 'fact_check', ready: current.ready, finished: current.finished, nextStage: current.nextStage, inputVersionIds: inputs,
         artifacts: summary.artifacts, selectedPublication: summary.selectedPublication,
-        ...(prepared ? factMaterialContext(authorizedMaterials) : {}),
+        ...(prepared ? { materialCatalog: summary.materialCatalog } : {}),
         factPhase: prepared ? 'verify' : 'extract',
         ...(prepared ? { preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
           savedSourceRecords: factRecordCatalog(storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.progress(runId),
