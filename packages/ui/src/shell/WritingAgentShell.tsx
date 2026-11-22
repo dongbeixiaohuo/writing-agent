@@ -428,7 +428,7 @@ function PublicationGateNoticeCard({
 export function RunRecords({ records, activeRunId, liveActivity, loadDetail }: { records: readonly RunRecordView[]; activeRunId?: string | null; liveActivity?: BridgeSnapshot['liveActivity']; loadDetail?: RunTraceProps['loadDetail'] }) {
   if (records.length === 0) return <div className={css.emptyRunRecords}><strong>还没有运行记录</strong><span>提交第一条写作指令后，这里会显示每个阶段的真实进度、用量和结果。</span></div>
   return <div className={css.runRecords}>
-    <div className={css.runRecordsIntro}><h2>运行记录</h2><p>按时间查看 Agent、模型和工具的实际执行过程。选择一步查看当时的输入、回复、工具参数、结果与耗时；只有实际调用了搜索才会显示搜索记录。详情按需读取，历史缺失不会补造。</p></div>
+    <div className={css.runRecordsIntro}><h2>运行记录</h2><p>点开任意一步，查看助手做了什么、用了多久。遇到问题时，这里会说明发生了什么和接下来可以怎么做。</p></div>
     <RunTrace records={records} activeRunId={activeRunId} liveActivity={liveActivity} loadDetail={loadDetail} />
     <details><summary>写作阶段与累计用量</summary>
     {[...records].reverse().map(run => <article className={css.runRecordCard} key={run.id}>

@@ -19,26 +19,26 @@ export function runStopReasonLabel(reason: string): string {
   const labels: Readonly<Record<string, string>> = {
     CO_CREATION_CHECKPOINT: '等待你确认当前共创阶段',
     WRITING_INPUT_REQUIRED: '写作已暂停，等待你补充必要信息',
-    UNKNOWN_EXTERNAL_OUTCOME: '外部请求结果未知，需要你决定是否重试',
+    UNKNOWN_EXTERNAL_OUTCOME: 'App 没收到能确认结果的回复。先查看对话或稿件，再决定是否重试',
     USER_CANCELLED: '你已停止这次运行',
-    BUDGET_EXHAUSTED: '已达到程序内部调用上限，本轮已停止；这不是服务商账户额度不足，已保存内容仍保留',
-    MODEL_BUDGET_EXHAUSTED: '本次运行已达到模型请求上限',
-    TOOL_BUDGET_EXHAUSTED: '本次运行已达到工具调用上限',
-    REVISION_BUDGET_EXHAUSTED: '本次运行已达到重大修订上限',
-    MODEL_UNSUPPORTED: '当前模型不可用，请检查模型 ID 或重新验证连接',
-    MODEL_RESPONSE_INVALID: '模型回复未通过格式校验，本轮未完成；你的输入仍保留，可以重试，反复出现请反馈运行记录',
-    STAGE_OUTPUT_NOT_SAVED: '本阶段生成结果反复未通过保存校验，已停止自动重写；上一版稿件保留。这是阶段输出问题，不是账户额度或连接问题',
-    TOOL_FAILURE_LOOP: '程序提交反复被同一门禁拒绝，已停止自动重试；已保存内容保留。这是内容校验问题，不是账户额度或连接问题',
-    TOOL_NO_PROGRESS: '模型重复读取相同信息但没有推进，已停止自动循环；已保存内容保留，可重试当前步骤',
-    PROVIDER_RETRY_DEFERRED: '模型服务要求稍后重试，已保存进度并暂停；请在建议时间后继续',
-    MODEL_OUTPUT_TRUNCATED: '模型回复达到单次输出长度上限而被截断，本阶段未完成；残缺内容未保存，已有阶段仍保留，无需重填资料',
-    MODEL_AUTHENTICATION_FAILED: '模型鉴权失败，请检查 API Key',
+    BUDGET_EXHAUSTED: '这次运行用完了 App 允许的处理次数，已保存的内容还在',
+    MODEL_BUDGET_EXHAUSTED: '这次运行已用完可以请求模型的次数',
+    TOOL_BUDGET_EXHAUSTED: '这次运行已用完可以调用工具的次数',
+    REVISION_BUDGET_EXHAUSTED: '这次运行已用完可以大幅修订的次数',
+    MODEL_UNSUPPORTED: '当前模型暂时不能用。可以到模型设置里测试连接或换个模型',
+    MODEL_RESPONSE_INVALID: '模型回了话，但回复格式没对上。可以回到对话重试，原来的输入还在',
+    STAGE_OUTPUT_NOT_SAVED: '这一步尝试了几次还是没能保存，已暂停。可以重试，上一版稿件还在',
+    TOOL_FAILURE_LOOP: '这一步重试了几次仍遇到同样的问题，已经暂停。可以查看最后一步的说明',
+    TOOL_NO_PROGRESS: '助手一直读到相同的内容，这一步已暂停。可以使用已有材料重试',
+    PROVIDER_RETRY_DEFERRED: '模型服务要求稍后再试。已保存的内容还在，可以在建议时间后继续',
+    MODEL_OUTPUT_TRUNCATED: '模型回复太长，被截断了。已经保存的内容还在，可以重试这一步',
+    MODEL_AUTHENTICATION_FAILED: '模型服务没有通过账号验证。请在模型设置里检查密钥',
     MODEL_RATE_LIMITED: '服务商限流，请稍后重试',
     MODEL_QUOTA_EXHAUSTED: '模型额度不足，请检查服务商账户',
-    MODEL_NETWORK_ERROR: '无法连接模型服务，请检查网络与 Base URL',
+    MODEL_NETWORK_ERROR: '无法连接模型服务。可以检查网络，或在模型设置里测试连接',
     MATERIAL_READ_REQUIRED: '授权材料尚未全部读取，写作未继续',
   }
-  return labels[reason] ?? `运行已停止（${reason}）`
+  return labels[reason] ?? '这次运行已经停下。可以查看最后一步的说明，再回到对话决定是否重试'
 }
 
 export function runProgressSummary(run: RunRecordView): string {
@@ -71,7 +71,7 @@ export function runProgressSummary(run: RunRecordView): string {
   const failed = run.stages.find(stage => stage.status === 'failed')
   if (failed !== undefined) return `停在“${failed.label}”阶段：${failed.detail}`
   if (run.totalStages > 0) return `已完成 ${run.completedStages}/${run.totalStages}`
-  return run.stopReason ?? '这次运行没有可用的阶段记录'
+  return run.stopReason === null ? '这次运行没有可用的阶段记录' : runStopReasonLabel(run.stopReason)
 }
 
 export function runDisplayStatus(run: RunRecordView): string {

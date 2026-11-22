@@ -159,7 +159,7 @@ function safeToolInput(toolName: string, args: Readonly<Record<string, unknown>>
   }
   if (toolName === 'read_fact_source' || toolName === 'read_author_web') {
     const host = safeHttpsHost(args.url)
-    return host ? `来源域名：${host}` : '读取本轮已授权的事实来源'
+    return host ? `网页：${host}` : '读取指定网页'
   }
   if (toolName === 'read_material') {
     const id = safeId(args.materialId)
@@ -205,18 +205,17 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     const hosts = safeSourceHosts(result?.evidenceText)
     const failure = safeCode(result?.failureCode)
     const mode = result?.mode === 'external' ? `${provider ?? '外部'} 搜索已返回`
-      : failure === 'SEARCH_NO_RESULTS' ? '未取得可用结果' : result?.mode === 'unavailable' ? '搜索不可用' : '仅模型复核，未联网搜索'
+      : failure ? searchFailureTitle(toolName, failure) : result?.mode === 'unavailable' ? '这次搜索没有完成' : '本轮用已有材料核对，未联网搜索'
     const evidence = safePreview(result?.evidenceText)
-    const notice = safePreview(result?.notice)
     const attempts = Array.isArray(result?.attempts) ? result.attempts.map(item => {
       const attempt = object(item)
       const service = attempt?.provider === 'deepseek' ? 'DeepSeek' : attempt?.provider === 'tavily' ? 'Tavily' : attempt?.provider === 'parallel' ? 'Parallel' : null
-      return service ? `${service}：${count(attempt?.httpRequests) ?? 0} 个 HTTP 请求 · ${attempt?.status === 'completed' ? '成功' : safeCode(attempt?.errorCode) ?? '失败'}` : null
+      return service ? `${service}：${count(attempt?.httpRequests) ?? 0} 个 HTTP 请求 · ${attempt?.status === 'completed' ? '已返回结果' : searchFailureTitle(toolName, safeCode(attempt?.errorCode))}` : null
     }).filter(Boolean).join(' → ') : ''
     const quota = result?.quotaCharged === false ? ' · 独立查询次数未增加' : result?.quotaCharged === true ? ' · 计入1次独立查询' : ''
     const recovery = object(result?.recoveryRequired)
     const decision = recovery ? ` · 等待选择${recovery.kind === 'limit' ? '追加3次或不追加' : '重试或不再搜索'}（独立查询 ${count(recovery.used)} 次，目标 ${count(recovery.limit)} 次；已发查询尝试 ${count(recovery.attemptsUsed)} 次）` : ''
-    return `${mode}${result?.cacheHit === true ? ' · 使用缓存，无新请求' : quota}${attempts ? ` · ${attempts}` : ''}${decision}${result?.authorization === 'timeout' ? ' · 等待授权超时，未调用搜索服务' : ''}${hosts.length ? ` · 来源域名（未核实）：${hosts.join('、')}` : ''}${failure ? ` · ${failure}` : ''}${evidence ? ` · 证据：${evidence}` : ''}${notice ? ` · 说明：${notice}` : ''}`
+    return `${mode}${result?.cacheHit === true ? ' · 使用已找到的结果，未再次搜索' : quota}${attempts ? ` · ${attempts}` : ''}${decision}${hosts.length ? ` · 来源网站（待核对）：${hosts.join('、')}` : ''}${evidence ? ` · 摘录：${evidence}` : ''}`
   }
   if (toolName === 'read_material') return '已读取指定材料版本'
   if (toolName === 'read_author_web') {
@@ -256,6 +255,10 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     if (content) return `结果：${content}`
   }
   return '工具执行完成'
+}
+
+function searchFailureTitle(technicalName: string, errorCode: string | null): string {
+  return explainRunFailure({ kind: 'tool', status: 'failed', technicalName, errorCode }).title
 }
 
 function modelLabel(status: DiagnosticOperationStatus): string {
@@ -424,7 +427,10 @@ export function runDiagnostics(projection: WritingProjectProjection, run: RunRec
     }
     if (event.type === 'search.progress') {
       const searchTool = toolOperations.get(event.operationId)
-      if (searchTool?.toolName === 'search_fact_sources' || searchTool?.toolName === 'search_research_sources') searchTool.outputPreview = safePreview(event.payload.message)
+      if (searchTool?.toolName === 'search_fact_sources' || searchTool?.toolName === 'search_research_sources') {
+        searchTool.outputPreview = safePreview(event.payload.message)?.replace(/\bSEARCH_[A-Z0-9_]+\b/gu,
+          code => searchFailureTitle(searchTool.toolName, code)) ?? null
+      }
       continue
     }
     const status = toolStatus(event)

@@ -92,16 +92,15 @@ test('search details retain timestamped dispatch and failure history even before
   } finally { f.close(); }
 });
 
-test('failed source detail explains the ledger gate and next step without inventing a network failure', async () => {
+test('failed source keeps the recorded code and domain in the original input and output without repeating the overview', async () => {
   const f = fixture();
   try {
-    const step = f.event('tool.requested', 'source-op', { toolName: 'read_fact_source', arguments: { url: 'https://example.com/report' } });
+    const step = f.event('tool.requested', 'source-op', { toolName: 'read_fact_source', arguments: { url: 'https://www.sohu.com/a/example' } });
     f.event('tool.failed', 'source-op', { error: { code: 'FACT_SOURCE_NOT_IN_LEDGER' } });
     const detail = await f.bridge.getRunTraceDetail({ ...f.input, stepId: step.id });
-    assert.match(detail.notes.join('\n'), /未匹配.*来源记录/u);
-    assert.match(detail.notes.join('\n'), /未发出网络读取/u);
-    assert.match(detail.notes.join('\n'), /先.*公开搜索/u);
-    assert.doesNotMatch(detail.notes.join('\n'), /模型编造|网站宕机/u);
+    assert.match(detail.sections.find(section => section.id === 'input')!.text, /www\.sohu\.com/u);
+    assert.match(detail.sections.find(section => section.id === 'output')!.text, /FACT_SOURCE_NOT_IN_LEDGER/u);
+    assert.doesNotMatch(detail.notes.join('\n'), /FACT_SOURCE_NOT_IN_LEDGER|处理建议|门禁/u);
   } finally { f.close(); }
 });
 

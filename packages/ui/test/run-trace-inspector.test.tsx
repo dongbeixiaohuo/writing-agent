@@ -53,11 +53,11 @@ test('run trace starts as a bounded searchable ledger with an explicit inspector
   assert.match(html, /输出摘要 61/u)
   assert.match(html, /选择左侧步骤查看真实请求与结果/u)
   assert.match(html, /role="tablist"/u)
-  assert.match(html, /概览.*输入.*输出.*Schema.*时序/u)
+  assert.match(html, /概览.*输入.*输出.*工具格式.*时序/u)
   assert.doesNotMatch(html, /查看旧版分段统计/u)
 })
 
-test('failed steps show a human cause, technical code and actionable remediation in the ledger', () => {
+test('failed steps show the cause and next action in plain language in the ledger', () => {
   const record = recordWithSteps(1)
   record.diagnostics = { ...record.diagnostics!, trace: [
     { id: 'model', segmentId: 'segment-1', occurredAt: '2026-10-03T00:00:01.000Z', completedAt: '2026-10-03T00:00:31.000Z',
@@ -72,13 +72,13 @@ test('failed steps show a human cause, technical code and actionable remediation
   ] }
 
   const html = renderToStaticMarkup(<RunTrace records={[record]} />)
-  assert.match(html, /模型未在等待时限内返回首个有效内容/u)
-  assert.match(html, /公开搜索服务请求失败/u)
-  assert.match(html, /来源读取被授权记录门禁拒绝/u)
-  assert.match(html, /事实核查提交被业务门禁拒绝/u)
-  assert.match(html, /处理建议/u)
-  assert.match(html, /技术代码.*TIMEOUT.*SEARCH_HTTP_429.*FACT_SOURCE_NOT_IN_LEDGER.*FACT_CHECK_EVIDENCE_REFERENCE_INVALID/us)
-  assert.doesNotMatch(html, /查看旧版分段统计|模型编造|网站宕机/u)
+  assert.match(html, /等了很久，模型还没开始回复/u)
+  assert.match(html, /搜索服务暂时限制了请求/u)
+  assert.match(html, /这一步没有打开网页/u)
+  assert.match(html, /App 没有向该网站发请求/u)
+  assert.match(html, /这次核查结果没能保存/u)
+  assert.match(html, /可以怎么做/u)
+  assert.doesNotMatch(html, /TIMEOUT|SEARCH_HTTP_429|FACT_SOURCE_NOT_IN_LEDGER|FACT_CHECK_EVIDENCE_REFERENCE_INVALID|门禁|网站宕机/u)
 })
 
 test('tail following only stays active while the reader is near the latest step', () => {

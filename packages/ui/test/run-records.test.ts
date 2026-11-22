@@ -33,7 +33,7 @@ function record(overrides: Partial<RunRecordView> = {}): RunRecordView {
 
 test('internal loop protection is not presented as a user spending budget', () => {
   assert.equal(runStatusLabel('budget_exhausted'), '已触发运行保护');
-  assert.match(runStopReasonLabel('BUDGET_EXHAUSTED'), /内部调用上限/u);
+  assert.match(runStopReasonLabel('BUDGET_EXHAUSTED'), /App 允许的处理次数/u);
   assert.doesNotMatch(runStopReasonLabel('BUDGET_EXHAUSTED'), /缩小|预算已用完/u);
   assert.match(runStopReasonLabel('MODEL_QUOTA_EXHAUSTED'), /服务商账户/u);
 });
@@ -41,7 +41,7 @@ test('internal loop protection is not presented as a user spending budget', () =
 test('a paused invalid-output stage does not look like an expert still running', () => {
   const run = record({status:'waiting_user',stopReason:'STAGE_OUTPUT_NOT_SAVED'});
   assert.match(progress.runDisplayStatus(run),/保存未完成.*暂停/);
-  assert.match(runProgressSummary(run),/保存校验/);
+  assert.match(runProgressSummary(run),/没能保存.*暂停/);
   assert.doesNotMatch(runProgressSummary(run),/正在处理|外部请求结果未知/);
 });
 
@@ -52,7 +52,7 @@ test('invalid model output is explained without an internal code or blaming the 
 });
 
 test('output truncation is not described as a schema error or account quota problem', () => {
-  assert.match(runStopReasonLabel('MODEL_OUTPUT_TRUNCATED'), /输出.*上限/u);
+  assert.match(runStopReasonLabel('MODEL_OUTPUT_TRUNCATED'), /回复太长.*截断/u);
   assert.doesNotMatch(runStopReasonLabel('MODEL_OUTPUT_TRUNCATED'), /格式校验|账户|MODEL_OUTPUT_TRUNCATED/u);
 });
 
@@ -72,6 +72,13 @@ test('missing writing inputs ask for an answer instead of approval or a generic 
   assert.equal(composerRecoveryMode([recovery], 'other-session'), null)
   assert.equal(composerRecoveryMode([{ ...recovery, stopReason: 'UNKNOWN_EXTERNAL_OUTCOME' }], 'session-1'), 'decision')
 })
+
+test('unknown stop reasons stay out of the run summary', () => {
+  const code = 'FUTURE_UNKNOWN_ERROR';
+  const run = record({ status: 'failed', stopReason: code, totalStages: 0, stages: [] });
+  assert.match(runStopReasonLabel(code), /查看最后一步的说明/u);
+  assert.doesNotMatch(runProgressSummary(run), /FUTURE_UNKNOWN_ERROR/u);
+});
 
 test('run progress copy exposes the current stage instead of a generic running state', () => {
   assert.equal(runStatusLabel('running'), '正在写作')
@@ -151,9 +158,9 @@ test('co-creation checkpoint is described as a saved user decision point', () =>
     '已保存 2/3 个阶段 · 等待你确认后继续“完整初稿”',
   )
   assert.equal(runStopReasonLabel('CO_CREATION_CHECKPOINT'), '等待你确认当前共创阶段')
-  assert.equal(runStopReasonLabel('UNKNOWN_EXTERNAL_OUTCOME'), '外部请求结果未知，需要你决定是否重试')
-  assert.equal(runStopReasonLabel('MODEL_UNSUPPORTED'), '当前模型不可用，请检查模型 ID 或重新验证连接')
-  assert.equal(runStopReasonLabel('UNLISTED_INTERNAL_CODE'), '运行已停止（UNLISTED_INTERNAL_CODE）')
+  assert.match(runStopReasonLabel('UNKNOWN_EXTERNAL_OUTCOME'), /先查看对话或稿件.*再决定是否重试/u)
+  assert.match(runStopReasonLabel('MODEL_UNSUPPORTED'), /当前模型暂时不能用.*到模型设置里测试连接/u)
+  assert.doesNotMatch(runStopReasonLabel('UNLISTED_INTERNAL_CODE'), /UNLISTED_INTERNAL_CODE/u)
 })
 
 test('title discussion is a choice checkpoint, not missing writing material', () => {

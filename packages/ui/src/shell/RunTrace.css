@@ -277,10 +277,21 @@
   color: var(--dsw-alias-label-primary);
 }
 
-.run-trace-failure code {
-  color: var(--dsw-alias-label-caption);
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
+.run-trace-overview > .run-trace-failure {
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.run-trace-technical > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.run-trace-technical[open] > summary {
+  margin-bottom: 8px;
 }
 
 .run-trace-load-older {

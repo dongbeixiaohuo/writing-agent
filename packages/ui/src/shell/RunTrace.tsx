@@ -27,8 +27,19 @@ const TOOL_LABEL: Readonly<Record<string, string>> = {
 
 const TABS = [
   { id: 'overview', label: '概览' }, { id: 'input', label: '输入' }, { id: 'output', label: '输出' },
-  { id: 'schema', label: 'Schema' }, { id: 'timing', label: '时序' },
+  { id: 'schema', label: '工具格式' }, { id: 'timing', label: '时序' },
 ] as const
+
+function stepFailure(step: RunDiagnosticTraceStep | null) {
+  if (!step || (step.status !== 'failed' && step.status !== 'outcome_unknown')) return null
+  return explainRunFailure({ kind: step.kind, status: step.status, technicalName: step.technicalName,
+    errorCode: step.errorCode, transportPhase: step.transport?.phase, httpStatus: step.httpStatus })
+}
+
+function FailureSummary({ failure }: { failure: ReturnType<typeof explainRunFailure> }) {
+  return <span className="run-trace-failure"><strong>{failure.title}</strong><span>{failure.detail}</span>
+    <span><b>可以怎么做</b>{failure.remediation}</span></span>
+}
 
 type InspectorTab = typeof TABS[number]['id']
 type RunTraceLiveActivity = NonNullable<BridgeSnapshot['liveActivity']>
@@ -120,11 +131,6 @@ function selectionKey(runId: string, stepId: string): string {
   return JSON.stringify([runId, stepId])
 }
 
-function loadError(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message
-  return '详细历史读取失败。'
-}
-
 function displayStatus(record: RunRecordView, step: RunDiagnosticTraceStep): 'pending' | 'settled' {
   return step.status === 'pending' && (record.status === 'running' || record.status === 'queued') ? 'pending' : 'settled'
 }
@@ -135,7 +141,7 @@ export function isNearTraceTail(metrics: Pick<HTMLElement, 'scrollHeight' | 'scr
 
 export function SectionContent({ detail, sectionId }: { detail: RunTraceDetail | null; sectionId: 'input' | 'output' | 'schema' }) {
   const section = detail?.sections.find(item => item.id === sectionId)
-  if (!section) return <p className="run-trace-missing">该步骤没有保存{sectionId === 'input' ? '输入或工具参数' : sectionId === 'output' ? '响应或工具结果' : '结构化 Schema'}。</p>
+  if (!section) return <p className="run-trace-missing">这一步没有留下{sectionId === 'input' ? '详细输入' : sectionId === 'output' ? '详细结果' : '当时的工具格式'}。</p>
   return <div className="run-trace-payload">
     {sectionId === 'input' && detail?.inputBreakdown && <section aria-label="请求输入构成" className="run-trace-overview-summary">
       <strong>输入构成 · 共 {detail.inputBreakdown.totalCharacters.toLocaleString('zh-CN')} 字符</strong>
@@ -250,7 +256,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
     if (!loadDetail) { dispatchDetail({ type: 'unavailable', key, request }); return }
     void loadDetail(runId, stepId).then(
       detail => dispatchDetail({ type: 'resolve', key, request, detail }),
-      error => dispatchDetail({ type: 'reject', key, request, message: loadError(error) }),
+      () => dispatchDetail({ type: 'reject', key, request, message: '可以重试读取。左侧的步骤摘要仍能查看。' }),
     )
   }, [loadDetail])
 
@@ -325,6 +331,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
   if (timeline.length === 0) return <p className="run-trace-empty">还没有可显示的模型、Agent 或工具执行记录。</p>
 
   const selectedStep = selectedEntry?.step ?? null
+  const selectedFailure = stepFailure(selectedStep)
   const selectedRecord = selectedEntry?.record ?? null
   const selectedLive = selectedEntry?.live && selectedStep?.kind === 'model' && selectedStep.status === 'pending' && selectedEntry.live.requestId === selectedStep.requestId ? selectedEntry.live : null
   const selectedRunOngoing = selectedRecord?.status === 'running' || selectedRecord?.status === 'queued'
@@ -356,11 +363,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
             const stoppedDetail = stoppedPending ? `运行已结束，未记录${step.kind === 'model' ? '模型响应' : step.kind === 'tool' ? '工具完成' : 'Agent 调度完成'}结果。` : ''
             const stoppedElapsed = record.completedAt ? duration(Math.max(0, Date.parse(record.completedAt) - Date.parse(step.occurredAt))) : '结束耗时未记录'
             const isSelected = key === selectedKey
-            const failure = step.status === 'failed' || step.status === 'outcome_unknown' ? explainRunFailure({
-              kind: step.kind, status: step.status, technicalName: step.technicalName, errorCode: step.errorCode,
-              transportPhase: step.transport?.phase,
-              httpStatus: step.httpStatus,
-            }) : null
+            const failure = stepFailure(step)
             return <li className={`run-trace-step run-trace-${step.kind} run-trace-${stoppedPending ? 'stopped' : step.status}${isActivePending ? ' run-trace-current' : ''}${isSelected ? ' run-trace-selected' : ''}`}
               key={key} role="presentation" data-run-id={record.id} data-step-id={step.id}>
               <button type="button" className="run-trace-select" role="option" aria-selected={isSelected} tabIndex={isSelected || (!selectionIsShown && index === 0) ? 0 : -1}
@@ -375,8 +378,7 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
                   {step.stream && <span className="run-trace-stream">连接（响应头） {metric(step.stream.headersMs)}
                     {step.stream.reasoningEvents !== undefined && <> · 推理活动：首次 {metric(step.stream.firstReasoningMs ?? null)} · 最后 {metric(step.stream.lastReasoningMs ?? null)} · {step.stream.reasoningEvents} 次</>}
                     {' · '}首个有效内容 {metric(step.stream.firstContentMs)} · 最后有效内容 {metric(step.stream.lastContentMs)} · 有效内容事件 {step.stream.contentEvents} 次 · 总耗时 {duration(step.durationMs)}</span>}
-                  {failure && <span className="run-trace-failure"><strong>{failure.title}</strong><span>{failure.detail}</span>
-                    <span><b>处理建议</b>{failure.remediation}</span><code>技术代码 · {step.errorCode ?? '未记录'}</code></span>}
+                  {failure && <FailureSummary failure={failure} />}
                 </span>
               </button>
             </li>
@@ -385,8 +387,8 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
         {showJumpLatest && <button type="button" className="run-trace-jump-latest" onClick={jumpToLatest}>回到最新步骤 <span aria-hidden="true">↓</span></button>}
       </section>
 
-      <aside className="run-trace-inspector" aria-label="步骤详情检查器">
-        <header><span>STEP INSPECTOR</span><h3>{selectedStep ? `${selectedStep.actorLabel ? `${selectedStep.actorLabel} · ` : ''}${selectedStep.label}` : '选择左侧步骤查看真实请求与结果'}</h3>
+      <aside className="run-trace-inspector" aria-label="步骤详情">
+        <header><span>步骤详情</span><h3>{selectedStep ? `${selectedStep.actorLabel ? `${selectedStep.actorLabel} · ` : ''}${selectedStep.label}` : '选择左侧步骤查看真实请求与结果'}</h3>
           {selectedEntry && <p>{selectedEntry.segmentLabel} · {clock(selectedStep!.occurredAt)}</p>}</header>
         <div className="run-trace-tabs" role="tablist" aria-label="详情分类">
           {TABS.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={activeTab === tab.id} aria-controls="run-trace-panel" disabled={!selectedEntry} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}
@@ -394,24 +396,36 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
         <div id="run-trace-panel" className="run-trace-panel" role="tabpanel">
           {!selectedEntry && <div className="run-trace-inspector-empty"><span aria-hidden="true">↳</span><p>选择一次模型请求、工具调用或 Agent 调度。详情只在选择后读取，不会批量加载历史载荷。</p></div>}
           {selectedEntry && activeTab === 'overview' && <div className="run-trace-overview">
+            {selectedStep!.inputPreview && <div className="run-trace-overview-summary"><span>输入摘要</span><p>{selectedStep!.inputPreview}</p></div>}
+            {selectedFailure ? <FailureSummary failure={selectedFailure} /> : selectedStep!.outputPreview &&
+              <div className="run-trace-overview-summary"><span>结果摘要</span><p>{selectedStep!.outputPreview}</p></div>}
             <dl className="run-trace-meta">
               <div><dt>状态</dt><dd>{selectedStopped ? '已停止等待' : STATUS[selectedStep!.status]}{selectedIsCurrent ? ' · 当前活动' : ''}</dd></div><div><dt>类型</dt><dd>{selectedStep!.kind === 'model' ? '模型请求' : selectedStep!.kind === 'tool' ? '工具调用' : 'Agent 调度'}</dd></div>
-              <div><dt>耗时</dt><dd>{selectedStopped ? '运行结束前未完成' : selectedIsCurrent ? `${Math.floor(selectedElapsed / 1000)} 秒，仍在进行` : duration(selectedStep!.durationMs)}</dd></div><div><dt>技术名称</dt><dd>{selectedStep!.technicalName ?? '—'}</dd></div>
+              <div><dt>耗时</dt><dd>{selectedStopped ? '运行结束前未完成' : selectedIsCurrent ? `${Math.floor(selectedElapsed / 1000)} 秒，仍在进行` : duration(selectedStep!.durationMs)}</dd></div>
             </dl>
-            {selectedStep!.inputPreview && <div className="run-trace-overview-summary"><span>输入摘要</span><p>{selectedStep!.inputPreview}</p></div>}{selectedStep!.outputPreview && <div className="run-trace-overview-summary"><span>结果摘要</span><p>{selectedStep!.outputPreview}</p></div>}
-            {detailState.key === selectedKey && detailState.status === 'loading' && <p className="run-trace-notice" role="status">正在读取所选步骤的持久化详情…</p>}
-            {detailState.key === selectedKey && detailState.status === 'error' && <div className="run-trace-load-error" role="alert"><strong>详细历史读取失败</strong><p>{detailState.message}</p><button type="button" onClick={() => requestDetail(selectedRecord!.id, selectedStep!.id, selectedKey!)}>重试</button></div>}
-            {detailState.key === selectedKey && detailState.status === 'unavailable' && <p className="run-trace-notice">当前宿主尚未连接详细历史读取能力；账本摘要和时序仍可查看。</p>}
-            {detailState.key === selectedKey && detailState.status === 'missing' && <div className="run-trace-missing-history"><strong>{detailState.message ?? '没有可用的原始历史'}</strong><p>{detailState.message ? '当前活动仍在内存中，完成并写入账本后才可读取请求、结果与 Schema。' : '该步骤存在于运行账本中，但没有保存请求、结果或 Schema。早期记录与中断写入可能出现此情况。'}</p></div>}
-            {detail && <><dl className="run-trace-identifiers"><div><dt>Provider</dt><dd>{detail.provider ?? '未记录'}</dd></div><div><dt>Model</dt><dd>{detail.model ?? '未记录'}</dd></div><div><dt>Request ID</dt><dd>{detail.requestId ?? '未记录'}</dd></div><div><dt>Call ID</dt><dd>{detail.callId ?? '未记录'}</dd></div></dl>
-              {detail.notes.length > 0 && <ul className="run-trace-notes">{detail.notes.map((note, index) => <li key={`${String(index)}:${note}`}>{note}</li>)}</ul>}</>}
+            {detailState.key === selectedKey && detailState.status === 'loading' && <p className="run-trace-notice" role="status">正在读取本机记录…</p>}
+            {detailState.key === selectedKey && detailState.status === 'error' && <div className="run-trace-load-error" role="alert"><strong>没能打开这一步的详细记录</strong><p>{detailState.message}</p><button type="button" onClick={() => requestDetail(selectedRecord!.id, selectedStep!.id, selectedKey!)}>重试</button></div>}
+            {detailState.key === selectedKey && detailState.status === 'unavailable' && <p className="run-trace-notice">当前页面无法打开详细记录。你仍可查看步骤摘要和耗时。</p>}
+            {detailState.key === selectedKey && detailState.status === 'missing' && <div className="run-trace-missing-history"><strong>{detailState.message ?? '这一步没有留下详细记录'}</strong><p>{detailState.message ? '可以等这一步完成后再查看。' : '你仍可在左侧查看这一步的摘要。'}</p></div>}
+            <details className="run-trace-technical" key={selectedKey}>
+              <summary>技术详情</summary>
+              <dl className="run-trace-identifiers">
+                {selectedFailure && <div><dt>错误代码</dt><dd>{selectedStep!.errorCode ?? '未记录'}</dd></div>}
+                {selectedStep!.technicalName && <div><dt>技术名称</dt><dd>{selectedStep!.technicalName}</dd></div>}
+                {(selectedStep!.httpStatus ?? selectedStep!.providerHttpStatus) !== undefined && <div><dt>HTTP 状态</dt><dd>{selectedStep!.httpStatus ?? selectedStep!.providerHttpStatus}</dd></div>}
+                <div><dt>模型服务</dt><dd>{detail?.provider ?? '未记录'}</dd></div><div><dt>模型</dt><dd>{detail?.model ?? '未记录'}</dd></div>
+                <div><dt>请求编号</dt><dd>{detail?.requestId ?? selectedStep!.requestId ?? '未记录'}</dd></div>
+                <div><dt>调用编号</dt><dd>{detail?.callId ?? '未记录'}</dd></div>
+              </dl>
+              {detail && detail.notes.length > 0 && <ul className="run-trace-notes">{detail.notes.map((note, index) => <li key={`${String(index)}:${note}`}>{note}</li>)}</ul>}
+            </details>
             {selectedLive?.lastEventKind === 'reasoning' && <p className="run-trace-private-note">检测到模型内部处理活动。检查器不会展示或请求私有推理内容。</p>}
           </div>}
           {selectedEntry && (activeTab === 'input' || activeTab === 'output' || activeTab === 'schema') && <>{detailState.key === selectedKey && detailState.status === 'loading'
             ? <p className="run-trace-notice" role="status">正在读取{TABS.find(tab => tab.id === activeTab)?.label}…</p>
             : detailState.key === selectedKey && detailState.status === 'error'
-              ? <div className="run-trace-load-error" role="alert"><strong>详细历史读取失败</strong><p>{detailState.message}</p><button type="button" onClick={() => requestDetail(selectedRecord!.id, selectedStep!.id, selectedKey!)}>重试</button></div>
-              : detailState.key === selectedKey && detailState.status === 'unavailable' ? <p className="run-trace-notice">当前宿主尚未连接详细历史读取能力。</p> : <SectionContent detail={detail} sectionId={activeTab} />}</>}
+              ? <div className="run-trace-load-error" role="alert"><strong>没能打开这一步的详细记录</strong><p>{detailState.message}</p><button type="button" onClick={() => requestDetail(selectedRecord!.id, selectedStep!.id, selectedKey!)}>重试</button></div>
+              : detailState.key === selectedKey && detailState.status === 'unavailable' ? <p className="run-trace-notice">当前页面无法打开详细记录。你仍可查看步骤摘要和耗时。</p> : <SectionContent detail={detail} sectionId={activeTab} />}</>}
           {selectedEntry && activeTab === 'timing' && <div className="run-trace-timing"><dl className="run-trace-meta">
             <div><dt>开始</dt><dd>{new Date(selectedStep!.occurredAt).toLocaleString('zh-CN', { hour12: false })}</dd></div><div><dt>完成</dt><dd>{selectedStep!.completedAt ? new Date(selectedStep!.completedAt).toLocaleString('zh-CN', { hour12: false }) : selectedStopped ? '运行已结束，步骤未完成' : '仍在进行'}</dd></div>
             <div><dt>总耗时</dt><dd>{selectedIsCurrent ? `${duration(selectedElapsed)}（进行中）` : duration(selectedStep!.durationMs)}</dd></div><div><dt>HTTP 状态</dt><dd>{selectedStep!.providerHttpStatus ?? '未报告'}</dd></div></dl>

@@ -44,7 +44,8 @@ class IntakeProvider extends ModelProviderBase {
     if (intent) { yield* intent; return; }
     this.requests.push(structuredClone(request));
     const hasToolResult = request.messages.some(message => message.role === 'tool' &&
-      ['respond_writing_intake', 'submit_writing_proposal'].includes(message.name ?? ''));
+      ['respond_writing_intake', 'submit_writing_proposal'].includes(message.name ?? '') &&
+      JSON.parse(message.content).ok === true);
     if (hasToolResult) {
       yield { type: "text_delta", delta: "不应依赖的模型尾声" };
       yield { type: "completed", finishReason: "stop" };
@@ -160,6 +161,42 @@ describe("conversation intake", () => {
       assert.match(prompt.systemPrompt, /ideation.*不.*授权/u);
       assert.doesNotMatch(buildConversationIntakePrompt(f.service.getConversationIntake('project-1'), '没啥思路', true).systemPrompt,
         /先以普通文本/u, 'save-only continuation must not start another dialogue');
+    } finally { f.close(); }
+  });
+
+  it('repairs a reply that refers to unseen choices before saving it and lets the author choose by number', async () => {
+    const topic = '为什么请一天年假，比请病假还让人心虚？';
+    const incomplete = {
+      reply: '我更推荐职场行为学那个切口（列表里的第二个）。\n\n1. 这几个切口你想走哪个？\n2. 你有请假的具体细节吗？',
+      summary: '想写请年假时的心虚，角度还没有定。',
+      questions: ['这几个切口你想走哪个？', '你有请假的具体细节吗？'],
+    };
+    const directions = ['为什么主动休息像要先证明自己有理', '请年假前的小动作暴露了什么', '为什么本该能用的假期还得看团队脸色'];
+    class ReplayProvider extends IntakeProvider {
+      protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+        if (this.requests.length === 0) yield { type: 'text_delta', delta: incomplete.reply };
+        yield* super.providerStream(request);
+      }
+    }
+    const provider = new ReplayProvider([[incomplete], [{ ...incomplete,
+      reply: '可以从下面三个地方切进去。', questions: ['你更想写哪个？'],
+      ideation: { directions, reactions: [] } }], [proposalResponse('模型另起的方向')]]);
+    const f = fixture(provider);
+    try {
+      const result = await f.service.startConversationTurn(runInput(topic, 'leave-options')).result;
+      assert.equal(result.ok, true, JSON.stringify(result));
+      const state = f.service.getConversationIntake('project-1');
+      assert.equal(state.assistantTurns.length, 1);
+      assert.deepEqual(state.ideation?.directions, directions);
+      assert.match(state.reply, /1\. 为什么主动休息像要先证明自己有理[\s\S]*2\. 请年假前的小动作暴露了什么[\s\S]*3\. 为什么本该能用的假期还得看团队脸色/u);
+      assert.equal(state.brief, null);
+      assert.equal(provider.requests.length, 2);
+      assert.ok(provider.requests[1]?.messages.some(message =>
+        message.role === 'tool' && message.content.includes('INTAKE_DIRECTION_OPTIONS_REQUIRED')));
+      const selected = await f.service.startConversationTurn(runInput('第二个', 'leave-select', result.sessionId)).result;
+      assert.equal(selected.ok, true, JSON.stringify(selected));
+      assert.equal(f.service.getConversationIntake('project-1').brief?.topic, directions[1]);
+      assert.equal(f.storage.inspectProject('project-1')!.latestBodyVersionId, null);
     } finally { f.close(); }
   });
 
