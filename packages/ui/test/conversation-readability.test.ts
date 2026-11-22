@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { stageRoleCopy } from '../src/shell/interaction.js';
+import { checkpointCopy, conversationWorkingCopy, stageRoleCopy } from '../src/shell/interaction.js';
 
 test('reader simulation and final review responsibilities are explicit', () => {
   assert.match(stageRoleCopy('review_reader').action, /分别阅读文章/);
@@ -46,7 +46,25 @@ test('working materials are a collapsed manual preview, not rotating progress', 
     assert.match(html, /<option[^>]*value="1"[^>]*>产品资料<\/option>/);
     assert.match(html, /<details[^>]*data-material-details="true"(?![^>]*open)/);
     assert.doesNotMatch(html, /TAIL_MUST_NOT_RENDER|INTERNAL_TOOL_ARGUMENTS|尚未执行|数据活动|私有推理|999/);
-    assert.match(html, /资料研究 Agent 正在整理参考材料/);
+    assert.match(html, /资料员包打听在翻手头的材料/);
+    assert.match(html, /src="\/agent-avatars\/research\.png" width="36" height="36"/u);
     assert.match(html, /本轮已用时/);
   } finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test('waiting and interruption use the same persona for a workflow stage', () => {
+  const activity = { runId: 'run', requestId: 'request', actor: 'language_review', phase: 'waiting' as const,
+    startedAt: 1000, lastActivityAt: null };
+  const running = conversationWorkingCopy(activity, 31000);
+  assert.equal(running.title, '终审林顺句在读修订稿');
+  assert.match(running.detail, /你可以再等一会儿，也可以点「停止」/);
+  const paused = checkpointCopy({ runId: 'run', sessionId: 'session', status: 'interrupted',
+    stopReason: 'UNKNOWN_EXTERNAL_OUTCOME', checkpointStage: null, nextStage: null,
+    interruption: { source: 'model', cause: 'timeout', actorLabel: '语言终审', replyAccepted: false } }, undefined);
+  assert.equal(paused.persona, running.persona);
+  assert.match(paused.title, /终审林顺句/);
+  const reading = { ...activity, actor: 'research', activeTool: { name: 'read_fact_source', startedAt: 2000 } };
+  assert.equal(conversationWorkingCopy(reading, 2500).persona, 'research');
+  assert.equal(conversationWorkingCopy({ ...reading, actor: 'fact_check' }, 2500).persona, 'fact-check');
+  assert.equal(conversationWorkingCopy({ ...activity, actor: 'review_reader_a' }, 2500).persona, 'readers');
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { BridgeSnapshot, ClientBridge } from '../../../client-bridge/src/protocol.ts'
 import { conversationWorkingCopy } from './interaction.ts'
+import { AgentAvatar } from './AgentAvatar.tsx'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import css from './WritingAgentShell.module.css'
 
@@ -35,7 +36,7 @@ export function ConversationWorking({ snapshot, bridge }: { snapshot: BridgeSnap
   }
   return <section className={css.conversationWorking} aria-label="写作进行中" data-conversation-working data-conversation-message={snapshot.liveReply ? undefined : 'status'}>
     <div className={css.workingHeading}>
-      <strong role="status">{copy.title}</strong>
+      <div className={css.workingIdentity}><AgentAvatar persona={copy.persona} /><strong role="status">{copy.title}</strong></div>
       <div className={css.workingActions}>
         {snapshot.liveActivity && <span className={css.workingElapsed} aria-live="off">本轮已用时 {copy.elapsedSeconds} 秒</span>}
         <button type="button" onClick={() => void stop()} disabled={stopping || !snapshot.activeRunId}>{stopping ? '正在停止…' : '停止'}</button>

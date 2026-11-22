@@ -21,7 +21,7 @@ test('no-progress and deferred-provider waits are actionable pauses, never autho
 test('all-reader failure has an explicit retry action, not author-approval or input homework', () => {
   const recovery:RecoverableRunSummary = {runId:'r', sessionId:'s', status:'waiting_user', stopReason:'PARALLEL_TEXT_ALL_FAILED', checkpointStage:null, nextStage:null};
   const copy = checkpointCopy(recovery, undefined);
-  assert.equal(copy.role, '模拟读者');
+  assert.equal(copy.persona, 'readers');
   assert.equal(copy.primaryAction, '重试模拟读者');
   assert.match(copy.description, /只重试读者反馈这一步/);
   assert.deepEqual(recoveryContinueAction(recovery), {kind:'resume', decision:'resume'});
@@ -32,10 +32,10 @@ test('reader confirmation invites author reactions rather than editorial instruc
   const recovery:RecoverableRunSummary = {runId:'r', sessionId:'s', status:'waiting_user', stopReason:'CO_CREATION_CHECKPOINT',
     checkpointStage:'review_reader', nextStage:'central_revision'};
   const copy = checkpointCopy(recovery, undefined);
-  assert.equal(copy.role, '模拟读者');
+  assert.equal(copy.persona, 'readers');
   assert.match(copy.title, /感受.*怎么看/);
   assert.doesNotMatch(copy.title, /建议/);
-  assert.match(copy.description, /写作导演.*你的取舍/);
+  assert.match(copy.description, /托尼老师.*你的取舍/);
   assert.match(copy.feedbackPlaceholder, /我更希望/);
 })
 
@@ -44,7 +44,7 @@ test('live timer names execution accumulation rather than the current stage and 
     startedAt: 320000, segmentStartedAt: 0, lastActivityAt: null, requestOrdinal: 1 }
   const copy = conversationWorkingCopy(activity, 410000)
   assert.equal(copy.elapsedSeconds, 410)
-  assert.match(copy.detail, /还没有新回复/u)
+  assert.match(copy.detail, /还在等回复/u)
   assert.doesNotMatch(copy.detail, /当前请求|累计|阶段耗时/u)
   assert.equal(conversationWorkingCopy({ ...activity, segmentStartedAt: 400000, startedAt: 400000 }, 410000).elapsedSeconds, 10)
 })
@@ -66,7 +66,7 @@ test('checkpoint action names the next expert, including title before fact check
     checkpointCopy({ runId: 'r', sessionId: 's', status: 'waiting_user', stopReason: 'CO_CREATION_CHECKPOINT', checkpointStage, nextStage }, undefined)
   assert.match(checkpoint('outline', 'draft').primaryAction, /内容主笔/u)
   assert.match(checkpoint('language_review', 'fact_check').primaryAction, /标题策划/u)
-  assert.match(checkpoint('language_review', 'fact_check').description, /标题.*事实/u)
+  assert.match(checkpoint('language_review', 'fact_check').description, /标题.*查有据.*核对稿件/u)
   assert.match(checkpoint('review_editor', 'review_publish').description, /提出修改要求/u)
 })
 
@@ -74,7 +74,7 @@ test('version permission failures are explained as program conflicts, not missin
   const copy = checkpointCopy({ runId: 'r', sessionId: 's', status: 'waiting_user', stopReason: 'TOOL_FAILURE_LOOP', checkpointStage: null, nextStage: null,
     validationFailure: { code: 'TOOL_PERMISSION_DENIED', tool: 'read_artifact_version', explanation: '调度读取版本与权限冲突。这不是文章事实核查不通过，也不是你缺少材料。' } }, undefined)
   assert.match(copy.title, /这一步未能完成.*已保存内容仍在/)
-  assert.match(copy.description, /无需重新提供材料/); assert.doesNotMatch(copy.description, /TOOL_PERMISSION_DENIED|调度读取版本|权限冲突/)
+  assert.match(copy.description, /材料不用重传/); assert.doesNotMatch(copy.description, /TOOL_PERMISSION_DENIED|调度读取版本|权限冲突/)
   assert.equal(copy.primaryAction, '重试这一步')
 })
 

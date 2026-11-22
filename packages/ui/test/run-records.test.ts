@@ -175,9 +175,9 @@ test('co-creation checkpoints expose a human role, a real next step, and user fe
     nextStage: 'draft',
   }, record({ status: 'waiting_user', stopReason: 'CO_CREATION_CHECKPOINT' }))
 
-  assert.equal(copy.role, '选题策划')
+  assert.equal(copy.persona, 'outline')
   assert.match(copy.title, /提纲/u)
-  assert.match(copy.description, /内容主笔/u)
+  assert.match(copy.description, /主笔周一稿/u)
   assert.equal(stageRoleCopy('fact_check').role, '事实核查')
   assert.equal(checkpointResumeInstruction('  压到 3000 字  '), '压到 3000 字')
   assert.equal(checkpointResumeInstruction('   '), '认可当前阶段，继续下一步')

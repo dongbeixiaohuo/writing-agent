@@ -920,17 +920,23 @@
   gap: 12px;
 }
 
-.checkpointRole {
-  display: grid;
+.agentAvatar {
+  display: block;
   flex: none;
-  place-items: center;
   width: 36px;
   height: 36px;
-  border-radius: 11px;
-  color: var(--dsw-alias-label-primary-foreground);
-  background: var(--dsw-alias-brand-primary);
-  font-size: 15px;
-  font-weight: 700;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.checkpointGuide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .checkpointHeader > div:last-child {
@@ -3128,8 +3134,9 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
 .manuscriptReader > p { color: var(--dsw-alias-label-secondary); font-size: 13px; }
 .manuscriptReader > button { margin-bottom: 20px; }
 .conversationWorking { color: var(--dsw-alias-label-secondary); padding: 14px 0 14px 16px; border-left: 2px solid var(--dsw-alias-label-secondary); font-size: 14px; }
-.conversationWorking p { margin: 7px 0 0; line-height: 1.65; }
+.conversationWorking > p { margin: 5px 0 0 46px; line-height: 1.65; }
 .workingHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.workingIdentity { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .workingHeading strong { color: var(--dsw-alias-label-primary); font-weight: 600; }
 .workingActions { display: flex; align-items: center; gap: 12px; }
 .workingElapsed { font-variant-numeric: tabular-nums; font-size: 12px; }

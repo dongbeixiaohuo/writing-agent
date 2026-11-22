@@ -85,6 +85,8 @@ import { ABOUT_DATA_DESCRIPTION, ABOUT_PRODUCT_DESCRIPTION, aboutVersionView } f
 import { conversationFollowTarget, CONVERSATION_FOLLOW_THRESHOLD } from './conversation-follow.ts'
 import { ConversationNavigator } from './ConversationNavigator.tsx'
 import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, stageRoleLabel, runRecordsTabLabel } from './interaction.ts'
+import { AgentAvatar } from './AgentAvatar.tsx'
+import { agentPersonas } from './agent-personas.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import { runProgressSummary, runDisplayStatus, runSavedStageLabel, runStopReasonLabel } from './run-records.ts'
 import { publicationGateNotice, factVerificationNotice } from './publication-gate.ts'
@@ -352,7 +354,7 @@ export function CheckpointDecisionCard({
   // Normal confirmation is asked once, at the end of the saved timeline result.
   // Keep cancellation available without creating a second conversation card.
   if (isCheckpoint && !isTitleDiscussion) return <div className={css.checkpointActions} data-conversation-recovery="true" aria-label="共创确认操作">
-    <p className={css.checkpointDescription}>{copy.description}</p>
+    <p className={css.checkpointGuide}><AgentAvatar persona={copy.persona} /><span>{copy.description}</span></p>
     <button className={css.textActionNeutral} type="button" disabled={busy || runActive} onClick={() => void stop()}>结束本轮</button>
     {canApproveCheckpoint && <button className={css.primaryAction} type="button" disabled={busy || runActive} onClick={() => void resume()}>
       {busy ? '正在继续…' : copy.primaryAction}
@@ -363,8 +365,8 @@ export function CheckpointDecisionCard({
   return <section className={css.checkpointCard} data-conversation-recovery="true"
     aria-label={searchRecovery ? '搜索恢复决定' : isTitleDiscussion ? '待选标题' : needsInput ? '待补充信息' : isCheckpoint ? '共创决策' : '写作暂停'}>
     <div className={css.checkpointHeader}>
-      <div className={css.checkpointRole} aria-hidden="true">{copy.role.slice(0, 1)}</div>
-      <div><span>{copy.role} · {copy.eyebrow}</span><h2>{copy.title}</h2></div>
+      <AgentAvatar persona={copy.persona} />
+      <div><span>{agentPersonas[copy.persona]} · {copy.eyebrow}</span><h2>{copy.title}</h2></div>
     </div>
     <p className={css.checkpointDescription}>{copy.description}</p>
     {searchRecovery && <p>正在查找：{searchRecovery.query}</p>}
