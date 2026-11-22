@@ -84,9 +84,9 @@ import css from './WritingAgentShell.module.css'
 import { ABOUT_DATA_DESCRIPTION, ABOUT_PRODUCT_DESCRIPTION, aboutVersionView } from './about.ts'
 import { conversationFollowTarget, CONVERSATION_FOLLOW_THRESHOLD } from './conversation-follow.ts'
 import { ConversationNavigator } from './ConversationNavigator.tsx'
-import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, stageRoleLabel, runRecordsTabLabel } from './interaction.ts'
+import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRoleCopy, runRecordsTabLabel } from './interaction.ts'
 import { AgentAvatar } from './AgentAvatar.tsx'
-import { agentPersonas } from './agent-personas.ts'
+import { agentPersonas, personaForActor } from './agent-personas.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
 import { runProgressSummary, runDisplayStatus, runSavedStageLabel, runStopReasonLabel } from './run-records.ts'
 import { publicationGateNotice, factVerificationNotice } from './publication-gate.ts'
@@ -220,37 +220,42 @@ function Timeline({ items, brand, footer, diagnostic = false }: { items: readonl
   if (items.length === 0 && footer === undefined) return <p className={css.emptyTimeline}>此会话还没有内容。</p>
   return (
     <div className={css.timeline} aria-live="polite" data-conversation-timeline>
-      {items.filter(item => diagnostic || (item.kind === 'message' ? item.audience !== 'diagnostic' : item.audience === 'conversation')).map(item => item.kind === 'message' ? (
-        <article
-          className={clsx(css.message, item.role === 'user' ? css.userMessage : css.assistantMessage)}
-          data-conversation-message={item.role}
-          data-message-id={item.id}
-          aria-label={item.streaming ? '正在生成的回复' : undefined}
-          aria-busy={item.streaming ? true : undefined}
-          key={item.id}
-        >
-          {item.role === 'assistant' && item.stage && <header className={css.expertHeading} data-expert-stage={item.stage}>
-            <span className={css.expertBadge} aria-hidden="true">{stageRoleCopy(item.stage).role.slice(0, 1)}</span>
-            <div><strong>{stageRoleLabel(item.stage)}</strong><span>{stageRoleCopy(item.stage).action}</span></div>
-          </header>}
-          {item.role === 'assistant' && !item.stage && item.actorLabel && <header className={css.expertHeading} data-actor-label={item.actorLabel}>
-            <span className={css.expertBadge} aria-hidden="true">{item.actorLabel.slice(0, 1)}</span>
-            <div><strong>{item.actorLabel}</strong></div>
-          </header>}
-          <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
-          <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${item.role === 'user' ? '你' : item.stage ? stageRoleLabel(item.stage) : item.actorLabel ?? brand.assistantName} · ${item.createdAt}`}
-            {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 处理用时 ${Math.round(item.activeDurationMs / 1000)} 秒`}
+      {items.filter(item => diagnostic || (item.kind === 'message' ? item.audience !== 'diagnostic' : item.audience === 'conversation')).map(item => {
+        if (item.kind === 'tool') return (
+          <div className={css.toolRow} key={item.id}>
+            <span className={clsx(css.toolState, item.state === 'pending' && css.toolPending, item.state === 'failure' && css.toolFailure)}>
+              {item.state === 'success' ? <CheckIcon /> : <ToolIcon />}
+            </span>
+            <strong>{item.label}</strong>
+            <span>· {item.detail}</span>
           </div>
-        </article>
-      ) : (
-        <div className={css.toolRow} key={item.id}>
-          <span className={clsx(css.toolState, item.state === 'pending' && css.toolPending, item.state === 'failure' && css.toolFailure)}>
-            {item.state === 'success' ? <CheckIcon /> : <ToolIcon />}
-          </span>
-          <strong>{item.label}</strong>
-          <span>· {item.detail}</span>
-        </div>
-      ))}
+        )
+        const genericAssistant = !diagnostic && !item.streaming && !item.actorLabel &&
+          brand.assistantName === WRITING_AGENT_BRAND.assistantName ? 'assistant' : undefined
+        const persona = personaForActor(item.stage) ?? personaForActor(item.actorLabel) ?? genericAssistant
+        const author = item.role === 'user' ? '你' : persona ? agentPersonas[persona] : item.actorLabel ?? brand.assistantName
+        return (
+          <article
+            className={clsx(css.message, item.role === 'user' ? css.userMessage : css.assistantMessage)}
+            data-conversation-message={item.role}
+            data-message-id={item.id}
+            aria-label={item.streaming ? '正在生成的回复' : undefined}
+            aria-busy={item.streaming ? true : undefined}
+            key={item.id}
+          >
+            {item.role === 'assistant' && (persona || item.actorLabel) && (
+              <header className={css.expertHeading} data-expert-stage={item.stage} data-actor-label={item.stage ? undefined : item.actorLabel}>
+                {persona ? <AgentAvatar persona={persona} /> : <span className={css.expertBadge} aria-hidden="true">{author.slice(0, 1)}</span>}
+                <div><strong>{author}</strong>{item.stage && <span>{stageRoleCopy(item.stage).action}</span>}</div>
+              </header>
+            )}
+            <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
+            <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${author} · ${item.createdAt}`}
+              {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 处理用时 ${Math.round(item.activeDurationMs / 1000)} 秒`}
+            </div>
+          </article>
+        )
+      })}
       {footer}
     </div>
   )

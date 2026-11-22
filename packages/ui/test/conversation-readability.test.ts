@@ -30,6 +30,47 @@ test('program generated confirmation summaries render Markdown in the actual use
   } finally {rmSync(root,{recursive:true,force:true});}
 });
 
+test('saved conversation messages resolve legacy authors to the current avatars and names', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-history-personas-'));
+  const file = join(root, 'render.cjs');
+  try {
+    buildSync({
+      stdin: { contents: `import React from 'react'; import {renderToStaticMarkup} from 'react-dom/server';
+        import {WritingAgentShell} from './packages/ui/src/shell/WritingAgentShell.tsx';
+        import {createDeterministicMockBridge} from './packages/client-bridge/src/mock-bridge.ts';
+        const mock=createDeterministicMockBridge(); const old=mock.getSnapshot();
+        const message=(id, body, extra={})=>({id, body, kind:'message', role:'assistant', createdAt:'22:29', ...extra});
+        const history=[message('old-assistant','已选定标题。',{actorLabel:'写作助手'}),
+          message('old-fact','这版文章已完成事实核查，可以导出。',{stage:'fact_check',activeDurationMs:61000}),
+          message('old-final','保存后的修订稿',{actorLabel:'终审与文字打磨专家'}),
+          message('no-actor','早期没有角色编号的消息。'),
+          message('user','这是用户原话。',{role:'user'})];
+        const snapshot={...old,timelineBySession:{[old.selectedSessionId]:history}};
+        export const html=renderToStaticMarkup(React.createElement(WritingAgentShell,
+          {bridge:{...mock,getSnapshot:()=>snapshot},extensions:{extensionIds:[],listLaunchers:()=>[],getPanel:()=>undefined}}));
+        mock.dispose();`, resolveDir: resolve('.'), loader: 'tsx' },
+      bundle: true, platform: 'node', format: 'cjs', outfile: file, jsx: 'automatic',
+      define: { 'process.env.NODE_ENV': '"production"' }, loader: { '.css': 'empty' }, logLevel: 'silent',
+    });
+    const { html } = createRequire(import.meta.url)(file);
+    const row = (id: string) => html.split('data-message-id="' + id + '"')[1]?.split('</article>')[0] ?? '';
+    for (const [id, avatar, name] of [
+      ['old-assistant', 'assistant', '写作助手汤大姆'],
+      ['old-fact', 'fact-check', '核查员查有据'],
+      ['old-final', 'final-review', '终审林顺句'],
+      ['no-actor', 'assistant', '写作助手汤大姆'],
+    ]) {
+      assert.ok(row(id!).includes('/agent-avatars/' + avatar + '.png'), id);
+      assert.ok(row(id!).includes('<strong>' + name + '</strong>'), id);
+      assert.ok(row(id!).includes(name + ' · 22:29'), id);
+    }
+    assert.match(row('old-fact'), /这版文章已完成事实核查，可以导出。/u);
+    assert.match(row('old-fact'), /处理用时 61 秒/u);
+    assert.match(row('user'), /这是用户原话。/u);
+    assert.doesNotMatch(row('user'), /agent-avatars/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('the writing status only shows who is working, elapsed time and the stop button', () => {
   const root=mkdtempSync(join(tmpdir(),'wa-material-preview-'));const file=join(root,'render.cjs');
   try {

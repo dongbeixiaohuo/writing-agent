@@ -80,10 +80,6 @@ export function stageRoleCopy(stage: WritingWorkflowStageId): StageRoleCopy {
   return STAGE_ROLE_COPY[stage]
 }
 
-export function stageRoleLabel(stage: WritingWorkflowStageId): string {
-  return stage === 'fact_check' ? '事实核查专员' : stage === 'review_reader' ? '模拟读者' : `${stageRoleCopy(stage).role}专家`
-}
-
 export interface CheckpointCopy {
   readonly persona: AgentPersona
   readonly eyebrow: string

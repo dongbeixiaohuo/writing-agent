@@ -87,7 +87,7 @@ test('main conversation links to the current manuscript while export settings li
     assert.match(passed, /网络中断，请重试/u);
     assert.match(passed, /请确认这份提纲/u);
     assert.match(passed, /处理用时 61 秒/u);
-    assert.match(passed, /事实核查专员/u);
+    assert.match(passed, /核查员查有据/u);
     const streaming = render('not_checked', 'running');
     assert.match(streaming, /这是一段正在到达的回复/u);
     assert.match(streaming, /正在生成.*尚未保存/u);

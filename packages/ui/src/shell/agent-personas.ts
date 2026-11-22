@@ -16,7 +16,7 @@ export const agentPersonas = {
 export type AgentPersona = keyof typeof agentPersonas
 
 const actorPersonas: Readonly<Record<string, AgentPersona>> = {
-  intake: 'assistant', author: 'assistant', '需求澄清助手': 'assistant', '写作助手': 'assistant',
+  intake: 'assistant', author: 'assistant', 'Writing Agent': 'assistant', '需求澄清助手': 'assistant', '写作助手': 'assistant',
   director: 'director', '写作导演': 'director',
   research: 'research', researcher: 'research', '资料研究': 'research',
   outline: 'outline', planner: 'outline', '选题策划': 'outline',
@@ -24,15 +24,16 @@ const actorPersonas: Readonly<Record<string, AgentPersona>> = {
   review_editor: 'editor', editor: 'editor', '编辑审校': 'editor',
   review_publish: 'publisher', publisher: 'publisher', '发布审校': 'publisher',
   review_reader: 'readers', reader: 'readers', '模拟读者': 'readers',
-  language_review: 'final-review', language_reviewer: 'final-review', '语言终审': 'final-review',
+  language_review: 'final-review', language_reviewer: 'final-review', '语言终审': 'final-review', '终审与文字打磨': 'final-review',
   title: 'title', '标题策划': 'title',
   fact_check: 'fact-check', fact_extract: 'fact-check', fact_checker: 'fact-check',
-  '事实核查': 'fact-check', '提取待查事实': 'fact-check',
-  style_modeler: 'style', '风格分析': 'style',
+  '事实核查': 'fact-check', '事实核查专员': 'fact-check', '提取待查事实': 'fact-check',
+  style_modeler: 'style', '风格分析': 'style', '风格建模': 'style',
 }
 
 export function personaForActor(actor: string | null | undefined): AgentPersona | undefined {
-  if (!actor) return undefined
-  if (/^review_reader_[abc]$/u.test(actor) || actor.startsWith('模拟读者 ')) return 'readers'
-  return Object.hasOwn(actorPersonas, actor) ? actorPersonas[actor] : undefined
+  const role = actor?.trim().replace(/专家$/u, '')
+  if (!role) return undefined
+  if (/^review_reader_[abc]$/u.test(role) || role.startsWith('模拟读者 ')) return 'readers'
+  return Object.hasOwn(actorPersonas, role) ? actorPersonas[role] : undefined
 }
