@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWorkspaceStorage } from '../../storage/src/index.js';
-import { savePublicationCandidates, choosePublicationCandidate, getPublicationCandidates, isPublicationSelectionCurrent,
+import { submitPublicationCandidates, savePublicationCandidates, choosePublicationCandidate, getPublicationCandidates, isPublicationSelectionCurrent,
   isPublicationSelectionWait, isUsablePublicationTitle, publicationSelectionIndex, selectedPublicationContext } from '../src/publication-choice.js';
 
 it('accepts unambiguous everyday title choices without turning objections or questions into consent', () => {
@@ -103,4 +103,42 @@ it('does not lock or accept a legacy opening-paragraph candidate as a current pu
       reason: 'author-publication-selection', actor });
     assert.equal(isPublicationSelectionCurrent(storage, 'p'), false);
   } finally { storage.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+it('repairs only the ordinal that collides with a body subheading, without changing confirmed titles', () => {
+  const path = mkdtempSync(join(tmpdir(), 'publication-heading-collision-'));
+  const storage = openWorkspaceStorage({ workspacePath: path });
+  const actor = { kind: 'user', id: 'test' } as const;
+  try {
+    storage.createProject({ projectId: 'p', operationId: 'p', name: '文章', mode: 'quick', actor });
+    storage.createSession({ projectId: 'p', sessionId: 's', purpose: 'test' });
+    storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r', purpose: 'test', planVersion: 'test', operationId: 'start' });
+    const content = '# 工作标题\n\n## **围绕读者的困境**\n\n正文。';
+    storage.commitArtifactVersion({ projectId: 'p', operationId: 'body', expectedProjectRevision: storage.inspectProject('p')!.revision, kind: 'body',
+      logicalKey: 'main', baseVersionId: null, content, reason: 'test', actor });
+    const bodyVersionId = storage.inspectProject('p')!.latestBodyVersionId!;
+    const base = { projectId: 'p', runId: 'r' };
+    const toolName = 'submit_publication_candidates';
+    const submit = (operationId: string, args: Parameters<typeof submitPublicationCandidates>[2]) =>
+      submitPublicationCandidates(storage, { ...base, operationId, bodyVersionId, toolName }, args);
+    const candidates = ['工作标题', '围绕读者的困境？'].map((title, index) =>
+      ({ title, opening: null, distributionCopy: '配文' + index, rationale: '候选' + index }));
+    storage.recordRunEvent({ ...base, operationId: 'initial', type: 'tool.requested', payload: { toolName, arguments: { candidates } } });
+    assert.throws(() => submit('initial', { candidates }), (error: unknown) => {
+      const failure = error as { code: string; details: Record<string, any> };
+      assert.equal(failure.code, 'PUBLICATION_TITLE_HEADING_COLLISION');
+      assert.deepEqual(failure.details.collisions.map((c: { index: number }) => c.index), [2]);
+      storage.recordRunEvent({ ...base, operationId: 'initial', type: 'tool.failed', payload: { result: { ok: false, toolName,
+        error: { code: failure.code, details: failure.details } } } });
+      return true;
+    });
+    assert.equal(getPublicationCandidates(storage, 'p'), null);
+    assert.throws(() => submit('rewrite', { candidates }), { code: 'PUBLICATION_TITLE_REPAIR_REQUIRED' });
+    assert.throws(() => submit('wrong', { replacements: [{ index: 1, title: '不许改的第一条' }] }), { code: 'PUBLICATION_TITLE_REPAIR_REQUIRED' });
+    assert.throws(() => submit('collision', { replacements: [{ index: 2, title: '围绕读者的困境' }] }), { code: 'PUBLICATION_TITLE_HEADING_COLLISION' });
+    const corrected = submit('patch', { replacements: [{ index: 2, title: '谁能把困境说清楚' }] });
+    assert.deepEqual(corrected.candidates, [candidates[0], { ...candidates[1], title: '谁能把困境说清楚' }]);
+    assert.equal(storage.getArtifactVersion(bodyVersionId)?.content, content);
+    assert.equal(storage.inspectProject('p')?.currentTitleVersionId, null);
+  } finally { storage.close(); rmSync(path, { recursive: true, force: true }); }
 });

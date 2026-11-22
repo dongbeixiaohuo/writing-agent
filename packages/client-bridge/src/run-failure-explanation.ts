@@ -300,7 +300,18 @@ export function explainRunFailure(context: RunFailureContext): RunFailureExplana
     remediation: '回到对话重试核查，或让助手使用已经找到的其他资料。',
   }
 
+  if (code === 'PUBLICATION_TITLE_HEADING_COLLISION' || code === 'PUBLICATION_TITLE_REPAIR_REQUIRED') return {
+    title: '有候选标题与正文小标题重复',
+    detail: '这组候选正在等重复项换一个标题。',
+    remediation: '标题专家只需替换重复的编号，其他候选会保留。',
+  }
+
   if (technicalName === 'read_fact_source') {
+    if (code === 'FACT_SOURCE_RESULT_NOT_FOUND') return {
+      title: '没找到选中的搜索结果',
+      detail: '这个编号和本轮已保存的搜索结果对不上。',
+      remediation: '用本轮搜索返回的结果编号重新打开，或先用已有材料继续。',
+    }
     if (code === 'FACT_SOURCE_NOT_IN_LEDGER') return {
       title: '这一步没有打开网页',
       detail: '这条链接不在本轮搜索结果或已保存的核查资料里。App 没有向该网站发请求。',

@@ -91,3 +91,25 @@ it('retains public citation URLs and recognizes encoded equivalents without expo
   const bound = { ...research, content: JSON.stringify({ claims: [{ source_url: 'https://example.org/原文#section' }] }) };
   assert.equal(researchReadings({ listRunEvents: () => [] }, 'p', bound, [encoded])[0]?.text, snapshot.content);
 });
+
+it('carries the matching saved excerpt after the numbered article could not be read', () => {
+  const original = 'https://example.org/source?from=provider';
+  const quote = '从已经保存的公开报道摘录中完整找到这句材料。';
+  const bound = { ...research, content: JSON.stringify({ claims: [{ source_url: url, source_quote: quote }] }) };
+  const base = { projectId: 'p', runId: 'r', occurredAt: '2026-11-14' };
+  const events: RuntimeEvent[] = [
+    { ...base, id: 'search', projectSeq: 5, operationId: 'search', type: 'tool.completed',
+      payload: { result: { ok: true, callId: 'search', toolName: 'search_research_sources',
+        result: { mode: 'external', evidenceText: JSON.stringify([{ url: original, excerpt: quote }]) } } } },
+    { ...base, id: 'read', projectSeq: 6, operationId: 'read', type: 'tool.requested',
+      payload: { actor: 'research', toolName: 'read_fact_source', arguments: { searchCallId: 'search', resultNumber: 1 } } },
+    { ...base, id: 'failed', projectSeq: 7, operationId: 'read', type: 'tool.failed', payload: {} },
+  ];
+  const get = (rows: RuntimeEvent[]) => researchReadings({ listRunEvents: () => rows }, 'p', bound);
+  assert.equal(get(events)[0]?.text, quote);
+  assert.equal(get(events)[0]?.url, original);
+  assert.equal(get(events)[0]?.sourceType, 'search_excerpt');
+  assert.match(get(events)[0]?.useBoundary ?? '', /未独立打开原文/u);
+  assert.deepEqual(get(events.slice(0, -1)), []);
+  assert.deepEqual(get(events.map(row => row.id === 'search' ? { ...row, runId: 'another-run' } : row)), []);
+});

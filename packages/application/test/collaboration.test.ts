@@ -3048,8 +3048,16 @@ it('uses an isolated title expert when the final body has no explicit title inst
         assert.match(request.messages[0]!.content, /ACTOR=title/u);
         assert.ok(request.tools?.some(tool => tool.name === 'submit_publication_candidates'));
         assert.equal(request.tools?.some(tool => tool.name === 'submit_writing_stage'), false);
+        const collision = request.messages.find(message => message.role === 'tool' && message.content.includes('PUBLICATION_TITLE_HEADING_COLLISION'));
+        if (collision) {
+          assert.deepEqual(JSON.parse(collision.content).error.details.collisions.map((item: { index: number }) => item.index), [1]);
+          yield { type: 'tool_call_delta', index: 0, id: 'title-repair', name: 'submit_publication_candidates',
+            argumentsDelta: JSON.stringify({ replacements: [{ index: 1, title: '把安静留在窗边' }] }) };
+          yield { type: 'completed', finishReason: 'tool_calls' };
+          return;
+        }
         yield { type: 'tool_call_delta', index: 0, id: 'title-candidates', name: 'submit_publication_candidates', argumentsDelta: JSON.stringify({ candidates: [
-          { title: '把安静留在窗边', opening: null, distributionCopy: null, rationale: '忠实概括正文的观察' },
+          { title: '窗边的光', opening: null, distributionCopy: null, rationale: '忠实概括正文的观察' },
           { title: '安静不是空白', opening: null, distributionCopy: null, rationale: '强调正文的核心判断' },
         ] }) };
         yield { type: 'completed', finishReason: 'tool_calls' };
@@ -3058,7 +3066,7 @@ it('uses an isolated title expert when the final body has no explicit title inst
       if (state?.stage && ['draft', 'central_revision', 'language_review'].includes(state.stage)) {
         this.requests.push(structuredClone(request));
         yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: state.stage,
-          content: '我喜欢这样的安静。它不是退场，而是把注意力重新放回眼前。\n\n窗边的光慢慢移动，房间也跟着有了层次。' })!;
+          content: '我喜欢这样的安静。它不是退场，而是把注意力重新放回眼前。\n\n## 窗边的光\n\n窗边的光慢慢移动，房间也跟着有了层次。' })!;
         return;
       }
       yield* super.providerStream(request);

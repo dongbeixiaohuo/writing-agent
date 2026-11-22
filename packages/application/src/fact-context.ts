@@ -463,7 +463,7 @@ export function projectFactToolResult(message: ModelMessage, context?: { readonl
     }
     const text = message.name === 'search_fact_sources' ? result.evidenceText : result.text;
     if (typeof text !== 'string' || !text) return message.content;
-    const metadata = Object.fromEntries(['mode', 'provider', 'finalUrl', 'notice', 'errorCode', 'cached'].filter(k => k in result).map(k => [k, result[k]]));
+    const metadata = Object.fromEntries(['mode', 'provider', 'requestedUrl', 'finalUrl', 'notice', 'errorCode', 'cached', 'originals'].filter(k => k in result).map(k => [k, result[k]]));
     const rows = message.name === 'search_fact_sources' ? searchRows(text) : null;
     const fullResultAvailableVia = { tool: 'read_fact_record', callId: message.toolCallId };
     return JSON.stringify({ ...envelope, result: { ...metadata, fullResultAvailableVia,
@@ -473,7 +473,7 @@ export function projectFactToolResult(message: ModelMessage, context?: { readonl
         : { excerpt: text.slice(0, 1800), excerptTruncated: text.length > 1800,
           sourceUrls: [...new Set(text.match(/https?:\/\/[^\s"<>\\]+/gu) ?? [])] }),
       requestProjection: 'excerpt_not_full_source', instruction: rows
-        ? '这里只是摘录。按callId和选中的resultIndex回读该条结果。'
+        ? '这里只是摘录。回读摘录用read_fact_record的callId与resultIndex。需要打开网页时用read_fact_source的searchCallId与resultNumber（resultIndex加1）。'
         : '这里只是摘录。按callId回读整份本地记录，省略resultIndex。' } });
   } catch { return message.content; }
 }

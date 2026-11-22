@@ -22,8 +22,8 @@ import { REVISION_COMPARISON_INSTRUCTIONS, JSON_SCHEMA as REVISION_COMPARISON_SC
 import { PUBLICATION_REVIEW_INSTRUCTIONS, publicationReviewEvidence, publicationReviewSourceSlices } from './publication-review-context.js';
 import { FINDINGS_SUBMISSION, COLD_REVIEW_SUBMISSION, RESOLUTION_SUBMISSION, REDEVELOPMENT_SUBMISSION, finalRevisionAuditPrompt } from './review-closure-prompts.js';
 import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA, COLD_FINDINGS_JSON_SCHEMA, COLD_READING_JSON_SCHEMA, PERSUASION_FINDINGS_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA, READING_JSON_SCHEMA, needsArticleRedevelopment } from './review-closure.js';
-import { getPublicationCandidates, savePublicationCandidates, isPublicationSelectionCurrent, isPublicationSelectionWait, isUsablePublicationTitle,
-  PUBLICATION_SELECTION_WAIT_REASON, selectedPublicationContext, type PublicationCandidate } from './publication-choice.js';
+import { getPublicationCandidates, submitPublicationCandidates, publicationCandidateSubmissionSchema, isPublicationSelectionCurrent, isPublicationSelectionWait, isUsablePublicationTitle,
+  PUBLICATION_SELECTION_WAIT_REASON, selectedPublicationContext, type PublicationCandidateSubmission } from './publication-choice.js';
 import { createFactSourceTool, factToolFailureLoopKey } from './fact-web.js';
 import { usesPublicSources, withResearchSupplement } from './research-supplement.js';
 import { createFactSearchTools, type FactSearchConfiguration } from './fact-search.js';
@@ -54,7 +54,7 @@ function expectedArtifact(stage: CollaborationStage): ArtifactExpectation {
 function stageInstruction(stage: WritingWorkflowStage, basePrompt: string, researchSearchEnabled = false, editorialPlanRequired = false, confirmedDirection = false): string {
   if (stage === 'review_reader') return '三个隔离模拟读者只给口语感受，不是编辑审校，不给修改建议；程序合并为一个成果和一次作者确认。';
   if (stage === "research") return (researchSearchEnabled
-    ? '先读已有材料。只在缺少能把原题写具体的场景、行动、回应或后果时，用search_research_sources与read_fact_source找对应素材。搜到够写就停，已有材料够写可以直接提交。同一方向找不到合适素材就用已有材料继续。preferredBatchSize只供安排，实际按缺口决定。保留实际URL和引句。'
+    ? '先读已有材料。只在缺少能把原题写具体的场景、行动、回应或后果时，用search_research_sources与read_fact_source找对应素材。打开检索原文用该条结果的 searchCallId 和 resultNumber，保留工具返回的 requestedUrl 与原文引句。搜到够写就停，已有材料够写可以直接提交。同一方向找不到合适素材就用已有材料继续。preferredBatchSize只供安排，实际按缺口决定。保留实际URL和引句。'
     : '当前为材料整理模式，没有外部搜索工具：从本次授权材料提取正文所需证据；多来源矛盾只对照实际提供的内容，不臆造检索或核验结果。')
     + '只提交研究账本，content直接用对象' + (editorialPlanRequired ? '{sources,claims,notes,editorialPlan}' : '{sources,claims,notes}') + '，不要转成带转义的JSON字符串。sources按来源列一次source_id、source_title、source_publisher、accessed_at及可选source_url；每条claim用source_id引用，填写claim_type、claim_text、source_quote、reliability、use_boundary、verification_status。evidence_id可省略，由程序编号；确需保留旧编号时明确填写。仅illustrative允许空引句，其余必须引用连续原文；用户材料不能自动标为已外部核实。无事实时sources和claims用空数组，notes说明原因。'
     + (confirmedDirection ? '沿writingRequirements.topic和作者明确补充的要求整理材料；某条素材缺依据就在原方向内补查或换素材，提交仍可用的内容。' : '关键前提存在必要证据缺口时暂停提问，不用猜测补足。')
@@ -298,13 +298,10 @@ export function createWritingCollaboration(options: {
         ...(args.action === "ask" ? { awaitingUserInput: { reason: args.reason, questions: args.questions, nextStage: current.nextStage, requiredArtifactVersionIds: current.inputs } } : {}) };
     },
   };
-  const publicationCandidatesDefinition: ToolDefinition<{ candidates: PublicationCandidate[] }, JsonValue> = {
+  const publicationCandidatesDefinition: ToolDefinition<PublicationCandidateSubmission, JsonValue> = {
     name: 'submit_publication_candidates', version: '1.0.0', effect: 'local_idempotent', permissions: ['workflow:submit'],
     description: 'Title expert only: persist 1–6 publication title/distribution candidates for the exactly bound current body. This never selects a title or edits the body.',
-    inputSchema: { type: 'object', properties: { candidates: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'object', properties: {
-      title: { type: 'string', minLength: 1, maxLength: 200 }, opening: { type: ['string', 'null'], maxLength: 4000 },
-      distributionCopy: { type: ['string', 'null'], maxLength: 2000 }, rationale: { type: 'string', minLength: 1, maxLength: 2000 },
-    }, required: ['title', 'opening', 'distributionCopy', 'rationale'], additionalProperties: false } } }, required: ['candidates'], additionalProperties: false },
+    inputSchema: publicationCandidateSubmissionSchema,
     execute(args, context) {
       const current = state(context.runId);
       if (current.current?.actor !== 'title' || current.current.stage !== 'title') throw new ToolExecutionFault('TITLE_EXPERT_NOT_ACTIVE', 'Only the assigned title expert may submit publication candidates');
@@ -313,7 +310,8 @@ export function createWritingCollaboration(options: {
       if (!bodyVersionId || project?.latestBodyVersionId !== bodyVersionId || current.current.expectedBodyVersionId !== bodyVersionId) {
         throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE', 'The article changed; prepare candidates for its current version');
       }
-      const saved = savePublicationCandidates(storage, projectId, context.operationId, bodyVersionId, args.candidates, context.runId);
+      const saved = submitPublicationCandidates(storage, { projectId, operationId: context.operationId,
+        bodyVersionId, runId: context.runId, toolName: 'submit_publication_candidates' }, args);
       const choices = saved.candidates.map((candidate, index) => `${index + 1}. 「${candidate.title}」${candidate.distributionCopy === null ? '' : `；分发文案：${candidate.distributionCopy}`}`).join('\n');
       return { stage: 'title', candidateVersionId: saved.id, bodyVersionId, bodyUnchanged: true,
         awaitingUserInput: { kind: 'publication_selection', reason: PUBLICATION_SELECTION_WAIT_REASON,
@@ -790,7 +788,7 @@ export function createWritingCollaboration(options: {
     let rolePrompt = actor === "director"
       ? "你是写作导演，只能调度独立专家、提问、返工或结束，不得直接写正文。director_decide.reason是传给专家的任务说明：明确本次解决什么、范围和预期输出。汇总评审分歧后给修订主笔取舍依据。nextStage仅约束普通dispatch，不覆盖用户当前修改要求；已完成正文需删改时先 rework central_revision，再dispatch central_revision→language_review→fact_check。不要直接dispatch已完成的language_review；它只能最小润色，不承担内容删改。事实blocked后若用户已授权删改，必须先实际修改当前被核查正文，再独立核查新版本，不能反复核查旧稿或再次索要同一授权；若只补充来源而无正文改动，可重新核查。提纲改向先rework outline再重新确认。全部阶段保存且当前事实门禁passed才finish，之后用一句话结束。"
       : actor === 'title'
-        ? '你是独立标题专家。只基于绑定的当前最终正文生成少量真实且有差异的标题候选；调用 submit_publication_candidates 保存。不得改写正文，不得自行选择或声称用户已确认。'
+        ? '你是独立标题专家。只基于绑定的当前最终正文生成少量真实且有差异的标题候选，避开正文小标题；调用 submit_publication_candidates 保存。遇到撞车时，只按反馈的编号提交 replacements。不得改写正文，不得自行选择或声称用户已确认。'
         : stageInstruction(assignment!.stage as WritingWorkflowStage, options.systemPrompt, researchSearch.enabled(), workflow.requireEditorialPlan, Boolean(confirmedDirection));
     if (confirmedFocus && actor === 'director') rolePrompt += '\n所有派发沿 confirmedFocus 的主问题推进。材料中的旁支、一个案例的细节和后来发现的核查问题，都不能替作者改选题。';
     if (actor === "director") rolePrompt += "\n区分新任务编辑现稿与同run返工：项目已有正文或旧run事实blocked，不代表本run完成过阶段。rework只能选择本run completedStages中且前置均完成的阶段。新run即使要求修改已有稿件，也应读取现稿、评估ready，从nextStage=research按原流程推进；只有本run已完成central_revision后再次收到删改授权，才使用rework central_revision。项目历史factCheck不是新run的阶段完成凭据。例外：若本run的completedStages非空，说明程序已把同会话上一中断run的连续完成阶段连同其有效产物承接进本run，它们就是本run自己的完成记录——直接从当前nextStage继续，不要再从research重来，也不要重新生成已承接的产物。";
