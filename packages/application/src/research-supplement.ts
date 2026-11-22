@@ -11,7 +11,8 @@ type ResearchSearch = ReturnType<typeof createFactSearchTools>;
 type History = Pick<SessionStore, 'listRunEvents'> & Pick<StoragePort, 'inspectProject'>;
 
 export function usesPublicSources(brief: Pick<WritingBrief, 'genre'> | undefined) {
-  return brief?.genre === 'explanatory_analysis' || brief?.genre === 'argument_commentary';
+  return brief?.genre === 'explanatory_analysis' || brief?.genre === 'argument_commentary' ||
+    brief?.genre === 'narrative_observation';
 }
 
 function site(url: string) {

@@ -58,6 +58,7 @@ function stageInstruction(stage: WritingWorkflowStage, basePrompt: string, resea
     : '当前为材料整理模式，没有外部搜索工具：从本次授权材料提取正文所需证据；多来源矛盾只对照实际提供的内容，不臆造检索或核验结果。')
     + '只提交研究账本，content直接用对象' + (editorialPlanRequired ? '{sources,claims,notes,editorialPlan}' : '{sources,claims,notes}') + '，不要转成带转义的JSON字符串。sources按来源列一次source_id、source_title、source_publisher、accessed_at及可选source_url；每条claim用source_id引用，填写claim_type、claim_text、source_quote、reliability、use_boundary、verification_status。evidence_id可省略，由程序编号；确需保留旧编号时明确填写。仅illustrative允许空引句，其余必须引用连续原文；用户材料不能自动标为已外部核实。无事实时sources和claims用空数组，notes说明原因。'
     + (confirmedDirection ? '沿writingRequirements.topic和作者明确补充的要求整理材料；某条素材缺依据就在原方向内补查或换素材，提交仍可用的内容。' : '关键前提存在必要证据缺口时暂停提问，不用猜测补足。')
+    + '优先留下能说明当事人具体处境的素材。相关性相当时，先读调查发布方、官方统计原文或有实际经过的记录。调查注明材料能确认的时间、发布方和受访范围，转引保留报道归属；采访、真实案例和媒体评论的意见分别处理，评论意见不列作支撑主论点的事实。素材够写就停。'
     + '成稿后仍须独立事实核查。不要设计开头、结尾、标题或提纲；明确排除的材料只在notes简记理由和必要风险，不另造完整证据条目。';
   if (stage === "outline") return "只提交可供确认的文体化提纲，体现用户要求和材料边界，不要提前写正文。提纲是写给作者看的确认稿：禁止出现 E001/E002 这类证据编号和 use_boundary、illustrative 等内部字段名；证据与观点的对应关系由研究账本承担，不在提纲里标注；需要说明来源性质时用自然语言（如「这是作者的亲历观察」「这一点按既有事实写」）。";
   if (stage.startsWith("review_")) return "你是只读独立评审。只审阅绑定的同一初稿，不得读取其他初审意见，不得提交正文或重写文章。面向普通作者交流，不交一份冗长内部报告：先用1—2句给结论，再按‘优先讨论的问题’‘可选优化’‘建议保留’分段；优先列最多3个最重要的讨论点，每点用短句说明位置、影响和建议。确有更多重要风险不能省略，但不要为凑条目逐段复述全文、重复夸赞或展开后台检查清单。不得显示正文UUID、review_publish等内部字段。不要声称已交接下一位；共创模式会由程序在你保存后等待作者讨论和确认。";

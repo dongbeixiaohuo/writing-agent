@@ -16,7 +16,7 @@ import { createOutlineSupplement } from '../src/research-supplement.js';
 import { saveProjectStyleSelection } from '../src/style-selection.js';
 import { createWritingWorkflowTools } from '../src/workflow-tools.js';
 
-type ReplaySearchHit = { title: string; url: string; content: string };
+type ReplaySearchHit = { title: string; url: string; content: string; published_date?: string };
 
 export interface ReadingHandoffFixture {
   brief: WritingBrief;
@@ -36,6 +36,7 @@ export interface ReadingHandoffFixture {
     queries: ReadonlyMap<string, ReplaySearchHit[]>;
     followupQueries: string[];
     readings: ResearchReading[];
+    failedReadUrls?: string[];
   };
   recordedSupplement?: {
     queries: ReadonlyMap<string, ReplaySearchHit[]>;
@@ -181,14 +182,23 @@ export async function replayReadingHandoff(fixture: ReadingHandoffFixture,
             assert.ok(request.tools?.some(definition => definition.name === 'search_research_sources'), 'supplement has its own budget');
           }
           const runId = storage.listRuns(projectId)[0]!.id;
-          if (!readingsReplayed) for (const [index, reading] of (fixture.recordedResearch?.readings ?? [fixture.firstReading]).entries()) {
-            const operationId = `recorded-reading-${index}`;
-            const record = { projectId, runId, operationId };
-            storage.recordRunEvent({ ...record, type: 'tool.requested', payload: { actor: 'research', toolName: 'read_fact_source',
-              requestId: request.requestId, callId: operationId, arguments: { url: reading.url } } });
-            storage.recordRunEvent({ ...record, type: 'tool.completed', payload: { requestId: request.requestId, callId: operationId,
-              result: { ok: true, toolName: 'read_fact_source', operationId, callId: operationId, runId,
-                result: { ...reading, requestedUrl: reading.url } } } });
+          if (!readingsReplayed) {
+            for (const [index, reading] of (fixture.recordedResearch?.readings ?? [fixture.firstReading]).entries()) {
+              const operationId = `recorded-reading-${index}`;
+              const record = { projectId, runId, operationId };
+              storage.recordRunEvent({ ...record, type: 'tool.requested', payload: { actor: 'research', toolName: 'read_fact_source',
+                requestId: request.requestId, callId: operationId, arguments: { url: reading.url } } });
+              storage.recordRunEvent({ ...record, type: 'tool.completed', payload: { requestId: request.requestId, callId: operationId,
+                result: { ok: true, toolName: 'read_fact_source', operationId, callId: operationId, runId,
+                  result: { ...reading, requestedUrl: reading.url } } } });
+            }
+            for (const [index, url] of (fixture.recordedResearch?.failedReadUrls ?? []).entries()) {
+              const operationId = `recorded-failed-reading-${index}`;
+              const record = { projectId, runId, operationId };
+              storage.recordRunEvent({ ...record, type: 'tool.requested', payload: { actor: 'research', toolName: 'read_fact_source',
+                requestId: request.requestId, callId: operationId, arguments: { url } } });
+              storage.recordRunEvent({ ...record, type: 'tool.failed', payload: { requestId: request.requestId, callId: operationId } });
+            }
           }
           readingsReplayed = true;
           yield* tool(request, 'submit_writing_stage', { stage: 'research', content: fixture.researchLedger });

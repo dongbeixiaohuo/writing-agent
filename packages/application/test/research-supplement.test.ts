@@ -53,15 +53,58 @@ for (const outcome of ['found', 'missing', 'reprint', 'not_authorized', 'irrelev
     assert.doesNotMatch(replay.draftRequest.messages[1]!.content, /researchGap|公司怎样转移员工关于奖金的问题/u);
   });
 
-test('rebinds an optional bridge after pruning an invalid bookmark and keeps going with no bridge if its quote is gone', () => {
+test('rebinds optional writing connections after pruning invalid bookmarks and omits unsupported connections', () => {
   const good = fixture.assessment.readingRoute!.moments[0]!;
   const plan = (moment: number) => parsePrewriting({
     ...fixture.assessment, readingRoute: { question: direction, moments: [{ ...good, quote: '未出现的引文。' }, good] },
     transitionBridge: { moment, connection: '从作者起点转到书签。' },
+    practicalFriction: { moment, connection: '从书签中的实际交涉写员工问奖金时遇到的阻力。' },
   }, fixture.researchLedger, '', true, { direction, sources: [fixture.firstReading] });
   assert.equal(plan(2).transitionBridge?.moment, 1);
   assert.equal(plan(1).transitionBridge, undefined);
+  assert.equal(plan(2).practicalFriction?.moment, 1);
+  assert.equal(plan(1).practicalFriction, undefined);
   assert.equal(plan(7).decision, 'ready');
+});
+
+test('narrative observation uses an attributed survey or searches a concrete gap and keeps the topic if nothing turns up', async () => {
+  const topic = '为什么请年假难开口？';
+  const reportUrl = 'https://reports.example.org/leave-study';
+  const searchUrl = reportUrl + '?ref=search';
+  const report = '一份本地问卷里，有受访者把工作交接困难列为请年假的障碍。';
+  const initialQuery = '带薪年假 工作交接 问卷';
+  const practicalFriction = { moment: 1, connection: '写清开口请假前还要安排手头工作由谁接。' };
+  const gapQuery = '带薪年假 请假审批 工作交接 员工采访';
+  const narrative: ReadingHandoffFixture = {
+    ...fixture, brief: { ...fixture.brief, topic, genre: 'narrative_observation' }, rawAuthorText: [topic], authorReplies: [],
+    researchLedger: JSON.stringify({ claims: [{ evidence_id: 'E001', claim_type: 'other', claim_text: report, source_quote: report,
+      source_title: '问卷报道', source_publisher: '离线报道', source_url: reportUrl, accessed_at: '离线测试',
+      reliability: 'medium', use_boundary: '只说受访者遇到的交接困难', verification_status: 'source_verified' }],
+      editorialPlan: editorialPlanFixture(['E001']) }),
+    recordedResearch: { queries: new Map([[initialQuery, [{ url: searchUrl, title: '问卷报道', content: report }]]]),
+      followupQueries: [], readings: [], failedReadUrls: [reportUrl] },
+    assessment: { ...fixture.assessment, researchGap: undefined, transitionBridge: undefined, practicalFriction,
+      readingRoute: { question: topic, moments: [{ sourceUrl: searchUrl, quote: report, interest: '请假前先解决交接。' }] } },
+  };
+  const replay = await replayReadingHandoff(narrative, 'missing');
+  assert.deepEqual(replay.publicQueries, [initialQuery]);
+  const state = JSON.parse(replay.draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
+  assert.equal(state.writingPlan.readingRoute.question, topic);
+  assert.deepEqual(state.writingPlan.practicalFriction, practicalFriction);
+  assert.deepEqual(state.writingPlan.readingRoute.moments, [{ sourceUrl: searchUrl, quote: report }]);
+  assert.equal(state.sourceReadings[0]?.sourceType, 'search_excerpt');
+  assert.match(state.materialGuidance, /媒体评论提出的判断可供理解背景/u);
+
+  const missing = await replayReadingHandoff({
+    ...narrative, recordedResearch: { ...narrative.recordedResearch!, queries: new Map() },
+    assessment: { ...narrative.assessment, practicalFriction: undefined, readingRoute: { question: topic, moments: [] },
+      researchGaps: [{ angle: 'event', query: gapQuery }] },
+  }, 'missing');
+  assert.deepEqual(missing.publicQueries, [gapQuery]);
+  const missingInput = JSON.parse(missing.draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
+  assert.equal(missingInput.writingPlan.readingRoute.question, topic);
+  assert.equal(missingInput.writingPlan.practicalFriction, undefined);
+  assert.equal(missing.finalBody, undefined);
 });
 
 test('only checks implementation when a gap points to a retained source and sends only selected passages to the writer', async () => {
