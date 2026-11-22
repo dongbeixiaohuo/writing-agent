@@ -4,7 +4,7 @@
 
 Writing Agent 是一款开源 AI 写作助手，面向公众号文章、观点分析、个人随笔和经验分享。带上你的选题、材料和判断，和它一起找切口、写初稿、讨论修改，把文章一轮轮打磨出来。
 
-**[下载 Windows 桌面版](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.103)** · [快速上手](#desktop-start) · [Claude Code 插件](#claude-code-skill) · [参与开发](#development) · [文档中心](docs/README.md)
+**[下载 Windows 桌面版](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.107)** · [快速上手](#desktop-start) · [Claude Code 插件](#claude-code-skill) · [参与开发](#development) · [文档中心](docs/README.md)
 
 Windows x64 桌面版 · Claude Code Skill / 插件 · [MIT 开源](LICENSE)
 
@@ -73,7 +73,7 @@ Writing Agent 把这些环节串成一段可以参与的写作过程：
 
 ## 开始写第一篇文章
 
-**[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.103/Writing-Agent-Setup-1.0.0-rc.103-x64.exe)** · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.103)
+**[直接下载 Windows x64 安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.107/Writing-Agent-Setup-1.0.0-rc.107-x64.exe)** · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.107)
 
 1. **安装 App**：下载安装包并运行，桌面版无需另装 Claude Code、Node.js 或 Python。
 2. **连接模型**：进入“设置 → 模型”，选择服务商，填写自己的 API Key 和模型 ID，验证连接。
