@@ -2454,11 +2454,9 @@ it('finishes a passed workflow without asking the model for an inapplicable stag
       const state = collaborationState(request);
       return state?.actor === 'director' && state.nextStage === null && !state.finished;
     });
-    assert.equal(finishRequests.length, 1);
-    assert.equal(finishRequests[0]!.parameters.toolChoice, 'none');
-    assert.deepEqual(finishRequests[0]!.tools ?? [], []);
+    assert.equal(finishRequests.length, 0, 'verified completion does not request a director model turn');
     const finish = f.storage.listRunEvents(result.runId).findLast(event => event.type === 'tool.requested' && event.payload.toolName === 'director_decide');
-    assert.equal(finish?.payload.origin, 'harness_text_output');
+    assert.equal(finish?.payload.origin, 'harness_workflow');
     assert.deepEqual(finish?.payload.arguments, { action: 'finish', stage: null, reason: '稿件已保存并通过核查，可以查看当前稿件。', questions: [] });
     assert.equal(f.storage.listRunEvents(result.runId).filter(event => event.type === 'run.completed').length, 1);
   } finally { f.close(); }
@@ -3008,7 +3006,8 @@ it('resumed collaboration fact check retires consumed pages even during schema c
 });
 
 it('waits for co-author title selection before fact-checking and preserves that choice', async () => {
-  const f = setup(new CollaborationProvider(), 'co_creation');
+  const provider = new CollaborationProvider();
+  const f = setup(provider, 'co_creation');
   try {
     const first = await f.app.runDraft(f.input);
     for (let index = 0; index < 6; index++) {
@@ -3021,9 +3020,22 @@ it('waits for co-author title selection before fact-checking and preserves that 
     const candidate = getPublicationCandidates(f.storage, 'p')!;
     choosePublicationCandidate(f.storage, 'p', 'choose', '确认标题：安静', candidate.id, 1);
     const titleVersion = f.storage.inspectProject('p')!.currentTitleVersionId;
+    const beforeFactCheck = f.storage.listRequestSnapshots(first.runId).length;
     const result = await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, expectedProjectRevision: f.storage.inspectProject('p')!.revision, runId: first.runId, operationId: 'after-title', decision: 'resume', userInstruction: '标题已确认，请继续核查' })).result;
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(f.storage.inspectProject('p')!.currentTitleVersionId, titleVersion, 'fact checking must not replace selected title');
+    const requests = f.storage.listRequestSnapshots(first.runId).slice(beforeFactCheck).map(row => row.request);
+    assert.deepEqual(requests.map(request => request.tools?.some(tool => tool.name === 'prepare_fact_check') ? 'extract'
+      : request.tools?.some(tool => tool.name === 'submit_fact_check') ? 'verify' : 'other'), ['extract', 'verify']);
+    assert.equal(requests[0]?.parameters.lightReasoning, true);
+    assert.equal(requests[1]?.parameters.lightReasoning, undefined);
+    const events = f.storage.listRunEvents(first.runId);
+    const lastResume = events.findLastIndex(e => e.type === 'run.resumed');
+    const segment = events.slice(lastResume + 1);
+    const decisions = segment.filter(e => e.type === 'tool.requested' && e.payload.toolName === 'director_decide');
+    assert.deepEqual(decisions.map(e => [e.payload.origin, (e.payload.arguments as { action: string }).action]), [
+      ['harness_workflow', 'dispatch'], ['harness_workflow', 'finish'],
+    ]);
   } finally { f.close(); }
 });
 

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ConversationStreamPreview, type LiveConversationActivity } from './conversation-stream.js';
 import { deliveredInlineMaterialIds } from './material-context.js';
 import { projectRevisionComparisons, type RevisionComparisonView } from './revision-comparison.js';
-import { factMaterialContext, factReviewPrompt, factReviewTools, projectFactHistory, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionError, factRecordCatalog } from './fact-context.js';
+import { factMaterialContext, factReviewPrompt, factReviewTools, projectFactHistory, projectFactToolResult, createFactContextTools, factPreparation, factExtractionArtifacts, factVerificationArtifacts, factSubmissionError, factRecordCatalog, factSourcePassages } from './fact-context.js';
 import { validateFactSearchDecision, FACT_SEARCH_DECISION_REQUIRED, type FactSearchDecision } from './fact-search-recovery.js';
 import { pendingWorkflowHandoffs, recordHandoffFailure, isWorkflowHandoffSourceCommitted } from './workflow-handoff.js';
 import { finalLockedTitle } from '../../writing-core/src/index.js';
@@ -1838,6 +1838,7 @@ export class WritingApplicationService {
       requestPolicy: runId => {
         const binding = factBinding(), prepared = factPreparation(this.#storage, runId, binding);
         return { actor: prepared ? 'fact_check' : 'fact_extract', scopeId: `fact-check-only:${body.id}:${evidence.id}:${binding?.titleVersionId}:${prepared?.preparationId ?? 'extract'}`,
+          ...(prepared ? {} : { lightReasoning: true, disableConfiguredThinking: true }),
           systemPrompt: factReviewPrompt(prepared ? 'verify' : 'extract', factSearch.enabled()),
           progressKey: JSON.stringify({ ...factInput, factPhase: prepared ? 'verify' : 'extract',
             artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),
@@ -1846,7 +1847,8 @@ export class WritingApplicationService {
           userMessage: JSON.stringify({ ...factInput, artifacts: prepared ? factVerificationArtifacts([body, evidence], prepared) : factExtractionArtifacts([body, evidence]),
             selectedPublication: selectedPublicationContext(this.#storage, projectId), factPhase: prepared ? 'verify' : 'extract',
             ...(prepared ? { materialCatalog, preparedClaims: prepared.claims, noFactualClaimsReason: prepared.noFactualClaimsReason,
-              savedSourceRecords: factRecordCatalog(this.#storage, runId, prepared.preparationId) } : {}), searchBudget: factSearch.progress(runId) }),
+              savedSourceRecords: factRecordCatalog(this.#storage, runId, prepared.preparationId),
+              savedSourcePassages: factSourcePassages(this.#storage, runId, evidence, prepared, materials) } : {}), searchBudget: factSearch.progress(runId) }),
           allowedTools: factReviewTools(prepared !== null, factSearch.budget(runId), factSearch.enabled(), materials.length > 0),
           authorizeTool: call => {
             if (call.name !== 'read_material') return true;

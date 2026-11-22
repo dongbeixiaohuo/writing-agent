@@ -1,7 +1,37 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compactFactEvidence, factMaterialContext, factEvidenceCatalog, projectFactToolResult, createFactContextTools, factPreparation, factVerificationArtifacts, factSubmissionCoversPreparation, factSubmissionError, factRecordCatalog, normalizeFactVerification, FACT_CONTEXT_GUIDANCE } from '../src/fact-context.js';
+import { compactFactEvidence, factMaterialContext, factEvidenceCatalog, projectFactToolResult, createFactContextTools, factPreparation, factVerificationArtifacts, factSubmissionCoversPreparation, factSubmissionError, factRecordCatalog, factSourcePassages, normalizeFactVerification, FACT_CONTEXT_GUIDANCE } from '../src/fact-context.js';
 import { defaultFactTitleContent } from '../src/publication-choice.js';
+
+test('first verification receives exact relevant excerpts with the original local locators', () => {
+  const quote = '调查走访了1200名受访者，其中68%表示未用完全年的假期。';
+  const original = '网页导航。'.repeat(250) + quote + '另一页内容。'.repeat(200);
+  const matched = { claimId: 'C001', articleQuote: '调查称68%没有用完全年的假期。',
+    claimText: '抽样调查发现68%没有用完全年的假期', location: 'body' as const, matchedEvidenceIds: ['E001'] };
+  const missing = { claimId: 'C002', articleQuote: '僧侣徒步横越雪山用了三年。',
+    claimText: '僧侣徒步横越雪山用了三年', location: 'body' as const, matchedEvidenceIds: [] };
+  const evidence = { id: 'e', kind: 'evidence', content: JSON.stringify({
+    sources: [{ source_id: 'S01', source_url: 'https://example.test/survey' }],
+    claims: [{ evidence_id: 'E001', source_id: 'S01', source_quote: quote }],
+  }) };
+  const saved = { id: 'event', projectId: 'project', projectSeq: 1, runId: 'active', operationId: 'read',
+    occurredAt: '2026-11-22T00:00:00Z', type: 'tool.completed',
+    payload: { result: { ok: true, toolName: 'read_fact_source', callId: 'saved-page',
+      result: { finalUrl: 'https://example.test/survey', text: original, instructionAuthority: 'none' } } } };
+  const storage = { listRunEvents: (runId: string) => runId === saved.runId ? [saved] : [] };
+  const prepared = { preparationId: 'p', bodyVersionId: 'b', evidenceVersionId: 'e', titleVersionId: null,
+    noFactualClaimsReason: '', claims: [matched, missing] };
+  const selected = factSourcePassages(storage, 'active', evidence, prepared, []) as
+    { claimIds: string[]; url: string; text: string; offset: number; readArguments: object; verificationStatus: string }[];
+  assert.equal(selected.length, 1);
+  assert.deepEqual(selected[0]!.claimIds, ['C001']);
+  assert.equal(selected[0]!.text, original.slice(selected[0]!.offset, selected[0]!.offset + selected[0]!.text.length));
+  assert.ok(selected[0]!.text.includes(quote));
+  assert.ok(selected[0]!.text.length <= 550);
+  assert.deepEqual(selected[0]!.readArguments, { callId: 'saved-page', offset: selected[0]!.offset });
+  assert.equal(selected[0]!.verificationStatus, 'unverified_source_record');
+  assert.deepEqual(factSourcePassages(storage, 'different-run', evidence, prepared, []), []);
+});
 
 test('incomplete submission names missing and mismatched claims without masking it as role permission', () => {
   const prepared: any = { claims: [{ claimId: 'C001', claimText: '2025年发布' }, { claimId: 'C002', claimText: '负责人是甲' }] };

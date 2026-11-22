@@ -1508,7 +1508,7 @@ describe("WritingApplicationService draft closure", () => {
         },
       });
       assert.equal(result.ok, true, JSON.stringify(result));
-      assert.equal(result.modelRequestCount, 31, 'three readers replace one serial reader');
+      assert.equal(result.modelRequestCount, 30, 'includes three reader requests and program-owned completion');
       assert.equal(result.toolCallCount, 29);
       assert.equal(
         storage.listArtifactVersions("project-1", "review", `review_publish:${result.runId}`).length,
@@ -1672,10 +1672,10 @@ describe("WritingApplicationService draft closure", () => {
       if (!result.ok) return;
       assert.equal(result.validationKind, "mock_verified");
       assert.equal(result.publicationReady, true);
-      assert.equal(result.modelRequestCount, 28, 'all three parallel readers share the parent budget');
+      assert.equal(result.modelRequestCount, 27, 'three parallel readers share the parent budget and completion is local');
       assert.equal(result.toolCallCount, 26);
       assert.notEqual(result.artifactVersionId, null);
-      assert.equal(provider.requests.length, 28);
+      assert.equal(provider.requests.length, 27);
       assert.equal(
         JSON.stringify(provider.requests[0]).includes("下班后我沿着河边"),
         true,

@@ -86,7 +86,7 @@ export function factReviewPrompt(phase: 'extract' | 'verify', searchEnabled: boo
       : '未启用外部搜索：仅用已有材料或模型复核，明确未联网，不编造来源。',
     '提交submit_fact_check，保留全部claimId/claimText；每项只写短句的判断依据和必要修改，无问题写“无需修改”。SUPPORTED=一致，CONTRADICTED=相反，UNSUPPORTED=无法判断；缺少必要作者信息用NEEDS_USER_SOURCE。仅实际重要的未决错误risk=red，其余yellow/green不要求处理。supportScope用full/partial/none，不伪造支持。',
     'verificationMethod用external_source/material_comparison/model_review。external_source附本轮成功工具callId和同一具体URL；没有外部记录不得称已联网。matchedEvidenceId无匹配用null，模型知识sourceReference用model-knowledge:unverified。',
-    '证据claimFields为列名、claimRows为对应值；已提供引句直接用。摘录不足时可按materialCatalog用read_material定位本地原文，再决定是否联网。read_fact_record按savedSourceRecords回读本轮已保存的材料。只有编号搜索结果才使用resultIndex；单篇原文按readArguments读。定位记录不是证据。read_fact_article/read_fact_evidence仅在缺关键限定时使用。不从头重读完整正文和原始素材。',
+    '证据claimFields为列名、claimRows为对应值；已提供引句直接用，并对照savedSourcePassages。后者是本地原文的相关片段，按readTool和readArguments展开；命中词语并不证明事实正确。摘录不足时可按materialCatalog用read_material定位本地原文，再决定是否联网。read_fact_record按savedSourceRecords回读本轮已保存的材料。只有编号搜索结果才使用resultIndex；单篇原文按readArguments读。定位记录不是证据。read_fact_article/read_fact_evidence仅在缺关键限定时使用。不从头重读完整正文和原始素材。',
     'searchBudget.retryQuery存在时只重试原词。stopped为true或canSearch为false时沿用已有材料，如实说明未核实范围。成功提交后程序生成简报和下一步，无需再写总结。',
   ].join('\n');
 }
@@ -204,6 +204,108 @@ function searchExcerpt(row: Record<string, unknown>): string {
   const excerpts = Array.isArray(row.excerpts) ? row.excerpts.filter((value): value is string => typeof value === 'string' && !!value.trim()) : [];
   if (excerpts.length) return excerpts.join('\n');
   return [row.excerpt, row.content].find((value): value is string => typeof value === 'string' && !!value.trim()) ?? '';
+}
+
+const factWordSegments = new Intl.Segmenter('zh', { granularity: 'word' });
+const commonFactWords = new Set(['显示', '指出', '认为', '一项', '一位', '包括', '发现', '有关', '通过', '表示', '可能']);
+const savedFactPassageLength = 550;
+
+function factExcerptTerms(claim: PreparedClaim): string[] {
+  return [...new Set([
+    ...(claim.articleQuote.match(/[“「][^”」]{5,80}[”」]/gu) ?? []).map(term => term.slice(1, -1)),
+    ...(claim.articleQuote.match(/\d+(?:[.．]\d+)?%|\d{3,}/gu) ?? []),
+    ...Array.from(factWordSegments.segment(claim.claimText), part => part.isWordLike &&
+      part.segment.length >= 2 && !commonFactWords.has(part.segment) ? part.segment : '').filter(Boolean),
+  ])];
+}
+
+type SavedFactSource = {
+  url: string;
+  text: string;
+  aliases: readonly string[];
+  readTool: 'read_fact_record' | 'read_material';
+  readArguments: { callId: string } | { materialId: string; contentVersionId: string };
+  truncated: boolean;
+};
+
+/** Project exact passages from current-run pages and current authorized materials.
+ * Matching is only a way to find text. It cannot verify a claim or grant a URL. */
+export function factSourcePassages(storage: Pick<SessionStore, 'listRunEvents'>, runId: string, evidence: FactArtifact,
+  prepared: FactPreparation, materials: readonly MaterialRecord[]): JsonValue[] {
+  if (!prepared.claims.length) return [];
+  const sources = new Map<string, SavedFactSource>();
+  for (const event of storage.listRunEvents(runId)) {
+    if (event.type !== 'tool.completed') continue;
+    const envelope = event.payload.result as { ok?: boolean; toolName?: string; callId?: string; result?: {
+      requestedUrl?: string; finalUrl?: string; text?: string; truncated?: boolean; instructionAuthority?: string;
+    } } | undefined;
+    const result = envelope?.result;
+    if (!envelope?.ok || envelope.toolName !== 'read_fact_source' || !envelope.callId || !result?.text ||
+        result.instructionAuthority !== 'none') continue;
+    const url = sourceUrl(result.finalUrl ?? result.requestedUrl ?? '');
+    if (!url) continue;
+    const requested = sourceUrl(result.requestedUrl ?? '');
+    sources.set(url, { url, text: result.text, aliases: requested ? [url, requested] : [url],
+      readTool: 'read_fact_record', readArguments: { callId: envelope.callId }, truncated: result.truncated === true });
+  }
+  for (const material of materials) {
+    if (material.sourceKind !== 'web_snapshot' && material.role !== 'source_verified') continue;
+    const url = sourceUrl(material.sourceReference ?? '');
+    if (!url || sources.has(url) || !material.content) continue;
+    sources.set(url, { url, text: material.content, aliases: [url], readTool: 'read_material',
+      readArguments: { materialId: material.id, contentVersionId: material.contentVersionId }, truncated: false });
+  }
+  if (!sources.size) return [];
+  const ledger = factLedger(evidence.content);
+  const ledgerSources = (Array.isArray(ledger?.sources) ? ledger.sources : []) as Record<string, JsonValue>[];
+  const ledgerClaims = (Array.isArray(ledger?.claims) ? ledger.claims : []) as Record<string, JsonValue>[];
+  const selected: { claimIds: string[]; source: SavedFactSource; offset: number; text: string }[] = [];
+  for (const claim of prepared.claims) {
+    const terms = factExcerptTerms(claim);
+    const matches = ledgerClaims.filter(item => claim.matchedEvidenceIds.includes(String(item.evidence_id)));
+    const preferred = new Set<string>();
+    const quotes = new Set<string>();
+    for (const item of matches) {
+      const row = ledgerSources.find(source => source.source_id === item.source_id);
+      const url = sourceUrl(String(row?.source_url ?? item.source_url ?? ''));
+      if (url) preferred.add(url);
+      if (typeof item.source_quote === 'string' && item.source_quote.length >= 12) quotes.add(item.source_quote.slice(0, 120));
+    }
+    let best: { source: SavedFactSource; offset: number; text: string; score: number } | undefined;
+    for (const source of sources.values()) {
+      const preferredSource = source.aliases.some(url => preferred.has(url));
+      // Test paragraph-sized windows around located terms. Penalize scattered
+      // matches and prefer the exact ledger quote in a bound source.
+      const anchors = [...(preferredSource ? quotes : []), ...terms];
+      const offsets = new Set<number>();
+      for (const term of anchors) {
+        let index = source.text.indexOf(term);
+        for (let occurrence = 0; index >= 0 && occurrence < 6; occurrence++) {
+          offsets.add(Math.max(0, index - 160));
+          index = source.text.indexOf(term, index + term.length);
+        }
+      }
+      for (const offset of offsets) {
+        const text = source.text.slice(offset, offset + savedFactPassageLength);
+        const hits = terms.filter(value => text.includes(value));
+        const exactQuote = preferredSource && [...quotes].some(quote => text.includes(quote));
+        if (!exactQuote && (hits.length < 3 || (hits.length < 5 && !hits.some(value => value.length >= 4)))) continue;
+        const score = (exactQuote ? 10 : 0) + (preferredSource ? 4 : 0) +
+          hits.reduce((sum, hit) => sum + Math.min(hit.length, 10), 0);
+        if (!best || score > best.score) best = { source, offset, text, score };
+      }
+    }
+    if (!best) continue;
+    const passage = selected.find(item => item.source === best.source && item.offset === best.offset);
+    if (passage) passage.claimIds.push(claim.claimId);
+    else if (selected.length < 8) selected.push({ claimIds: [claim.claimId], source: best.source, offset: best.offset, text: best.text });
+  }
+  return selected.map(({ claimIds, source, offset, text }) => ({
+    claimIds, url: source.url, text, offset, truncated: source.truncated || offset > 0 || offset + text.length < source.text.length,
+    readTool: source.readTool, readArguments: { ...source.readArguments,
+      offset: source.readTool === 'read_material' ? Array.from(source.text.slice(0, offset)).length : offset },
+    instructionAuthority: 'none', verificationStatus: 'unverified_source_record',
+  }));
 }
 
 /** Citation wrappers/fragments identify the same fetched page. Preserve balanced

@@ -131,6 +131,9 @@ export interface AgentRequestPolicy {
   readonly toolChoice?: ModelParameters['toolChoice'];
   /** Per-stage override; never mutates the run or the stored provider profile. */
   readonly disableConfiguredThinking?: boolean;
+  readonly lightReasoning?: boolean;
+  /** An application decision executed through the same permissions and receipts as model tools. */
+  readonly localTool?: { readonly name: string; readonly arguments: Readonly<Record<string, JsonValue>> };
   readonly authorizeTool?: (call: CompletedToolCall) => boolean;
   /** Business preconditions are not role permissions; return precise correction details. */
   readonly toolValidationError?: (call: CompletedToolCall) => Extract<ToolExecutionResult, { ok: false }>['error'] | null;
@@ -193,7 +196,7 @@ export type AgentRunResult =
   | (AgentRunFacts & {
       readonly ok: true;
       readonly content: string;
-      readonly finalRequestSnapshotId: string;
+      readonly finalRequestSnapshotId: string | null;
       readonly artifactVersionId: string | null;
     })
   | (AgentRunFacts & {
@@ -567,7 +570,7 @@ export class AgentRuntime {
     };
   }
 
-  #completeRun(active: ActiveRun, snapshotId: string, content: string, artifactVersionId: string | null): AgentRunResult {
+  #completeRun(active: ActiveRun, snapshotId: string | null, content: string, artifactVersionId: string | null): AgentRunResult {
     if (this.#sessions.getRun(active.runId)?.status === "cancelled") return this.#cancelledResult(active);
     this.#sessions.finishRun({
       projectId: active.projectId,
@@ -903,6 +906,7 @@ export class AgentRuntime {
     const toolFailureCounts = new Map<string, number>();
     const successfulReadCounts = new Map<string, { count: number; requestId: string }>();
     let remindProgress = false;
+    const failedLocalScopes = new Set<string>();
 
     executionLoop: for (;;) {
       if (this.#sessions.getRun(runId)?.status === "cancelled") {
@@ -917,16 +921,19 @@ export class AgentRuntime {
       const policy = this.#requestPolicy?.(runId);
       const jsonTextOutput = policy?.textOutputTool?.format === 'json_object';
       const outputPreview = jsonTextOutput ? undefined : policy?.outputPreview;
-      let binding: { readonly provider: ModelProvider; readonly model: string };
-      try {
-        binding = this.#modelBinding(input, policy?.actor);
-      } catch (error) {
-        const failure = failureFromRouteResolver(error);
-        return this.#failRun(active, failure.code, failure.message, failure.retryable);
+      const localTool = policy?.localTool && !failedLocalScopes.has(policy.scopeId) ? policy.localTool : undefined;
+      let binding: { readonly provider: ModelProvider; readonly model: string } | null = null;
+      if (!localTool) {
+        try {
+          binding = this.#modelBinding(input, policy?.actor);
+        } catch (error) {
+          const failure = failureFromRouteResolver(error);
+          return this.#failRun(active, failure.code, failure.message, failure.retryable);
+        }
       }
-      const previousDelay = this.#sessions.listRunEvents(runId).findLast(event =>
+      const previousDelay = binding && this.#sessions.listRunEvents(runId).findLast(event =>
         event.type === 'run.waiting_user' && event.payload.stopReason === 'PROVIDER_RETRY_DEFERRED');
-      if (previousDelay?.payload.provider === binding.provider.id && previousDelay.payload.model === binding.model &&
+      if (binding && previousDelay?.payload.provider === binding.provider.id && previousDelay.payload.model === binding.model &&
           typeof previousDelay.payload.retryNotBefore === 'number' && previousDelay.payload.retryNotBefore > Date.now()) {
         return this.#deferProviderRetry(active, { provider: binding.provider.id, model: binding.model,
           retryNotBefore: previousDelay.payload.retryNotBefore,
@@ -972,7 +979,7 @@ export class AgentRuntime {
       // the binding actually selected for this request so routed profiles cannot
       // bypass the tool-calling requirement, while text-only reader children
       // remain valid on models without tools.
-      if (tools.length > 0 && binding.provider.capabilitiesFor(binding.model).tools !== 'supported') {
+      if (binding && tools.length > 0 && binding.provider.capabilitiesFor(binding.model).tools !== 'supported') {
         return this.#failRun(active, 'MODEL_TOOLS_UNVERIFIED', 'Selected model has not been verified for tool calling', false);
       }
       // A truncation recovery escalates the output cap once (x2, capped);
@@ -983,12 +990,13 @@ export class AgentRuntime {
       const requestHistory = policy?.projectHistory?.(originalHistory) ?? originalHistory;
       const request: ModelRequest = {
         requestId,
-        model: binding.model,
+        model: binding?.model ?? input.model,
         messages: requestHistory.map((message, index) => message.role === 'tool' && policy?.projectToolResult
           ? { ...message, content: policy.projectToolResult(message, { messages: requestHistory, index }) } : message),
         ...(tools.length === 0 ? {} : { tools }),
         parameters: { ...structuredClone(input.parameters),
           ...(policy?.disableConfiguredThinking === undefined ? {} : { disableConfiguredThinking: policy.disableConfiguredThinking }),
+          ...(policy?.lightReasoning === undefined ? {} : { lightReasoning: policy.lightReasoning }),
           ...(escalatedOutputTokens === null ? {} : { maxOutputTokens: escalatedOutputTokens }),
           ...(policy?.toolChoice === undefined ? {} : { toolChoice: policy.toolChoice }),
           ...(requireToolOnContinuation && tools.length > 0 ? { toolChoice: 'required' as const } : {}),
@@ -998,13 +1006,22 @@ export class AgentRuntime {
         value: active.controller.signal,
         enumerable: false,
       });
-      let snapshotId: string;
+      let snapshotId: string | null;
       let attempt: CollectedModelAttempt | null = null;
-      if (policy?.parallelTextTasks) {
+      if (localTool) {
+        const previous = this.#sessions.listRunEvents(runId).findLast(event => event.type === 'request.completed');
+        snapshotId = typeof previous?.payload.snapshotId === 'string' ? previous.payload.snapshotId : null;
+        attempt = { text: '', finishReason: 'tool_calls', completedToolCalls: [{
+          id: this.#idFactory(), ...localTool, rawArguments: canonicalJson(localTool.arguments),
+        }], error: null, usage: null, stream: {
+          headersMs: null, firstReasoningMs: null, lastReasoningMs: null, reasoningEvents: 0,
+          firstContentMs: null, lastContentMs: null, contentEvents: 0,
+        } };
+      } else if (policy?.parallelTextTasks) {
         const parallel = await this.#collectParallelText(input, active, policy);
         if (!parallel.ok) return parallel.result;
         ({ requestId, snapshotId, attempt } = parallel);
-      } else {
+      } else if (binding) {
         let providerSnapshot;
         try {
           providerSnapshot = binding.provider.snapshotRequest(request);
@@ -1225,6 +1242,8 @@ export class AgentRuntime {
           });
           break;
         }
+      } else {
+        return this.#failRun(active, 'REQUEST_ASSEMBLY_FAILED', 'No model binding for this request', false);
       }
 
       if (attempt && attempt.completedToolCalls.length === 0 && !policy?.textOutputTool &&
@@ -1258,9 +1277,10 @@ export class AgentRuntime {
         continue executionLoop;
       }
       const harnessTextOutput = localCall !== null;
+      const origin = localTool ? 'harness_workflow' : harnessTextOutput ? 'harness_text_output' : undefined;
       const calls = localCall ? [localCall] : attempt.completedToolCalls;
       if (attempt.finishReason === "tool_calls" || harnessTextOutput) {
-        messages.push({
+        if (!localTool) messages.push({
           role: "assistant",
           content: attempt.text,
           ...(harnessTextOutput ? {} : { toolCalls: calls }),
@@ -1282,7 +1302,7 @@ export class AgentRuntime {
               callId: call.id,
               toolName: call.name,
               arguments: call.arguments,
-              ...(harnessTextOutput ? { origin: 'harness_text_output' } : {}),
+              ...(origin ? { origin } : {}),
             },
           });
           const dispatched = this.#sessions.dispatchRuntimeOperation({
@@ -1297,7 +1317,7 @@ export class AgentRuntime {
               callId: call.id,
               toolName: call.name,
               arguments: call.arguments,
-              ...(harnessTextOutput ? { origin: 'harness_text_output' } : {}),
+              ...(origin ? { origin } : {}),
             },
             budgetUse: { toolCalls: 1 },
           });
@@ -1355,6 +1375,10 @@ export class AgentRuntime {
               ? { result: jsonValue(result) }
               : { error: jsonValue(result) }),
           });
+          if (localTool && policy && !result.ok) {
+            failedLocalScopes.add(policy.scopeId);
+            continue executionLoop;
+          }
           if (harnessTextOutput && !result.ok) {
             const stopped = rejectTextOutput(policy?.actor, result.error.code, attempt.text);
             if (stopped) return stopped;
@@ -1424,6 +1448,7 @@ export class AgentRuntime {
           }
           // Do not invent a model tool call in the conversation. A failed local
           // save is feedback to this same expert; successful stages change scope.
+          if (localTool) continue;
           if (harnessTextOutput) messages.push({ role: 'user', content: `程序保存结果（不是作者确认）：${canonicalJson(result)}。${jsonTextOutput
             ? '失败时按校验反馈，用普通回复重新输出一个完整 JSON 对象，不调用保存工具。'
             : '失败时根据校验反馈重新完整输出本阶段文本，不输出工具参数。'}` });
@@ -1450,6 +1475,7 @@ export class AgentRuntime {
         return this.#cancelledResult(active);
       }
 
+      if (snapshotId === null) return this.#failRun(active, 'MODEL_TERMINAL_MISSING', 'Final model response has no saved request', false);
       let artifactVersionId: string | null = null;
       if (this.#finalOutputCommitter !== undefined) {
         try {

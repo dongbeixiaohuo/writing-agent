@@ -86,6 +86,7 @@ export function runTraceDetail(source: ReturnType<WritingApplicationService['get
       progress: searchProgress, result: terminal ? terminal.payload.result ?? terminal.payload : null,
     });
     else if (terminal) add('output', '工具实际结果', terminal.payload.result ?? terminal.payload);
+    if (step.payload.origin === 'harness_workflow') notes.push('这一步由应用直接执行，未发起模型请求。');
     if (step.payload.origin === 'harness_text_output') notes.push('此调用由程序将模型文本转换为保存操作，不是模型直接发起的工具调用。');
   }
   if (!terminal) notes.push('尚未记录完成结果；运行中请等待，若已停止则保留为结果未记录。');

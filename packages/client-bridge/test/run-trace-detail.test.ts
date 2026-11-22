@@ -14,10 +14,11 @@ import { requestInputBreakdown } from '../src/request-input-breakdown.js';
 test('fact input counts selected claims and source locators as evidence, not unexplained stage state', () => {
   const state = { preparedClaims: [{ claimId: 'C001', claimText: '年份待查', articleQuote: '原句' }],
     savedSourceRecords: [{ callId: 'search1', sourceRows: [['公告', 'https://example.test']] }], noFactualClaimsReason: '',
+    savedSourcePassages: [{ claimIds: ['C001'], url: 'https://example.test', text: '已存原文节选' }],
     validEvidenceIds: ['E001'], factPhase: 'verify' };
   const request: any = { messages: [{ role: 'system', content: 'check' }, { role: 'user', content: JSON.stringify(state) }] };
   const result = requestInputBreakdown(request);
-  const expectedEvidence = ['preparedClaims', 'savedSourceRecords', 'noFactualClaimsReason', 'validEvidenceIds']
+  const expectedEvidence = ['preparedClaims', 'savedSourceRecords', 'savedSourcePassages', 'noFactualClaimsReason', 'validEvidenceIds']
     .reduce((total, key) => total + JSON.stringify((state as any)[key]).length, 0);
   assert.equal(result.parts.find(p => p.key === 'evidence')?.characters, expectedEvidence);
   assert.equal(result.parts.reduce((n, p) => n + p.characters, 0), result.totalCharacters);

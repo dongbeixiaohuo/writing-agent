@@ -104,7 +104,7 @@ export interface WritingWorkflowTools {
   hasRevisionReturnForAssignment(runId: string, dispatchSeq: number, bodyVersionId: string | null, events: readonly RuntimeEvent[]): boolean;
   readonly definitions: readonly ToolDefinition<never, JsonValue>[];
   isReady(runId: string): boolean;
-  approveReadiness(context: ToolExecutionContext, reason: string): JsonValue;
+  approveReadiness(context: ToolExecutionContext, reason: string, deliveredArtifacts?: readonly string[]): JsonValue;
   unreadReadinessArtifactIds(runId: string): readonly string[];
   invalidate(context: ToolExecutionContext, stage: WritingWorkflowStage): readonly WritingWorkflowStage[];
   progress(runId: string): {
@@ -1056,7 +1056,7 @@ export function createWritingWorkflowTools(options: {
     completedArtifactReadIds,
   } = options;
   const continuationEntryStageByRun = new Map<string, WritingWorkflowStage | null>();
-  const readyInputsByRun = new Map<string, string>();
+  const readyInputsByRun = new Map<string, { key: string; factArtifacts: readonly string[] }>();
   const prewritingRequired = (runId: string) => stageMarkerLineage(storage, stageMarker(storage, projectId, runId, 'research'))
     .some(marker => JSON.parse(marker.content).prewritingRequired === true);
   const readerValueRequired = (runId: string) => stageMarkerLineage(storage, stageMarker(storage, projectId, runId, 'research'))
@@ -1478,7 +1478,7 @@ export function createWritingWorkflowTools(options: {
     });
   };
   const isReady = (runId: string): boolean =>
-    nextStageForRun(runId) === null || readyInputsByRun.get(runId) === readinessKey(runId);
+    nextStageForRun(runId) === null || readyInputsByRun.get(runId)?.key === readinessKey(runId);
 
   const requiredContextArtifacts = (
     context: Pick<ToolExecutionContext, 'projectId' | 'runId'>,
@@ -1520,7 +1520,7 @@ export function createWritingWorkflowTools(options: {
       .map(a => a.artifactVersionId).filter(id => !read.has(id));
   };
 
-  const assertReadinessPrerequisites = (context: ToolExecutionContext): void => {
+  const assertReadinessPrerequisites = (context: ToolExecutionContext, deliveredArtifacts: readonly string[] = []): void => {
     const completedMaterials = new Set(completedMaterialIds?.(context.runId) ?? []);
     const unreadMaterialIds = requiredMaterialIds.filter(
       (materialId) => !completedMaterials.has(materialId),
@@ -1534,7 +1534,7 @@ export function createWritingWorkflowTools(options: {
       );
     }
     const unreadIds = new Set(unreadReadinessArtifactIds(context.runId));
-    const unreadArtifacts = requiredContextArtifacts(context, nextStageForRun(context.runId)).filter(a => unreadIds.has(a.artifactVersionId));
+    const unreadArtifacts = requiredContextArtifacts(context, nextStageForRun(context.runId)).filter(a => unreadIds.has(a.artifactVersionId) && !deliveredArtifacts.includes(a.artifactVersionId));
     if (unreadArtifacts.length > 0) {
       throw new ToolExecutionFault(
         "READINESS_CONTEXT_READ_REQUIRED",
@@ -1573,7 +1573,8 @@ export function createWritingWorkflowTools(options: {
     }
     if (continuationEntryStageByRun.get(context.runId) !== stage) return;
     const requiredArtifacts = requiredContextArtifacts(context, stage);
-    const completed = new Set(completedArtifactReadIds?.(context.runId) ?? []);
+    const delivered = stage === 'fact_check' && isReady(context.runId) ? readyInputsByRun.get(context.runId)?.factArtifacts : undefined;
+    const completed = new Set([...(completedArtifactReadIds?.(context.runId) ?? []), ...(delivered ?? [])]);
     const unreadArtifacts = requiredArtifacts.filter(
       (artifact) => !completed.has(artifact.artifactVersionId),
     );
@@ -1591,12 +1592,14 @@ export function createWritingWorkflowTools(options: {
     );
   };
 
-  const approveReadiness = (context: ToolExecutionContext, reason: string): JsonValue => {
+  const approveReadiness = (context: ToolExecutionContext, reason: string, deliveredArtifacts: readonly string[] = []): JsonValue => {
     if (context.projectId !== projectId) throw new ToolExecutionFault('PROJECT_SCOPE_MISMATCH', 'Workflow belongs to another project');
     if (!reason.trim()) throw new ToolExecutionFault('WRITING_READINESS_INVALID', 'A readiness reason is required');
-    assertReadinessPrerequisites(context);
-    readyInputsByRun.set(context.runId, readinessKey(context.runId));
-    return { status: 'ready', reason: reason.trim(), questions: [], nextStage: nextStageForRun(context.runId) };
+    const nextStage = nextStageForRun(context.runId);
+    const factArtifacts = nextStage === 'fact_check' ? deliveredArtifacts : [];
+    assertReadinessPrerequisites(context, factArtifacts);
+    readyInputsByRun.set(context.runId, { key: readinessKey(context.runId), factArtifacts });
+    return { status: 'ready', reason: reason.trim(), questions: [], nextStage };
   };
 
   const assessWritingReadiness: ToolDefinition<AssessWritingReadinessArgs, JsonValue> = {
