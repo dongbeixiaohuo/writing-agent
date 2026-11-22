@@ -30,7 +30,7 @@ const findingSchema = z.strictObject({
 });
 const findingsSchema = z.array(findingSchema).max(12);
 const coldFindingsSchema = z.array(findingSchema.omit({ recovery: true }).extend({ evidenceIds: z.array(nonBlank).max(0) })).max(12);
-const persuasionFindings = z.array(coldFindingsSchema.element.omit({ paragraphIds: true }).extend({
+const persuasionFindings = z.array(coldFindingsSchema.element.omit({ paragraphIds: true, repairTarget: true }).extend({
   kind: z.literal('inference'),
 })).max(MAX_PERSUASION_FINDINGS);
 const coldReadingSchema = readingSchema.extend({ verdict: z.enum(['delivered', 'revise']), queries: z.array(nonBlank).max(0), questions: z.array(nonBlank).max(0) });
@@ -182,7 +182,8 @@ export function validatePersuasionFindings(value: unknown, body: string): Review
     }
     covered.add(quote);
   }
-  return findings;
+  // Older review records share a storage schema that requires repairTarget.
+  return findings.map(finding => ({ ...finding, repairTarget: finding.issue }));
 }
 
 export function parseReviewResolutions(value: unknown, findings: readonly BoundReviewFinding[], content: string) {

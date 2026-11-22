@@ -64,6 +64,37 @@ test('rebinds an optional bridge after pruning an invalid bookmark and keeps goi
   assert.equal(plan(7).decision, 'ready');
 });
 
+test('only checks implementation when a gap points to a retained source and sends only selected passages to the writer', async () => {
+  const rule = '公司承诺向员工公布工资区间和奖金计算规则。公告写明从下个月开始可以查阅。';
+  const reading = source(publicUrl, rule);
+  const implementationQuery = '公司 公开奖金规则 实行后 员工 查询 访谈';
+  const assessment = { ...fixture.assessment, readingRoute: { question: direction,
+    moments: [{ sourceUrl: publicUrl, quote: '没有读到的政策。', interest: '无原文。' },
+      { sourceUrl: publicUrl, quote: rule, interest: '制度只说什么时间可以查询。' }] } };
+  const gap = (effectOfMoment: number) => ({ angle: 'counterexample' as const, query: implementationQuery, effectOfMoment });
+  for (const [researchGap, outcome, expectedReads, expectedQueries] of [
+    [undefined, 'missing', 0, []],
+    [gap(1), 'missing', 0, []],
+    [gap(2), 'missing', 0, [implementationQuery]],
+    [gap(2), 'found', 1, [implementationQuery]],
+  ] as const) {
+    const replay = await replayReadingHandoff({ ...fixture, firstReading: reading, assessment: { ...assessment, researchGap } }, outcome);
+    assert.deepEqual(replay.publicQueries, expectedQueries);
+    assert.equal(replay.sourceReads, expectedReads);
+    const state = JSON.parse(replay.draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
+    assert.equal(state.writingPlan.readingRoute.question, direction);
+    assert.deepEqual(state.writingPlan.readingRoute.moments.map((entry: { quote: string }) => entry.quote),
+      outcome === 'found' ? [rule, supplementalText] : [rule]);
+    assert.match(state.materialGuidance, /分清制度怎么规定和实行后发生了什么/u);
+    assert.doesNotMatch(JSON.stringify(state.writingPlan), /effectOfMoment|没有读到的政策/u);
+    if (expectedQueries.length) {
+      const request = replay.runEvents.find(event => event.type === 'tool.requested' && event.payload.implementationReference === publicUrl);
+      assert.ok(request);
+      assert.deepEqual(request.payload.arguments, { query: implementationQuery });
+    }
+  }
+});
+
 test('initial research and supplement dispatch only the queries requested', async () => {
   const firstSearchQuery = '职场同事工资和奖金保密 案例';
   const replay = await replayReadingHandoff({ ...fixture, firstSearchQuery }, 'missing');

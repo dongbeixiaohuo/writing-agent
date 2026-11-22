@@ -38,6 +38,41 @@ it('assigns source assessment to research and fact checking instead of the artic
   assert.doesNotMatch(READING_DRAFT_INSTRUCTIONS, /材料限制并入相关叙述/u);
 });
 
+it('hands off the author’s title question, opening situation and ending without an old practical takeaway', () => {
+  const direction = '谁在给下班失联定价';
+  const narrativePlan = {
+    core_keyword_from_title: '难受',
+    questionToAnswer: '不回消息为什么还要猜以后会不会吃亏？',
+    openingSituation: '从下班后收到一条工作消息、犹豫要不要回的处境写起。',
+    ending: { mode: 'structural_critique', focus: '收回到员工独自承担不回的后果。' },
+  };
+  const submitted = {
+    decision: 'ready', promise: direction, readerPayoff: '给一个可操作的判断方法。', reason: '沿作者方向继续。',
+    readingRoute: { question: direction, moments: [] }, narrativePlan, queries: [], questions: [],
+  };
+  assert.ok(new Ajv().compile(READING_SELECTION_JSON_SCHEMA)(submitted));
+  const selection = { direction, sources: [], authorWords: ['《下班不回微信，为什么最后难受的是员工？》', direction] };
+  const project = (value: unknown, authorWords = selection.authorWords) =>
+    draftWritingPlan(parsePrewriting(value, JSON.stringify(ledger), '选材完成。', true, { ...selection, authorWords }));
+  const narrativeOf = (handoff: ReturnType<typeof project>) => 'narrativePlan' in handoff ? handoff.narrativePlan : undefined;
+  const plan = project(submitted);
+  assert.ok('readingRoute' in plan && 'narrativePlan' in plan);
+  assert.equal(plan.promise, direction);
+  assert.equal(plan.readingRoute.question, direction);
+  assert.equal(plan.narrativePlan.core_keyword_from_title, '难受');
+  assert.equal(plan.narrativePlan.questionToAnswer, narrativePlan.questionToAnswer);
+  assert.equal(plan.narrativePlan.openingSituation, narrativePlan.openingSituation);
+  assert.match(plan.narrativePlan.ending.guidance ?? '', /不必另给行动建议/u);
+  assert.ok(!('readerPayoff' in plan));
+  assert.equal(narrativeOf(project(submitted, [direction]))?.core_keyword_from_title, undefined);
+  assert.equal(narrativeOf(project({ ...submitted, readingRoute: { question: '为什么需要给加班定价？', moments: [] } })), undefined);
+  const naturalEnding = { focus: '写到人物的选择为止。' };
+  assert.deepEqual(narrativeOf(project({ ...submitted, narrativePlan: { ...narrativePlan, ending: naturalEnding } }))?.ending, naturalEnding);
+  const decision = project({ ...submitted, narrativePlan: { ...narrativePlan,
+    ending: { mode: 'actionable_heuristic', focus: '给读者一个材料能支撑的判断标准。' } } });
+  assert.match(narrativeOf(decision)?.ending.guidance ?? '', /具体判断标准/u);
+});
+
 it('runs targeted persuasion review into scoped revision and carries that contract across continuation', () => {
   const path = mkdtempSync(join(tmpdir(), 'reading-route-'));
   const storage = openWorkspaceStorage({ workspacePath: path });
@@ -64,13 +99,13 @@ it('runs targeted persuasion review into scoped revision and carries that contra
     const body = '# 原标题\n\n值得保留的动作。\n\n住得近就一定相处得好。';
     submit('draft', body);
     submit('review_editor', '论点审稿', { findings: [{ quote: '住得近就一定相处得好。', kind: 'inference', severity: 'required',
-      issue: '见面方便不能推出一定相处得好。', repairTarget: '落到安排给见面提供的实际便利。', evidenceIds: [] }] });
+      issue: '见面方便不能推出一定相处得好。', evidenceIds: [] }] });
     assert.equal(workflow.progress('r').nextStage, 'central_revision');
     const base = stageArtifact(storage, 'p', 'r', 'draft')!;
     const findingId = workflow.revisionWork('r', base.id)!.closure.findings[0]!.id;
     submit('central_revision', body, { reviewEdits: { baseBodyVersionId: base.id,
-      edits: [{ findingId, kind: 'hypothesis', condition: '住得近', consequence: '见面可能方便些' }] } });
-    assert.equal(stageArtifact(storage, 'p', 'r', 'central_revision')!.content, '# 原标题\n\n值得保留的动作。\n\n如果住得近，见面可能方便些。');
+      edits: [{ findingId, kind: 'paragraph', replacement: '住得近，见面可能方便些。' }] } });
+    assert.equal(stageArtifact(storage, 'p', 'r', 'central_revision')!.content, '# 原标题\n\n值得保留的动作。\n\n住得近，见面可能方便些。');
     assert.equal(workflow.progress('r').nextStage, 'language_review');
     storage.finishRun({ projectId: 'p', runId: 'r', operationId: 'interrupt', status: 'cancelled', stopReason: 'test', payload: {} });
     storage.startRun({ projectId: 'p', sessionId: 's', runId: 'r2', purpose: 'test', planVersion: 'test', operationId: 'continue' });
@@ -79,10 +114,10 @@ it('runs targeted persuasion review into scoped revision and carries that contra
     assert.ok(usesFocusedReview(storage, 'p', 'r2'));
 
     const revised = stageArtifact(storage, 'p', 'r2', 'central_revision')!;
-    assert.deepEqual(workflow.protectedHypotheses('r2'), ['如果住得近，见面可能方便些。']);
-    const edit = { kind: 'wording', quote: '值得保留的动作', replacement: '看得见的动作', reason: '用词贴近上下文。' };
+    assert.deepEqual(workflow.protectedHypotheses('r2'), []);
+    const edit = { kind: 'context', quote: '值得保留的动作', replacement: '这一步做的是把两家的住所安排近一些。这个动作看得见。', reason: '交代动作指什么。' };
     const lintEdits = { baseBodyVersionId: revised.id, edits: [edit] };
-    const finalBody = revised.content.replace(edit.quote, edit.replacement);
+    const finalBody = revised.content.replace(`${edit.quote}。`, edit.replacement);
     storage.recordRunEvent({ projectId: 'p', runId: 'r2', operationId: 'lint-dispatch', type: 'tool.completed',
       payload: { result: { toolName: 'director_decide', result: { collaboration: {
         actor: 'language_review', stage: 'language_review', status: 'dispatched', decisionId: 'lint-dispatch',

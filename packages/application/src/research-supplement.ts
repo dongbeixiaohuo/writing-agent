@@ -267,7 +267,9 @@ export function createOutlineSupplement(storage: StoragePort & Pick<SessionStore
         if (attempted.has(key)) continue;
         attempted.add(key);
         const op = `${operation(runId)}:${++sequence}`;
-        await runTool('search_research_sources', op, { query: gap.query }, { angle: gap.angle, coverage });
+        const reference = gap.effectOfMoment === undefined ? undefined : plan.readingRoute?.moments[gap.effectOfMoment - 1];
+        await runTool('search_research_sources', op, { query: gap.query }, { angle: gap.angle, coverage,
+          ...(reference ? { implementationReference: reference.sourceUrl } : {}) });
         if (await readCandidates()) return reviewMaterials;
       }
       return null;

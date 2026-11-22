@@ -10,7 +10,7 @@ import { FactClaimStatusSchema, FactClaimTypeSchema } from "../../writing-core/s
 import { workflowStageSequence, type WritingWorkflowStage } from "../../writing-pack/src/index.js";
 import { buildExpertInstructions, LANGUAGE_REVIEW_SEMANTIC_CONTRACT } from '../../writing-pack/src/expert-instructions.js';
 import { PREWRITING_INSTRUCTIONS, PREWRITING_JSON_SCHEMA, bindConfirmedReadingPlan, confirmedWritingFocus, draftWritingPlan, READING_SELECTION_INSTRUCTIONS,
-  CONFIRMED_READING_SELECTION_INSTRUCTIONS, READING_SELECTION_JSON_SCHEMA, READING_DRAFT_INSTRUCTIONS } from './prewriting.js';
+  CONFIRMED_READING_SELECTION_INSTRUCTIONS, READING_SELECTION_JSON_SCHEMA, READING_DRAFT_INSTRUCTIONS, READING_MATERIAL_GUIDANCE } from './prewriting.js';
 import { researchReadings } from './research-readings.js';
 import { redevelopmentReference, redevelopmentProblems, redevelopmentHistory } from './revision-context.js';
 import { articleParagraphs, paragraphEditsOutputSchema, paragraphRepairScope } from './paragraph-revision.js';
@@ -402,7 +402,7 @@ export function createWritingCollaboration(options: {
       const originalReadings = researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection));
       const availableReadings = withResearchSupplement(storage, runId, research, originalReadings);
       const plan = confirmedFocus ? bindConfirmedReadingPlan(savedPlan, { direction: confirmedFocus.question,
-        sources: availableReadings, focus: confirmedFocus }) : savedPlan;
+        sources: availableReadings, focus: confirmedFocus, authorWords }) : savedPlan;
       const sourceReadings = availableReadings.filter(reading => originalReadings.includes(reading) ||
         plan.readingRoute?.moments.some(moment => moment.sourceUrl === reading.url));
       const additionalMaterials = inlineMaterialContext(materials.filter(material => !material.id.startsWith('intake-user-') &&
@@ -415,6 +415,7 @@ export function createWritingCollaboration(options: {
           writingRequirements, confirmedFocus, authorReplies, authorClarifications,
           authorWords,
           sourceReadings,
+          ...(sourceReadings.length ? { materialGuidance: READING_MATERIAL_GUIDANCE } : {}),
           ...(additionalMaterials.length ? { materials: additionalMaterials } : {}),
           writingPlan: draftWritingPlan(plan),
         })}`,
@@ -510,6 +511,7 @@ export function createWritingCollaboration(options: {
       const authorized = storage.listMaterials(projectId).filter(m => options.materialIds.includes(m.id));
       const research = stageArtifact(storage, projectId, runId, 'research');
       const field = focusedReview ? 'reviewEdits' : 'paragraphEdits';
+      const findings = revisionWork.closure.findings;
       return {
         scopeId: `paragraph-revision:${assignment.decisionId}:${repairBody.id}`, actor: 'central_revision', expectedBodyVersionId: repairBody.id,
         systemPrompt: [focusedReview ? FOCUSED_REVISION_INSTRUCTIONS : readingFirst ? READING_REVISION_INSTRUCTIONS : PARAGRAPH_REVISION_SUBMISSION,
@@ -521,7 +523,7 @@ export function createWritingCollaboration(options: {
           confirmedFocus, authorReplies, authorClarifications, ...(!focusedReview ? { taskInstruction: assignment.reason } : {}),
           baseBodyVersionId: repairBody.id, paragraphScope: scope,
           ...(focusedReview ? { sources: workflow.lintSources(runId) } : { sourceReadings: researchReadings(storage, projectId, research, authorized) }),
-          revisionFeedback: { findings: revisionWork.closure.findings },
+          revisionFeedback: { findings: focusedReview ? findings.map(({ id, quote, issue }) => ({ id, quote, issue })) : findings },
           revisionOutputSchema: { type: 'object', properties: { [field]: focusedReview
             ? REVIEW_EDITS_SCHEMA : paragraphEditsOutputSchema(repairBody.id, scope) }, required: [field], additionalProperties: false },
         })}`,
@@ -536,12 +538,20 @@ export function createWritingCollaboration(options: {
       if (!body || body.id !== current.expectedBodyVersionId || !inputs.includes(body.id)) {
         throw new ToolExecutionFault('BASE_VERSION_CONFLICT', '终稿检查需要使用这次任务绑定的修订稿。');
       }
+      const parentId = body.reason === 'workflow:central_revision' ? body.parentVersionIds[0] : undefined;
+      const parent = parentId ? storage.getArtifactVersion(parentId) : null;
+      const previousParagraphs = parent?.projectId === projectId ? articleParagraphs(parent.content) : [];
+      const currentParagraphs = articleParagraphs(body.content);
+      const beforeRevision = previousParagraphs.length === currentParagraphs.length ? currentParagraphs.flatMap((paragraph, index) => {
+        const before = previousParagraphs[index]!.text;
+        return before === paragraph.text ? [] : [{ before, after: paragraph.text }];
+      }) : [];
       return {
         scopeId: `language-lint:${assignment.decisionId}:${body.id}`, actor: 'language_review', expectedBodyVersionId: body.id,
         disableConfiguredThinking: true, systemPrompt: FINAL_LINT_INSTRUCTIONS,
         userMessage: `请检查这版文章。\nCOLLABORATION_STATE=${JSON.stringify({
           actor: 'language_review', stage: 'language_review', baseBodyVersionId: body.id, body: body.content, confirmedFocus,
-          sources: workflow.lintSources(runId), protectedHypotheses: workflow.protectedHypotheses(runId),
+          sources: workflow.lintSources(runId), protectedHypotheses: workflow.protectedHypotheses(runId), beforeRevision,
           lintOutputSchema: { type: 'object', properties: { lintEdits: LINT_EDITS_SCHEMA }, required: ['lintEdits'], additionalProperties: false },
         })}`,
         allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',

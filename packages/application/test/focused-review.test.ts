@@ -31,7 +31,7 @@ const correction = '公布的是固定工资的区间。奖金还得另算。';
 const attribution = '材料写的是公开奖金区间。';
 const body = [title, opening, claim, attribution, '这两件事说到底是一套算法。'].join('\n\n');
 const finding = { quote: claim, kind: 'inference', severity: 'required',
-  issue: '如果奖金另算，工资范围算不出奖金。', repairTarget: '区分工资参照和奖金规则。', evidenceIds: [] };
+  issue: '如果奖金另算，工资范围算不出奖金。', evidenceIds: [] };
 const materialEdit = { kind: 'material', quote: '公开奖金区间', replacement: '公开固定工资区间', reason: '范围不符。',
   source: { id: url, quote: sourceText } };
 const sources = [{ id: url, text: sourceText, instructionAuthority: 'none' as const }];
@@ -39,9 +39,10 @@ const patch = (edits: unknown[], baseBodyVersionId = 'body') => ({ edits, baseBo
 
 test('the persuasion reviewer is limited to at most two concrete, uniquely anchored argument issues', () => {
   assert.deepEqual(validatePersuasionFindings([], body), []);
-  assert.deepEqual(validatePersuasionFindings([finding], body), [finding]);
+  assert.equal(validatePersuasionFindings([finding], body)[0]?.issue, finding.issue);
   for (const findings of [[finding, finding, finding], [finding, finding], [{ ...finding, quote: title }],
-    [{ ...finding, quote: '稿件没有这句话。' }], [{ ...finding, kind: 'process_note' }], [{ ...finding, recovery: {} }]]) {
+    [{ ...finding, quote: '稿件没有这句话。' }], [{ ...finding, kind: 'process_note' }], [{ ...finding, recovery: {} }],
+    [{ ...finding, repairTarget: '主笔可以直接抄这句。' }]]) {
     assert.throws(() => validatePersuasionFindings(findings, body), { code: 'REVIEW_FINDINGS_INVALID' });
   }
 });
@@ -61,10 +62,10 @@ test('lint preserves unrelated text and rejects stale, unsupported, ambiguous an
   }
 });
 
-test('review repairs separate the exact source from the replacement and protect concise hypotheses', () => {
+test('review repairs keep legacy sentence edits readable for recovery', () => {
   const anchors = [{ id: 'f1', quote: claim }];
   const hypothesis = { findingId: 'f1', kind: 'hypothesis', condition: '公司只公布工资区间', consequence: '员工可能还是算不出奖金' };
-  const result = applyReviewEdits(body, 'body', patch([hypothesis]), anchors, sources);
+  const result = applyReviewEdits(body, 'body', patch([hypothesis]), anchors, sources, true);
   const sentence = '如果公司只公布工资区间，员工可能还是算不出奖金。';
   assert.equal(result.content, body.replace(claim, sentence));
   assert.deepEqual(result.protectedHypotheses, [sentence]);
@@ -73,9 +74,9 @@ test('review repairs separate the exact source from the replacement and protect 
   assert.equal(applyReviewEdits(body, 'body', patch([sourceEdit]), anchors, sources).content, body.replace(claim, correction));
   const recordedSource = { findingId: 'f1', kind: 'source', source };
   assert.equal(applyReviewEdits(body, 'body', patch([recordedSource]), anchors, sources, true).content, body.replace(claim, sourceText));
-  assert.equal(applyReviewEdits(body, 'body', patch([{ ...hypothesis, lead: '要是' }]), anchors, sources).protectedHypotheses[0],
+  assert.equal(applyReviewEdits(body, 'body', patch([{ ...hypothesis, lead: '要是' }]), anchors, sources, true).protectedHypotheses[0],
     '要是公司只公布工资区间，员工可能还是算不出奖金。');
-  for (const edit of [recordedSource, { ...sourceEdit, source: { ...source, quote: '已有法院支持开除。' } },
+  for (const edit of [hypothesis, { kind: 'remove', findingId: 'f1' }, recordedSource, { ...sourceEdit, source: { ...source, quote: '已有法院支持开除。' } },
     { ...sourceEdit, replacement: '# 不能换标题' }, { ...sourceEdit, replacement: '第一段\n\n第二段' },
     { ...sourceEdit, replacement: claim + correction },
     { ...hypothesis, consequence: '员工可能算不出奖金。已有法院支持开除。' },
@@ -84,6 +85,28 @@ test('review repairs separate the exact source from the replacement and protect 
   }
   assert.throws(() => applyLintEdits(result.content, 'body', patch([{ kind: 'wording', quote: '如果公司只公布工资区间，',
     replacement: '公司只公布工资区间，', reason: '试图去掉条件。' }]), sources, result.protectedHypotheses), { code: 'FINAL_LINT_INVALID' });
+});
+
+test('final lint reconnects a missing premise in its own paragraph, including after a legacy sentence edit', () => {
+  const advice = '可以先问主管，哪几种情况需要下班后回消息。';
+  const ending = `${advice}他也可能不肯公开说清楚。讨论能不能回，先得知道谁在定规矩。`;
+  const draft = [title, opening, ending].join('\r\n\r\n');
+  const anchors = [{ id: 'f1', quote: advice }];
+  const paragraph = { findingId: 'f1', kind: 'paragraph',
+    replacement: '先问清哪几种情况需要下班后回消息。主管若连这个问题也不愿说清，员工就只能猜。' };
+  assert.deepEqual(applyReviewEdits(draft, 'body', patch([paragraph]), anchors, sources),
+    { content: draft.replace(ending, paragraph.replacement), protectedHypotheses: [] });
+  assert.throws(() => applyReviewEdits(draft, 'body', patch([paragraph, paragraph]), anchors, sources), { code: 'REVIEW_EDITS_INVALID' });
+  const legacy = applyReviewEdits(draft, 'body', patch([{ findingId: 'f1', kind: 'hypothesis', condition: '员工要求定规矩',
+    consequence: '主管可能会拒绝' }]), anchors, sources, true);
+  const context = { kind: 'context', quote: '员工要求定规矩', replacement: paragraph.replacement,
+    reason: '前面的修改删掉了要约定的具体事。' };
+  assert.equal(applyLintEdits(legacy.content, 'body', patch([context]), sources, legacy.protectedHypotheses).content,
+    draft.replace(ending, paragraph.replacement));
+  for (const change of [{ ...context, quote: title }, { ...context, replacement: '' },
+    { ...context, replacement: '这是一段。\n\n这是下一段。' }]) {
+    assert.throws(() => applyLintEdits(legacy.content, 'body', patch([change]), sources, legacy.protectedHypotheses), { code: 'FINAL_LINT_INVALID' });
+  }
 });
 
 test('a sourced correction replaces the anchored paragraph only, preserving the title and separators', () => {
@@ -101,6 +124,7 @@ for (const noEdits of [false, true]) test(`the saved article goes through only t
       if (stage === 'review_editor') {
         assert.equal(state.artifacts[0].content, body);
         assert.equal(state.reviewOutputSchema.properties.findings.maxItems, 2);
+        assert.equal(state.reviewOutputSchema.properties.findings.items.properties.repairTarget, undefined);
         assert.equal(state.reviewOutputSchema.properties.reading, undefined);
         return { findings: noEdits ? [] : [finding] };
       }
@@ -108,6 +132,8 @@ for (const noEdits of [false, true]) test(`the saved article goes through only t
         const target = state.paragraphScope.paragraphs.find((p: { text: string }) => p.text === claim);
         assert.deepEqual(state.paragraphScope.editableParagraphIds, noEdits ? [] : [target.id]);
         assert.deepEqual(state.sources, sources);
+        assert.deepEqual(state.revisionFeedback.findings.map(({ issue }: { issue: string }) => issue), noEdits ? [] : [finding.issue]);
+        assert.ok(state.revisionFeedback.findings.every((item: Record<string, unknown>) => !('repairTarget' in item)));
         return { reviewEdits: { baseBodyVersionId: state.baseBodyVersionId,
           edits: noEdits ? [] : [{ findingId: state.revisionFeedback.findings[0].id, kind: 'source',
             source: { id: url, quote: sourceText }, replacement: correction }] } };

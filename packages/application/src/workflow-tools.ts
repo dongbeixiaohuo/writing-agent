@@ -40,7 +40,7 @@ import { JSON_SCHEMA as REVISION_COMPARISON_SCHEMA, parseRevisionComparison } fr
 import { applyParagraphEdits, PARAGRAPH_EDITS_SCHEMA, quoteParagraphIds } from './paragraph-revision.js';
 import { applyLintEdits, applyReviewEdits, LINT_EDITS_SCHEMA, REVIEW_EDITS_SCHEMA, type LintSource } from './focused-review.js';
 import { inlineMaterialContext } from './material-context.js';
-import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA,
+import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA, PERSUASION_FINDINGS_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA,
   validateReviewFindings, validateColdReviewFindings, validatePersuasionFindings, parseReadingAssessment, parseReviewResolutions, parseRevisionAudit, READING_JSON_SCHEMA, needsArticleRedevelopment,
   type ReadingAssessment, type ReviewFinding, type BoundReviewFinding } from './review-closure.js';
 type BodyStage = Extract<ContentStage, "draft" | "central_revision" | "language_review">;
@@ -916,7 +916,7 @@ const WRITING_STAGE_SCHEMA = {
     prewriting: PREWRITING_JSON_SCHEMA,
     reading: READING_JSON_SCHEMA,
     comparison: REVISION_COMPARISON_SCHEMA,
-    findings: REVIEW_FINDINGS_SCHEMA,
+    findings: { anyOf: [REVIEW_FINDINGS_SCHEMA, PERSUASION_FINDINGS_SCHEMA] },
     resolutions: RESOLUTIONS_JSON_SCHEMA,
     audit: REVISION_AUDIT_JSON_SCHEMA,
     paragraphEdits: PARAGRAPH_EDITS_SCHEMA,
@@ -1757,13 +1757,14 @@ export function createWritingWorkflowTools(options: {
         const readingSelection = readerValueRequired(context.runId);
         const confirmedDirection = readingSelection ? confirmedWritingDirection(storage, projectId, briefVersion) : undefined;
         const materials = storage.listMaterials(projectId).filter(material => !confirmedDirection || briefVersion!.brief.materialIds.includes(material.id));
-        const focus = confirmedDirection ? confirmedWritingFocus(confirmedDirection, materials.filter(material =>
-          material.id.startsWith('intake-user-') || material.role === 'user_firsthand').map(material => material.content)) : undefined;
+        const authorWords = materials.filter(material =>
+          material.id.startsWith('intake-user-') || material.role === 'user_firsthand').map(material => material.content);
+        const focus = confirmedDirection ? confirmedWritingFocus(confirmedDirection, authorWords) : undefined;
         const sources = withResearchSupplement(storage, context.runId, research,
           researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection)));
         try {
           prewriting = parsePrewriting(args.prewriting, research.content, content, readingSelection,
-            confirmedDirection ? { direction: confirmedDirection, sources, ...(focus ? { focus } : {}) } : undefined);
+            confirmedDirection ? { direction: confirmedDirection, sources, authorWords, ...(focus ? { focus } : {}) } : undefined);
           if (!confirmedDirection) validateReadingRoute(prewriting, sources);
         }
         catch (error) { throw new ToolExecutionFault('PREWRITING_INVALID', error instanceof Error ? error.message : 'Prewriting assessment required', true); }
@@ -1805,7 +1806,7 @@ export function createWritingWorkflowTools(options: {
             new Set(evidenceIdsFromLedger(stageArtifact(storage, projectId, context.runId, 'research')?.content ?? '')))
         : undefined;
       if (focusedCritic && findings) {
-        content = findings.length ? findings.map(({ issue, repairTarget }, index) => `${index + 1}. ${issue}\n\n   ${repairTarget}`).join('\n\n')
+        content = findings.length ? findings.map(({ issue }, index) => `${index + 1}. ${issue}`).join('\n\n')
           : '没有发现需要处理的论点漏洞。';
       }
       if (args.findings !== undefined && !reviewStage) throw new ToolExecutionFault('REVIEW_FINDINGS_UNEXPECTED', 'Only independent reviews submit findings.');
