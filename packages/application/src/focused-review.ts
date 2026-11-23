@@ -33,6 +33,11 @@ export const FINAL_LINT_INSTRUCTIONS = [
   '只按 lintOutputSchema 回复 JSON，复制 baseBodyVersionId。quote 是正文唯一出现的连续原文，replacement 是该处的新文字。没有需改的地方时提交空数组。不要回复全文。',
 ].join('\n');
 
+export const GUIDE_LINT_INSTRUCTIONS = [
+  '实用指南中遇到只有行政部门职责、没有读者动作的句子，先看本次 sources。来源明确记载具体入口或所需材料时，用 material 局部换成读者能照做的一步，带上原句依据及实际适用范围。没有这类材料时，可用 wording 去掉重复而无助操作的职责说明，保留正文已有的有效做法及出处。不要猜按钮、把受理范围扩大或承诺结果。',
+  '跨节重复的法条解释只修重复的位置，保留新的适用情形、反例或做法，以及读者理解后续所需的简短回指。结尾若混有新的判断与复述，局部删掉重复步骤、渠道与法条，留下新增判断。标题、段落布局与其它文字原样保留。',
+].join('\n');
+
 const shortText = (max: number) => z.string().max(max).regex(/\S/u);
 const span = shortText(320).regex(/^[^\r\n]+$/u);
 const sourceReference = z.strictObject({ id: shortText(2000), quote: span });
@@ -66,6 +71,8 @@ export interface LintSource {
   id: string;
   text: string;
   instructionAuthority: 'none';
+  sourceType?: 'search_excerpt';
+  useBoundary?: string;
 }
 
 type FindingAnchor = { id: string; quote: string };

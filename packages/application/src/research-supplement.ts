@@ -12,7 +12,7 @@ type History = Pick<SessionStore, 'listRunEvents'> & Pick<StoragePort, 'inspectP
 
 export function usesPublicSources(brief: Pick<WritingBrief, 'genre'> | undefined) {
   return brief?.genre === 'explanatory_analysis' || brief?.genre === 'argument_commentary' ||
-    brief?.genre === 'narrative_observation';
+    brief?.genre === 'narrative_observation' || brief?.genre === 'practical_experience';
 }
 
 function site(url: string) {

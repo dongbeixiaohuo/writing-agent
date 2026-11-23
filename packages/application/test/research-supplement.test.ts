@@ -107,6 +107,71 @@ test('narrative observation uses an attributed survey or searches a concrete gap
   assert.equal(missing.finalBody, undefined);
 });
 
+test('a guide preserves an actionable excerpt within the source budget and hands each bookmark to one step', async () => {
+  const topic = '遇到强制扫码点餐，当场怎么做、事后从哪里投诉？';
+  const startQuery = '扫码点餐 投诉须知 入口';
+  const missingQuery = '页面拒绝授权后 提供人工点餐的实际案例';
+  const instructions = '到消费争议平台的投诉入口提交商家名称、地址、诉求和争议材料。';
+  const portalUrl = 'https://guide.example.org/notice';
+  const readings = ['规则只说明何时可以拒绝扫码授权。', '规则补充依法收集数据的基本原则。', '指导说明介绍了有关部门的各项职责。', '店员可以使用纸质菜单帮顾客点餐。']
+    .map((text, index) => source(`https://source.example.org/reading-${index}`, text));
+  const caseReading = readings[3]!;
+  const report = { url: portalUrl, title: '消费争议投诉须知', content: instructions };
+  const makeClaim = (entry: { url: string; text: string }, index: number) => ({
+    evidence_id: `E00${index + 1}`, claim_type: entry.url === portalUrl ? 'action_step' : entry.url === caseReading.url ? 'case_report' : 'other',
+    claim_text: entry.text,
+    source_quote: entry.text, source_title: '离线素材', source_publisher: '离线来源', source_url: entry.url,
+    accessed_at: '离线记录', reliability: 'medium', use_boundary: '保留来源的适用范围', verification_status: 'source_verified',
+  });
+  const claims = [...readings, { url: portalUrl, text: instructions }].map(makeClaim);
+  const guide: ReadingHandoffFixture = {
+    ...fixture, brief: { ...fixture.brief, topic, genre: 'practical_experience' }, rawAuthorText: [topic], authorReplies: [],
+    firstReading: readings[0]!,
+    researchLedger: JSON.stringify({ claims, editorialPlan: editorialPlanFixture(claims.map(claim => claim.evidence_id)) }),
+    recordedResearch: { queries: new Map([[startQuery, [report]]]), followupQueries: [], readings, failedReadUrls: [portalUrl] },
+    assessment: { ...fixture.assessment, researchGap: undefined, transitionBridge: undefined,
+      readingRoute: { question: topic, moments: [
+        { sourceUrl: caseReading.url, quote: caseReading.text, interest: '当场可以先问人工点餐。' },
+        { sourceUrl: portalUrl, quote: instructions, interest: '投诉入口和所需材料。' },
+        { sourceUrl: portalUrl, quote: instructions, interest: '重复引用同一原话。' },
+      ] },
+      guideSteps: [
+        { heading: '问能否人工点餐', action: '向店员询问是否有纸质菜单。', moments: [1] },
+        { heading: '事后从哪里提交', action: '从投诉入口提交门店和诉求。', moments: [2] },
+        { heading: '再讲一遍', action: '把投诉材料再列一遍。', moments: [3] },
+      ],
+    },
+  };
+  const saved = '# 扫码点餐遇到卡点\n\n记好店名。有关部门在各自职责范围内负责监督管理。';
+  const replay = await replayReadingHandoff(guide, 'missing', { body: saved, answer(request, stage) {
+    const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
+    if (stage === 'review_editor') return { findings: [] };
+    if (stage === 'central_revision') return { reviewEdits: { baseBodyVersionId: state.baseBodyVersionId, edits: [] } };
+    assert.match(request.messages[0]!.content, /没有读者动作的句子/u);
+    assert.ok(state.sources.some((item: { id: string; sourceType?: string }) => item.id === portalUrl && item.sourceType === 'search_excerpt'));
+    return { lintEdits: { baseBodyVersionId: state.baseBodyVersionId, edits: [{ kind: 'material',
+      quote: '有关部门在各自职责范围内负责监督管理。', replacement: instructions,
+      source: { id: portalUrl, quote: instructions }, reason: '给出具体入口和材料。' }] } };
+  } });
+  assert.deepEqual(replay.publicQueries, [startQuery]);
+  const handoff = JSON.parse(replay.draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
+  assert.equal(handoff.writingPlan.readingRoute.question, topic);
+  assert.deepEqual(handoff.writingPlan.guideSteps, guide.assessment.guideSteps?.slice(0, 2));
+  assert.equal(handoff.sourceReadings.length, 4);
+  assert.ok(handoff.sourceReadings.some((entry: { url: string }) => entry.url === portalUrl));
+  assert.equal(replay.finalBody, saved.replace('有关部门在各自职责范围内负责监督管理。', instructions));
+
+  const missing = await replayReadingHandoff({ ...guide,
+    recordedResearch: { ...guide.recordedResearch!, queries: new Map([[startQuery, []]]) },
+    assessment: { ...guide.assessment, researchGaps: [{ angle: 'event', query: missingQuery }] },
+  }, 'missing');
+  assert.deepEqual(missing.publicQueries, [startQuery, missingQuery]);
+  const withoutSource = JSON.parse(missing.draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
+  assert.equal(withoutSource.writingPlan.readingRoute.question, topic);
+  assert.deepEqual(withoutSource.writingPlan.guideSteps, guide.assessment.guideSteps?.slice(0, 1));
+  assert.equal(missing.finalBody, undefined);
+});
+
 test('only checks implementation when a gap points to a retained source and sends only selected passages to the writer', async () => {
   const rule = '公司承诺向员工公布工资区间和奖金计算规则。公告写明从下个月开始可以查阅。';
   const reading = source(publicUrl, rule);

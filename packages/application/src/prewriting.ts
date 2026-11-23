@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MAX_SEARCH_LIMIT } from '../../writing-core/src/search-limits.js';
+import type { WritingBrief } from '../../writing-core/src/index.js';
 import { hasBonusCalculationDetails, type ResearchReading } from './research-readings.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -9,6 +10,11 @@ const ReadingRouteSchema = z.strictObject({
   moments: z.array(z.strictObject({ sourceUrl: text(2000), quote: text(1200), interest: text(300) })).max(6),
 });
 const ReadingConnectionSchema = z.strictObject({ moment: z.number().int().min(1).max(6), connection: text(240) });
+const GuideStepsSchema = z.array(z.strictObject({
+  heading: text(100),
+  action: text(300),
+  moments: z.array(z.number().int().min(1).max(6)).min(1).max(6),
+})).max(6);
 const ResearchGapSchema = z.strictObject({
   angle: z.enum(['event', 'rule', 'counterexample']),
   query: text(128),
@@ -35,6 +41,7 @@ export const PrewritingSchema = z.object({
   narrativePlan: NarrativePlanSchema.optional().catch(undefined),
   transitionBridge: ReadingConnectionSchema.optional().catch(undefined),
   practicalFriction: ReadingConnectionSchema.optional().catch(undefined),
+  guideSteps: GuideStepsSchema.optional().catch(undefined),
   researchGap: ResearchGapSchema.optional().catch(undefined),
   researchGaps: z.array(ResearchGapSchema).max(MAX_SEARCH_LIMIT).optional().catch(undefined),
   readerValue: z.strictObject({
@@ -70,11 +77,16 @@ const selectionSchema = PrewritingSchema.omit({ readerValue: true, premises: tru
   narrativePlan: NarrativePlanSchema.optional(),
   transitionBridge: ReadingConnectionSchema.optional(),
   practicalFriction: ReadingConnectionSchema.optional(),
+  guideSteps: GuideStepsSchema.optional(),
   researchGap: ResearchGapSchema.optional(),
   researchGaps: z.array(ResearchGapSchema).max(MAX_SEARCH_LIMIT).optional(),
 });
 const { $schema: _selectionMeta, ...selectionDefinition } = z.toJSONSchema(selectionSchema, { target: 'draft-07', io: 'input' });
 export const READING_SELECTION_JSON_SCHEMA = selectionDefinition;
+
+export function isPracticalGuide(brief: Pick<WritingBrief, 'genre'> | undefined) {
+  return brief?.genre === 'practical_experience';
+}
 
 type SourceReading = Pick<ResearchReading, 'url' | 'text' | 'supplementEvidence'>;
 type ResearchGap = z.infer<typeof ResearchGapSchema>;
@@ -118,6 +130,10 @@ export function validateReadingRoute(plan: PrewritingAssessment, sources: readon
 
 /** Render new trial-based plans from one source of truth; legacy text stays. */
 export function prewritingContent(plan: PrewritingAssessment, legacyContent: string): string {
+  if (plan.guideSteps?.length && plan.readingRoute) return [
+    plan.readingRoute.question,
+    ...plan.guideSteps.map(({ heading, action }) => `## ${heading}\n\n${action}`),
+  ].join('\n\n');
   if (plan.readingRoute) return `${plan.readingRoute.question}\n\n${plan.readingRoute.moments.map(m => `> ${m.quote}\n\n${m.interest}`).join('\n\n')}`;
   if (plan.decision !== 'ready' || !plan.readerValue?.approaches) return legacyContent;
   return [plan.readerValue.development, ...plan.sections.map(section => `## ${section.heading}\n\n${section.readerGain}`)].join('\n\n');
@@ -134,6 +150,7 @@ export function draftWritingPlan(plan: PrewritingAssessment) {
       ? { transitionBridge: plan.transitionBridge } : {}),
     ...(plan.practicalFriction && plan.practicalFriction.moment <= plan.readingRoute.moments.length
       ? { practicalFriction: plan.practicalFriction } : {}),
+    ...(plan.guideSteps?.length ? { guideSteps: plan.guideSteps } : {}),
     readingRoute: { question: plan.readingRoute.question,
     moments: plan.readingRoute.moments.map(({ sourceUrl, quote }) => ({ sourceUrl, quote })) } };
   return { promise: plan.promise,
@@ -158,10 +175,11 @@ type ConfirmedSelection = {
   sources: readonly SourceReading[];
   focus?: ConfirmedWritingFocus;
   authorWords?: readonly string[];
+  practicalGuide?: boolean;
 };
 
 /** The confirmed question owns the handoff even when reopening a saved outline. */
-export function bindConfirmedReadingPlan(result: PrewritingAssessment, { direction, sources, focus, authorWords }: ConfirmedSelection): PrewritingAssessment {
+export function bindConfirmedReadingPlan(result: PrewritingAssessment, { direction, sources, focus, authorWords, practicalGuide }: ConfirmedSelection): PrewritingAssessment {
   const originalMoments = result.readingRoute?.moments ?? [];
   const acceptsAuthorQuestion = result.readingRoute?.question === direction;
   const moments = originalMoments.filter(moment => {
@@ -177,6 +195,19 @@ export function bindConfirmedReadingPlan(result: PrewritingAssessment, { directi
   };
   const moment = result.transitionBridge ? boundMoment(result.transitionBridge.moment) : 0;
   const frictionMoment = result.practicalFriction ? boundMoment(result.practicalFriction.moment) : 0;
+  const ownedQuotes = new Set<string>();
+  const guideSteps = practicalGuide && acceptsAuthorQuestion ? result.guideSteps?.flatMap(step => {
+    const bound = step.moments.flatMap(index => {
+      const moment = boundMoment(index);
+      if (!moment) return [];
+      const { sourceUrl, quote } = moments[moment - 1]!;
+      const key = `${sourceUrl}\n${withoutWhitespace(quote)}`;
+      if (ownedQuotes.has(key)) return [];
+      ownedQuotes.add(key);
+      return [moment];
+    });
+    return bound.length ? [{ ...step, moments: bound }] : [];
+  }) : undefined;
   const bindGap = (gap: ResearchGap | undefined) => {
     if (!gap || gap.effectOfMoment === undefined) return gap;
     const index = boundMoment(gap.effectOfMoment);
@@ -205,6 +236,7 @@ export function bindConfirmedReadingPlan(result: PrewritingAssessment, { directi
       connection: '员工跟主管谈自己的绩效和奖金，接着收到的是别把奖金告诉同事的叮嘱。用这个片段看分配问题怎样被转成关系问题。' } } :
       !focus?.workplacePay && acceptsAuthorQuestion && moment && result.transitionBridge ? { transitionBridge: { ...result.transitionBridge, moment } } : {}),
     ...(frictionMoment && result.practicalFriction ? { practicalFriction: { ...result.practicalFriction, moment: frictionMoment } } : {}),
+    ...(guideSteps?.length ? { guideSteps } : {}),
     ...(researchGap ? { researchGap } : {}),
     ...(researchGaps ? { researchGaps } : {}),
   };
@@ -217,6 +249,7 @@ export function parsePrewriting(value: unknown, evidence: string, outline: strin
   if (confirmedSelection && (result.readingRoute || result.decision !== 'ready')) {
     return bindConfirmedReadingPlan(result, confirmedSelection);
   }
+  delete result.guideSteps;
   if (requireReaderValue && !result.readerValue && !result.readingRoute) throw new Error('prewriting: assess the reading value and select concrete material');
   const claims = new Map<string, Record<string, unknown>>((JSON.parse(evidence).claims ?? []).map((c: Record<string, unknown>) => [c.evidence_id, c]));
   for (const entry of [...result.premises, ...result.sections, ...(result.readerValue ? [result.readerValue] : [])]) {
@@ -278,5 +311,17 @@ export const READING_MATERIAL_GUIDANCE = [
   '分清制度怎么规定和实行后发生了什么。只用来参照时，说清谁可以做什么、争议由谁处理即可。只有现有原文记载了对应地区和人群的实施情况，才写联系频率、员工处境等实际上怎么变了。没有这类材料就沿原题写。',
   '若写作交接给了 practicalFriction，按对应书签的事实和范围交代现实中的具体卡点，从它展开作者的问题。媒体评论提出的判断可供理解背景，不能当独立事实或核心论据，也不能去掉归属后当作已证实的判断。能定位的调查或真实事例按实际出处写。',
 ].join('\n');
+
+export const GUIDE_RESEARCH_INSTRUCTIONS =
+  '实用指南优先找读者眼下能试的低摩擦做法，再找失败后的处理和必要规则。入账时把材料确实记载的动作、入口或提交所需信息标成 action_step，保留能在来源中定位的连续原句及适用条件。只有各方职责的条文只作依据。够写就停。';
+
+export const GUIDE_OUTLINE_INSTRUCTIONS = [
+  '作者要能照做的指南时，按读者行动的先后填写 guideSteps：heading 是这一步的用途，action 写读者怎么做及何时换下一步，moments 用从1起的书签编号。优先解决当场的事，再交代留证、投诉等后续。每个入口或按钮以材料能支持的精度写。',
+  '同一条关键法条、案例或数据只归一个主讲步骤。其他步骤可简短回指，或用它解释新的情况。已有步骤讲清规则时，省略重复的法条汇总。已保存摘录能提供具体入口时直接选用并保留出处。只看到原则、没找到怎么做时，按缺的动作提出定向 researchGaps。查不到就围绕原方向用已有材料推进。',
+  '结尾只留一个前文还没解释透、读者用得上的判断或取舍。没有新增价值时，ending.focus 说明在最后一个动作处停住。不要再列一轮前文步骤、投诉渠道或法条。',
+].join('\n');
+
+export const GUIDE_MATERIAL_GUIDANCE =
+  '按 guideSteps 的顺序安排各步，moments 是该步主讲材料。一个定义或规则在对应步骤讲透一次，后续用短回指或用它说明新情况。按已有出处写入口及所需信息，材料没给出的按钮和处理结果不补造。结尾按提纲收住。';
 
 export const READING_DRAFT_INSTRUCTIONS = '按作者要求写一篇愿意让人读下去的完整中文文章。具体内容决定篇幅与推进；新收获可以是细节、感受、人物理解或观点，不必每节证明一个结论。若提供readingRoute，它是材料书签，允许写作时改变连接方式，不必逐条使用。保持作者声音，直接讲人和事；工作说明不进正文，不补造亲历或事实。只输出Markdown文章，保留指定标题。讲完具体片段后，用新的动作、回应或后果接续；不另段复述刚写的动作。解释只有增加事实中尚未显出的关系时才保留。比较不要求两侧对称。正文不写来源可靠性、核实难度、材料缺口、推断边界或人物内心不可知等核查说明；这些由研究和事实核查承担，即使书签或风格资料提到也不转述。必要限定直接用事实归属、时间和行动表达，例如“马叙伦在《石屋续沈》中记载”，不写“这是一则后人记述”“细节未必能核实”“材料没有留下”。不用“值得注意”“它告诉我们”“它提醒我们”总结刚讲的内容。';

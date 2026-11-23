@@ -10,11 +10,12 @@ import { FactClaimStatusSchema, FactClaimTypeSchema } from "../../writing-core/s
 import { workflowStageSequence, type WritingWorkflowStage } from "../../writing-pack/src/index.js";
 import { buildExpertInstructions, LANGUAGE_REVIEW_SEMANTIC_CONTRACT } from '../../writing-pack/src/expert-instructions.js';
 import { PREWRITING_INSTRUCTIONS, PREWRITING_JSON_SCHEMA, bindConfirmedReadingPlan, confirmedWritingFocus, draftWritingPlan, READING_SELECTION_INSTRUCTIONS,
-  CONFIRMED_READING_SELECTION_INSTRUCTIONS, READING_SELECTION_JSON_SCHEMA, READING_DRAFT_INSTRUCTIONS, READING_MATERIAL_GUIDANCE } from './prewriting.js';
-import { researchReadings } from './research-readings.js';
+  CONFIRMED_READING_SELECTION_INSTRUCTIONS, READING_SELECTION_JSON_SCHEMA, READING_DRAFT_INSTRUCTIONS, READING_MATERIAL_GUIDANCE,
+  GUIDE_MATERIAL_GUIDANCE, GUIDE_OUTLINE_INSTRUCTIONS, GUIDE_RESEARCH_INSTRUCTIONS, isPracticalGuide } from './prewriting.js';
+import { fitResearchReadings, researchReadings } from './research-readings.js';
 import { redevelopmentReference, redevelopmentProblems, redevelopmentHistory } from './revision-context.js';
 import { articleParagraphs, paragraphEditsOutputSchema, paragraphRepairScope } from './paragraph-revision.js';
-import { FINAL_LINT_INSTRUCTIONS, FOCUSED_REVISION_INSTRUCTIONS, LINT_EDITS_SCHEMA, PERSUASION_REVIEW_INSTRUCTIONS, REVIEW_EDITS_SCHEMA } from './focused-review.js';
+import { FINAL_LINT_INSTRUCTIONS, FOCUSED_REVISION_INSTRUCTIONS, GUIDE_LINT_INSTRUCTIONS, LINT_EDITS_SCHEMA, PERSUASION_REVIEW_INSTRUCTIONS, REVIEW_EDITS_SCHEMA } from './focused-review.js';
 import { PARAGRAPH_REVISION_SUBMISSION, READING_EDITOR_INSTRUCTIONS, READING_REVISION_INSTRUCTIONS, readingAuditPrompt } from './review-closure-prompts.js';
 import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, isReadOnlyRevisionAudit, isReadingFirstRun, usesFocusedReview, workflowStagesForRun, stageArtifact, stageMarker, type WritingWorkflowTools } from "./workflow-tools.js";
 import { EDITORIAL_PLAN_INSTRUCTIONS } from './editorial-plan.js';
@@ -333,6 +334,7 @@ export function createWritingCollaboration(options: {
     const draftBriefVersion = briefId ? storage.getWritingBriefVersion(briefId) : null;
     const writingBrief = draftBriefVersion?.brief;
     const confirmedDirection = confirmedWritingDirection(storage, projectId, draftBriefVersion);
+    const practicalGuide = Boolean(confirmedDirection) && isPracticalGuide(writingBrief);
     const conversationalBrief = ['conversation-user', 'conversation-intake'].includes(draftBriefVersion?.actor.id ?? '');
     const authorWords = storage.listMaterials(projectId).filter(material => options.materialIds.includes(material.id) &&
       (material.id.startsWith('intake-user-') || material.role === 'user_firsthand')).map(material => material.content);
@@ -378,7 +380,7 @@ export function createWritingCollaboration(options: {
       const readTools = ['read_artifact_version', ...(materials.length ? ['read_material'] : [])];
       const authorContext = inlineMaterialContext(authorInputs);
       const sourceReadings = withResearchSupplement(storage, runId, research,
-        researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection && readerValueRequired)));
+        researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection && readerValueRequired), practicalGuide));
       const sourceReadTools = materials.some(material => !authorContext.some(item => {
         const slice = item as { materialId: string; truncated: boolean; content: string };
         return slice.materialId === material.id && !slice.truncated && slice.content === material.content;
@@ -387,7 +389,8 @@ export function createWritingCollaboration(options: {
       const target = brief?.lengthTarget.targetCharacters ?? 1800;
       return { scopeId: `outline-fit:${assignment.decisionId}:${research.id}`, actor: 'outline', expectedBodyVersionId: current.expectedBodyVersionId,
         systemPrompt: (readerValueRequired ? (confirmedDirection ? CONFIRMED_READING_SELECTION_INSTRUCTIONS : READING_SELECTION_INSTRUCTIONS)
-          : PREWRITING_INSTRUCTIONS) + (selectedStyle ? `\n${STYLE_APPLICATION_POLICY}` : ''),
+          : PREWRITING_INSTRUCTIONS) + (practicalGuide && readerValueRequired ? `\n${GUIDE_OUTLINE_INSTRUCTIONS}` : '') +
+          (selectedStyle ? `\n${STYLE_APPLICATION_POLICY}` : ''),
         userMessage: `围绕作者的问题选择值得展开的内容。\n${styleContext(selectedStyle, 'outline')}\nCOLLABORATION_STATE=${JSON.stringify({
           actor: 'outline', stage: 'outline', nextStage: current.nextStage, ready: true, finished: false,
           prewritingRequired: true, readerValueRequired, inputVersionIds: inputs, unreadArtifactVersionIds: [], completedStages: current.nextStage === 'outline' ? ['research'] : [],
@@ -429,11 +432,16 @@ export function createWritingCollaboration(options: {
       const selectedStyle = projectStyleSelection(storage, projectId);
       const savedPlan = workflow.prewritingApproval(runId)!;
       const research = stageArtifact(storage, projectId, runId, 'research')!;
-      const originalReadings = researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection));
+      const originalReadings = researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection), practicalGuide);
       const availableReadings = withResearchSupplement(storage, runId, research, originalReadings);
+      const plannedMoments = savedPlan.readingRoute?.moments ?? [];
+      const guideSources = new Set(savedPlan.guideSteps?.flatMap(step => step.moments.map(index => plannedMoments[index - 1]?.sourceUrl)));
+      const draftReadings = practicalGuide ? fitResearchReadings(availableReadings.filter(reading =>
+        originalReadings.includes(reading) || plannedMoments.some(moment => moment.sourceUrl === reading.url))
+        .sort((left, right) => Number(guideSources.has(right.url)) - Number(guideSources.has(left.url)))) : availableReadings;
       const plan = confirmedFocus ? bindConfirmedReadingPlan(savedPlan, { direction: confirmedFocus.question,
-        sources: availableReadings, focus: confirmedFocus, authorWords }) : savedPlan;
-      const sourceReadings = availableReadings.filter(reading => originalReadings.includes(reading) ||
+        sources: draftReadings, focus: confirmedFocus, authorWords, practicalGuide }) : savedPlan;
+      const sourceReadings = draftReadings.filter(reading => originalReadings.some(source => source.url === reading.url) ||
         plan.readingRoute?.moments.some(moment => moment.sourceUrl === reading.url));
       const additionalMaterials = inlineMaterialContext(materials.filter(material => !material.id.startsWith('intake-user-') &&
         material.role !== 'user_firsthand' && !sourceReadings.some(source => source.url === material.sourceReference)));
@@ -445,7 +453,8 @@ export function createWritingCollaboration(options: {
           writingRequirements, confirmedFocus, authorReplies, authorClarifications,
           authorWords,
           sourceReadings,
-          ...(sourceReadings.length ? { materialGuidance: READING_MATERIAL_GUIDANCE } : {}),
+          ...(sourceReadings.length ? { materialGuidance: READING_MATERIAL_GUIDANCE +
+            (plan.guideSteps?.length ? `\n${GUIDE_MATERIAL_GUIDANCE}` : '') } : {}),
           ...(additionalMaterials.length ? { materials: additionalMaterials } : {}),
           writingPlan: draftWritingPlan(plan),
         })}`,
@@ -578,7 +587,8 @@ export function createWritingCollaboration(options: {
       }) : [];
       return {
         scopeId: `language-lint:${assignment.decisionId}:${body.id}`, actor: 'language_review', expectedBodyVersionId: body.id,
-        disableConfiguredThinking: true, systemPrompt: FINAL_LINT_INSTRUCTIONS,
+        disableConfiguredThinking: true, systemPrompt: FINAL_LINT_INSTRUCTIONS +
+          (practicalGuide ? `\n${GUIDE_LINT_INSTRUCTIONS}` : ''),
         userMessage: `请检查这版文章。\nCOLLABORATION_STATE=${JSON.stringify({
           actor: 'language_review', stage: 'language_review', baseBodyVersionId: body.id, body: body.content, confirmedFocus,
           sources: workflow.lintSources(runId), protectedHypotheses: workflow.protectedHypotheses(runId), beforeRevision,
@@ -807,6 +817,7 @@ export function createWritingCollaboration(options: {
     ].join('\n');
     if (actor === 'director') rolePrompt += `\n精简交接：reason建议在${outputGuidance.delegationTargetCharacters}字内，只说明本阶段的关键目标、作者最新取舍与必要边界。专家已收到完整的当前方向、材料与产物，不要重复粘贴它们、逐条重述证据、写一份提纲再让提纲专家重写；不得要求提纲展示证据编号。保留确有必要的复杂要求，不以精简为由丢掉作者约束。`;
     if (assignment?.stage === 'research') rolePrompt += workflow.requireEditorialPlan ? `\n${EDITORIAL_PLAN_INSTRUCTIONS}\n只入账对当前写作有用的材料，字数目标约${articleTargetCharacters}字；不用数字点缀观点，保留能解释原因、呈现差异或限制结论的材料。notes只写共同边界，不重复计划。` : '';
+    if (assignment?.stage === 'research' && practicalGuide) rolePrompt += `\n${GUIDE_RESEARCH_INSTRUCTIONS}`;
     if (assignment?.stage === 'outline' || assignment?.stage === 'draft') rolePrompt += '\n有editorialPlan时围绕选中的切口与读者收获写作，只使用use材料支撑主张，不重新拼成候选切口大合集。gaps决定能说到哪里；无法支撑的判断缩小或不写。内部计划不是文章结构模板，不能把字段、选材理由、证据编号或自检说明写进正文。';
     if (assignment?.stage === 'central_revision') rolePrompt += reviewClosure ? `\n${RESOLUTION_SUBMISSION}`
       : '\n沿用已经选定的切口和读者收获。完整证据仍可核对反例、事实和适用范围，避免把淘汰的切口和选材重新扩成正文。';
