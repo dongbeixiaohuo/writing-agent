@@ -1,8 +1,10 @@
 export function BrandMark({ size = 24 }: { size?: number }) {
   return (
     <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <rect x="1.5" y="1.5" width="21" height="21" rx="7" fill="currentColor" opacity="0.1" />
-      <path d="M5.4 7.1 8.1 17h2.35l1.56-5.45L13.6 17h2.32l2.68-9.9h-2.12l-1.78 7.2-1.8-6.08h-1.78l-1.8 6.08-1.8-7.2H5.4Z" fill="currentColor" />
+      <rect width="24" height="24" rx="5.5" fill="#28241F" />
+      <path d="M8.9 2.9h6.2a.35.35 0 0 1 .35.35c0 3.2 1.1 5.55 3.3 7.6C15.9 13.45 13.7 17.1 12 21.3c-1.7-4.2-3.9-7.85-6.75-10.45 2.2-2.05 3.3-4.4 3.3-7.6a.35.35 0 0 1 .35-.35Z" fill="#FFF2DE" />
+      <path d="M12 12.3v9.2" stroke="#28241F" strokeWidth="0.85" />
+      <circle cx="12" cy="12.3" r="1.1" fill="#28241F" />
     </svg>
   )
 }
