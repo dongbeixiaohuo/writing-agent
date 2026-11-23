@@ -153,7 +153,7 @@ describe("conversation intake", () => {
       assert.match(prompt.systemPrompt, /启发式对话/u);
       assert.match(prompt.systemPrompt, /3[—–到-]5个.*切口/u);
       assert.match(prompt.systemPrompt, /一个.*容易回答.*问题/u);
-      assert.match(prompt.systemPrompt, /再次.*不知道.*换.*具体/u);
+      assert.match(prompt.systemPrompt, /仍说不知道.*两个具体情境.*同一个自然问句.*不另建两项编号列表/u);
       assert.match(prompt.systemPrompt, /否定.*不要.*重复/u);
       assert.match(prompt.systemPrompt, /不愿.*亲历.*观察/u);
       assert.match(prompt.systemPrompt, /推荐.*不等于.*确认/u);
