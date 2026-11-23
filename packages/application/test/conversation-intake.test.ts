@@ -15,7 +15,7 @@ import {
   ApplicationServiceError,
   WritingApplicationService,
 } from "../src/index.js";
-import { buildConversationIntakePrompt, confirmConversationBriefState } from "../src/conversation-intake.js";
+import { buildConversationIntakePrompt, confirmConversationBriefState, getConversationIntakeState } from "../src/conversation-intake.js";
 import { createConversationIntent } from "../src/conversation-intent.js";
 import { mergeConversationIdeation, readConversationIdeation } from '../src/conversation-ideation.js';
 import { intentFixtureEvents } from './intent-fixture.js';
@@ -197,6 +197,79 @@ describe("conversation intake", () => {
       assert.equal(selected.ok, true, JSON.stringify(selected));
       assert.equal(f.service.getConversationIntake('project-1').brief?.topic, directions[1]);
       assert.equal(f.storage.inspectProject('project-1')!.latestBodyVersionId, null);
+    } finally { f.close(); }
+  });
+
+  it('shows a fresh list when the same topic starts in another conversation, and keeps each conversation’s numbered choices', async () => {
+    const topic = '离职明明提前 30 天通知就行，为什么想按时走还是像在求公司？';
+    const earlier = ['错位分析：通知怎么变成了申请', '公司筹码：离职证明和交接', '为什么占理的人反而心虚', '想按时走怎么留痕', '几种不同的离职经历'];
+    const current = ['离职通知发出去后，为什么人还在等批准', '交接表上的签字，怎么变成了离职的门槛', '为什么想好聚好散的人更难催办', '辞职时谁要为交接拖延付代价', '手续拖着不办，员工接下来怎么走'];
+    const oldReply = '这里有五个切口，可以在这段对话里选。';
+    const oldSummary = '原对话已给出五个方向，尚未选定。';
+    const incomplete = {
+      reply: '五个方向里我更推荐第 1 个"错位分析"做主线。直接说编号或用自己的话改都行。',
+      summary: '想写明明是通知、却像在求批准的落差。',
+      questions: [],
+    };
+    const provider = new IntakeProvider([
+      [{ ...incomplete, reply: oldReply, summary: oldSummary, ideation: { directions: earlier, reactions: [] } }],
+      [incomplete],
+      [{ ...incomplete, reply: '可以从这些具体处境切入。', ideation: { directions: current, reactions: [] } }],
+      [proposalResponse('模型另起的方向')],
+    ]);
+    const f = fixture(provider);
+    try {
+      const first = await f.service.startConversationTurn(runInput(topic, 'resignation-first', 'resignation-A')).result;
+      assert.equal(first.ok, true, JSON.stringify(first));
+      assert.match(f.service.getConversationIntake('project-1').reply, /5\. 几种不同的离职经历/u);
+
+      const second = await f.service.startConversationTurn(runInput(topic, 'resignation-fresh', 'resignation-B')).result;
+      assert.equal(second.ok, true, JSON.stringify(second));
+      const state = f.service.getConversationIntake('project-1');
+      assert.deepEqual(state.ideation?.directions, current);
+      current.forEach((direction, index) => assert.ok(state.reply.includes(`\n${index + 1}. ${direction}`)));
+      const freshPrompt = provider.requests[1]?.messages.find(message => message.role === 'user')?.content ?? '';
+      assert.ok(freshPrompt.includes(topic));
+      assert.ok(!freshPrompt.includes(oldReply));
+      assert.ok(!freshPrompt.includes(oldSummary));
+      assert.ok(earlier.every(direction => !freshPrompt.includes(direction)));
+      assert.ok(provider.requests[2]?.messages.some(message =>
+        message.role === 'tool' && message.content.includes('INTAKE_DIRECTION_OPTIONS_REQUIRED')));
+
+      const selected = await f.service.startConversationTurn(runInput('第二个', 'resignation-select', first.sessionId)).result;
+      assert.equal(selected.ok, true, JSON.stringify(selected));
+      assert.equal(f.service.getConversationIntake('project-1').brief?.topic, earlier[1]);
+      assert.equal(f.storage.inspectProject('project-1')!.latestBodyVersionId, null);
+    } finally { f.close(); }
+  });
+
+  it('does not accept a legacy candidate list copied into a reply that never displayed it', async () => {
+    const directions = ['通知和申请的错位', '留住员工的手续', '为什么主动离开的人心虚'];
+    const provider = new IntakeProvider([[{ ...ideaResponse, ideation: { directions, reactions: [] } }]]);
+    const f = fixture(provider);
+    const projectId = 'project-1';
+    try {
+      const first = await f.service.startConversationTurn(runInput('想写离职', 'old-intake-options', 'original')).result;
+      assert.equal(first.ok, true);
+      const version = f.storage.listArtifactVersions(projectId, 'report', 'conversation-intake').at(-1)!;
+      const reply = '五个方向里我更推荐第 1 个。直接说编号。';
+      const written = f.storage.commitArtifactVersion({
+        operationId: 'legacy-copied-options',
+        projectId,
+        expectedProjectRevision: f.storage.inspectProject(projectId)!.revision,
+        kind: version.kind,
+        logicalKey: version.logicalKey,
+        baseVersionId: version.id,
+        content: JSON.stringify({ ...JSON.parse(version.content), sessionId: 'legacy', reply }),
+        reason: version.reason,
+        requestSnapshotId: null,
+        actor: version.actor,
+      });
+      assert.equal(written.ok, true);
+      const state = getConversationIntakeState(f.storage, projectId, 'legacy');
+      assert.equal(state.reply, reply);
+      assert.equal(state.ideation, null);
+      assert.deepEqual(getConversationIntakeState(f.storage, projectId, 'original').ideation?.directions, directions);
     } finally { f.close(); }
   });
 

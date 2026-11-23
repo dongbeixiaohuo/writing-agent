@@ -773,7 +773,7 @@ export class WritingApplicationService {
       }
       throw error;
     }
-    let state = this.getConversationIntake(projectId);
+    let state = getConversationIntakeState(this.#storage, projectId, sessionId);
     const intakePrompt = (current: ConversationIntakeState, saving = false) => {
       const value = buildConversationIntakePrompt(current, userInstruction, saving);
       return { ...value, userMessage: [value.userMessage, styleContext(this.getProjectStyleSelection(projectId), 'intake')].filter(Boolean).join('\n') };
@@ -808,7 +808,7 @@ export class WritingApplicationService {
     const materialReadBudget = authorizedUrls.length || materialCatalogue().length ? 5 : 0;
     const intent = state.phase === 'proposal' || state.assistantTurns.length > 0 ? createConversationIntent({ storage: this.#storage, projectId, sessionId,
       userMessage: userInstruction, context: state,
-      directionCandidates: state.phase === 'collecting' && state.sessionId === sessionId ? state.ideation?.directions ?? [] : [],
+      directionCandidates: state.phase === 'collecting' ? state.ideation?.directions ?? [] : [],
       allowedIntents: state.phase === 'proposal'
         ? ['confirm_direction', 'revise_direction', 'discuss'] : ['propose_direction', 'discuss'] }) : null;
     const intake = createConversationIntakeTool({
