@@ -3,6 +3,9 @@ import type { ArtifactVersion, MaterialRecord } from '../../writing-core/src/ind
 import { savedNumberedSearchResults } from './fact-search.js';
 import type { SessionStore } from '../../runtime/session/src/index.js';
 
+const MAX_READING_SOURCES = 4;
+const MAX_READING_CHARACTERS = 20_000;
+
 function object(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -24,6 +27,19 @@ export interface ResearchReading {
   supplementEvidence?: { kind: 'documented_rule' | 'calculation_example' | 'reported_context'; useBoundary: string };
 }
 
+/** Pack important passages first without increasing the source or text budget. */
+export function fitResearchReadings(readings: readonly ResearchReading[]): ResearchReading[] {
+  const selected: ResearchReading[] = [];
+  let remaining = MAX_READING_CHARACTERS;
+  for (const reading of readings) {
+    if (!remaining || selected.length === MAX_READING_SOURCES) break;
+    const text = reading.text.slice(0, remaining);
+    selected.push(text === reading.text ? reading : { ...reading, text, truncated: true });
+    remaining -= text.length;
+  }
+  return selected;
+}
+
 export function hasBonusCalculationDetails(text: string) {
   const payoff = '奖金|绩效工资|奖励(?:比例|基数|(?:的)?(?:分配)?方案)|奖池|13薪';
   const factor = '系数|权重|提成|奖励比例|达成率|乘以|计算公式|×';
@@ -35,7 +51,7 @@ export function hasBonusCalculationDetails(text: string) {
 /** Keep the passages the researcher actually read. A claim table is an index,
  * not a replacement for the people, sequence and detail in the source. */
 export function researchReadings(storage: Pick<SessionStore, 'listRunEvents'>, projectId: string, research: ArtifactVersion | null,
-  materials: readonly MaterialRecord[] = [], includeAuthorizedSnapshots = false) {
+  materials: readonly MaterialRecord[] = [], includeAuthorizedSnapshots = false, preferActionExcerpts = false) {
   if (!research || research.projectId !== projectId || research.kind !== 'evidence' || research.actor.kind !== 'agent' ||
       research.actor.id !== 'writing-pack/researcher') return [];
   let ledger: Record<string, unknown> | null;
@@ -53,7 +69,10 @@ export function researchReadings(storage: Pick<SessionStore, 'listRunEvents'>, p
   const quotes = claims.flatMap(claim => {
     const url = claim?.source_url ?? sourceRows.find(row => row?.source_id === claim?.source_id)?.source_url;
     const quote = claim?.source_quote;
-    return typeof url === 'string' && typeof quote === 'string' && quote.trim().length >= 12 ? [{ url, quote }] : [];
+    const kind = claim?.claim_type;
+    return typeof url === 'string' && typeof quote === 'string' && quote.trim().length >= 12 ? [{
+      url, quote, action: kind === 'action_step' || kind === 'complaint_procedure', caseReport: kind === 'case_report',
+    }] : [];
   });
   // A query may be absent from a ledger URL only when the saved excerpt
   // independently matches the ledger's exact quote at the same article path.
@@ -69,9 +88,9 @@ export function researchReadings(storage: Pick<SessionStore, 'listRunEvents'>, p
     return matches.find(source => sourceKey(source.url) === sourceKey(url)) ??
       (new Set(matches.map(source => sourceKey(source.url))).size === 1 ? matches[0] : undefined);
   };
-  const passages: ResearchReading[] = [];
+  let passages: ResearchReading[] = [];
   const seen = new Set<string>();
-  let remaining = 20_000;
+  let remaining = MAX_READING_CHARACTERS;
   for (const event of [...events].reverse()) {
     if (event.type !== 'tool.completed') continue;
     const request = requests.get(event.operationId), envelope = object(event.payload.result), result = object(envelope?.result);
@@ -93,7 +112,7 @@ export function researchReadings(storage: Pick<SessionStore, 'listRunEvents'>, p
     passages.push({ url, finalUrl: result.finalUrl, text, bodyHash: result.bodyHash,
       truncated: result.truncated === true || text.length !== result.text.length, instructionAuthority: 'none' });
     seen.add(sourceKey(url)); remaining -= text.length;
-    if (!remaining || passages.length === 4) break;
+    if (!remaining || passages.length === MAX_READING_SOURCES) break;
   }
   passages.reverse();
   // For a confirmed direction, authorized snapshots remain usable even if
@@ -101,36 +120,55 @@ export function researchReadings(storage: Pick<SessionStore, 'listRunEvents'>, p
   for (const material of materials) {
     const url = material.sourceReference;
     if (material.projectId !== projectId || !url || (!includeAuthorizedSnapshots && !urls.has(sourceKey(url))) || seen.has(sourceKey(url)) ||
-        !(material.sourceKind === 'web_snapshot' || material.role === 'source_verified') || !remaining || passages.length === 4) continue;
+        !(material.sourceKind === 'web_snapshot' || material.role === 'source_verified') ||
+        !remaining || passages.length === MAX_READING_SOURCES) continue;
     const text = material.content.slice(0, remaining);
     if (!text) continue;
     passages.push({ url, finalUrl: url, text, bodyHash: createHash('sha256').update(material.content).digest('hex'),
       truncated: text.length !== material.content.length, instructionAuthority: 'none' });
     seen.add(sourceKey(url)); remaining -= text.length;
   }
-  if (remaining && passages.length < 4) {
-    for (const { url, quote } of quotes) {
-      const source = fromSearch(url, quote);
-      if (!source || passages.some(reading => sameArticle(reading.url, source.url))) continue;
-      const failedRead = events.some(event => {
-        if (event.type !== 'tool.failed') return false;
-        const request = requests.get(event.operationId);
-        const args = object(request?.payload.arguments);
-        return request !== undefined && source.searchSeq < request.projectSeq &&
-          (args?.searchCallId === source.searchCallId && args?.resultNumber === source.resultNumber ||
-            typeof args?.url === 'string' && sameArticle(args.url, source.url));
-      });
-      if (!failedRead) continue;
-      const text = source.excerpt.slice(0, Math.min(4000, remaining));
-      if (!text.includes(quote)) continue;
-      passages.push({ url: source.url, finalUrl: source.url, text, bodyHash: createHash('sha256').update(text).digest('hex'),
-        truncated: true, instructionAuthority: 'none', sourceType: 'search_excerpt',
-        ...(source.title ? { sourceTitle: source.title.slice(0, 200) } : {}),
-        ...(source.publishedDate ? { publishedDate: source.publishedDate.slice(0, 100) } : {}),
-        useBoundary: '仅为本轮搜索保存的报道摘录，未独立打开原文。按摘录写明报道/调查及受访样本，不推成总体统计；关键数字在终稿按需核实。' });
-      remaining -= text.length;
-      if (!remaining || passages.length === 4) break;
+  const savedExcerpt = ({ url, quote, action }: typeof quotes[number], limit: number): ResearchReading | undefined => {
+    const source = fromSearch(url, quote);
+    if (!source || passages.some(reading => sameArticle(reading.url, source.url))) return;
+    const failedRead = events.some(event => {
+      if (event.type !== 'tool.failed') return false;
+      const request = requests.get(event.operationId);
+      const args = object(request?.payload.arguments);
+      return request !== undefined && source.searchSeq < request.projectSeq &&
+        (args?.searchCallId === source.searchCallId && args?.resultNumber === source.resultNumber ||
+          typeof args?.url === 'string' && sameArticle(args.url, source.url));
+    });
+    if (!failedRead) return;
+    const text = source.excerpt.slice(0, Math.min(4000, limit));
+    if (!text.includes(quote)) return;
+    return { url: source.url, finalUrl: source.url, text, bodyHash: createHash('sha256').update(text).digest('hex'),
+      truncated: true, instructionAuthority: 'none', sourceType: 'search_excerpt',
+      ...(source.title ? { sourceTitle: source.title.slice(0, 200) } : {}),
+      ...(source.publishedDate ? { publishedDate: source.publishedDate.slice(0, 100) } : {}),
+      useBoundary: action && preferActionExcerpts
+        ? '本轮留存的搜索摘录，未独立打开原文。只使用摘录明确记载的公开入口、材料和适用范围，不补写界面路径或受理承诺。'
+        : '仅为本轮搜索保存的报道摘录，未独立打开原文。按摘录写明报道/调查及受访样本，不推成总体统计；关键数字在终稿按需核实。' };
+  };
+  if (preferActionExcerpts) {
+    // A source for the actual step can take one slot from previously read background.
+    for (const entry of quotes.filter(entry => entry.action)) {
+      const action = savedExcerpt(entry, 4000);
+      if (!action) continue;
+      const hasPracticalQuote = (reading: ResearchReading) => Number(quotes.some(item =>
+        (item.action || item.caseReport) && sameArticle(item.url, reading.url) && reading.text.includes(item.quote)));
+      passages.sort((left, right) => hasPracticalQuote(right) - hasPracticalQuote(left));
+      passages = fitResearchReadings([action, ...passages]);
+      remaining = MAX_READING_CHARACTERS - passages.reduce((total, reading) => total + reading.text.length, 0);
+      break;
     }
+  }
+  for (const entry of quotes) {
+    if (!remaining || passages.length === MAX_READING_SOURCES) break;
+    const excerpt = savedExcerpt(entry, remaining);
+    if (!excerpt) continue;
+    passages.push(excerpt);
+    remaining -= excerpt.text.length;
   }
   return passages;
 }

@@ -32,7 +32,7 @@ import { COMPACT_RESEARCH_SCHEMA, expandResearchEvidence } from './research-evid
 import { normalizeFactVerification } from './fact-context.js';
 import { factSearchLimitations } from './fact-search-recovery.js';
 import { parseEditorialPlan } from './editorial-plan.js';
-import { PREWRITING_JSON_SCHEMA, confirmedWritingFocus, parsePrewriting, prewritingContent, validateReadingRoute, type PrewritingAssessment } from './prewriting.js';
+import { PREWRITING_JSON_SCHEMA, confirmedWritingFocus, isPracticalGuide, parsePrewriting, prewritingContent, validateReadingRoute, type PrewritingAssessment } from './prewriting.js';
 import { confirmedWritingDirection } from './conversation-intake.js';
 import { researchReadings } from './research-readings.js';
 import { usesPublicSources, withResearchSupplement, type OutlineSupplement } from './research-supplement.js';
@@ -1116,11 +1116,14 @@ export function createWritingWorkflowTools(options: {
     const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
     const brief = briefId ? storage.getWritingBriefVersion(briefId) : null;
     const materials = storage.listMaterials(projectId).filter(material => brief?.brief.materialIds.includes(material.id));
+    const confirmedDirection = confirmedWritingDirection(storage, projectId, brief);
+    const practicalGuide = Boolean(confirmedDirection) && isPracticalGuide(brief?.brief);
     const readings = withResearchSupplement(storage, runId, research, researchReadings(storage, projectId, research,
-      materials, Boolean(confirmedWritingDirection(storage, projectId, brief))), prewritingApproval(runId) ?? undefined);
+      materials, Boolean(confirmedDirection), practicalGuide), prewritingApproval(runId) ?? undefined);
     const local = inlineMaterialContext(materials.filter(material => !material.id.startsWith('intake-user-') &&
       !readings.some(reading => reading.url === material.sourceReference)));
-    return [...readings.map(reading => ({ id: reading.url, text: reading.text, instructionAuthority: 'none' as const })),
+    return [...readings.map(reading => ({ id: reading.url, text: reading.text, instructionAuthority: 'none' as const,
+      ...(practicalGuide && reading.sourceType ? { sourceType: reading.sourceType, useBoundary: reading.useBoundary } : {}) })),
       ...local.flatMap(item => item && typeof item === 'object' && !Array.isArray(item) && typeof item.materialId === 'string' &&
         typeof item.content === 'string' ? [{ id: item.materialId, text: item.content, instructionAuthority: 'none' as const }] : [])];
   };
@@ -1763,11 +1766,12 @@ export function createWritingWorkflowTools(options: {
         const authorWords = materials.filter(material =>
           material.id.startsWith('intake-user-') || material.role === 'user_firsthand').map(material => material.content);
         const focus = confirmedDirection ? confirmedWritingFocus(confirmedDirection, authorWords) : undefined;
+        const practicalGuide = Boolean(confirmedDirection) && isPracticalGuide(briefVersion?.brief);
         const sources = withResearchSupplement(storage, context.runId, research,
-          researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection)));
+          researchReadings(storage, projectId, research, materials, Boolean(confirmedDirection), practicalGuide));
         try {
           prewriting = parsePrewriting(args.prewriting, research.content, content, readingSelection,
-            confirmedDirection ? { direction: confirmedDirection, sources, authorWords, ...(focus ? { focus } : {}) } : undefined);
+            confirmedDirection ? { direction: confirmedDirection, sources, authorWords, practicalGuide, ...(focus ? { focus } : {}) } : undefined);
           if (!confirmedDirection) validateReadingRoute(prewriting, sources);
         }
         catch (error) { throw new ToolExecutionFault('PREWRITING_INVALID', error instanceof Error ? error.message : 'Prewriting assessment required', true); }

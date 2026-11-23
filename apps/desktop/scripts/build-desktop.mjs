@@ -69,6 +69,7 @@ await Promise.all([
     legalComments: 'none',
   }),
   copyRenderer(rendererSource, rendererTarget),
+  cp(resolve(desktopRoot, 'assets/icon.ico'), resolve(stageRoot, 'icon.ico')),
 ])
 
 const desktopPackage = JSON.parse(await readFile(resolve(desktopRoot, 'package.json'), 'utf8'))
