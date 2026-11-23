@@ -16,7 +16,7 @@ import {
   type ToolDefinition,
   type ToolExecutionContext,
 } from "../../runtime/tools/src/index.js";
-import { IDEATION_TOOL_SCHEMA, INTAKE_IDEATION_GUIDANCE, mergeConversationIdeation, readConversationIdeation, isDirectionAcknowledgment, refersToDirectionOptions, selectedDirection,
+import { IDEATION_TOOL_SCHEMA, INTAKE_IDEATION_GUIDANCE, formatDirectionOptions, mergeConversationIdeation, readConversationIdeation, isDirectionAcknowledgment, refersToDirectionOptions, selectedDirection,
   type ConversationIdeation, type IdeationInput } from './conversation-ideation.js';
 
 export const CONVERSATION_INTAKE_LOGICAL_KEY = "conversation-intake" as const;
@@ -406,12 +406,24 @@ function parsePersistedState(version: ArtifactVersion): PersistedIntakeState {
   };
 }
 
-function assistantTurns(storage: StoragePort, projectId: string): ConversationAssistantTurn[] {
+function assistantHistory(storage: StoragePort, projectId: string, sessionId?: string) {
   const turns: ConversationAssistantTurn[] = [];
+  let latestReply: PersistedIntakeState | null = null;
+  let shownDirections: readonly string[] = [];
   for (const version of storage.listArtifactVersions(projectId, "report", CONVERSATION_INTAKE_LOGICAL_KEY)) {
     try {
       const state = parsePersistedState(version);
       if (state.reply.length === 0) continue;
+      if (sessionId !== undefined) {
+        if (state.sessionId !== sessionId || version.reason === "conversation-intake-proposal-invalidated-by-new-turn") continue;
+        latestReply = state;
+        const directions = state.ideation?.directions ?? [];
+        // Older versions could copy directions into a new conversation without showing them.
+        if (version.reason === "conversation-intake-response" && directions.length >= 3 &&
+            state.reply.includes(`\n\n${formatDirectionOptions(directions)}\n\n`)) {
+          shownDirections = directions;
+        }
+      }
       if (turns.at(-1)?.reply === state.reply) continue;
       turns.push({
         stateArtifactVersionId: version.id,
@@ -424,7 +436,7 @@ function assistantTurns(storage: StoragePort, projectId: string): ConversationAs
       // not erase otherwise recoverable conversation history.
     }
   }
-  return turns;
+  return { turns, latestReply, shownDirections };
 }
 
 function sourceTurns(storage: StoragePort, projectId: string): ConversationSourceTurn[] {
@@ -520,6 +532,7 @@ export function stableBriefSummary(
 export function getConversationIntakeState(
   storage: StoragePort,
   projectId: string,
+  sessionId?: string,
 ): ConversationIntakeState {
   const project = storage.inspectProject(projectId);
   if (project === null) {
@@ -549,23 +562,31 @@ export function getConversationIntakeState(
       ? "proposal"
       : "collecting";
   const reportMatchesBrief = persisted !== null && persisted.proposalVersionId === proposalVersionId;
+  const history = assistantHistory(storage, projectId, sessionId);
+  const replyState = sessionId === undefined ? persisted : history.latestReply;
+  const replyMatchesBrief = replyState !== null && replyState.proposalVersionId === proposalVersionId;
+  const ideation = sessionId === undefined
+    ? persisted?.ideation ?? null
+    : history.shownDirections.length || replyState?.ideation?.reactions.length
+      ? { directions: history.shownDirections, reactions: replyState?.ideation?.reactions ?? [] }
+      : null;
   return {
     schemaVersion: "conversation-intake-v1",
     phase: brief === null ? (persisted?.phase ?? inferredPhase) : inferredPhase,
-    summary: reportMatchesBrief && (brief === null || persisted.summary.startsWith('### 写作方向'))
-      ? persisted.summary
-      : brief === null
-        ? (persisted?.summary ?? "")
+    summary: brief === null
+      ? replyState?.summary ?? ""
+      : reportMatchesBrief && persisted.summary.startsWith('### 写作方向')
+        ? persisted.summary
         : stableBriefSummary(storage, projectId, brief,
           reportMatchesBrief ? (persisted.summary.split('建议或暂定项：')[1]?.split('；') ?? []) : [],
           reportMatchesBrief ? persisted.pendingAuthorization : null),
-    reply: reportMatchesBrief
-      ? persisted.reply
+    reply: replyMatchesBrief
+      ? replyState.reply
       : brief?.confirmationStatus === "confirmed"
         ? "需求已确认，可以进入写作。"
         : "",
-    questions: reportMatchesBrief ? persisted.questions : [],
-    ideation: persisted?.ideation ?? null,
+    questions: replyMatchesBrief ? replyState.questions : [],
+    ideation,
     proposalVersionId,
     invalidatedProposalVersionId: persisted?.invalidatedProposalVersionId ?? null,
     brief,
@@ -575,7 +596,7 @@ export function getConversationIntakeState(
     // than being rediscovered from assistant history or material text.
     pendingAuthorization: reportMatchesBrief ? persisted?.pendingAuthorization ?? null : null,
     sourceTurns: sourceTurns(storage, projectId),
-    assistantTurns: assistantTurns(storage, projectId),
+    assistantTurns: history.turns,
     sessionId: persisted?.sessionId ?? null,
     stateArtifactVersionId: stateVersion?.id ?? null,
   };
@@ -968,7 +989,7 @@ export function invalidatePendingConversationProposal(input: {
     requestSnapshotId: null,
     actor: { kind: "user", id: "conversation-user" },
   }));
-  return getConversationIntakeState(input.storage, input.projectId);
+  return getConversationIntakeState(input.storage, input.projectId, input.sessionId);
 }
 
 function commitState(
@@ -1095,7 +1116,7 @@ export function createConversationIntakeTool(input: {
           "A turn cannot invalidate and replace or confirm a proposal at the same time",
         );
       }
-      const previous = getConversationIntakeState(input.storage, context.projectId);
+      const previous = getConversationIntakeState(input.storage, context.projectId, input.sessionId);
       if (
         previous.stateArtifactVersionId !== input.expectedStateArtifactVersionId ||
         previous.proposalVersionId !== input.expectedProposalVersionId
@@ -1130,9 +1151,9 @@ export function createConversationIntakeTool(input: {
       const ideation = args.ideation
         ? mergeConversationIdeation(previous.ideation, args.ideation, ideationSource!.materialId)
         : previous.ideation ?? null;
-      const shownDirections = previous.sessionId === input.sessionId ? previous.ideation?.directions.length ?? 0 : 0;
+      const shownDirections = previous.ideation?.directions ?? [];
       if (previous.phase === 'collecting' && args.proposal == null && args.confirmation == null &&
-          !shownDirections && !args.ideation?.directions.length && [reply, ...args.questions].some(refersToDirectionOptions)) {
+          !shownDirections.length && !args.ideation?.directions.length && [reply, ...args.questions].some(refersToDirectionOptions)) {
         throw new ToolExecutionFault('INTAKE_DIRECTION_OPTIONS_REQUIRED',
           '回复让作者从几个方向里选，但这次和本对话之前都没有展示可选方向。请重新提交 reply、summary、questions 和 ideation.directions（3–5个不同的具体方向），由程序展示编号。先保持方向待选，不提交方案。', true);
       }
@@ -1142,7 +1163,7 @@ export function createConversationIntakeTool(input: {
           || args.proposal != null || args.confirmation != null) {
           throw new ToolExecutionFault('INTAKE_DIRECTION_OPTIONS_INVALID', '方向未定时请单独给出3–5个不同的方向，等作者选择后再保存方案。');
         }
-        reply += '\n\n' + directions.map((direction, index) => `${index + 1}. ${direction}`).join('\n') +
+        reply += '\n\n' + formatDirectionOptions(directions) +
           '\n\n你可以选一个编号，也可以直接说想写哪个方向。';
       }
       let phase = previous.phase;
@@ -1186,7 +1207,7 @@ export function createConversationIntakeTool(input: {
           throw new ToolExecutionFault("INTAKE_BRIEF_INVALID", "Proposed writing preferences are invalid");
         }
         const fields = preferences as Record<string, unknown>;
-        const choices = previous.phase === 'collecting' && previous.sessionId === input.sessionId ? previous.ideation?.directions ?? [] : [];
+        const choices = previous.phase === 'collecting' ? shownDirections : [];
         const chosenIndex = input.directionSelectionIndex?.();
         const choice = selectedDirection(input.currentUserMessage, choices) ??
           (chosenIndex == null ? undefined : choices[chosenIndex - 1]);
