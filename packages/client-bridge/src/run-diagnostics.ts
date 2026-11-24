@@ -3,6 +3,7 @@ import type { RunRecord } from '../../runtime/session/src/index.js'
 import type { DiagnosticOperationStatus, RecoverableRunSummary, RunDiagnosticDecision, RunDiagnosticModelRequest, RunDiagnosticToolGroup, RunDiagnosticToolTarget, RunDiagnosticTraceStep, RunDiagnosticsView } from './protocol.js'
 import { explainRunFailure } from './run-failure-explanation.js'
 import { recordedActorLabel, toolPresentation } from './tool-presentation.js'
+import { isSearchProvider, searchProviderName } from '../../writing-core/src/search-providers.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/u
@@ -201,7 +202,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   const envelope = object(payload.result)
   const result = envelope?.ok === true ? object(envelope.result) : null
   if (toolName === 'search_fact_sources' || toolName === 'search_research_sources') {
-    const provider = result?.provider === 'deepseek' ? 'DeepSeek' : result?.provider === 'parallel' ? 'Parallel' : result?.provider === 'tavily' ? 'Tavily' : null
+    const provider = isSearchProvider(result?.provider) ? searchProviderName(result.provider) : null
     const hosts = safeSourceHosts(result?.evidenceText)
     const failure = safeCode(result?.failureCode)
     const mode = result?.mode === 'external' ? `${provider ?? '外部'} 搜索已返回`
@@ -209,7 +210,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     const evidence = safePreview(result?.evidenceText)
     const attempts = Array.isArray(result?.attempts) ? result.attempts.map(item => {
       const attempt = object(item)
-      const service = attempt?.provider === 'deepseek' ? 'DeepSeek' : attempt?.provider === 'tavily' ? 'Tavily' : attempt?.provider === 'parallel' ? 'Parallel' : null
+      const service = isSearchProvider(attempt?.provider) ? searchProviderName(attempt.provider) : null
       return service ? `${service}：${count(attempt?.httpRequests) ?? 0} 个 HTTP 请求 · ${attempt?.status === 'completed' ? '已返回结果' : searchFailureTitle(toolName, safeCode(attempt?.errorCode))}` : null
     }).filter(Boolean).join(' → ') : ''
     const quota = result?.quotaCharged === false ? ' · 独立查询次数未增加' : result?.quotaCharged === true ? ' · 计入1次独立查询' : ''
@@ -242,6 +243,21 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   const artifactVersionId = safeId(result?.artifactVersionId)
   if (toolName === 'submit_writing_stage' && object(result?.handoff)?.kind === 'revision_required') {
     return '终审 Agent 发现仍需修正的内容，正在交回主笔继续修订；当前稿件已保留。'
+  }
+  const researchAdjustment = toolName === 'submit_writing_stage' && result?.stage === 'research'
+    ? object(result.researchAdjustment) : null
+  if (researchAdjustment) {
+    const omitted = count(researchAdjustment.omittedClaims)
+    const normalized = count(researchAdjustment.normalizedClaimIds)
+    return [
+      '研究已保存，继续做提纲',
+      omitted ? `有 ${omitted} 条资料缺少可用出处或字段，已跳过` : null,
+      normalized ? `已统一 ${normalized} 条资料的编号字段写法，保留原编号` : null,
+      researchAdjustment.damagedPayload === true ? '研究回复残缺，沿已确认方向使用已有材料' : null,
+      researchAdjustment.planStatus === 'repaired' ? '已对齐选材表和资料编号' : null,
+      researchAdjustment.planStatus === 'skipped' ? '选材表有缺项，使用现有材料按原方向推进' : null,
+      researchAdjustment.discardedLegacyMetadata === true ? '已略过格式不完整的检索说明' : null,
+    ].filter(Boolean).join(' · ')
   }
   if (toolName.startsWith('submit_') || toolName.startsWith('respond_') || toolName.startsWith('propose_')) {
     return artifactVersionId ? `已保存 · 版本 ${artifactVersionId.slice(0, 12)}` : '已保存'

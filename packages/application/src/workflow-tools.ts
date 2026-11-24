@@ -26,12 +26,11 @@ type WorkflowStorage = StoragePort & Pick<SessionStore, 'listRunEvents'> & {
 };
 
 type ContentStage = Exclude<WritingWorkflowStage, "fact_check">;
-import { canonicalJson, FactClaimStatusSchema, FactClaimTypeSchema, parseEvidenceLedger, createFactCheckInputSnapshot, evaluateFactCheck } from '../../writing-core/src/index.js';
+import { canonicalJson, FactClaimStatusSchema, FactClaimTypeSchema, createFactCheckInputSnapshot, evaluateFactCheck } from '../../writing-core/src/index.js';
 import { defaultFactTitleContent, isPublicationSelectionCurrent } from './publication-choice.js';
-import { COMPACT_RESEARCH_SCHEMA, expandResearchEvidence } from './research-evidence.js';
+import { COMPACT_RESEARCH_SCHEMA, prepareResearchEvidence } from './research-evidence.js';
 import { normalizeFactVerification } from './fact-context.js';
 import { factSearchLimitations } from './fact-search-recovery.js';
-import { parseEditorialPlan } from './editorial-plan.js';
 import { PREWRITING_JSON_SCHEMA, confirmedWritingFocus, isPracticalGuide, parsePrewriting, prewritingContent, validateReadingRoute, type PrewritingAssessment } from './prewriting.js';
 import { confirmedWritingDirection } from './conversation-intake.js';
 import { researchReadings } from './research-readings.js';
@@ -291,39 +290,6 @@ export function assertCleanBodyStageContent(stage: BodyStage, content: string, b
         "Resubmit only the complete Markdown article. Start with the real article title; omit conclusions, rationale, change lists, and phrases such as 'final article below'.",
     },
   );
-}
-
-function evidenceLedgerContent(content: string): string {
-  try {
-    const parsed = expandResearchEvidence(JSON.parse(content));
-    if (
-      parsed !== null &&
-      typeof parsed === "object" &&
-      Array.isArray((parsed as { claims?: unknown }).claims)
-    ) {
-      // Persist only what the fact-check gate can later accept; rejecting here
-      // lets the research expert fix the ledger while it still owns it.
-      parseEvidenceLedger(JSON.stringify(parsed));
-      return JSON.stringify(parsed);
-    }
-    return JSON.stringify({ claims: [], notes: content.trim() });
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      // Free-form research notes remain useful, but they do not become evidence
-      // claims implicitly. The fact gate will therefore reject any unsupported
-      // factual claims instead of treating prose notes as verified evidence.
-      return JSON.stringify({ claims: [], notes: content.trim() });
-    }
-    throw new ToolExecutionFault(
-      "EVIDENCE_LEDGER_INVALID",
-      "The evidence ledger does not satisfy the persisted contract",
-      true,
-      {
-        correction:
-          "Resubmit the complete research object and retain its editorialPlan if required by this request. Each source needs a unique source_id, source_title, source_publisher, accessed_at and optional http(s) source_url. Claims reference source_id and include claim_type, claim_text, source_quote, reliability (high/medium/low), use_boundary, verification_status. Empty source_quote is accepted ONLY with verification_status exactly 'illustrative'; 'illustrative_only' is not that value. Use illustrative only for an explicitly hypothetical example, never to bypass a missing factual quote. Otherwise supply the actual continuous source quote or omit the unsupported claim. Keep evidence_id unique (E001/E002...). No claims requires non-empty notes. Do not copy historical metadata as current verification.",
-      },
-    );
-  }
 }
 
 export function evidenceIdsFromLedger(content: string): readonly string[] {
@@ -619,9 +585,7 @@ function commitStageArtifact(
   }
   const kind = artifactKind(stage);
   const key = logicalKey(stage, context.runId);
-  const persistedContent = stage === "research"
-    ? evidenceLedgerContent(content)
-    : stage.startsWith("review_")
+  const persistedContent = stage.startsWith("review_")
       ? reviewEnvelopeContent(
           storage,
           context,
@@ -936,9 +900,9 @@ const WRITING_STAGE_SCHEMA = {
       ],
     },
     content: {
-      anyOf: [{ type: 'string', minLength: 1, maxLength: 1_000_000 }, COMPACT_RESEARCH_SCHEMA],
+      anyOf: [{ type: 'string', minLength: 1, maxLength: 1_000_000 }, COMPACT_RESEARCH_SCHEMA, { type: 'object' }],
       description:
-        "Research: prefer a structured {sources,claims,notes} object, not a JSON string. Runtime expands shared sources and assigns omitted evidence IDs before canonical validation. Legacy flat ledger strings remain supported. Other stages require a plain Markdown string; body stages must contain only the complete article, no process commentary.",
+        "Research: submit {sources,claims,notes,editorialPlan}. Runtime expands shared sources, keeps usable evidence rows and normalizes plan references. Legacy ledger strings remain supported. Other stages require a plain Markdown string; body stages contain only the complete article.",
     },
   },
   required: ["stage", "content"],
@@ -1109,7 +1073,7 @@ export function createWritingWorkflowTools(options: {
     return storage.getArtifactVersion(saved.versionId)!;
   };
   const reviewFindingsRequired = (runId: string) => Boolean(options.requireEditorialPlan &&
-    JSON.parse(stageArtifact(storage, projectId, runId, 'research')?.content ?? '{}').editorialPlan);
+    (prewritingRequired(runId) || JSON.parse(stageArtifact(storage, projectId, runId, 'research')?.content ?? '{}').editorialPlan));
   const lintSources = (runId: string): LintSource[] => {
     const research = stageArtifact(storage, projectId, runId, 'research');
     if (!research) return [];
@@ -1301,7 +1265,7 @@ export function createWritingWorkflowTools(options: {
   const revisionCandidates = (runId: string) => {
     const evidence = stageArtifact(storage, projectId, runId, 'research');
     // Existing runs remain resumable without manufacturing a plan retrospectively.
-    if (!evidence || !JSON.parse(evidence.content).editorialPlan) return null;
+    if (!evidence || (!prewritingRequired(runId) && !JSON.parse(evidence.content).editorialPlan)) return null;
     const original = stageArtifact(storage, projectId, runId, 'draft');
     const revised = stageArtifact(storage, projectId, runId, 'central_revision');
     if (!original || !revised) return null;
@@ -1668,9 +1632,9 @@ export function createWritingWorkflowTools(options: {
     description:
       "Persist the next required writing workflow stage. Stages are ordered and review stages cannot modify the body.",
     inputSchema: options.requireEditorialPlan ? { ...WRITING_STAGE_SCHEMA, properties: { ...WRITING_STAGE_SCHEMA.properties,
-      content: { anyOf: [WRITING_STAGE_SCHEMA.properties.content.anyOf[0],
-        { ...COMPACT_RESEARCH_SCHEMA, required: [...COMPACT_RESEARCH_SCHEMA.required, 'editorialPlan'] }],
-        description: 'Research MUST submit the complete structured object {sources,claims,notes,editorialPlan}; editorialPlan is required, not optional. Other stages submit complete Markdown content; language review also supplies comparison when the request binds two versions.' },
+      content: { ...WRITING_STAGE_SCHEMA.properties.content, anyOf: [WRITING_STAGE_SCHEMA.properties.content.anyOf[0],
+        { ...COMPACT_RESEARCH_SCHEMA, required: [...COMPACT_RESEARCH_SCHEMA.required, 'editorialPlan'] },
+        WRITING_STAGE_SCHEMA.properties.content.anyOf[2]] },
     } } : WRITING_STAGE_SCHEMA,
     effect: "local_idempotent",
     permissions: ["workflow:submit"],
@@ -1742,16 +1706,18 @@ export function createWritingWorkflowTools(options: {
           );
         }
       }
-      if (args.stage === 'research' && options.requireEditorialPlan) {
-        const ledger = JSON.parse(evidenceLedgerContent(content));
+      let researchAdjustment: Omit<ReturnType<typeof prepareResearchEvidence>, 'content'> | undefined;
+      if (args.stage === 'research') {
         const briefId = storage.inspectProject(projectId)?.currentBriefVersionId;
         const briefVersion = briefId ? storage.getWritingBriefVersion(briefId) : null;
-        const allowSingleAngle = Boolean(confirmedWritingDirection(storage, projectId, briefVersion));
-        try {
-          parseEditorialPlan(ledger.editorialPlan, new Set(evidenceIdsFromLedger(JSON.stringify(ledger))), { allowSingleAngle });
-        } catch (error) {
-          throw new ToolExecutionFault('EDITORIAL_PLAN_INVALID', error instanceof Error ? error.message : 'A grounded editorial plan is required', true,
-            { correction: 'Include editorialPlan with the author-confirmed angle or 2–3 angles if none is confirmed. Include selectedAngleId, selectionReason, materialDecisions for every evidence ID, and gaps. An author-selected hypothesis is not established fact. Record unsupported core premises instead of turning them into a source-criticism article.' });
+        const confirmedDirection = Boolean(confirmedWritingDirection(storage, projectId, briefVersion));
+        const { content: prepared, ...adjustment } = prepareResearchEvidence(content, { requirePlan: options.requireEditorialPlan === true, confirmedDirection });
+        if (options.requireEditorialPlan && !confirmedDirection && adjustment.planStatus === 'skipped') {
+          throw new ToolExecutionFault('EDITORIAL_PLAN_INVALID', 'There is no confirmed writing direction and no usable editorial plan.', true);
+        }
+        content = prepared;
+        if (adjustment.omittedClaims || adjustment.normalizedClaimIds || adjustment.damagedPayload || adjustment.planStatus || adjustment.discardedLegacyMetadata) {
+          researchAdjustment = adjustment;
         }
       }
       if (args.prewriting !== undefined && args.stage !== 'outline') throw new ToolExecutionFault('PREWRITING_UNEXPECTED', 'Only the outline editor submits prewriting.');
@@ -1886,6 +1852,7 @@ export function createWritingWorkflowTools(options: {
         ...(args.stage === "research"
           ? {
               evidenceIds: [...evidenceIdsFromLedger(artifact.content)],
+              ...(researchAdjustment ? { researchAdjustment } : {}),
               factCheckReferenceRule:
                 "matchedEvidenceId must be one of evidenceIds; otherwise use null and provide sourceReference",
             }

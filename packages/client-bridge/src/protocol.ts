@@ -20,6 +20,7 @@ export interface ProjectSummary {
   readIssue?: { code: string; message: string; stage: string }
   id: string
   name: string
+  updatedAt?: string
   sessionIds: readonly string[]
   revision: number
   latestProjectSeq: number

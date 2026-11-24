@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { groupProviderConfig, loadDesktopProviderCatalog, loadDesktopProviderProfile } from '../../apps/desktop/src/provider-profile.js';
+import { groupProviderConfig, loadDesktopProviderCatalog } from '../../apps/desktop/src/provider-profile.js';
 import { SearchSettingsStore } from '../../apps/desktop/src/search-settings.js';
 import { createConfiguredProvider, createDefaultCredentialBroker } from '../../packages/runtime/provider-config/src/index.js';
 import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '../../packages/runtime/llm/src/index.js';
@@ -35,7 +35,6 @@ const before = protectedHashes();
 const profilePath = join(process.env.APPDATA!, 'Writing Agent/provider.json');
 const profileBefore = readFileSync(profilePath);
 const catalog = loadDesktopProviderCatalog(profilePath);
-const fallback = loadDesktopProviderProfile(profilePath);
 const credentials = createDefaultCredentialBroker();
 const searchEnabled = mode === 'reframed' && process.env.WRITING_AGENT_COMPARE_SEARCH === '1';
 const searchSettings = new SearchSettingsStore(join(process.env.APPDATA!, 'Writing Agent/search-settings.json'), credentials);
@@ -74,7 +73,7 @@ const replayResearch = new class extends ModelProviderBase {
 }();
 const providers = new Map<string, ReturnType<typeof createConfiguredProvider>>();
 function real(role: string) {
-  const config = groupProviderConfig(catalog, fallback, role)!;
+  const config = groupProviderConfig(catalog, role);
   routes[role] = config.model;
   if (!providers.has(role)) providers.set(role, createConfiguredProvider(config, credentials));
   const delegate = providers.get(role)!;

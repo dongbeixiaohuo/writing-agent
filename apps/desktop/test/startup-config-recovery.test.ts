@@ -34,6 +34,7 @@ for (const file of ['ui-settings.json', 'search-settings.json', 'provider.json']
       assert.equal(snapshot.settings.contentFontSize, 14);
       assert.equal(snapshot.settings.credentialReference, null);
       assert.equal((await host.searchStatus()).tavilyEnabled, false);
+      if (file === 'search-settings.json') assert.equal((await host.searchStatus()).parallelEnabled, false);
       assert.equal(snapshot.startupNotices?.length, 1);
       const backup = readdirSync(dirname(damagedPath)).find(name => name.startsWith(file+'.invalid-'));
       assert.ok(backup, 'must preserve exact input bytes before changing settings');

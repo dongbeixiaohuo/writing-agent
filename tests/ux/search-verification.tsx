@@ -8,10 +8,10 @@ import '../../packages/ui/src/theme/global.css';
 import '../../packages/ui/src/shell/RunTrace.css';
 
 let settings: SearchSettingsView = { parallelEnabled: false, tavilyEnabled: true, tavilyKeyConfigured: true, credentialPersistence: 'system' };
-const attempts = { tavily: 0, parallel: 0 };
+const attempts = { tavily: 0, parallel: 0, keenable: 0, deepseek: 0 };
 const host = {
   searchStatus: async () => ({ ...settings }),
-  configureSearch: async (input) => { settings = { ...settings, parallelEnabled: input.parallelEnabled, tavilyEnabled: input.tavilyEnabled, verification: {} }; return { ...settings }; },
+  configureSearch: async (input) => { settings = { ...settings, parallelEnabled: input.parallelEnabled, keenableEnabled: input.keenableEnabled, tavilyEnabled: input.tavilyEnabled, verification: {} }; return { ...settings }; },
   testSearchConnection: async provider => {
     attempts[provider]++;
     await new Promise(resolve => setTimeout(resolve, 500));

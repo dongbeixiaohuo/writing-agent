@@ -4,11 +4,9 @@ import { DEFAULT_SEARCH_LIMIT, MIN_SEARCH_LIMIT, MAX_SEARCH_LIMIT, isSearchLimit
 import type { ToolDefinition, ToolExecutionContext } from '../../runtime/tools/src/index.js';
 import type { SessionStore } from '../../runtime/session/src/index.js';
 import { searchDecisions, searchRecoveryPause, type FactSearchRecoveryRequest } from './fact-search-recovery.js';
+import { enabledSearchProviders, searchProviderName, type SearchProvider, type SearchProviderFlags } from '../../writing-core/src/search-providers.js';
 
-export type SearchProvider = 'deepseek' | 'parallel' | 'tavily';
-export function searchProviderName(provider: SearchProvider): string {
-  return provider === 'deepseek' ? 'DeepSeek' : provider === 'tavily' ? 'Tavily' : 'Parallel';
-}
+export { searchProviderName, type SearchProvider } from '../../writing-core/src/search-providers.js';
 export const FACT_SEARCH_LIMIT = DEFAULT_SEARCH_LIMIT;
 export const MAX_FACT_SEARCH_LIMIT = MAX_SEARCH_LIMIT;
 export const OUTLINE_SEARCH_ORIGIN = 'outline_research_supplement';
@@ -25,11 +23,8 @@ export interface SearchAttempt {
   errorCode?: string;
 }
 
-export interface FactSearchConfiguration extends SearchLimits {
-  readonly deepseekEnabled?: boolean;
+export interface FactSearchConfiguration extends SearchLimits, SearchProviderFlags {
   readonly getDeepSeekKey?: () => Promise<string | undefined>;
-  readonly parallelEnabled: boolean;
-  readonly tavilyEnabled: boolean;
   readonly getTavilyKey?: () => Promise<string | undefined>;
   /** Trusted host setting only, never a model argument. Enabled services may search without per-query prompts. */
   readonly authorizationMode?: 'enabled_services';
@@ -197,7 +192,7 @@ export function createFactSearchTools(options: {
     discovered.set(runId, urls);
   }
   const sessionId = randomUUID();
-  const enabled = () => { const c = options.configuration(); return !!c.deepseekEnabled || c.parallelEnabled || c.tavilyEnabled; };
+  const enabled = () => enabledSearchProviders(options.configuration()).length > 0;
   const automatic = () => enabled() && options.configuration().authorizationMode === 'enabled_services';
   const configuredTarget = () => {
     const config = options.configuration();
@@ -323,8 +318,26 @@ export function createFactSearchTools(options: {
     if (response.error || response.result?.isError || !Array.isArray(response.result?.content)) throw new Error('SEARCH_PROVIDER_ERROR');
     const text = response.result.content.filter((item: any) => item.type === 'text' && typeof item.text === 'string')
       .map((item: any) => item.text).join('\n').slice(0, 25_000) as string;
-    if (!text.trim()) throw new Error('SEARCH_NO_RESULTS');
+    if (!numberedSearchResults(text).length) throw new Error('SEARCH_NO_RESULTS');
     return text;
+  }
+  async function keenable(query: string, signal: AbortSignal, sent: () => void) {
+    const data = await read(await request('https://api.keenable.ai/v1/search/public',
+      { query, max_results: 5 }, signal, { 'X-Keenable-Title': 'Writing Agent' }, sent));
+    if (!Array.isArray(data?.results)) throw new Error('SEARCH_PROVIDER_ERROR');
+    const rows = data.results.slice(0, 5).flatMap((item: any) => {
+      if (typeof item?.url !== 'string' || item.url.length > 2048) return [];
+      let url: URL;
+      try { url = new URL(item.url); } catch { return []; }
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return [];
+      const excerpt = typeof item.snippet === 'string' ? item.snippet.trim() : '';
+      if (!excerpt) return [];
+      return [{ title: typeof item.title === 'string' ? item.title.slice(0, 500) : '', url: url.href,
+        publishedDate: typeof item.published_at === 'string' ? item.published_at.slice(0, 100) : '',
+        excerpt: excerpt.slice(0, 4000) }];
+    });
+    if (!rows.length) throw new Error('SEARCH_NO_RESULTS');
+    return JSON.stringify(rows);
   }
   async function tavily(query: string, signal: AbortSignal, config: FactSearchConfiguration, sent: () => void) {
     const key = await waitFor(Promise.resolve().then(() => config.getTavilyKey?.()), signal);
@@ -360,8 +373,8 @@ export function createFactSearchTools(options: {
   }
   async function search(query: string, signal?: AbortSignal, runId = 'direct', context?: ToolExecutionContext): Promise<FactSearchResult> {
     const config = options.configuration();
-    const providers = (['deepseek', 'parallel', 'tavily'] as const).filter(provider => provider === 'deepseek'
-      ? config.deepseekEnabled : provider === 'parallel' ? config.parallelEnabled : config.tavilyEnabled);
+    const providers = enabledSearchProviders(config);
+    const routeKey = providers.join(',');
     const attempts: SearchAttempt[] = [];
     const currentBudget = budget(runId);
     const base: Omit<FactSearchResult, 'mode' | 'notice'> = { provider: null, instructionAuthority: 'none', retrievedAt: new Date().toISOString(), evidenceText: '', route: providers, attempts, searchLimit: currentBudget.limit };
@@ -385,7 +398,7 @@ export function createFactSearchTools(options: {
       return { ...base, mode: 'unavailable', quotaCharged: false, failureCode: 'SEARCH_QUERY_TOO_LONG',
         notice: 'DeepSeek 搜索词最多 128 个 Unicode 字符；请保留关键事实精简查询。本次未发送请求，不会静默截断或消耗检索额度。' };
     const automatic = config.authorizationMode === 'enabled_services';
-    const cacheKey = `${runId}:${automatic}:${!!config.deepseekEnabled}:${config.parallelEnabled}:${config.tavilyEnabled}:${queryKey}`;
+    const cacheKey = `${runId}:${automatic}:${routeKey}:${queryKey}`;
     signal?.throwIfAborted();
     // Rebuilding the runtime after a resume must not reset the per-run budget or lose cached results.
     const history = context && options.storage ? scopedEvents(runId).filter(event => event.operationId !== context.operationId) : [];
@@ -402,7 +415,7 @@ export function createFactSearchTools(options: {
       const completed = history.findLast(item => item.operationId === event.operationId && item.type === 'tool.completed');
       const envelope = completed?.payload.result as { ok?: boolean; result?: FactSearchResult } | undefined;
       const obsoleteApproval = automatic && ['SEARCH_NOT_AUTHORIZED', 'SEARCH_APPROVAL_FAILED', 'SEARCH_APPROVAL_TIMEOUT'].includes(envelope?.result?.failureCode ?? '');
-      if (envelope?.ok && !obsoleteApproval && !(retryPending && event.projectSeq < retry!.projectSeq) && envelope.result?.route?.join() === providers.join()) cache.set(cacheKey, envelope.result);
+      if (envelope?.ok && !obsoleteApproval && !(retryPending && event.projectSeq < retry!.projectSeq) && envelope.result?.route?.join() === routeKey) cache.set(cacheKey, envelope.result);
     }
     const previous = cache.get(cacheKey);
     if (previous) { rememberSources(runId, previous.evidenceText); progress('复用本轮已保存的检索结果，没有再次请求搜索服务。'); return { ...previous, cacheHit: true }; }
@@ -461,8 +474,7 @@ export function createFactSearchTools(options: {
     };
     try {
       const boundedSignal = searchDeadline.signal;
-      const current = options.configuration();
-      if (!!current.deepseekEnabled !== !!config.deepseekEnabled || current.parallelEnabled !== config.parallelEnabled || current.tavilyEnabled !== config.tavilyEnabled) return notAuthorized;
+      if (enabledSearchProviders(options.configuration()).join() !== routeKey) return notAuthorized;
       for (const [index, provider] of providers.entries()) {
         boundedSignal.throwIfAborted();
         const remaining = Math.max(1, overallTimeoutMs - (Date.now() - networkStartedAt));
@@ -474,12 +486,15 @@ export function createFactSearchTools(options: {
           httpRequests++;
           progress(`${searchProviderName(provider)} 已发出第 ${httpRequests} 个 HTTP 请求${provider === 'parallel' ? '（含 MCP 握手）' : ''}；阶段独立查询 ${budget(runId).used} 次。`);
         };
-        progress(`${provider === 'parallel' ? '准备 Parallel MCP 连接' : `准备 ${searchProviderName(provider)}，正在读取已保存的凭据`}${index ? '；上一服务未成功，正在回退' : ''}。`);
+        const preparation = provider === 'parallel' ? '准备 Parallel MCP 连接' : provider === 'keenable'
+          ? '准备 Keenable 公开搜索' : `准备 ${searchProviderName(provider)}，正在读取已保存的凭据`;
+        progress(`${preparation}${index ? '；上一服务未成功，正在回退' : ''}。`);
         try {
           const evidenceText = provider === 'parallel'
             ? await parallel(normalized, providerDeadline.signal, sent)
-            : provider === 'deepseek' ? await deepseek(normalized, providerDeadline.signal, config, sent)
-              : await tavily(normalized, providerDeadline.signal, config, sent);
+            : provider === 'keenable' ? await keenable(normalized, providerDeadline.signal, sent)
+              : provider === 'deepseek' ? await deepseek(normalized, providerDeadline.signal, config, sent)
+                : await tavily(normalized, providerDeadline.signal, config, sent);
           attempts.push({ provider, status: 'completed', elapsedMs: Date.now() - startedAt, httpRequests });
           progress(`${searchProviderName(provider)} 已返回搜索结果；来源仍需核对，不代表事实已经通过。`);
           const result: FactSearchResult = { ...base, mode: 'external', provider, evidenceText, quotaCharged: !knownQuery,

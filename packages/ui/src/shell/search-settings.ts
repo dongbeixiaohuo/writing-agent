@@ -1,5 +1,6 @@
 import type { SearchSettingsInput, SearchSettingsView } from '../../../client-bridge/src/desktop-bridge.ts'
 import { MIN_SEARCH_LIMIT, MAX_SEARCH_LIMIT, SEARCH_LIMIT_KEYS, isSearchLimit, type SearchLimits } from '../../../writing-core/src/search-limits.ts'
+import { enabledSearchProviders, searchProviderName, type SearchProviderFlags } from '../../../writing-core/src/search-providers.ts'
 
 export function searchSettingsValidation(
   settings: Pick<SearchSettingsView, 'tavilyEnabled' | 'tavilyKeyConfigured' | 'deepseekEnabled' | 'deepseekKeyConfigured'> & SearchLimits,
@@ -19,13 +20,14 @@ export function searchSettingsValidation(
 }
 
 export function searchSettingsInput(
-  settings: Pick<SearchSettingsView, 'parallelEnabled' | 'tavilyEnabled' | 'deepseekEnabled'> & SearchLimits,
+  settings: SearchProviderFlags & SearchLimits,
   apiKey: string,
   deepseekApiKey = '',
 ): SearchSettingsInput {
   const trimmedKey = apiKey.trim()
   return {
     parallelEnabled: settings.parallelEnabled,
+    ...(settings.keenableEnabled === undefined ? {} : { keenableEnabled: settings.keenableEnabled }),
     tavilyEnabled: settings.tavilyEnabled,
     ...(settings.deepseekEnabled === undefined ? {} : { deepseekEnabled: settings.deepseekEnabled }),
     ...(deepseekApiKey.trim() ? { deepseekApiKey: deepseekApiKey.trim() } : {}),
@@ -34,7 +36,6 @@ export function searchSettingsInput(
   }
 }
 
-export function searchSettingsRoute(settings: Pick<SearchSettingsView, 'deepseekEnabled' | 'parallelEnabled' | 'tavilyEnabled'>): string[] {
-  return [settings.deepseekEnabled ? 'DeepSeek' : null, settings.parallelEnabled ? 'Parallel' : null,
-    settings.tavilyEnabled ? 'Tavily' : null].filter((name): name is string => name !== null);
+export function searchSettingsRoute(settings: SearchProviderFlags): string[] {
+  return enabledSearchProviders(settings).map(searchProviderName);
 }

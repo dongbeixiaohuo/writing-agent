@@ -7,14 +7,15 @@ import type { CredentialBroker } from '../../../packages/runtime/credentials/src
 import type { SearchSettingsInput, SearchSettingsView, SearchConnectionView } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { createFactSearchTools, SEARCH_TEST_QUERY, type SearchProvider, type FactSearchConfiguration } from '../../../packages/application/src/fact-search.js';
 import { DEFAULT_SEARCH_LIMIT, MIN_SEARCH_LIMIT, MAX_SEARCH_LIMIT, SEARCH_LIMIT_KEYS } from '../../../packages/writing-core/src/search-limits.js';
+import { isSearchProvider } from '../../../packages/writing-core/src/search-providers.js';
 
 const limit = z.number().int().min(MIN_SEARCH_LIMIT).max(MAX_SEARCH_LIMIT).default(DEFAULT_SEARCH_LIMIT);
-const flags = z.object({ parallelEnabled: z.boolean(), tavilyEnabled: z.boolean(), deepseekEnabled: z.boolean().default(false),
+const flags = z.object({ parallelEnabled: z.boolean(), keenableEnabled: z.boolean().default(false), tavilyEnabled: z.boolean(), deepseekEnabled: z.boolean().default(false),
   researchSearchLimit: limit, supplementSearchLimit: limit, searchLimit: limit }).strict();
 
 const inputSchema = flags.extend({ tavilyApiKey: z.string().max(2048).optional(), deepseekApiKey: z.string().max(2048).optional() });
 export class SearchSettingsStore {
-  #flags = flags.parse({ parallelEnabled: false, tavilyEnabled: false });
+  #flags = flags.parse({ parallelEnabled: true, tavilyEnabled: false });
   readonly #credentialId: string;
   readonly #deepseekCredentialId: string;
   #saving = false;
@@ -25,7 +26,8 @@ export class SearchSettingsStore {
     private readonly recovery?: LocalSettingsRecovery) {
     this.#credentialId = `search-tavily-${createHash('sha256').update(path).digest('hex').slice(0, 24)}`;
     this.#deepseekCredentialId = `search-deepseek-${createHash('sha256').update(path).digest('hex').slice(0, 24)}`;
-    this.#flags = readLocalSettings(path, 'search', this.#flags, value => flags.parse(value), recovery);
+    this.#flags = readLocalSettings(path, 'search', this.#flags, value => flags.parse(value), recovery,
+      { ...this.#flags, parallelEnabled: false });
   }
   configuration(): FactSearchConfiguration {
     return { ...this.#flags, authorizationMode: 'enabled_services',
@@ -41,7 +43,7 @@ export class SearchSettingsStore {
       ...(Object.keys(this.#verification).length ? { verification: { ...this.#verification } } : {}) };
   }
   async verify(provider: SearchProvider): Promise<SearchSettingsView> {
-    if (!['deepseek', 'parallel', 'tavily'].includes(provider)) throw new Error('SEARCH_SETTINGS_INVALID');
+    if (!isSearchProvider(provider)) throw new Error('SEARCH_SETTINGS_INVALID');
     if (this.#saving || this.#checking.has(provider)) throw new Error('SEARCH_SETTINGS_BUSY');
     this.#checking.add(provider);
     delete this.#verification[provider];
@@ -49,7 +51,7 @@ export class SearchSettingsStore {
     const startedAt = Date.now();
     try {
       const search = createFactSearchTools({ ...this.transport, configuration: () => ({
-        parallelEnabled: provider === 'parallel', tavilyEnabled: provider === 'tavily',
+        parallelEnabled: provider === 'parallel', keenableEnabled: provider === 'keenable', tavilyEnabled: provider === 'tavily',
         deepseekEnabled: provider === 'deepseek', getDeepSeekKey: this.configuration().getDeepSeekKey!,
         getTavilyKey: this.configuration().getTavilyKey!,
         // Explicit settings action authorizes only this fixed, public probe; never a manuscript query.
@@ -59,7 +61,8 @@ export class SearchSettingsStore {
       const available = result.mode === 'external' && result.provider === provider;
       const code = result.attempts?.at(-1)?.errorCode ?? result.failureCode;
       const failure = code === 'SEARCH_API_KEY_REQUIRED' ? `未找到已保存的 ${provider === 'deepseek' ? 'DeepSeek' : 'Tavily'} Key，请重新配置。`
-        : code === 'SEARCH_HTTP_401' || code === 'SEARCH_HTTP_403' ? '服务拒绝认证，请核对 Key 和账户权限。'
+        : code === 'SEARCH_HTTP_401' || code === 'SEARCH_HTTP_403'
+          ? provider === 'parallel' || provider === 'keenable' ? '服务拒绝了访问，请稍后重试。' : '服务拒绝认证，请核对 Key 和账户权限。'
         : code === 'SEARCH_HTTP_402' ? '搜索账户余额不足，请检查服务商账户。'
         : code === 'SEARCH_HTTP_429' ? '服务限流或配额不足，请稍后重试或检查账户。'
         : code?.includes('TIMEOUT') ? '连接或搜索响应超时，未验证可用。'
@@ -77,6 +80,7 @@ export class SearchSettingsStore {
     this.#saving = true;
     try {
       const parsed = inputSchema.safeParse({ ...input,
+        ...(input.keenableEnabled === undefined ? { keenableEnabled: this.#flags.keenableEnabled } : {}),
         ...(input.deepseekEnabled === undefined ? { deepseekEnabled: this.#flags.deepseekEnabled } : {}),
         ...Object.fromEntries(SEARCH_LIMIT_KEYS.map(key => [key, input[key] === undefined ? this.#flags[key] : input[key]])) });
       if (!parsed.success) throw new Error('SEARCH_SETTINGS_INVALID');
@@ -87,7 +91,7 @@ export class SearchSettingsStore {
       for (const update of updates) {
         if (update.enabled && !update.key && !(await this.credentials.resolve(`managed:${update.id}`))) throw new Error('SEARCH_API_KEY_REQUIRED');
       }
-      const value = { parallelEnabled: parsed.data.parallelEnabled, tavilyEnabled: parsed.data.tavilyEnabled,
+      const value = { parallelEnabled: parsed.data.parallelEnabled, keenableEnabled: parsed.data.keenableEnabled, tavilyEnabled: parsed.data.tavilyEnabled,
         deepseekEnabled: parsed.data.deepseekEnabled, researchSearchLimit: parsed.data.researchSearchLimit,
         supplementSearchLimit: parsed.data.supplementSearchLimit, searchLimit: parsed.data.searchLimit };
       mkdirSync(dirname(this.path), { recursive: true });

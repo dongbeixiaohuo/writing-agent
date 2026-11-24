@@ -116,7 +116,7 @@ for (const stopReason of ['TOOL_NO_PROGRESS', 'PROVIDER_RETRY_DEFERRED'] as cons
       const beforeResume = requests.length;
       recovering = true;
       bridge = createApplicationBridge({ service: app, workspaceId: 'real-resume', initialProjectId: 'p', initialSessionId: first.sessionId,
-        model: { model: 'm', parameters: {}, providerLabel: 'synthetic', credentialReference: null, budget } });
+        model: { model: 'm', parameters: {}, providerLabel: 'synthetic', credentialReference: 'test', budget } });
       if (stopReason === 'PROVIDER_RETRY_DEFERRED') {
         const wait = storage.listRunEvents(first.runId).findLast(event => event.type === 'run.waiting_user')!;
         await bridge.resumeRun(first.runId, 'resume', { operationId: 'too-early' });

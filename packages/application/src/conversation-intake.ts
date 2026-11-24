@@ -16,6 +16,7 @@ import {
   type ToolDefinition,
   type ToolExecutionContext,
 } from "../../runtime/tools/src/index.js";
+import { DIRECTION_PICK_PROMPT, removeDuplicateDirectionOptions, showsDirectionOptions } from '../../writing-core/src/direction-options.js';
 import { IDEATION_TOOL_SCHEMA, INTAKE_IDEATION_GUIDANCE, formatDirectionOptions, mergeConversationIdeation, readConversationIdeation, isDirectionAcknowledgment, refersToDirectionOptions, selectedDirection,
   type ConversationIdeation, type IdeationInput } from './conversation-ideation.js';
 
@@ -420,7 +421,7 @@ function assistantHistory(storage: StoragePort, projectId: string, sessionId?: s
         const directions = state.ideation?.directions ?? [];
         // Older versions could copy directions into a new conversation without showing them.
         if (version.reason === "conversation-intake-response" && directions.length >= 3 &&
-            state.reply.includes(`\n\n${formatDirectionOptions(directions)}\n\n`)) {
+            (state.reply.includes(`\n\n${formatDirectionOptions(directions)}\n\n`) || showsDirectionOptions(state.reply, directions))) {
           shownDirections = directions;
         }
       }
@@ -1163,8 +1164,7 @@ export function createConversationIntakeTool(input: {
           || args.proposal != null || args.confirmation != null) {
           throw new ToolExecutionFault('INTAKE_DIRECTION_OPTIONS_INVALID', '方向未定时请单独给出3–5个不同的方向，等作者选择后再保存方案。');
         }
-        reply += '\n\n' + formatDirectionOptions(directions) +
-          '\n\n你可以选一个编号，也可以直接说想写哪个方向。';
+        reply = removeDuplicateDirectionOptions(`${reply}\n\n${formatDirectionOptions(directions)}\n\n${DIRECTION_PICK_PROMPT}`);
       }
       let phase = previous.phase;
       let proposalVersionId = previous.proposalVersionId;

@@ -432,7 +432,7 @@ describe("secure local Web host", () => {
           model: {
             model: "test-model",
             providerLabel: "测试 Provider",
-            credentialReference: null,
+            credentialReference: "test",
             parameters: { temperature: 0 },
           },
           pollIntervalMs: 5,

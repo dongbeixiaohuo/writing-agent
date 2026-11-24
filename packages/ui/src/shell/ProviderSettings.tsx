@@ -112,27 +112,18 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
       editRequest.current++; setCheckingKey(false)
       const saved = await host.configureProvider(input)
       setStatus(saved); setChoices({}); setConnectionResults({}); setEditing(false); setForm(emptyForm())
-      setNotice(`默认模型已设为 ${saved.model}，跟随默认的分组将使用它。正在验证连接…`)
-      const result = await host.testProviderConnection()
+      setNotice(`配置已保存，正在验证 ${input.model}…`)
+      if (!saved.activeProfileId) throw Error('PROVIDER_PROFILE_NOT_FOUND')
+      const result = await host.testProviderConnection({ profileId: saved.activeProfileId, model: input.model })
+      setConnectionResults({ [connectionKey(saved.activeProfileId, input.model)]: result })
       setStatus(await host.providerStatus('summary'))
-      if (result.ok) {
-        setNotice(`已保存并验证通过：${saved.model} 已可用，可在上方分组中选择。`)
+      if (result.ok && result.tools === 'supported') {
+        setNotice(`${input.model} 已通过验证，可在上方选择。`)
       } else {
-        setNotice(`已保存默认模型 ${saved.model}，但连接验证未通过，暂不能单独分配给分组。`)
+        setNotice(`已保存 ${input.model} 的配置。`)
         setError(`配置已保存。${providerConnectionMessage(result).text}`)
       }
     } catch (reason) { setNotice(null); setError(explain(reason, '模型配置保存或连接验证未完成')) }
-    finally { setBusy(false) }
-  }
-
-  const select = async (profile: DesktopSavedProviderView) => {
-    if (!host) return
-    setBusy(true); setError(null); setNotice(null)
-    try {
-      const saved = await host.selectProvider(profile.profileId, choices[profile.profileId] ?? profile.model)
-      setStatus(saved)
-      setNotice(`默认模型已切换为 ${saved.model}。跟随默认的分组将在下次启动或继续时使用它；单独选择的分组保持不变。`)
-    } catch (reason) { setError(explain(reason, '模型切换失败')) }
     finally { setBusy(false) }
   }
 
@@ -143,8 +134,8 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
       const result = await host.testProviderConnection(target)
       setConnectionResults(current => ({ ...current, [connectionKey(target.profileId, target.model)]: result }))
       setStatus(await host.providerStatus('summary'))
-      if (result.ok) setNotice(`${target.model} 已验证通过，可在分组中选择。默认模型未改变。`)
-      if (!result.ok) setError(providerConnectionMessage(result).text)
+      if (result.ok && result.tools === 'supported') setNotice(`${target.model} 已通过验证，可在上方选择。`)
+      else setError(providerConnectionMessage(result).text)
     } catch (reason) { setError(explain(reason, '连接验证失败')) }
     finally { setBusy(false) }
   }
@@ -184,26 +175,23 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
       {host && <button type="button" className={css.secondaryAction} onClick={() => { void host.revealProviderConfig().catch(() => setError('无法打开配置文件位置')) }}>打开配置文件</button>}
     </div>
     <p className={css.providerLead}>{editing
-      ? (existing ? `编辑 ${existing.displayName} 的连接、Key 和模型。` : '添加供应商和 API 密钥，选择本次写作使用的模型。')
-      : '先配置默认模型，再按需要为三组角色选择不同模型。'}</p>
-    <p className={css.settingHint}>配置对所有项目生效，已有对话下次继续时使用；正在执行任务时请先停止再调整。</p>
+      ? (existing ? `编辑 ${existing.displayName} 的连接、Key 和模型。` : '添加供应商和 API Key，再验证需要使用的模型。')
+      : '从已验证的模型里，为三档角色各选一个。'}</p>
+    <p className={css.settingHint}>已有会话下次继续时使用新配置。请在任务结束或停止后调整。</p>
     {!host ? <p className={css.aboutCopy}>请在桌面版中添加和切换模型。</p> : <>
       {loading && <p role="status">正在读取模型配置…</p>}
       {status && host.configureModelGroups && <ModelGroupSettings status={status} busy={busy || loading} onChange={groups => void saveGroups(groups)} />}
       <div className={css.providerList} aria-label="已保存的模型供应商">
         {profiles.map(profile => {
           const identity = PROVIDER_PRESETS.find(item => item.id === identifyProviderPreset(profile))
-          const active = status?.activeProfileId === profile.profileId
           const model = choices[profile.profileId] ?? profile.model
-          const selected = active && model === status?.model
-          const connectionResult = connectionResults[connectionKey(profile.profileId, model)] ?? (selected ? status?.connectionTest : null)
+          const connectionResult = connectionResults[connectionKey(profile.profileId, model)]
           const failedVerification = connectionResult?.ok === false
           const verified = !failedVerification && !(profile.credentialChecked === true && !profile.configured) && Boolean(profile.verifiedModels?.[model] ?? (model === profile.model ? profile.verifiedAt : null))
           return <section className={css.providerCard} key={profile.profileId}>
             <div className={css.providerCardHeading}>
               <div className={css.providerIdentity}><strong>{profile.displayName}</strong>
                 <span className={clsx(css.providerDot, verified && css.providerDotReady)} aria-label={failedVerification ? '连接验证未通过' : verified ? '连接已验证' : profile.credentialChecked === false ? '配置已保存，Key 尚未检查' : profile.configured ? '已保存 Key' : '需要填写 Key'} />
-                {active && <span className={css.providerCurrent}>默认供应商</span>}
               </div>
               <button type="button" className={css.secondaryAction} disabled={busy} onClick={() => openEditor(profile)} aria-label={`编辑 ${profile.displayName}`}>编辑</button>
             </div>
@@ -216,7 +204,6 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
                 onChange={event => { setChoices(current => ({ ...current, [profile.profileId]: event.target.value })); setNotice(null); setError(null) }} disabled={busy}>
                 {profile.models.map(id => <option value={id} key={id}>{id}</option>)}
               </select></label>
-              <button type="button" className={selected ? css.secondaryAction : css.primaryAction} disabled={busy || selected || (profile.credentialChecked !== false && !profile.configured)} onClick={() => void select(profile)}>{selected ? '当前默认' : '设为默认'}</button>
               <button type="button" className={css.providerCustomize} disabled={busy} onClick={() => void testConnection({ profileId: profile.profileId, model })}>验证连接</button>
             </div>
             <p className={css.settingHint}>{failedVerification ? `${model} · ${providerConnectionMessage(connectionResult).text}` : verified ? `${model} · 已验证通过` : profile.credentialChecked === false ? `${model} · 尚未验证，可点击验证连接` : !profile.configured ? '未找到可用 Key，请点击编辑补充。' : 'Key 已保存 · 此模型连接尚未验证'}{profile.credentialPersistence === 'session' ? ' · Key 仅本次启动可用' : ''}</p>
@@ -284,7 +271,7 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
                 <button type="button" className={css.providerCustomize} onClick={() => setMode('custom')}>修改协议或使用自定义 API</button></>}
             </div>
           </details>
-          <div className={css.providerModelsHeader}><div><strong>模型目录</strong><p className={css.settingHint}>填写服务商提供的完整模型 ID，并选择要使用的模型。</p></div>
+          <div className={css.providerModelsHeader}><div><strong>模型目录</strong><p className={css.settingHint}>填写完整模型 ID，再勾选保存时要验证的模型。</p></div>
             <button type="button" className={css.providerCustomize} disabled={!form.baseURL || (!canReuseKey && !form.apiKey)} onClick={() => void loadModels()}>获取可用模型</button></div>
           {presetModels.length > 0 && <p className={css.settingHint}>输入框提供收录时的模型 ID 示例，可直接填写其他 ID；示例不代表你的账号已开通，不会自动选中。</p>}
           {catalog.length > 0 && <div className={css.providerModelChips} aria-label="服务商返回的可用模型">
@@ -293,7 +280,7 @@ export function ProviderSettings({ host }: { host: DesktopHostConfiguration | un
           </div>}
           <datalist id="provider-model-catalog">{suggestedModels.map(id => <option key={id} value={id} />)}</datalist>
           <div className={css.providerModelRows}>{models.map((id, index) => <div className={css.providerModelRow} key={index}>
-            <input type="radio" name="provider-current-model" aria-label={`使用第 ${index + 1} 个模型`} checked={selectedModel === index} onChange={() => setSelectedModel(index)} />
+            <input type="radio" name="provider-current-model" aria-label={`保存时验证第 ${index + 1} 个模型`} checked={selectedModel === index} onChange={() => setSelectedModel(index)} />
             <input aria-label={`模型 ID ${index + 1}`} list="provider-model-catalog" value={id} placeholder={preset?.modelHint ?? '例如：服务商控制台中的模型 ID'}
               onChange={event => setModels(current => current.map((value, i) => i === index ? event.target.value : value))} />
             <button type="button" className={css.miniButton} aria-label={`移除第 ${index + 1} 个模型`} disabled={models.length === 1} onClick={() => {

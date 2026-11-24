@@ -205,7 +205,7 @@ test("desktop RPC preserves allowlisted writing error codes with safe messages",
   assert.equal(JSON.stringify(failed).includes("internal detail"), false);
   if (!failed.ok) {
     assert.equal(failed.error.code, "MODEL_PROVIDER_REQUIRED");
-    assert.equal(failed.error.message, "A model provider must be configured before writing");
+    assert.equal(failed.error.message, "请先在设置中为三档各选一个已验证的模型。");
   }
 });
 
