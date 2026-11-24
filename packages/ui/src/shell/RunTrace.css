@@ -679,6 +679,58 @@
   }
 }
 
+.run-trace-analysis {
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 10px;
+  background: var(--dsw-specific-popover);
+  overflow-wrap: anywhere;
+}
+
+.run-trace-analysis > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run-trace-analysis button {
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.run-trace-analysis button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.run-trace-analysis p,
+.run-trace-analysis dd {
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1.6;
+}
+
+.run-trace-analysis dl {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+}
+
+.run-trace-analysis dt {
+  font-weight: 650;
+}
+
+.run-trace-analysis-error button {
+  margin-top: 6px;
+}
+
 @media (max-width: 760px) {
   .run-trace-toolbar {
     align-items: stretch;

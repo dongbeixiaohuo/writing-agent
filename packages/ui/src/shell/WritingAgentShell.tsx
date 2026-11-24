@@ -2,6 +2,7 @@ import clsx from 'clsx'
 import { draftKey, readDraft, saveDraft, removeProjectDrafts } from './draft-storage.ts'
 import { useConversationCreation } from './conversation-creation.js'
 import { RunDiagnostics } from './RunDiagnostics.tsx'
+import { FailureAnalysisSettings } from './FailureAnalysisSettings.tsx'
 import { RunTrace, type RunTraceProps } from './RunTrace.tsx'
 import './RunTrace.css'
 import { ConversationWorking } from './ConversationWorking.tsx'
@@ -29,12 +30,7 @@ import type {
   TimelineItem,
 } from '../../../client-bridge/src/protocol.ts'
 import type {
-  DesktopDiagnosticExportResultView,
-  DesktopDiagnosticPreviewView,
   DesktopHostConfiguration,
-  DesktopLegacyMigrationPlanView,
-  DesktopLegacyMigrationResultView,
-  DesktopLegacySourceKind,
   DesktopWorkspaceBackupResultView,
   DesktopWorkspaceRestorePreviewView,
   DesktopWorkspaceRestoreResultView,
@@ -434,11 +430,12 @@ function PublicationGateNoticeCard({
   </section>
 }
 
-export function RunRecords({ records, activeRunId, liveActivity, loadDetail }: { records: readonly RunRecordView[]; activeRunId?: string | null; liveActivity?: BridgeSnapshot['liveActivity']; loadDetail?: RunTraceProps['loadDetail'] }) {
+export function RunRecords({ records, activeRunId, liveActivity, loadDetail, analyzeFailure, openFailureSettings }: Pick<RunTraceProps, 'records' | 'activeRunId' | 'liveActivity' | 'loadDetail' | 'analyzeFailure' | 'openFailureSettings'>) {
   if (records.length === 0) return <div className={css.emptyRunRecords}><strong>还没有运行记录</strong><span>提交第一条写作指令后，这里会显示每个阶段的真实进度、用量和结果。</span></div>
   return <div className={css.runRecords}>
     <div className={css.runRecordsIntro}><h2>运行记录</h2><p>点开任意一步，查看助手做了什么、用了多久。遇到问题时，这里会说明发生了什么和接下来可以怎么做。</p></div>
-    <RunTrace records={records} activeRunId={activeRunId} liveActivity={liveActivity} loadDetail={loadDetail} />
+    <RunTrace records={records} activeRunId={activeRunId} liveActivity={liveActivity} loadDetail={loadDetail}
+      analyzeFailure={analyzeFailure} openFailureSettings={openFailureSettings} />
     <details><summary>写作阶段与累计用量</summary>
     {[...records].reverse().map(run => <article className={css.runRecordCard} key={run.id}>
       <div className={css.runRecordHeader}>
@@ -819,7 +816,7 @@ function DeleteProjectDialog({
         <div><h2 id="delete-project-title">删除会话“{project.name}”？</h2><p>这会永久删除此会话的材料、稿件、版本、核查与运行记录，包括旧对话记录。其他会话不受影响。</p></div>
         <button className={css.miniButton} type="button" aria-label="关闭删除会话确认" disabled={deleting} onClick={onClose}><CloseIcon /></button>
       </div>
-      <div className={css.deleteProjectWarning}>此操作无法撤销。如需保留数据，请先在“设置 → 数据与诊断”中备份工作区。</div>
+      <div className={css.deleteProjectWarning}>此操作无法撤销。如需保留数据，请先在“设置 → 备份与排障”中备份工作区。</div>
       {error !== null && <div className={css.editorError} role="alert">{error}</div>}
       <label className={css.formField}><span>输入完整会话名称 <strong>{project.name}</strong> 以确认</span><input data-initial-focus aria-label="输入会话名称确认删除" value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" /></label>
       <div className={css.setupActions}>
@@ -886,22 +883,12 @@ function SettingsDialog({
   const snapshot = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot)
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const [settingsError, setSettingsError] = useState<string | null>(null)
-  const [diagnosticPreview, setDiagnosticPreview] = useState<DesktopDiagnosticPreviewView | null>(null)
-  const [diagnosticResult, setDiagnosticResult] = useState<DesktopDiagnosticExportResultView | null>(null)
-  const [diagnosticBusy, setDiagnosticBusy] = useState(false)
-  const [legacySourceKind, setLegacySourceKind] = useState<DesktopLegacySourceKind>('manifest')
-  const [migrationPlan, setMigrationPlan] = useState<DesktopLegacyMigrationPlanView | null>(null)
-  const [migrationResult, setMigrationResult] = useState<DesktopLegacyMigrationResultView | null>(null)
-  const [migrationBusy, setMigrationBusy] = useState(false)
   const [backupResult, setBackupResult] = useState<DesktopWorkspaceBackupResultView | null>(null)
   const [backupBusy, setBackupBusy] = useState(false)
   const [restorePreview, setRestorePreview] = useState<DesktopWorkspaceRestorePreviewView | null>(null)
   const [restoreResult, setRestoreResult] = useState<DesktopWorkspaceRestoreResultView | null>(null)
   const [restoreConfirmation, setRestoreConfirmation] = useState('')
   const [restoreBusy, setRestoreBusy] = useState(false)
-  const [deleteConfirmation, setDeleteConfirmation] = useState('')
-  const [deleteBusy, setDeleteBusy] = useState(false)
-  const [deleteResult, setDeleteResult] = useState<string | null>(null)
   const [aboutHandshake, setAboutHandshake] = useState<BridgeHandshake | null>(null)
   const [aboutError, setAboutError] = useState<string | null>(null)
   const dialogRef = useModalDialog(onClose)
@@ -937,65 +924,6 @@ function SettingsDialog({
       await bridge.updateSettings(patch)
     } catch (reason) {
       setSettingsError(reason instanceof Error ? reason.message : '外观设置保存失败')
-    }
-  }
-
-  const previewDiagnostics = async (): Promise<void> => {
-    if (hostConfiguration === undefined) return
-    try {
-      setDiagnosticBusy(true)
-      setDiagnosticResult(null)
-      setSettingsError(null)
-      setDiagnosticPreview(await hostConfiguration.previewDiagnostics())
-    } catch (reason) {
-      setSettingsError(dataActionErrorMessage(reason, '诊断包预览失败，请稍后重试。'))
-    } finally {
-      setDiagnosticBusy(false)
-    }
-  }
-
-  const exportDiagnostics = async (): Promise<void> => {
-    if (hostConfiguration === undefined || diagnosticPreview === null) return
-    try {
-      setDiagnosticBusy(true)
-      setSettingsError(null)
-      const result = await hostConfiguration.exportDiagnostics(diagnosticPreview.confirmationHash)
-      setDiagnosticResult(result)
-      if (!result.cancelled) setDiagnosticPreview(null)
-    } catch (reason) {
-      setSettingsError(dataActionErrorMessage(reason, '诊断包导出失败，请稍后重试。'))
-    } finally {
-      setDiagnosticBusy(false)
-    }
-  }
-
-  const scanLegacySource = async (): Promise<void> => {
-    if (hostConfiguration === undefined) return
-    try {
-      setMigrationBusy(true)
-      setMigrationPlan(null)
-      setMigrationResult(null)
-      setSettingsError(null)
-      setMigrationPlan(await hostConfiguration.selectLegacyMigrationSource(legacySourceKind))
-    } catch (reason) {
-      setSettingsError(dataActionErrorMessage(reason, '旧项目扫描失败，请检查所选数据。'))
-    } finally {
-      setMigrationBusy(false)
-    }
-  }
-
-  const applyLegacyMigration = async (): Promise<void> => {
-    if (hostConfiguration === undefined || migrationPlan === null) return
-    try {
-      setMigrationBusy(true)
-      setSettingsError(null)
-      const result = await hostConfiguration.applyLegacyMigration(migrationPlan.planHash)
-      setMigrationResult(result)
-      setMigrationPlan(null)
-    } catch (reason) {
-      setSettingsError(dataActionErrorMessage(reason, '旧项目导入失败；旧数据未被修改。'))
-    } finally {
-      setMigrationBusy(false)
     }
   }
 
@@ -1046,48 +974,13 @@ function SettingsDialog({
     }
   }
 
-  const deleteSelectedProject = async (): Promise<void> => {
-    if (hostConfiguration === undefined || snapshot.selectedProjectId.length === 0) return
-    try {
-      setDeleteBusy(true)
-      setDeleteResult(null)
-      setSettingsError(null)
-      const name = snapshot.projects.find(project => project.id === snapshot.selectedProjectId)?.name
-      if (name === undefined) throw new Error('PROJECT_NOT_FOUND')
-      await hostConfiguration.deleteProject(snapshot.selectedProjectId, deleteConfirmation)
-      const cleanupError = removeProjectDrafts(snapshot.workspaceId, snapshot.selectedProjectId)
-      if (cleanupError) setSettingsError(cleanupError)
-      setDeleteConfirmation('')
-      setDeleteResult(`会话“${name}”已永久删除。其他会话仍在。`)
-    } catch (reason) {
-      setSettingsError(dataActionErrorMessage(reason, '会话删除失败，数据仍在。'))
-    } finally {
-      setDeleteBusy(false)
-    }
-  }
-
-  const selectedProjectForData = snapshot.projects.find(project => project.id === snapshot.selectedProjectId)
-  const diagnosticFileLabels: Readonly<Record<string, string>> = {
-    'application.json': '应用版本与运行平台',
-    'provider.json': '模型类型、模型 ID 与连接状态',
-    'runtime.json': '最近一次运行状态、用量与预算',
-    'security.json': '凭据保存与安全策略状态',
-  }
-  const excludedDiagnosticLabels: Readonly<Record<string, string>> = {
-    api_keys_and_credential_values: 'API Key 与凭据值',
-    article_and_material_content: '文章正文与材料内容',
-    full_prompts_and_tool_results: '完整提示词与工具结果',
-    personal_paths: '个人文件路径',
-    raw_logs_and_exception_messages: '原始日志与异常详情',
-  }
   const aboutVersion = aboutHandshake === null ? null : aboutVersionView(aboutHandshake)
-
   return (
     <div className={clsx(css.overlay, css.settingsOverlay)} role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
       <section ref={dialogRef} className={css.settingsDialog} role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <nav className={css.settingsNav} aria-label="设置分类">
           <h2 className={css.settingsHeading} id="settings-title">设置</h2>
-          {([['general', '通用'], ['models', '模型'], ['search', '搜索'], ['data', '数据与诊断'], ['about', '关于']] as const).map(([value, label]) => (
+          {([['general', '通用'], ['models', '模型'], ['search', '搜索'], ['data', '备份与排障'], ['about', '关于']] as const).map(([value, label]) => (
             <button
               className={clsx(css.settingsNavButton, section === value && css.settingsNavActive)}
               key={value}
@@ -1138,70 +1031,20 @@ function SettingsDialog({
             <div hidden={section !== 'models'}><ProviderSettings host={hostConfiguration} /></div>
             {section === 'search' && <SearchSettings host={hostConfiguration} />}
             {section === 'data' && <>
-              <h3 className={css.settingsSectionTitle}>数据与诊断</h3>
+              <h3 className={css.settingsSectionTitle}>备份与排障</h3>
               {hostConfiguration === undefined ? (
-                <p className={css.aboutCopy}>旧项目迁移和诊断包导出仅在桌面版可用。</p>
+                <p className={css.aboutCopy}>工作区备份、恢复和报错分析可在桌面版使用。</p>
               ) : <div className={css.dataTools}>
-                <section className={css.dataCard}>
+                <section className={css.dataCard} aria-label="备份与恢复">
                   <div className={css.dataCardHeader}>
-                    <div><strong>脱敏诊断包</strong><p>先预览字段，再由你选择保存位置。诊断包不会包含正文、材料、Key、完整提示词或个人路径。</p></div>
-                    <button className={css.secondaryAction} type="button" disabled={diagnosticBusy} onClick={() => void previewDiagnostics()}>{diagnosticBusy ? '处理中…' : '预览诊断内容'}</button>
-                  </div>
-                  {diagnosticPreview !== null && <div className={css.dataPreview}>
-                    <strong>将包含</strong>
-                    <ul>{diagnosticPreview.includedFiles.map(file => <li key={file}>{diagnosticFileLabels[file] ?? file}</li>)}</ul>
-                    <strong>明确排除</strong>
-                    <ul>{diagnosticPreview.excludedDataClasses.map(item => <li key={item}>{excludedDiagnosticLabels[item] ?? item}</li>)}</ul>
-                    <small>预览校验：{diagnosticPreview.confirmationHash.slice(0, 12)}…</small>
-                    <button className={css.primaryAction} type="button" disabled={diagnosticBusy} onClick={() => void exportDiagnostics()}>确认以上内容并导出 ZIP</button>
-                  </div>}
-                  {diagnosticResult !== null && <div className={css.dataResult} role="status">{diagnosticResult.cancelled
-                    ? '已取消导出，没有写入文件。'
-                    : `诊断包已导出：${diagnosticResult.fileName} · ${formatBytes(diagnosticResult.byteLength)} · SHA-256 ${diagnosticResult.sha256.slice(0, 12)}…`}</div>}
-                </section>
-
-                <section className={css.dataCard}>
-                  <div className={css.dataCardHeader}>
-                    <div><strong>导入旧项目</strong><p>只读扫描旧数据，先显示差异和空间检查；确认后备份来源与现有目标，再导入为独立会话。</p></div>
-                  </div>
-                  <div className={css.dataControls}>
-                    <label className={css.formField}><span>旧数据类型</span><select value={legacySourceKind} disabled={migrationBusy} onChange={event => {
-                      setLegacySourceKind(event.target.value as DesktopLegacySourceKind)
-                      setMigrationPlan(null)
-                      setMigrationResult(null)
-                    }}><option value="manifest">旧 articles 项目目录</option><option value="desktop_v0_1">旧桌面版 0.1 数据库</option></select></label>
-                    <button className={css.secondaryAction} type="button" disabled={migrationBusy} onClick={() => void scanLegacySource()}>{migrationBusy ? '正在检查…' : '选择来源并只读扫描'}</button>
-                  </div>
-                  {migrationPlan !== null && <div className={css.dataPreview}>
-                    <strong>扫描结果：{migrationPlan.projects.length} 个项目</strong>
-                    <div className={css.dataProjectList}>{migrationPlan.projects.map((project, index) => <article key={`${project.name}:${String(index)}`}>
-                      <span>{project.name}</span><small>{project.mode === 'deep' ? '深度模式' : '快速模式'} · {project.artifactCount} 个历史产物 · 旧核查 {project.legacyFactStatus}</small>
-                    </article>)}</div>
-                    <p className={migrationPlan.spaceCheck.ok ? css.dataSafe : css.dataDanger}>空间检查：需要 {formatBytes(migrationPlan.spaceCheck.requiredBytes)}，可用 {formatBytes(migrationPlan.spaceCheck.availableBytes)} · {migrationPlan.spaceCheck.ok ? '通过' : '空间不足'}</p>
-                    <ul>
-                      <li>旧源保持只读，导入前建立独立备份。</li>
-                      <li>旧会话历史不会被伪造；旧核查统一变为“尚未核查”。</li>
-                      <li>模型 Key 不随项目迁移，旧风格保留为待确认来源。</li>
-                    </ul>
-                    <small>迁移校验：{migrationPlan.planHash.slice(0, 12)}…</small>
-                    <button className={css.primaryAction} type="button" disabled={migrationBusy || !migrationPlan.spaceCheck.ok} onClick={() => void applyLegacyMigration()}>确认备份并导入这些项目</button>
-                  </div>}
-                  {migrationResult !== null && <div className={css.dataResult} role="status">已导入 {migrationResult.projects.length} 篇旧稿。关闭设置后可在左侧会话列表打开，正式交付前需重新核查。</div>}
-                </section>
-
-                <section className={css.dataCard}>
-                  <div className={css.dataCardHeader}>
-                    <div><strong>工作区备份</strong><p>生成经过 SQLite 完整性校验的整库备份，包含本机工作区中的会话、版本、决定和运行记录，但不包含 Windows 凭据管理器中的 Key。</p></div>
+                    <div><strong>工作区备份</strong><p>保存全部会话、素材、稿件版本和运行记录。换电脑后请重新配置 API Key。</p></div>
                     <button className={css.secondaryAction} type="button" disabled={backupBusy} onClick={() => void backupWorkspace()}>{backupBusy ? '正在备份…' : '选择位置并备份'}</button>
                   </div>
                   {backupResult !== null && <div className={css.dataResult} role="status">{backupResult.cancelled
                     ? '已取消备份，没有写入文件。'
                     : `工作区备份已完成：${backupResult.fileName} · ${formatBytes(backupResult.byteLength)} · schema v${backupResult.schemaVersion} · SHA-256 ${backupResult.sha256.slice(0, 12)}…`}</div>}
-                </section>
-
-                <section className={clsx(css.dataCard, css.dangerCard)}>
-                  <div className={css.dataCardHeader}>
-                    <div><strong>从整库备份恢复</strong><p>先只读检查你选定的备份。确认后会自动保存当前工作区的安全副本，再替换工作区并重启；Windows 凭据管理器中的模型 Key 不受影响。</p></div>
+                  <div className={clsx(css.dataCardHeader, css.restoreRow)}>
+                    <div><strong>从整库备份恢复</strong><p>先检查备份。确认后会保留当前工作区的副本，再替换整库并重启。</p></div>
                     <button className={css.secondaryAction} type="button" disabled={restoreBusy} onClick={() => void selectWorkspaceRestoreBackup()}>{restoreBusy ? '正在检查…' : '选择备份并检查'}</button>
                   </div>
                   {restorePreview !== null && <div className={css.dataPreview}>
@@ -1221,16 +1064,7 @@ function SettingsDialog({
                   {restoreResult !== null && <div className={css.dataResult} role="status">已恢复 {restoreResult.restoredProjectCount} 条会话。恢复前的安全备份为 {restoreResult.safetyBackupFileName}。程序正在重启…</div>}
                 </section>
 
-                <section className={clsx(css.dataCard, css.dangerCard)}>
-                  <div className={css.dataCardHeader}>
-                    <div><strong>永久删除当前会话</strong><p>{selectedProjectForData === undefined ? '当前没有可删除的会话。' : `将删除“${selectedProjectForData.name}”的材料、稿件、版本、核查与运行记录，包括旧对话记录。建议先备份工作区。`}</p></div>
-                  </div>
-                  {selectedProjectForData !== undefined && <div className={css.deleteControls}>
-                    <label className={css.formField}><span>输入完整会话名称以确认</span><input value={deleteConfirmation} onChange={event => setDeleteConfirmation(event.target.value)} placeholder={selectedProjectForData.name} /></label>
-                    <button className={css.dangerAction} type="button" disabled={deleteBusy || deleteConfirmation.trim() !== selectedProjectForData.name} onClick={() => void deleteSelectedProject()}>{deleteBusy ? '正在删除…' : '永久删除此会话'}</button>
-                  </div>}
-                  {deleteResult !== null && <div className={css.dataResult} role="status">{deleteResult}</div>}
-                </section>
+                <FailureAnalysisSettings host={hostConfiguration} />
               </div>}
             </>}
             {section === 'about' && <>
@@ -1296,6 +1130,11 @@ export function WritingAgentShell({
   const loadTraceDetail = useCallback((runId: string, stepId: string) => bridge.getRunTraceDetail({
     projectId: snapshot.selectedProjectId, sessionId: snapshot.selectedSessionId, runId, stepId,
   }), [bridge, snapshot.selectedProjectId, snapshot.selectedSessionId])
+  const analyzeFailure = hostConfiguration?.analyzeRunFailure
+    ? (runId: string, stepId: string) => hostConfiguration.analyzeRunFailure!({
+      projectId: snapshot.selectedProjectId, sessionId: snapshot.selectedSessionId, runId, stepId,
+    })
+    : undefined
   const [showJumpLatest, setShowJumpLatest] = useState(false)
   const [briefConfirming, setBriefConfirming] = useState(false)
   const [briefConfirmationError, setBriefConfirmationError] = useState<string | null>(null)
@@ -1770,7 +1609,8 @@ export function WritingAgentShell({
             styleLibraryOpen={styleLibraryOpen}
             hostConfiguration={hostConfiguration}
           /></div>}
-        </> : <div className={css.runRecordsScroll}><RunRecords key={`${snapshot.selectedProjectId}:${snapshot.selectedSessionId}`} records={snapshot.runRecords} activeRunId={snapshot.activeRunId} liveActivity={snapshot.liveActivity} loadDetail={loadTraceDetail} /></div>}
+        </> : <div className={css.runRecordsScroll}><RunRecords key={`${snapshot.selectedProjectId}:${snapshot.selectedSessionId}`} records={snapshot.runRecords} activeRunId={snapshot.activeRunId} liveActivity={snapshot.liveActivity}
+          loadDetail={loadTraceDetail} analyzeFailure={analyzeFailure} openFailureSettings={() => openSettings('data')} /></div>}
       </section>
 
       <aside className={appFrameCss.rightbarCol} aria-label={activePanel?.label ?? '扩展面板'}>

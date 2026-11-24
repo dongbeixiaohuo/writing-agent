@@ -272,82 +272,14 @@ async function handleRpc(
       const result = await currentHost.listProviderModels(parseDesktopProviderProfileInput(parsed.args[0]));
       return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
     }
-    if (parsed.method === "previewDiagnostics") {
-      const result = await currentHost.previewDiagnostics();
-      return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
+    if (parsed.method === 'failureAnalysisStatus') {
+      return { ok: true, result: await currentHost.failureAnalysisStatus() };
     }
-    if (parsed.method === "exportDiagnostics") {
-      const confirmationHash = parsed.args[0];
-      if (typeof confirmationHash !== "string" || !/^[a-f0-9]{64}$/u.test(confirmationHash)) {
-        return { ok: false, error: { code: "DESKTOP_REQUEST_INVALID", message: "Desktop request is invalid" } };
-      }
-      const selected = await showSaveDialog({
-        title: "导出脱敏诊断包",
-        defaultPath: join(
-          app.getPath("documents"),
-          `writing-agent-diagnostics-${confirmationHash.slice(0, 8)}.zip`,
-        ),
-        filters: [{ name: "ZIP 诊断包", extensions: ["zip"] }],
-        properties: ["showOverwriteConfirmation", "createDirectory"],
-      });
-      if (selected.canceled || selected.filePath === undefined) {
-        return { ok: true, result: { cancelled: true }, snapshot: currentHost.bridge.getSnapshot() };
-      }
-      const written = await currentHost.writeDiagnostics(selected.filePath, confirmationHash);
-      return {
-        ok: true,
-        result: { cancelled: false, ...written },
-        snapshot: currentHost.bridge.getSnapshot(),
-      };
+    if (parsed.method === 'configureFailureAnalysisModel') {
+      return { ok: true, result: await currentHost.configureFailureAnalysisModel(parsed.args[0]) };
     }
-    if (parsed.method === "selectLegacyMigrationSource") {
-      const kind = parsed.args[0];
-      if (kind !== "manifest" && kind !== "desktop_v0_1") {
-        return { ok: false, error: { code: "DESKTOP_REQUEST_INVALID", message: "Desktop request is invalid" } };
-      }
-      if (kind === "manifest") {
-        const selected = await showOpenDialog({
-          title: "选择包含 run_manifest.json 的旧项目目录",
-          properties: ["openDirectory"],
-        });
-        if (selected.canceled || selected.filePaths[0] === undefined) {
-          return { ok: true, result: null, snapshot: currentHost.bridge.getSnapshot() };
-        }
-        const result = currentHost.planLegacyImport({
-          kind: "manifest",
-          projectPath: selected.filePaths[0],
-        });
-        return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
-      }
-      const database = await showOpenDialog({
-        title: "选择旧版桌面数据库",
-        properties: ["openFile"],
-        filters: [{ name: "SQLite 数据库", extensions: ["db", "sqlite", "sqlite3"] }],
-      });
-      if (database.canceled || database.filePaths[0] === undefined) {
-        return { ok: true, result: null, snapshot: currentHost.bridge.getSnapshot() };
-      }
-      const artifacts = await showOpenDialog({
-        title: "选择旧版项目产物目录",
-        properties: ["openDirectory"],
-      });
-      if (artifacts.canceled || artifacts.filePaths[0] === undefined) {
-        return { ok: true, result: null, snapshot: currentHost.bridge.getSnapshot() };
-      }
-      const result = currentHost.planLegacyImport({
-        kind: "desktop_v0_1",
-        databasePath: database.filePaths[0],
-        artifactsRoot: artifacts.filePaths[0],
-      });
-      return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
-    }
-    if (parsed.method === "applyLegacyMigration") {
-      const planHash = parsed.args[0];
-      if (typeof planHash !== "string" || !/^[a-f0-9]{64}$/u.test(planHash)) {
-        return { ok: false, error: { code: "DESKTOP_REQUEST_INVALID", message: "Desktop request is invalid" } };
-      }
-      const result = await currentHost.applyLegacyImport(planHash);
-      return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
+    if (parsed.method === 'analyzeRunFailure') {
+      return { ok: true, result: await currentHost.analyzeRunFailure(parsed.args[0]) };
     }
     if (parsed.method === "backupWorkspace") {
       const day = new Date().toISOString().slice(0, 10);
@@ -664,7 +596,6 @@ async function start(): Promise<void> {
     workspacePath,
     providerProfilePath,
     applicationVersion: app.getVersion(),
-    applicationBuild: "writing-agent-desktop-v1",
     // Identify the installed browser honestly; no session cookies are copied.
     // Public WeChat article HTML can exceed 2 MiB even when its text is short.
     authorWebFetcher: new SecureWebFetcher({ policy: new NetworkAccessPolicy({ allowHttp: true }),

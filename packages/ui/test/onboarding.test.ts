@@ -149,24 +149,14 @@ test("desktop command failures become visible user actions instead of transport 
   );
 });
 
-test("diagnostic and migration failures explain the safe next action", () => {
+test("backup and deletion failures explain the safe next action", () => {
   // Electron contextBridge retains only standard Error fields, not custom code.
   assert.equal(dataActionErrorMessage(new Error("PROJECT_DELETE_RUN_ACTIVE"), "删除失败"),
     "这条会话仍在写作。请先停止任务，再删除会话。");
   assert.match(dataActionErrorMessage(new Error("STORAGE_WRITE_FAILED"), "删除失败"), /已回滚/);
   assert.equal(
-    dataActionErrorMessage(
-      Object.assign(new Error("Desktop command failed"), { code: "TARGET_SPACE_INSUFFICIENT" }),
-      "旧项目扫描失败",
-    ),
-    "可用磁盘空间不足，无法安全备份并导入。",
-  );
-  assert.equal(
-    dataActionErrorMessage(
-      Object.assign(new Error("Desktop command failed"), { code: "DIAGNOSTIC_TARGET_EXISTS" }),
-      "诊断包导出失败",
-    ),
-    "所选文件已经存在，请换一个文件名后重试。",
+    dataActionErrorMessage(Object.assign(new Error("Desktop command failed"), { code: "BACKUP_DESTINATION_EXISTS" }), "备份失败"),
+    "所选备份文件已经存在，请换一个文件名。",
   );
 });
 

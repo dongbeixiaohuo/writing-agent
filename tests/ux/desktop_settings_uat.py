@@ -58,7 +58,7 @@ def main() -> int:
         connection_copy = result.inner_text()
         page.screenshot(path=str(args.output_dir / "provider-connection-passed.png"), full_page=True)
 
-        dialog.get_by_role("button", name="数据与诊断", exact=True).click()
+        dialog.get_by_role("button", name="备份与排障", exact=True).click()
         restore_heading = dialog.get_by_text("从整库备份恢复", exact=True)
         restore_heading.wait_for(state="visible")
         restore_heading.scroll_into_view_if_needed()
@@ -73,7 +73,7 @@ def main() -> int:
                 "button", name="选择备份并检查", exact=True
             ).is_visible(),
             "restoreSafetyCopyVisible": dialog.get_by_text(
-                "先只读检查你选定的备份。确认后会自动保存当前工作区的安全副本，再替换工作区并重启；Windows 凭据管理器中的模型 Key 不受影响。",
+                "先检查备份。确认后会保留当前工作区的副本，再替换整库并重启。",
                 exact=True,
             ).count()
             > 0,

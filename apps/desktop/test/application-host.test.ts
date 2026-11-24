@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -21,6 +21,7 @@ import { DesktopClientBridge } from '../../../packages/client-bridge/src/desktop
 import { dispatchDesktopRpc } from '../src/rpc-host.js';
 import { loadDesktopProviderProfile, markDesktopProviderVerified } from '../src/provider-profile.js';
 import { WritingApplicationService } from '../../../packages/application/src/index.js';
+import { seedFailureAnalysisWorkspace } from '../../../tests/fixtures/failure-analysis-workspace.js';
 
 for (const action of ['select', 'configure'] as const) test(`failed provider ${action} leaves the saved configuration and live bridge unchanged`, async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-provider-atomic-'));
@@ -559,60 +560,62 @@ test('a late successful connection probe cannot verify the replacement model', a
   } finally { release(); host.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test("desktop application host previews diagnostics before export and never exposes private content", async () => {
-  const root = mkdtempSync(join(tmpdir(), "wa-desktop-diagnostics-"));
-  const host = new DesktopApplicationHost({
-    workspacePath: join(root, "workspace"),
-    providerProfilePath: join(root, "provider.json"),
-  });
-  try {
-    const preview = await host.previewDiagnostics();
-    assert.deepEqual(preview.includedFiles, [
-      "application.json",
-      "provider.json",
-      "runtime.json",
-      "security.json",
-    ]);
-    assert.equal(preview.excludedDataClasses.includes("article_and_material_content"), true);
-    assert.match(preview.confirmationHash, /^[a-f0-9]{64}$/u);
-
-    const outputPath = join(root, "diagnostics.zip");
-    const written = await host.writeDiagnostics(outputPath, preview.confirmationHash);
-    assert.equal(written.fileName, "diagnostics.zip");
-    assert.equal(written.byteLength > 0, true);
-    assert.equal(existsSync(outputPath), true);
-    assert.equal(JSON.stringify({ preview, written }).includes(root), false);
-  } finally {
-    host.close();
-    rmSync(root, { recursive: true, force: true });
+test('failure analysis uses only the explicit verified model and scoped, content-free trace metadata', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wa-failure-analysis-'));
+  const path = join(root, 'provider.json');
+  const workspacePath = join(root, 'workspace');
+  const { target, completedStepId } = seedFailureAnalysisWorkspace(workspacePath);
+  const requests: ModelRequest[] = [];
+  let malformed = true;
+  class AnalysisProvider extends ModelProviderBase {
+    constructor() { super('analysis-mock', 'test', { protocol: 'mock', streaming: 'supported', tools: 'supported', usage: 'unknown' }); }
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      requests.push(request);
+      yield { type: 'text_delta', delta: malformed ? 'not-json' : '```json\n' + JSON.stringify({
+        problem: '读取公开来源时停下了。',
+        finding: '来源没有匹配的检索记录，网页请求还没发出去。',
+        nextStep: '在运行记录里找到匹配的来源，再回到对话重试。',
+      }) + '\n```' };
+      yield { type: 'completed', finishReason: 'stop' };
+    }
   }
-});
-
-test("desktop application host dry-runs and confirms a read-only legacy import", async () => {
-  const root = mkdtempSync(join(tmpdir(), "wa-desktop-migration-"));
-  const host = new DesktopApplicationHost({
-    workspacePath: join(root, "workspace"),
-    providerProfilePath: join(root, "provider.json"),
-  });
+  const provider = new AnalysisProvider();
+  const credentials = new CredentialBroker({ systemBackend: new MemoryCredentials(), environment: {} });
+  const createHost = () => new DesktopApplicationHost({ workspacePath, providerProfilePath: path, credentials, providerFactory: () => provider });
+  let host = createHost();
   try {
-    const plan = host.planLegacyImport({
-      kind: "manifest",
-      projectPath: resolve("tests", "fixtures", "legacy", "manifest-project"),
-    });
-    assert.equal(plan.sourceKind, "manifest");
-    assert.equal(plan.projects.length, 1);
-    assert.equal(plan.spaceCheck.ok, true);
-    assert.equal(JSON.stringify(plan).includes("projectPath"), false);
-
-    const result = await host.applyLegacyImport(plan.planHash);
-    assert.equal(result.status, "completed");
-    assert.equal(result.sourceUnchanged, true);
-    assert.equal(result.projects.length, 1);
-    assert.equal(host.bridge.getSnapshot().projects.some(project => project.id === result.projects[0]?.projectId), true);
-  } finally {
+    const configured = await host.configureProvider({ kind: 'openai_compatible', providerId: 'test', baseURL: 'https://example.test/v1',
+      model: 'analysis', models: ['analysis', 'unverified'], tools: 'supported', usage: 'unknown', apiKey: 'test-only-key', persistence: 'system' });
+    const selection = { profileId: configured.activeProfileId!, model: 'analysis' };
+    markDesktopProviderVerified(path, selection.profileId);
+    await host.bridge.selectSession(target.projectId, target.sessionId);
+    await assert.rejects(host.analyzeRunFailure(target), /FAILURE_ANALYSIS_MODEL_REQUIRED/);
+    await assert.rejects(host.configureFailureAnalysisModel({ ...selection, model: 'unverified' }), /FAILURE_ANALYSIS_MODEL_UNAVAILABLE/);
+    const status = await host.configureFailureAnalysisModel(selection);
+    assert.deepEqual(status.choices.map(choice => choice.selection), [selection]);
+    assert.deepEqual((await host.providerStatus()).modelGroups, configured.modelGroups);
     host.close();
-    rmSync(root, { recursive: true, force: true });
-  }
+    host = createHost();
+    assert.deepEqual((await host.failureAnalysisStatus()).selection, selection);
+    await host.bridge.selectSession(target.projectId, target.sessionId);
+    await assert.rejects(host.analyzeRunFailure({ ...target, projectId: 'other' }), /TRACE_SCOPE_MISMATCH/);
+    await assert.rejects(host.analyzeRunFailure({ ...target, stepId: completedStepId }), /FAILURE_ANALYSIS_NO_FAILURE/);
+    assert.equal(requests.length, 0);
+    const before = host.bridge.getSnapshot().runRecords;
+    await assert.rejects(host.analyzeRunFailure(target), /FAILURE_ANALYSIS_RESPONSE_INVALID/);
+    malformed = false;
+    assert.match((await host.analyzeRunFailure(target)).finding, /网页请求还没发出去/);
+    assert.deepEqual(host.bridge.getSnapshot().runRecords, before);
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      assert.equal(request.model, 'analysis');
+      assert.equal(request.tools, undefined);
+      const context = JSON.parse(request.messages.at(-1)!.content);
+      assert.equal(context.failure.errorCode, 'FACT_SOURCE_NOT_IN_LEDGER');
+      assert.equal(context.nearbySteps.length, 1);
+      assert.doesNotMatch(JSON.stringify(request.messages), /fixture-private|example-local|test-only-key|https?:\/\//u);
+    }
+  } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test("desktop application host backs up the workspace and deletes only the exactly confirmed project", async () => {
