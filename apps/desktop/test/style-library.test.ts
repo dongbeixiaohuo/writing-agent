@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { zipSync, strToU8 } from 'fflate';
 import { DesktopApplicationHost } from '../src/application-host.js';
+import { loadDesktopProviderProfile, markDesktopProviderVerified } from '../src/provider-profile.js';
 import { decodeStyleDocument, readStyleBatch } from '../src/style-source.js';
 import { CredentialBroker } from '../../../packages/runtime/credentials/src/index.js';
 import { ModelProviderBase, type ModelRequest, type ProviderStreamEvent } from '../../../packages/runtime/llm/src/index.js';
@@ -51,8 +52,12 @@ function createHost(root: string, provider = new Provider()) {
     authorWebFetcher: { async fetchText(url) { return { finalUrl: url, redirectCount: 0, contentType: 'text/html', bodyHash: 'test',
       content: { text: sample.text, title: '公众号样文', truncated: false, totalChars: sample.text.length, activeContentRemoved: true, trustLabel: 'external_untrusted', instructionAuthority: 'none' } }; } } });
 }
-async function configure(host: DesktopApplicationHost) {
-  await host.configureProvider({ kind: 'openai_compatible', providerId: 'test', baseURL: 'https://example.test/v1', model: 'm', tools: 'supported', usage: 'unknown', apiKey: 'test-only', persistence: 'session' });
+async function configure(host: DesktopApplicationHost, root: string) {
+  const status = await host.configureProvider({ kind: 'openai_compatible', providerId: 'test', baseURL: 'https://example.test/v1', model: 'm', tools: 'supported', usage: 'unknown', apiKey: 'test-only', persistence: 'session' });
+  const profilePath = join(root, 'provider.json');
+  const target = { profileId: status.activeProfileId!, model: 'm' };
+  markDesktopProviderVerified(profilePath, target.profileId, loadDesktopProviderProfile(profilePath)!);
+  await host.configureModelGroups({ planning: target, writing: target, review: target });
 }
 
 test('bundled trial styles are available without analysis or database seeding and can be copied without changing the originals', async () => {
@@ -106,7 +111,7 @@ test('continuous original examples survive save and reopen; forged quotations ar
   const provider = new Provider(JSON.stringify(styleAnalysisResponse(sample.id, ['p1:0.0', 'p2:0.1'])));
   const root = mkdtempSync(join(tmpdir(), 'wa-style-quotes-')); let host = createHost(root, provider);
   try {
-    await configure(host);
+    await configure(host, root);
     const analysis = await host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [input] });
     assert.equal(provider.requests.length, 1);
     assert.equal(analysis.draft!.package!.snippets[0]!.quote, original);
@@ -129,7 +134,7 @@ test('an unmatched optional example does not block analysis or overwrite an earl
   const provider = new Provider(JSON.stringify(response));
   const root = mkdtempSync(join(tmpdir(), 'wa-style-error-')); const host = createHost(root, provider);
   try {
-    await configure(host);
+    await configure(host, root);
     const saved = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: fixture })).profile!;
     const result = await host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [sample] });
     assert.equal(result.draft!.package!.snippets.length, 1);
@@ -145,14 +150,14 @@ test('old description-only profiles remain usable; incomplete new extraction can
   const provider = new Provider(JSON.stringify({ summary: '语气平实，直接表达观察，不急于总结。', notes: ['几份样文存在不同语气，建议试写后调整。'] }));
   let host = createHost(root, provider);
   try {
-    await configure(host);
+    await configure(host, root);
     const legacy = { ...fixture, card: '语气平实，直接表达观察，不急于总结。', rules: [], notes: ['旧版描述，保留用户编辑。'] };
     const saved = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: legacy })).profile!;
     await assert.rejects(host.styleLibrary({ action: 'analyze', name: '描述型风格', samples: [sample] }), /STYLE_ANALYSIS_INCOMPLETE/);
     assert.equal((await host.styleLibrary({ action: 'get', id: saved.id })).profile!.version, 1);
     const preview = '风格试写，非事实稿：' + '窗边的光落在桌面上。人群慢慢走过。这个下午没有结论，只有几次停顿。'.repeat(4);
     host.close(); host = createHost(root, new Provider(JSON.stringify({ preview })));
-    await configure(host);
+    await configure(host, root);
     const opened = (await host.styleLibrary({ action: 'get', id: saved.id })).profile!;
     assert.deepEqual(opened.notes, legacy.notes);
     assert.match(styleReferenceForProfile(opened), /语气平实/);
@@ -164,7 +169,7 @@ test('old description-only profiles remain usable; incomplete new extraction can
 test('desktop library analyzes once, saves explicitly, versions edits, survives reopen and removes without changing applied cards', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-style-host-')); const provider = new Provider(); let host = createHost(root, provider);
   try {
-    await configure(host);
+    await configure(host, root);
     const analysis = await host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [sample] });
     assert.equal(provider.requests.length, 1); assert.deepEqual((await host.styleLibrary({ action: 'list' })).profiles.filter(p => !p.builtin), []);
     const created = (await host.styleLibrary({ action: 'save', id: null, expectedVersion: null, draft: analysis.draft })).profile!;
@@ -205,7 +210,7 @@ test('imports DOCX and native-selected text; rejects bad documents and arbitrary
 test('cancels a model ignoring AbortSignal, blocks concurrent analysis and never saves late output', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wa-style-cancel-')); const provider = new Provider(); provider.never = true; const host = createHost(root, provider);
   try {
-    await configure(host);
+    await configure(host, root);
     const pending = host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [sample] });
     await assert.rejects(host.styleLibrary({ action: 'analyze', name: fixture.name, samples: [sample] }), /STYLE_LIBRARY_BUSY/);
     await host.styleLibrary({ action: 'cancel' });

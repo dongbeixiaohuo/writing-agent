@@ -416,7 +416,7 @@ for (const freshBatch of [false, true]) it(`hands a title selected after manual 
     }
   }
   const provider = new SelectionThenCheck([{ name: 'choose_publication', args: { index: 1 } }]), f = setup(provider);
-  const bridge = createApplicationBridge({ service: f.service, workspaceId: 'edited-title', initialProjectId: 'p', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: null } });
+  const bridge = createApplicationBridge({ service: f.service, workspaceId: 'edited-title', initialProjectId: 'p', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: 'test' } });
   try {
     f.storage.createSession({ projectId: 'p', sessionId: 'conversation', purpose: 'writing-pack:draft' });
     f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'old-writing', planVersion: 'test', purpose: 'writing-pack:draft' });
@@ -455,7 +455,7 @@ it('keeps review objections with the current expert and leaves the original hand
   }
   const provider = new PlainReviewDiscussion([]);
   const f = setup(provider);
-  const bridge = createApplicationBridge({ service: f.service, workspaceId: 'review-discussion', model: { model: 'mock', providerLabel: 'mock', parameters: {}, credentialReference: null } });
+  const bridge = createApplicationBridge({ service: f.service, workspaceId: 'review-discussion', model: { model: 'mock', providerLabel: 'mock', parameters: {}, credentialReference: 'test' } });
   try {
     f.storage.createSession({ projectId: 'p', sessionId: 'conversation', purpose: 'writing-pack:draft' });
     f.storage.startRun({ projectId: 'p', sessionId: 'conversation', runId: 'review-wait', planVersion: 'test', purpose: 'writing-pack:draft' });

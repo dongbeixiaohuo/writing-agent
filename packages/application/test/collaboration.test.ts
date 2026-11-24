@@ -1974,7 +1974,7 @@ it('treats a short affirmative outline reply as confirmation, not a rework reque
 for (const phrase of ['认同', '认可；', '我觉得你说的这些都挺对的，往下做吧']) it(`reader approval through the real bridge resumes the same saved workflow: ${phrase}`, async () => {
   const provider = new CollaborationProvider();
   const f = setup(provider, 'co_creation');
-  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'semantic-reader', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: null } });
+  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'semantic-reader', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: 'test' } });
   try {
     const first = await f.app.runDraft(f.input);
     for (let n = 0; n < 3; n++) await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId,
@@ -1999,7 +1999,7 @@ for (const phrase of ['认同', '认可；', '我觉得你说的这些都挺对�
 
 for (const phrase of ['不同意', '还没确认', '认可第一点，但第二点为什么要改？', '先别交给下一位，解释一下']) it(`semantic objections never advance or rewrite a pending stage: ${phrase}`, async () => {
   const f = setup(new CollaborationProvider(), 'co_creation');
-  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'semantic-objection', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: null } });
+  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'semantic-objection', model: { model: 'mock', parameters: {}, providerLabel: 'mock', credentialReference: 'test' } });
   try {
     const first = await f.app.runDraft(f.input);
     const before = f.storage.listRunEvents(first.runId).length;
@@ -2809,7 +2809,7 @@ it('desktop bridge retry preserves the timed-out outline task and saved research
   }
   const provider = new OutlineTimeoutProvider();
   const f = setup(provider, 'co_creation');
-  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'retry-test', model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {}, budget: f.input.budget } });
+  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'retry-test', model: { model: 'mock', providerLabel: 'test', credentialReference: 'test', parameters: {}, budget: f.input.budget } });
   try {
     const first = await f.app.runDraft(f.input);
     assert.equal(first.ok, false);
@@ -2853,7 +2853,7 @@ for (const cancel of [false, true]) it(`desktop recovers a protected expert with
   // A snapshot without a source reference still exercises on-demand reads.
   const f = setup(provider, 'co_creation', 1, 'quick', '外部资料原文'.repeat(500), 'web_snapshot', null);
   const input = { ...f.input, budget: { ...f.input.budget, maxModelRequests: 12 } };
-  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'protected-retry', model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {}, budget: input.budget } });
+  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'protected-retry', model: { model: 'mock', providerLabel: 'test', credentialReference: 'test', parameters: {}, budget: input.budget } });
   try {
     const first = await f.app.runDraft(input);
     assert.equal(f.storage.getRun(first.runId)?.status, 'budget_exhausted', JSON.stringify(f.storage.listRunEvents(first.runId).filter(e => e.type === 'tool.failed' || e.type === 'run.waiting_user').map(e => e.payload)));

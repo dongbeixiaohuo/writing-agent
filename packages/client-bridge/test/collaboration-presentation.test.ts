@@ -113,7 +113,7 @@ async function fixture(purpose = 'writing-pack:draft') {
   service.createProject({ operationId: 'create', projectId: 'project', name: '交互验收', mode: 'quick', actor: { kind: 'user', id: 'test' } });
   storage.createSession({ projectId: 'project', sessionId: 'session', purpose: 'writing-pack:draft' });
   storage.startRun({ projectId: 'project', sessionId: 'session', runId: 'run', purpose, planVersion: 'test', displayInstruction: '开始' });
-  const bridge = createApplicationBridge({ service, workspaceId: 'test', model: { model: 'test', providerLabel: 'test', credentialReference: null, parameters: { temperature: 0, toolChoice: 'auto' } } });
+  const bridge = createApplicationBridge({ service, workspaceId: 'test', model: { model: 'test', providerLabel: 'test', credentialReference: 'test', parameters: { temperature: 0, toolChoice: 'auto' } } });
   await bridge.selectSession('project', 'session');
   return {
     storage, service, bridge,
