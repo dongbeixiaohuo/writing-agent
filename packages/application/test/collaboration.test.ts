@@ -2895,7 +2895,7 @@ it('stops invalid language JSON after bounded recovery and retries only that exp
     }
   }
   const provider = new RejectedLanguage(); const f = setup(provider);
-  const bridge = createApplicationBridge({ service:f.app, workspaceId:'text-save-retry', model:{model:'mock',providerLabel:'test',credentialReference:null,parameters:{},budget:f.input.budget} });
+  const bridge = createApplicationBridge({ service:f.app, workspaceId:'text-save-retry', model:{model:'mock',providerLabel:'test',credentialReference:'test',parameters:{},budget:f.input.budget} });
   try {
     const first = await f.app.runDraft(f.input);
     assert.equal(f.storage.getRun(first.runId)?.stopReason, 'STAGE_OUTPUT_NOT_SAVED');
