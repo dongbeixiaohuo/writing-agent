@@ -5,12 +5,9 @@ import {
   type BridgeSnapshot,
 } from "../../../packages/client-bridge/src/protocol.js";
 import type {
-  DesktopDiagnosticExportResultView,
-  DesktopDiagnosticPreviewView,
+  DesktopFailureAnalysisStatus,
+  DesktopFailureAnalysisResult,
   DesktopHostApi,
-  DesktopLegacyMigrationPlanView,
-  DesktopLegacyMigrationResultView,
-  DesktopLegacySourceKind,
   DesktopWorkspaceBackupResultView,
   DesktopWorkspaceRestorePreviewView,
   DesktopWorkspaceRestoreResultView,
@@ -133,44 +130,6 @@ const api: DesktopHostApi = {
     if (!response.ok) throw new Error(response.error.code);
     return response.result as DesktopProviderConnectionResultView;
   },
-  async previewDiagnostics(): Promise<DesktopDiagnosticPreviewView> {
-    const response = await invoke({
-      protocolVersion: UI_BRIDGE_PROTOCOL_VERSION,
-      method: "previewDiagnostics",
-      args: [],
-    });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
-    return response.result as DesktopDiagnosticPreviewView;
-  },
-  async exportDiagnostics(confirmationHash: string): Promise<DesktopDiagnosticExportResultView> {
-    const response = await invoke({
-      protocolVersion: UI_BRIDGE_PROTOCOL_VERSION,
-      method: "exportDiagnostics",
-      args: [confirmationHash],
-    });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
-    return response.result as DesktopDiagnosticExportResultView;
-  },
-  async selectLegacyMigrationSource(
-    kind: DesktopLegacySourceKind,
-  ): Promise<DesktopLegacyMigrationPlanView | null> {
-    const response = await invoke({
-      protocolVersion: UI_BRIDGE_PROTOCOL_VERSION,
-      method: "selectLegacyMigrationSource",
-      args: [kind],
-    });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
-    return response.result as DesktopLegacyMigrationPlanView | null;
-  },
-  async applyLegacyMigration(planHash: string): Promise<DesktopLegacyMigrationResultView> {
-    const response = await invoke({
-      protocolVersion: UI_BRIDGE_PROTOCOL_VERSION,
-      method: "applyLegacyMigration",
-      args: [planHash],
-    });
-    if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
-    return response.result as DesktopLegacyMigrationResultView;
-  },
   async backupWorkspace(): Promise<DesktopWorkspaceBackupResultView> {
     const response = await invoke({
       protocolVersion: UI_BRIDGE_PROTOCOL_VERSION,
@@ -179,6 +138,21 @@ const api: DesktopHostApi = {
     });
     if (!response.ok) throw Object.assign(new Error(response.error.message), { code: response.error.code });
     return response.result as DesktopWorkspaceBackupResultView;
+  },
+  async failureAnalysisStatus(): Promise<DesktopFailureAnalysisStatus> {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'failureAnalysisStatus', args: [] });
+    if (!response.ok) throw new Error(response.error.message);
+    return response.result as DesktopFailureAnalysisStatus;
+  },
+  async configureFailureAnalysisModel(selection): Promise<DesktopFailureAnalysisStatus> {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'configureFailureAnalysisModel', args: [selection] });
+    if (!response.ok) throw new Error(response.error.message);
+    return response.result as DesktopFailureAnalysisStatus;
+  },
+  async analyzeRunFailure(target): Promise<DesktopFailureAnalysisResult> {
+    const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'analyzeRunFailure', args: [target] });
+    if (!response.ok) throw new Error(response.error.message);
+    return response.result as DesktopFailureAnalysisResult;
   },
   async selectWorkspaceRestoreBackup(): Promise<DesktopWorkspaceRestorePreviewView | null> {
     const response = await invoke({

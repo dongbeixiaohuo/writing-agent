@@ -17,27 +17,19 @@ import {
   createApplicationBridge,
 } from "../../../packages/client-bridge/src/application-bridge.js";
 import { createFileUiSettingsPersistence } from "../../../packages/client-bridge/src/ui-settings-persistence.js";
-import { LocalSettingsRecovery } from "../../../packages/client-bridge/src/local-settings-recovery.js";
+import { LocalSettingsRecovery, readLocalSettings } from "../../../packages/client-bridge/src/local-settings-recovery.js";
 import type {
   BridgeSnapshot,
   ClientBridge,
 } from "../../../packages/client-bridge/src/protocol.js";
 import type {
   DesktopProviderConnectionResultView,
-  DesktopDiagnosticPreviewView,
-  DesktopLegacyMigrationPlanView,
-  DesktopLegacyMigrationResultView,
+  DesktopFailureAnalysisStatus,
   DesktopPublicationSaveInput,
   DesktopPublicationSaveResult,
   DesktopProviderStatusView,
   DesktopSavedProviderView,
 } from "../../../packages/client-bridge/src/desktop-bridge.js";
-import {
-  applyLegacyMigration,
-  planLegacyMigration,
-  type LegacyMigrationPlan,
-  type LegacySourceSpec,
-} from "../../../packages/legacy-migration/src/index.js";
 import {
   CredentialBroker,
 } from "../../../packages/runtime/credentials/src/index.js";
@@ -50,11 +42,6 @@ import {
   probeModelConnection,
   type ModelProvider,
 } from "../../../packages/runtime/llm/src/index.js";
-import {
-  prepareDiagnosticBundle,
-  writeDiagnosticBundle,
-  type PreparedDiagnosticBundle,
-} from "../../../packages/runtime/diagnostics/src/index.js";
 import { openWorkspaceStorage } from "../../../packages/storage/src/index.js";
 import { assertNoPendingWorkspaceRestore } from "./workspace-restore.js";
 import {
@@ -66,6 +53,7 @@ import {
   configuredGroupProvider,
   type DesktopProviderCatalog,
   parseModelGroups,
+  parseModelSelection,
   saveModelGroups,
   selectDesktopProvider,
   previousProvider,
@@ -75,7 +63,7 @@ import {
   type DesktopProviderProfileInput,
 } from "./provider-profile.js";
 
-const ACTIVE_RUN_STATUSES = new Set(["queued", "running", "paused", "waiting_user"]);
+import { failureAnalysisContext, parseFailureAnalysisTarget, requestFailureAnalysis, saveFailureAnalysisModel } from "./failure-analysis.js";
 
 export interface DesktopProviderStatus extends DesktopProviderStatusView {
   readonly configured: boolean;
@@ -100,7 +88,6 @@ export interface DesktopApplicationHostOptions {
     credentials: CredentialBroker,
   ) => ModelProvider;
   readonly applicationVersion?: string;
-  readonly applicationBuild?: string;
   readonly authorWebFetcher?: AuthorWebFetcher;
 }
 
@@ -114,7 +101,7 @@ export class DesktopApplicationHost {
   readonly #credentials: CredentialBroker;
   readonly #providerFactory: NonNullable<DesktopApplicationHostOptions["providerFactory"]>;
   readonly #applicationVersion: string;
-  readonly #applicationBuild: string;
+  readonly #failureAnalysisModelPath: string;
   readonly #authorWebFetcher: AuthorWebFetcher | undefined;
   readonly #storage;
   readonly #listeners = new Set<(snapshot: BridgeSnapshot) => void>();
@@ -123,8 +110,7 @@ export class DesktopApplicationHost {
   #bridgeUnsubscribe: (() => void) | null = null;
   #providerConfig: NormalizedProviderConfig | null;
   #connectionTest: DesktopProviderConnectionResultView | null = null;
-  #preparedDiagnostics: PreparedDiagnosticBundle | null = null;
-  #legacyPlan: LegacyMigrationPlan | null = null;
+  #failureAnalysis: AbortController | null = null;
   #closed = false;
   readonly #savedPublications = new Map<string, string>();
   #savingPublication = false;
@@ -141,7 +127,7 @@ export class DesktopApplicationHost {
     this.#settingsRecovery = new LocalSettingsRecovery(join(this.#workspacePath, '.writing-agent', 'logs', 'settings-recovery.jsonl'));
     this.#providerFactory = options.providerFactory ?? createConfiguredProvider;
     this.#applicationVersion = options.applicationVersion ?? "development";
-    this.#applicationBuild = options.applicationBuild ?? "writing-agent-desktop-v1";
+    this.#failureAnalysisModelPath = join(dirname(this.#providerProfilePath), 'failure-analysis-model.json');
     this.#authorWebFetcher = options.authorWebFetcher;
     this.#storage = openWorkspaceStorage({ workspacePath: this.#workspacePath });
     try {
@@ -323,6 +309,59 @@ export class DesktopApplicationHost {
     });
   }
 
+  async failureAnalysisStatus(): Promise<DesktopFailureAnalysisStatus> {
+    const selection = this.#readFailureAnalysisModel();
+    const status = await this.providerStatus();
+    const choices = (status.profiles ?? []).flatMap(profile => profile.configured
+      ? profile.models.filter(model => Object.hasOwn(profile.verifiedModels ?? {}, model)).map(model => ({
+        selection: { profileId: profile.profileId, model },
+        label: `${profile.displayName} / ${model}`,
+      })) : []);
+    const notice = selection === null ? this.#settingsRecovery.notices.findLast(message => message.startsWith('报错分析设置')) : undefined;
+    return { selection, choices, ...(notice ? { notice } : {}) };
+  }
+
+  async configureFailureAnalysisModel(input: unknown): Promise<DesktopFailureAnalysisStatus> {
+    if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
+    const selection = parseModelSelection(input);
+    this.#readFailureAnalysisModel();
+    this.#settingsRecovery.assertWritable(this.#failureAnalysisModelPath);
+    if (selection) await this.#analysisProviderConfig(selection);
+    if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
+    saveFailureAnalysisModel(this.#failureAnalysisModelPath, selection);
+    return this.failureAnalysisStatus();
+  }
+
+  async analyzeRunFailure(input: unknown) {
+    if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
+    if (this.#failureAnalysis) throw new Error('FAILURE_ANALYSIS_BUSY');
+    const target = parseFailureAnalysisTarget(input);
+    const context = failureAnalysisContext(this.bridge.getSnapshot(), target, this.#applicationVersion);
+    const selection = this.#readFailureAnalysisModel();
+    if (!selection) throw new Error('FAILURE_ANALYSIS_MODEL_REQUIRED');
+    const controller = new AbortController();
+    this.#failureAnalysis = controller;
+    try {
+      const config = await this.#analysisProviderConfig(selection);
+      if (controller.signal.aborted) throw controller.signal.reason;
+      return await requestFailureAnalysis(this.#providerFactory(config, this.#credentials), config.model, context, controller.signal);
+    } finally {
+      this.#failureAnalysis = null;
+    }
+  }
+
+  #readFailureAnalysisModel(): GroupModelSelection | null {
+    return readLocalSettings(this.#failureAnalysisModelPath, 'failureAnalysis', null, parseModelSelection, this.#settingsRecovery);
+  }
+
+  async #analysisProviderConfig(selection: GroupModelSelection): Promise<NormalizedProviderConfig> {
+    const profile = loadDesktopProviderCatalog(this.#providerProfilePath, this.#settingsRecovery).profiles
+      .find(candidate => candidate.id === selection.profileId);
+    if (!profile || !Object.hasOwn(verifiedProviderModels(profile), selection.model) ||
+      !(await this.#credentials.inspect(profile.config.credentialRef)).configured) throw new Error('FAILURE_ANALYSIS_MODEL_UNAVAILABLE');
+    return { ...profile.config, model: selection.model };
+  }
+
   async #changeProvider(change: (prepare: (config: NormalizedProviderConfig, catalog: DesktopProviderCatalog) => void) => Promise<NormalizedProviderConfig>,
     validateProfile = false): Promise<DesktopProviderStatus> {
     this.#settingsRecovery.assertWritable(this.#providerProfilePath);
@@ -437,86 +476,6 @@ export class DesktopApplicationHost {
       }
     }
     return connectionTest;
-  }
-
-  async previewDiagnostics(): Promise<DesktopDiagnosticPreviewView> {
-    if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
-    const provider = await this.providerStatus();
-    const latestRun = this.#service
-      .listProjects()
-      .flatMap((project) => this.#service.tryProjectProjection(project.id)?.runs ?? [])
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .at(-1);
-    const prepared = prepareDiagnosticBundle({
-      application: {
-        version: this.#applicationVersion,
-        build: this.#applicationBuild,
-        platform: process.platform,
-        arch: process.arch,
-      },
-      provider: {
-        id: provider.providerId ?? "not-configured",
-        protocol: provider.kind ?? "not-configured",
-        model: provider.model ?? "not-configured",
-        capabilities: {
-          streaming: provider.configured,
-          tools: provider.tools ?? "unknown",
-          usage: provider.usage ?? "unknown",
-        },
-        connection: provider.connectionTest === null
-          ? { status: "not_tested", errorCode: "UNKNOWN" }
-          : provider.connectionTest.ok
-            ? { status: "ok", errorCode: "UNKNOWN" }
-            : { status: "failed", errorCode: provider.connectionTest.errorCode },
-      },
-      runtime: latestRun === undefined
-        ? {
-            status: "idle",
-            stopReason: null,
-          }
-        : {
-            status: latestRun.status,
-            stopReason: latestRun.stopReason,
-            counts: {
-              modelCalls: latestRun.usage.modelRequests,
-              retries: latestRun.usage.retries,
-              toolCalls: latestRun.usage.toolCalls,
-              majorRevisions: latestRun.usage.majorRevisions,
-            },
-            budget: {
-              maxModelSteps: latestRun.budget.maxModelRequests,
-              maxRetries: latestRun.budget.maxRetriesPerRequest,
-              maxToolCalls: latestRun.budget.maxToolCalls,
-              maxMajorRevisions: latestRun.budget.maxMajorRevisions,
-            },
-            usage: {
-              inputTokens: latestRun.usage.inputTokens,
-              outputTokens: latestRun.usage.outputTokens,
-              cost: latestRun.usage.costKnown && latestRun.usage.cost !== null
-                ? {
-                    status: "known",
-                    amount: latestRun.usage.cost.amount,
-                    currency: latestRun.usage.cost.currency,
-                    priceVersion: latestRun.usage.cost.pricingVersion,
-                    verifiedAt: latestRun.usage.cost.verifiedAt,
-                  }
-                : { status: "unknown" },
-            },
-          },
-      security: {
-        credentialPersistence: provider.credentialPersistence,
-        systemCredentialStoreAvailable: provider.credentialPersistence === "system",
-        networkPolicy: "enforced",
-        externalContentTrust: "external_untrusted",
-        htmlActiveContent: "removed",
-        rendererDirectProviderAccess: false,
-        upstreamTelemetryEnabled: false,
-      },
-    }, {
-      sections: ["application", "provider", "runtime", "security"],
-    });
-    this.#preparedDiagnostics = prepared;
-    return prepared.manifest;
   }
 
   #assertRecoverySelection(projectId: unknown): asserts projectId is string {
@@ -639,76 +598,6 @@ export class DesktopApplicationHost {
     return this.#providerProfilePath;
   }
 
-  async writeDiagnostics(
-    outputPath: string,
-    confirmationHash: string,
-  ): Promise<{ readonly fileName: string; readonly byteLength: number; readonly sha256: string }> {
-    if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
-    const prepared = this.#preparedDiagnostics;
-    if (prepared === null) throw new Error("DIAGNOSTIC_PREPARATION_REQUIRED");
-    const written = writeDiagnosticBundle(prepared, {
-      outputDirectory: dirname(resolve(outputPath)),
-      fileName: basename(outputPath),
-      confirmationHash,
-    });
-    this.#preparedDiagnostics = null;
-    return {
-      fileName: basename(written.outputPath),
-      byteLength: written.byteLength,
-      sha256: written.sha256,
-    };
-  }
-
-  planLegacyImport(source: LegacySourceSpec): DesktopLegacyMigrationPlanView {
-    if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
-    if (this.#hasActiveRun()) throw new Error("ACTIVE_RUNS_PRESENT");
-    const plan = planLegacyMigration({
-      source,
-      targetWorkspacePath: this.#workspacePath,
-    });
-    this.#legacyPlan = plan;
-    return {
-      planHash: plan.planHash,
-      sourceKind: plan.source.kind,
-      createdAt: plan.createdAt,
-      projects: plan.projects.map((project) => ({
-        name: project.name,
-        mode: project.mode,
-        artifactCount: project.artifactCount,
-        legacyFactStatus: project.legacyFactStatus,
-        migratedFactStatus: project.migratedFactStatus,
-        styleStatus: project.styleStatus,
-      })),
-      credentialDisposition: plan.credentialDisposition,
-      warnings: plan.warnings,
-      spaceCheck: plan.spaceCheck,
-    };
-  }
-
-  async applyLegacyImport(planHash: string): Promise<DesktopLegacyMigrationResultView> {
-    if (this.#closed) throw new Error("DESKTOP_HOST_CLOSED");
-    if (this.#hasActiveRun()) throw new Error("ACTIVE_RUNS_PRESENT");
-    const plan = this.#legacyPlan;
-    if (plan === null || plan.planHash !== planHash) {
-      throw new Error("MIGRATION_CONFIRMATION_MISMATCH");
-    }
-    const report = await applyLegacyMigration({ plan });
-    this.#legacyPlan = null;
-    await this.#bridge.refresh();
-    return {
-      status: report.status,
-      sourceKind: report.sourceKind,
-      sourceUnchanged: report.sourceUnchanged,
-      projects: report.projects.map((project) => ({
-        projectId: project.targetProjectId,
-        name: plan.projects.find(candidate => candidate.targetProjectId === project.targetProjectId)?.name ?? "已迁移项目",
-        artifactVersionCount: project.artifactVersionCount,
-        factGateStatus: project.factGateStatus,
-        styleStatus: project.styleStatus,
-      })),
-    };
-  }
-
   async writeWorkspaceBackup(
     outputPath: string,
   ): Promise<{ readonly fileName: string; readonly byteLength: number; readonly sha256: string; readonly schemaVersion: number }> {
@@ -757,12 +646,12 @@ export class DesktopApplicationHost {
   close(): void {
     if (this.#closed) return;
     this.#styleOperation?.abort(new Error('STYLE_ANALYSIS_CANCELLED'));
+    this.#failureAnalysis?.abort(new Error('DESKTOP_HOST_CLOSED'));
     this.#closed = true;
     this.#bridgeUnsubscribe?.();
     this.#bridgeUnsubscribe = null;
     this.#bridge.dispose();
-    this.#preparedDiagnostics = null;
-    this.#legacyPlan = null;
+
     this.#listeners.clear();
     this.#savedPublications.clear();
     this.#storage.close();
@@ -834,10 +723,6 @@ export class DesktopApplicationHost {
   #emit(): void {
     const snapshot = this.#bridge.getSnapshot();
     for (const listener of this.#listeners) listener(snapshot);
-  }
-
-  #hasActiveRun(): boolean {
-    return this.#styleOperation !== null || this.#storage.hasRunInStates([...ACTIVE_RUN_STATUSES]);
   }
 
   #hasExecutingRun(projectId?: string): boolean {

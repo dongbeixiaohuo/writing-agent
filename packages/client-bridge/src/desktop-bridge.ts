@@ -1,5 +1,6 @@
 import { assertMessageOwner, messageOwner } from './message-owner.js';
 import type { SearchProvider, SearchProviderFlags } from '../../writing-core/src/search-providers.js';
+import type { GroupModelSelection } from './model-groups.js';
 import {
   UI_BRIDGE_PROTOCOL_VERSION,
   type BridgeCommandOptions,
@@ -59,10 +60,9 @@ export type DesktopRpcMethod =
   | "selectProvider"
   | "configureModelGroups"
   | "listProviderModels"
-  | "previewDiagnostics"
-  | "exportDiagnostics"
-  | "selectLegacyMigrationSource"
-  | "applyLegacyMigration"
+  | "failureAnalysisStatus"
+  | "configureFailureAnalysisModel"
+  | "analyzeRunFailure"
   | "backupWorkspace"
   | "selectWorkspaceRestoreBackup"
   | "applyWorkspaceRestore"
@@ -111,66 +111,25 @@ export const DESKTOP_RPC_METHODS = Object.freeze([
   "selectProvider",
   "configureModelGroups",
   "listProviderModels",
-  "previewDiagnostics",
-  "exportDiagnostics",
-  "selectLegacyMigrationSource",
-  "applyLegacyMigration",
+  "failureAnalysisStatus",
+  "configureFailureAnalysisModel",
+  "analyzeRunFailure",
   "backupWorkspace",
   "selectWorkspaceRestoreBackup",
   "applyWorkspaceRestore",
   "deleteProject",
 ] as const satisfies readonly DesktopRpcMethod[]);
 
-export interface DesktopDiagnosticPreviewView {
-  readonly createdAt: string;
-  readonly includedFiles: readonly string[];
-  readonly excludedDataClasses: readonly string[];
-  readonly confirmationHash: string;
+export interface DesktopFailureAnalysisStatus {
+  readonly selection: GroupModelSelection | null;
+  readonly choices: readonly { readonly selection: GroupModelSelection; readonly label: string }[];
+  readonly notice?: string;
 }
 
-export type DesktopDiagnosticExportResultView =
-  | { readonly cancelled: true }
-  | {
-      readonly cancelled: false;
-      readonly fileName: string;
-      readonly byteLength: number;
-      readonly sha256: string;
-    };
-
-export type DesktopLegacySourceKind = "manifest" | "desktop_v0_1";
-
-export interface DesktopLegacyMigrationPlanView {
-  readonly planHash: string;
-  readonly sourceKind: DesktopLegacySourceKind;
-  readonly createdAt: string;
-  readonly projects: readonly {
-    readonly name: string;
-    readonly mode: "quick" | "deep";
-    readonly artifactCount: number;
-    readonly legacyFactStatus: string;
-    readonly migratedFactStatus: "not_checked";
-    readonly styleStatus: "not_present" | "legacy_unknown";
-  }[];
-  readonly credentialDisposition: "excluded_requires_explicit_consent";
-  readonly warnings: readonly string[];
-  readonly spaceCheck: {
-    readonly requiredBytes: number;
-    readonly availableBytes: number;
-    readonly ok: boolean;
-  };
-}
-
-export interface DesktopLegacyMigrationResultView {
-  readonly status: "completed";
-  readonly sourceKind: DesktopLegacySourceKind;
-  readonly sourceUnchanged: true;
-  readonly projects: readonly {
-    readonly projectId: string;
-    readonly name: string;
-    readonly artifactVersionCount: number;
-    readonly factGateStatus: "not_checked";
-    readonly styleStatus: "not_present" | "legacy_unknown";
-  }[];
+export interface DesktopFailureAnalysisResult {
+  readonly problem: string;
+  readonly finding: string;
+  readonly nextStep: string;
 }
 
 export type DesktopWorkspaceBackupResultView =
@@ -351,13 +310,10 @@ export interface DesktopHostConfiguration {
   configureModelGroups?(groups: import('./model-groups.js').ModelGroupSelections): Promise<DesktopProviderStatusView>;
   listProviderModels(input: DesktopProviderSetupInput): Promise<readonly string[]>;
   testProviderConnection(target?: import('./model-groups.js').GroupModelSelection): Promise<DesktopProviderConnectionResultView>;
-  previewDiagnostics(): Promise<DesktopDiagnosticPreviewView>;
-  exportDiagnostics(confirmationHash: string): Promise<DesktopDiagnosticExportResultView>;
-  selectLegacyMigrationSource(
-    kind: DesktopLegacySourceKind,
-  ): Promise<DesktopLegacyMigrationPlanView | null>;
-  applyLegacyMigration(planHash: string): Promise<DesktopLegacyMigrationResultView>;
   backupWorkspace(): Promise<DesktopWorkspaceBackupResultView>;
+  failureAnalysisStatus?(): Promise<DesktopFailureAnalysisStatus>;
+  configureFailureAnalysisModel?(selection: GroupModelSelection | null): Promise<DesktopFailureAnalysisStatus>;
+  analyzeRunFailure?(target: RunTraceDetailInput): Promise<DesktopFailureAnalysisResult>;
   selectWorkspaceRestoreBackup(): Promise<DesktopWorkspaceRestorePreviewView | null>;
   applyWorkspaceRestore(
     confirmationHash: string,

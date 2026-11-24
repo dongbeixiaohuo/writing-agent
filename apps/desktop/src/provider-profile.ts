@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readLocalSettings, type LocalSettingsRecovery } from '../../../packages/client-bridge/src/local-settings-recovery.js';
-import { DEFAULT_MODEL_GROUPS, MODEL_GROUPS, modelGroupForActor, type ModelGroup, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
+import { DEFAULT_MODEL_GROUPS, MODEL_GROUPS, modelGroupForActor, type GroupModelSelection, type ModelGroup, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
 import {
   mkdirSync,
   readFileSync,
@@ -239,6 +239,12 @@ export function verifiedProviderModels(profile: SavedProviderEntry): Record<stri
 export function parseModelGroups(value: unknown): ModelGroupSelections {
   const result = modelGroupsSchema.safeParse(value);
   if (!result.success) throw providerProfileError('MODEL_GROUPS_INVALID', 'Invalid model group selection');
+  return result.data;
+}
+
+export function parseModelSelection(value: unknown): GroupModelSelection | null {
+  const result = groupSelectionSchema.safeParse(value);
+  if (!result.success) throw new Error('FAILURE_ANALYSIS_MODEL_INVALID');
   return result.data;
 }
 

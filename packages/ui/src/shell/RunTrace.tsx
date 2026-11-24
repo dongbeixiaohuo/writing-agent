@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react'
+import type { DesktopFailureAnalysisResult } from '../../../client-bridge/src/desktop-bridge.ts'
 import type { BridgeSnapshot, DiagnosticOperationStatus, RunDiagnosticTraceStep, RunRecordView, RunTraceDetail } from '../../../client-bridge/src/protocol.ts'
 import { explainRunFailure } from '../../../client-bridge/src/run-failure-explanation.ts'
 
@@ -159,11 +160,51 @@ export interface RunTraceProps {
   activeRunId?: string | null | undefined
   liveActivity?: RunTraceLiveActivity | null | undefined
   loadDetail?: ((runId: string, stepId: string) => Promise<RunTraceDetail>) | undefined
+  analyzeFailure?: ((runId: string, stepId: string) => Promise<DesktopFailureAnalysisResult>) | undefined
+  openFailureSettings?: (() => void) | undefined
   /** Test/SSR clock override; the interactive view refreshes once a second when omitted. */
   now?: number
 }
 
-export function RunTrace({ records, activeRunId = null, liveActivity = null, loadDetail, now }: RunTraceProps) {
+function FailureAnalysis({ analyze, openSettings }: { analyze: () => Promise<DesktopFailureAnalysisResult>; openSettings?: (() => void) | undefined }) {
+  const [pending, setPending] = useState(false)
+  const [result, setResult] = useState<DesktopFailureAnalysisResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function analyzeOnce() {
+    if (pending) return
+    setPending(true)
+    setError(null)
+    try {
+      setResult(await analyze())
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '分析暂未完成，请稍后重试。')
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return <section className="run-trace-analysis" aria-label="报错分析">
+    <header>
+      <strong>报错分析</strong>
+      <button type="button" onClick={() => void analyzeOnce()} disabled={pending}>
+        {pending ? '正在分析…' : result ? '重新分析' : '分析这次报错'}
+      </button>
+    </header>
+    {!result && !error && <p role={pending ? 'status' : undefined}>{pending ? '正在等待所选模型返回结果。' : '只发送这一步附近的脱敏状态。'}</p>}
+    {result && <dl aria-live="polite">
+      <div><dt>卡在哪一步</dt><dd>{result.problem}</dd></div>
+      <div><dt>记录能确认什么</dt><dd>{result.finding}</dd></div>
+      <div><dt>接下来怎么做</dt><dd>{result.nextStep}</dd></div>
+    </dl>}
+    {error && <div className="run-trace-analysis-error" role="alert">
+      <p>{error}</p>
+      {openSettings && <button type="button" onClick={openSettings}>选择分析模型</button>}
+    </div>}
+  </section>
+}
+
+export function RunTrace({ records, activeRunId = null, liveActivity = null, loadDetail, analyzeFailure, openFailureSettings, now }: RunTraceProps) {
   const [currentTime, setCurrentTime] = useState(() => now ?? Date.now())
   const [query, setQuery] = useState('')
   const [visibleRows, setVisibleRows] = useState(INITIAL_ROWS)
@@ -399,6 +440,8 @@ export function RunTrace({ records, activeRunId = null, liveActivity = null, loa
             {selectedStep!.inputPreview && <div className="run-trace-overview-summary"><span>输入摘要</span><p>{selectedStep!.inputPreview}</p></div>}
             {selectedFailure ? <FailureSummary failure={selectedFailure} /> : selectedStep!.outputPreview &&
               <div className="run-trace-overview-summary"><span>结果摘要</span><p>{selectedStep!.outputPreview}</p></div>}
+            {selectedFailure && analyzeFailure && <FailureAnalysis key={selectedKey}
+              analyze={() => analyzeFailure(selectedRecord!.id, selectedStep!.id)} openSettings={openFailureSettings} />}
             <dl className="run-trace-meta">
               <div><dt>状态</dt><dd>{selectedStopped ? '已停止等待' : STATUS[selectedStep!.status]}{selectedIsCurrent ? ' · 当前活动' : ''}</dd></div><div><dt>类型</dt><dd>{selectedStep!.kind === 'model' ? '模型请求' : selectedStep!.kind === 'tool' ? '工具调用' : 'Agent 调度'}</dd></div>
               <div><dt>耗时</dt><dd>{selectedStopped ? '运行结束前未完成' : selectedIsCurrent ? `${Math.floor(selectedElapsed / 1000)} 秒，仍在进行` : duration(selectedStep!.durationMs)}</dd></div>

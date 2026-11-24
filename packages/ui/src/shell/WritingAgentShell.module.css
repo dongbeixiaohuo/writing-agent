@@ -2687,8 +2687,7 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
   background: var(--dsw-alias-bg-base);
 }
 
-.dataCardHeader,
-.dataControls {
+.dataCardHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -2705,14 +2704,6 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.dataControls {
-  align-items: end;
-}
-
-.dataControls > label {
-  flex: 1;
 }
 
 .dataPreview {
@@ -2738,30 +2729,8 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
   margin-top: 3px;
 }
 
-.dataProjectList {
-  display: grid;
-  gap: 6px;
-}
-
-.dataProjectList article {
-  display: grid;
-  gap: 2px;
-  padding: 9px 10px;
-  border: 1px solid var(--dsw-alias-border-l3);
-  border-radius: 9px;
-}
-
-.dataProjectList small,
 .dataPreview > small {
   color: var(--dsw-alias-label-tertiary);
-}
-
-.dataSafe {
-  color: var(--dsw-static-green-900, #125f3e) !important;
-}
-
-.dataDanger {
-  color: var(--dsw-static-red-500) !important;
 }
 
 .dataResult {
@@ -2774,8 +2743,9 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
   line-height: 1.6;
 }
 
-.dangerCard {
-  border-color: color-mix(in srgb, var(--dsw-static-red-500) 36%, var(--dsw-alias-border-l3));
+.restoreRow {
+  border-top: 1px solid var(--dsw-alias-border-l3);
+  padding-top: 14px;
 }
 
 .deleteControls {

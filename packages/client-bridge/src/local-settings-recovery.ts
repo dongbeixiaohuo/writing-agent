@@ -6,6 +6,7 @@ const settings = {
   appearance: { code: 'UI_SETTINGS_INVALID', label: '外观设置', fallback: '已使用默认主题和字号' },
   search: { code: 'SEARCH_SETTINGS_INVALID', label: '搜索设置', fallback: '外部搜索已关闭，可在设置中重新启用' },
   provider: { code: 'DESKTOP_PROVIDER_PROFILE_INVALID', label: '模型配置', fallback: '可以继续打开稿件，在设置中重新配置模型' },
+  failureAnalysis: { code: 'FAILURE_ANALYSIS_SETTINGS_INVALID', label: '报错分析设置', fallback: '请在备份与排障中重新选择分析模型' },
 } as const;
 type SettingsKind = keyof typeof settings;
 
