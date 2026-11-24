@@ -185,10 +185,11 @@ test('a saved key is not verified; each service is probed directly and key chang
   const store = new SearchSettingsStore(join(root, 'search-settings.json'), credentials, { fetch: async (url, init) => {
     urls.push(String(url));
     if (String(url).includes('tavily')) return Response.json({ results: [{ url: 'https://example.com/archive', content: '公开记录' }] });
+    if (String(url).includes('keenable')) return Response.json({ results: [{ url: 'https://example.com/archive', snippet: '公开记录' }] });
     const body = JSON.parse(String(init?.body));
     if (body.method === 'initialize') return Response.json({ id: 1, result: { protocolVersion: '2024-11-05' } });
     if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
-    return Response.json({ id: 2, result: { content: [{ type: 'text', text: 'public evidence' }] } });
+    return Response.json({ id: 2, result: { content: [{ type: 'text', text: 'public evidence https://example.com/archive' }] } });
   } });
   try {
     const saved = await store.save({ parallelEnabled: true, tavilyEnabled: true, tavilyApiKey: 'synthetic-key' });
@@ -200,6 +201,10 @@ test('a saved key is not verified; each service is probed directly and key chang
     assert.equal(parallel.verification?.parallel?.status, 'available');
     assert.equal(urls.filter(url => url.includes('parallel')).length, 3);
     assert.ok(!JSON.stringify(parallel).includes('synthetic-key'));
+    const keenable = await store.verify('keenable');
+    assert.equal(keenable.verification?.keenable?.status, 'available');
+    assert.equal(keenable.keenableEnabled, false);
+    assert.equal(urls.at(-1), 'https://api.keenable.ai/v1/search/public');
     const changed = await store.save({ parallelEnabled: true, tavilyEnabled: true, tavilyApiKey: 'replacement-key' });
     assert.notEqual(changed.verification?.tavily?.status, 'available');
     const reopened = new SearchSettingsStore(join(root, 'search-settings.json'), credentials);
@@ -216,9 +221,11 @@ test('search settings persist toggles but never plaintext keys; blank key retain
   let host = new DesktopApplicationHost(options);
   try {
     assert.equal(typeof host.searchStatus, 'function');
-    assert.equal((await host.searchStatus()).parallelEnabled, false);
+    assert.equal((await host.searchStatus()).parallelEnabled, true);
+    assert.equal((await host.searchStatus()).keenableEnabled, false);
     await assert.rejects(host.configureSearch({ parallelEnabled: false, tavilyEnabled: true }), /SEARCH_API_KEY_REQUIRED/);
-    const status = await host.configureSearch({ parallelEnabled: true, tavilyEnabled: true, tavilyApiKey: 'test-secret-only' });
+    const status = await host.configureSearch({ parallelEnabled: true, keenableEnabled: true, tavilyEnabled: true, tavilyApiKey: 'test-secret-only' });
+    assert.equal(status.keenableEnabled, true);
     assert.equal(status.tavilyKeyConfigured, true);
     assert.ok(!JSON.stringify(status).includes('test-secret-only'));
     assert.ok(!readFileSync(join(root, 'search-settings.json'), 'utf8').includes('test-secret-only'));
@@ -226,6 +233,7 @@ test('search settings persist toggles but never plaintext keys; blank key retain
     host.close(); host = new DesktopApplicationHost(options);
     assert.equal((await host.searchStatus()).tavilyEnabled, true);
     assert.equal((await host.searchStatus()).parallelEnabled, false);
+    assert.equal((await host.searchStatus()).keenableEnabled, true);
     assert.equal((await host.searchStatus()).tavilyKeyConfigured, true);
   } finally { host.close(); rmSync(root, { recursive: true, force: true }); }
 });
@@ -251,6 +259,7 @@ test('failed settings replacement restores the previous Tavily key and flags', a
 
     assert.deepEqual(await store.status(), {
       parallelEnabled: true,
+      keenableEnabled: false,
       tavilyEnabled: true,
       deepseekEnabled: false,
       deepseekKeyConfigured: false,
@@ -279,7 +288,8 @@ test('failed first settings replacement removes the newly created Tavily key', a
     );
 
     assert.deepEqual(await store.status(), {
-      parallelEnabled: false,
+      parallelEnabled: true,
+      keenableEnabled: false,
       tavilyEnabled: false,
       deepseekEnabled: false,
       deepseekKeyConfigured: false,

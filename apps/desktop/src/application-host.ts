@@ -7,6 +7,7 @@ import { readStyleBatch, readStyleDocument, readStyleUrl } from './style-source.
 import { styleProviderConfig } from './style-provider.js';
 import { DEFAULT_MODEL_GROUPS, MODEL_GROUPS, type GroupModelSelection, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
 import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
+import type { SearchProvider } from '../../../packages/writing-core/src/search-providers.js';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
@@ -227,7 +228,7 @@ export class DesktopApplicationHost {
     } finally { if (this.#styleOperation === controller) this.#styleOperation = null; }
   }
   async configureSearch(input: SearchSettingsInput) { return this.#searchSettings.save(input); }
-  async testSearchConnection(provider: 'deepseek' | 'parallel' | 'tavily') { return this.#searchSettings.verify(provider); }
+  async testSearchConnection(provider: SearchProvider) { return this.#searchSettings.verify(provider); }
 
   async providerDetails(profileId: string): Promise<DesktopSavedProviderView> {
     const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(p => p.id === profileId);

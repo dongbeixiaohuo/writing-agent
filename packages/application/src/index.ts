@@ -8,6 +8,7 @@ import { pendingWorkflowHandoffs, recordHandoffFailure, isWorkflowHandoffSourceC
 import { finalLockedTitle } from '../../writing-core/src/index.js';
 
 import { createFactSearchTools, type FactSearchConfiguration } from './fact-search.js';
+import { enabledSearchProviders } from '../../writing-core/src/search-providers.js';
 import { createOutlineSupplement } from './research-supplement.js';
 import { createFactSourceTool, factToolFailureLoopKey } from './fact-web.js';
 import { createAuthorWebTool, authorizedAuthorWebUrls, AUTHOR_WEB_INSTRUCTIONS, type AuthorWebFetcher } from './author-web.js';
@@ -2003,7 +2004,7 @@ export class WritingApplicationService {
     );
     const searchConfiguration = this.#factSearchConfiguration();
     const searchDecision = validateFactSearchDecision(this.#storage, input.runId, input.factSearchDecision,
-      searchConfiguration.deepseekEnabled || searchConfiguration.parallelEnabled || searchConfiguration.tavilyEnabled);
+      enabledSearchProviders(searchConfiguration).length > 0);
     try {
       this.#storage.resumeRun({
         ...(receipt && stageMarker(this.#storage, projectId, run.id, receipt.checkpoint.stage) ? { checkpointDecision: {

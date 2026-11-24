@@ -30,6 +30,7 @@ import type {
   DesktopPublicationSaveInput,
 } from "../../../packages/client-bridge/src/desktop-bridge.js";
 import { DESKTOP_RPC_METHODS } from "../../../packages/client-bridge/src/desktop-bridge.js";
+import type { SearchProvider } from "../../../packages/writing-core/src/search-providers.js";
 import { inspectWorkspaceBackupFile } from "../../../packages/storage/src/index.js";
 import type { DesktopApplicationHost } from "./application-host.js";
 import { describeDesktopStartupFailure, recordDesktopStartupFailure, registerDesktopProcessDiagnostics, startDesktopApplicationHost } from "./startup.js";
@@ -195,7 +196,7 @@ async function handleRpc(
     }
     if (parsed.method === 'searchStatus' || parsed.method === 'configureSearch' || parsed.method === 'testSearchConnection') {
       const result = parsed.method === 'searchStatus' ? await currentHost.searchStatus()
-        : parsed.method === 'testSearchConnection' ? await currentHost.testSearchConnection(parsed.args[0] as 'deepseek' | 'parallel' | 'tavily')
+        : parsed.method === 'testSearchConnection' ? await currentHost.testSearchConnection(parsed.args[0] as SearchProvider)
         : await currentHost.configureSearch(parsed.args[0] as import('../../../packages/client-bridge/src/desktop-bridge.js').SearchSettingsInput);
       return { ok: true, result, snapshot: currentHost.bridge.getSnapshot() };
     }

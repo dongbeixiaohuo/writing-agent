@@ -34,7 +34,7 @@ test('all-bad project UI exposes a real raw export, explicit workspace restore a
     assert.match(html, /打开备份恢复/);
     assert.match(html, /还原会替换整个工作区，影响所有会话/);
     assert.match(html, /重新检查会话/);
-    assert.match(html, /新建会话/);
+    assert.match(html, /新建创作/);
     assert.doesNotMatch(html, /<textarea/);
     assert.match(html, /需要修复/);
   } finally { rmSync(directory, { recursive: true, force: true }); }

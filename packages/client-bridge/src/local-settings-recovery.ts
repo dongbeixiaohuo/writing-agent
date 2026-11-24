@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, lstatSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { appendFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
 const settings = {
@@ -15,15 +15,27 @@ function errorCode(error: unknown): string | undefined {
 
 /** The parser only sees persisted input. A read error must never rename a healthy file. */
 export function readLocalSettings<T>(path: string, kind: SettingsKind, missing: T,
-  parse: (input: unknown) => T, recovery?: LocalSettingsRecovery): T {
+  parse: (input: unknown) => T, recovery?: LocalSettingsRecovery, damaged = missing): T {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
   } catch (error) {
-    if (errorCode(error) === 'ENOENT') return missing;
+    if (errorCode(error) === 'ENOENT') {
+      if (damaged === missing) return missing;
+      // An archived settings file is a recovery, not a new installation.
+      try {
+        const prefix = basename(path) + '.invalid-';
+        return readdirSync(dirname(path)).some(name => name.startsWith(prefix) && name.endsWith('.bak')) ? damaged : missing;
+      } catch (directoryError) {
+        if (errorCode(directoryError) === 'ENOENT') return missing;
+        if (!recovery) throw directoryError;
+        recovery.report(path, kind, false, errorCode(directoryError) ?? 'SETTINGS_READ_FAILED');
+        return damaged;
+      }
+    }
     if (!recovery) throw error;
     recovery.report(path, kind, false, errorCode(error) ?? 'SETTINGS_READ_FAILED');
-    return missing;
+    return damaged;
   }
   try {
     return parse(JSON.parse(text));
@@ -33,7 +45,7 @@ export function readLocalSettings<T>(path: string, kind: SettingsKind, missing: 
       throw Object.assign(new Error(code, { cause }), { code });
     }
     recovery.report(path, kind, true, settings[kind].code);
-    return missing;
+    return damaged;
   }
 }
 

@@ -107,6 +107,7 @@ import type {
 } from '../../client-bridge/src/protocol.ts'
 import { publicationGateNotice, factVerificationNotice } from '../src/shell/publication-gate.ts'
 import {
+  conversationDateLabel,
   projectNavigationTarget,
   resumeSessionForProject,
 } from '../src/shell/project-navigation.ts'
@@ -163,6 +164,17 @@ test('project navigation resumes the current or actionable existing session', ()
     'session-latest',
   )
   assert.equal(resumeSessionForProject({ ...project, sessionIds: [] }, sessions, ''), null)
+})
+
+test('sidebar dates use local calendar days and switch to month and day after five days', () => {
+  const now = new Date(2026, 10, 24, 0, 5)
+  const updated = (day: number, hour = 23) => new Date(2026, 10, day, hour).toISOString()
+  assert.equal(conversationDateLabel(updated(24, 0), now), '今天')
+  assert.equal(conversationDateLabel(updated(23), now), '1天前')
+  assert.equal(conversationDateLabel(updated(19), now), '5天前')
+  assert.equal(conversationDateLabel(updated(18), now), '11月18日')
+  assert.equal(conversationDateLabel('invalid timestamp', now), null)
+  assert.equal(conversationDateLabel(undefined, now), null)
 })
 
 test('an existing project without sessions opens a new conversation state', () => {

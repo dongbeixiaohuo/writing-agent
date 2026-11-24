@@ -64,7 +64,7 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
   let db
   const run = js => window.webContents.executeJavaScript(js)
   const click = label => run(`document.querySelector('[aria-label="'+${JSON.stringify(label)}+'"]').click()`)
-  const clickNew = async () => click(await run(`document.querySelector('[aria-label="新建会话"]') ? '新建会话' : '新建项目'`))
+  const clickNew = async () => click(await run(`['新建创作','新建会话','新建项目'].find(label => document.querySelector('[aria-label="' + label + '"]'))`))
   const clickText = text => run(`[...document.querySelectorAll('button, summary')].find(el => el.textContent.trim().startsWith(${JSON.stringify(text)})).click()`)
   const editor = 'document.querySelector(\'[aria-label="写作指令"]\')'
   const type = value => run(`(()=>{const e=${editor};e.focus();e.textContent=${JSON.stringify(value)};e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));})()`)
@@ -129,6 +129,7 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
     } else if (phase === 'single-conversation') {
       const rows = () => run('document.querySelectorAll("[data-conversation-row]").length')
       await until(async () => await rows() === 1, 'one row for the existing theme')
+      assert.equal(await run('document.querySelector("[data-conversation-row] time[datetime]").textContent'), '今天')
       assert.equal(await run('!!document.querySelector(\'[aria-label^="切换默认模型"]\')'), false)
       await clickText('设置')
       await clickText('模型')
@@ -136,6 +137,12 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
         document.querySelector('select[aria-label="' + tier + '模型"]')?.selectedOptions[0]?.textContent.includes('synthetic'))`), 'migrated three model selections')
       assert.equal(await run('/跟随默认|设为默认|默认供应商/u.test(document.querySelector(\'[role="dialog"]\').innerText)'), false)
       assert.equal(await run('document.querySelector(\'[aria-label="进阶档角色"]\').textContent.includes("汤大姆（写作助手，聊选题、理需求）")'), true)
+      await clickText('搜索')
+      await until(() => run('document.querySelectorAll(\'[role="dialog"] input[role="switch"]\').length === 4'), 'four desktop search providers')
+      assert.deepEqual(await run(`Array.from(document.querySelectorAll('[role="dialog"] input[role="switch"]'),
+        input => [input.getAttribute('aria-label'), input.checked])`), [
+        ['启用 Parallel 搜索', true], ['启用 Keenable 搜索', false], ['启用 DeepSeek 搜索', false], ['启用 Tavily 搜索', false],
+      ])
       await click('关闭设置')
       await click('夜跑随想')
       await until(() => run('document.body.innerText.includes("查看当前稿件")'), 'existing manuscript')
@@ -148,7 +155,7 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
       await until(() => run(editor + '?.textContent === "夜跑随想的未发送采访笔记"'), 'saved draft after history')
 
       const topic = '我想写周末菜市场里为什么少了熟客'
-      await click('新建会话')
+      await click('新建创作')
       await until(() => run('document.querySelector("h1")?.textContent === "今天，写点什么？"'), 'fresh conversation')
       assert.equal(await run(editor + '.textContent'), '')
       assert.equal(await rows(), 1)

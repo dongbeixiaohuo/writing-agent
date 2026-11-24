@@ -95,6 +95,15 @@
   white-space: nowrap;
 }
 
+.conversationDate {
+  flex: none;
+  margin-inline-end: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .projectDeleteButton,
 .projectRenameButton {
   display: inline-grid;

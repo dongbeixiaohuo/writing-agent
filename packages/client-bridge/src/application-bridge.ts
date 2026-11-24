@@ -1636,7 +1636,7 @@ export class ApplicationClientBridge implements ClientBridge {
       this.#requireModelConfiguration();
       if (options.styleSelection !== undefined) this.#service.resolveStyleSelection(options.styleSelection);
       mutationValue(this.#service.createProject({ operationId: `${operationId}:project`, projectId,
-        name: '新会话', nameSource: 'placeholder', conversationInputHash, mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
+        name: '新创作', nameSource: 'placeholder', conversationInputHash, mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
       if (options.styleSelection !== undefined) this.#service.selectProjectStyle(projectId, options.styleSelection, `${operationId}:style`);
       this.#replace(this.#buildSnapshot(projectId, null, this.#snapshot.generation + 1,
         this.#snapshot.revision + 1, this.#snapshot.settings, null), true);
@@ -2437,7 +2437,7 @@ export class ApplicationClientBridge implements ClientBridge {
         const projection = projections.find(value => value.project.id === project.id);
         const readIssue = this.#service.getProjectReadIssue(project.id);
         const first = projection && project.id.startsWith('project:') ? initialConversation(projection, project.id.slice(8)) : undefined;
-        return { id: project.id, name: project.name, revision: project.revision,
+        return { id: project.id, name: project.name, revision: project.revision, updatedAt: project.updatedAt,
           ...(first ? { initialConversation: first } : {}),
           sessionIds: projection?.sessions.map(session => session.id) ?? [], latestProjectSeq: projection?.latestProjectSeq ?? 0,
           ...(readIssue ? { readIssue } : {}) };

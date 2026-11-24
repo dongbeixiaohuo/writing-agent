@@ -12,7 +12,7 @@ test('DeepSeek cancellation never dispatches fallback, even while its credential
   for (const at of ['key', 'transport']) {
     const controller = new AbortController();
     const urls: string[] = [];
-    const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: true, tavilyEnabled: true,
+    const scope = search.createFactSearchTools({ configuration: () => ({ parallelEnabled: false, tavilyEnabled: true,
       deepseekEnabled: true, authorizationMode: 'enabled_services', getDeepSeekKey: async () => {
         if (at === 'key') { controller.abort(); return await new Promise<string>(() => {}); }
         return 'synthetic';
@@ -21,6 +21,93 @@ test('DeepSeek cancellation never dispatches fallback, even while its credential
       } });
     await assert.rejects(scope.search('公开事实', controller.signal), { name:'AbortError' });
     assert.deepEqual(urls, at === 'key' ? [] : ['https://api.deepseek.com/v1/tools/search']);
+  }
+});
+
+test('enabled search providers fall back in order and Keenable returns numbered, readable sources without a key', async () => {
+  for (const keenableStatus of [200, 429, 'empty']) {
+    const called: string[] = [];
+    const target = 'https://example.com/keenable-result';
+    const scope = search.createFactSearchTools({
+      configuration: () => ({ parallelEnabled: true, keenableEnabled: true, deepseekEnabled: true, tavilyEnabled: true,
+        authorizationMode: 'enabled_services', getDeepSeekKey: async () => 'deepseek-only', getTavilyKey: async () => 'tavily-only' }),
+      fetch: async (url, init) => {
+        const service = new URL(String(url)).host.split('.')[1]!;
+        called.push(service);
+        if (service === 'parallel') {
+          const request = JSON.parse(String(init?.body));
+          if (request.method === 'initialize') return Response.json({ result: { protocolVersion: '2024-11-05' } });
+          if (request.method === 'notifications/initialized') return new Response(null, { status: 204 });
+          return Response.json({ result: { content: [{ type: 'text', text: '{"results":[]}' }] } });
+        }
+        if (service === 'keenable') {
+          assert.equal(String(url), 'https://api.keenable.ai/v1/search/public');
+          assert.deepEqual(JSON.parse(String(init?.body)), { query: '公开日期', max_results: 5 });
+          const headers = new Headers(init?.headers);
+          assert.equal(headers.get('X-Keenable-Title'), 'Writing Agent');
+          assert.equal(headers.has('Authorization'), false);
+          assert.equal(init?.redirect, 'error');
+          if (keenableStatus === 429) return new Response(null, { status: 429 });
+          return Response.json({ results: [
+            { url: 'file:///secret.txt', snippet: '无效', title: '过滤' },
+            ...(keenableStatus === 'empty' ? [] : [{ url: target, title: '原始来源', snippet: '有效摘录', published_at: '2025-03-01' }]),
+          ] });
+        }
+        if (service === 'deepseek') return new Response(null, { status: 402 });
+        return Response.json({ results: [{ url: 'https://example.com/tavily', content: '备用来源摘录' }] });
+      },
+    });
+    const result = await scope.search('公开日期', undefined, 'public-run');
+    assert.deepEqual(result.route, ['parallel', 'keenable', 'deepseek', 'tavily']);
+    assert.equal(result.attempts?.[0]?.errorCode, 'SEARCH_NO_RESULTS');
+    assert.equal(result.quotaCharged, true);
+    assert.equal(result.searchOrdinal, 1);
+    if (keenableStatus === 200) {
+      assert.equal(result.provider, 'keenable');
+      assert.deepEqual(called, ['parallel', 'parallel', 'parallel', 'keenable']);
+      assert.deepEqual(search.numberedSearchResults(result.evidenceText), [
+        { resultNumber: 1, url: target, title: '原始来源', excerpt: '有效摘录', publishedDate: '2025-03-01' },
+      ]);
+      assert.equal(scope.isDiscoveredSource(target, 'public-run'), true);
+      assert.equal((await scope.search('公开日期', undefined, 'public-run')).cacheHit, true);
+      assert.equal(called.length, 4);
+    } else {
+      assert.equal(result.provider, 'tavily');
+      assert.deepEqual(called, ['parallel', 'parallel', 'parallel', 'keenable', 'deepseek', 'tavily']);
+      assert.equal(result.attempts?.[1]?.errorCode, keenableStatus === 429 ? 'SEARCH_HTTP_429' : 'SEARCH_NO_RESULTS');
+    }
+  }
+});
+
+test('Keenable obeys request timeout and cancellation before dispatching the fallback', async () => {
+  for (const cancel of [false, true]) {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const keepProcessAlive = setInterval(() => {}, 100);
+    try {
+      const scope = search.createFactSearchTools({ requestTimeoutMs: 15, overallTimeoutMs: 500,
+        configuration: () => ({ parallelEnabled: false, keenableEnabled: true, tavilyEnabled: true,
+          authorizationMode: 'enabled_services', getTavilyKey: async () => 'fixture' }),
+        fetch: async url => {
+          calls.push(String(url));
+          if (String(url).includes('keenable')) {
+            if (cancel) controller.abort();
+            return await new Promise<Response>(() => {});
+          }
+          return Response.json({ results: [{ url: 'https://example.com/fact', content: '备用摘录' }] });
+        },
+      });
+      const pending = scope.search('公开日期', controller.signal);
+      if (cancel) {
+        await assert.rejects(pending, { name: 'AbortError' });
+        assert.deepEqual(calls, ['https://api.keenable.ai/v1/search/public']);
+      } else {
+        const result = await pending;
+        assert.equal(result.provider, 'tavily');
+        assert.equal(result.attempts?.[0]?.errorCode, 'SEARCH_REQUEST_TIMEOUT');
+        assert.deepEqual(calls, ['https://api.keenable.ai/v1/search/public', 'https://api.tavily.com/search']);
+      }
+    } finally { clearInterval(keepProcessAlive); }
   }
 });
 

@@ -8,13 +8,15 @@ import { buildSync } from 'esbuild'
 
 import { searchSettingsInput, searchSettingsValidation, searchSettingsRoute } from '../src/shell/search-settings.ts'
 
-test('DeepSeek uses a separate key and is explicitly first only when opted in', () => {
+test('DeepSeek uses a separate key and the UI lists enabled services in runtime order', () => {
   const value = { deepseekEnabled: true, deepseekKeyConfigured: false, parallelEnabled: true, tavilyEnabled: false, tavilyKeyConfigured: false };
   assert.match(searchSettingsValidation(value, '', ''), /DeepSeek.*API Key/);
   assert.equal(searchSettingsValidation(value, '', 'ds-new'), null);
   assert.equal(searchSettingsValidation({ ...value, deepseekKeyConfigured: true }, '', ''), null);
   assert.deepEqual(searchSettingsInput(value, '', ' ds-new '), { parallelEnabled: true, tavilyEnabled: false, deepseekEnabled: true, deepseekApiKey: 'ds-new' });
-  assert.deepEqual(searchSettingsRoute(value), ['DeepSeek', 'Parallel']);
+  assert.deepEqual(searchSettingsRoute(value), ['Parallel', 'DeepSeek']);
+  assert.deepEqual(searchSettingsRoute({ ...value, keenableEnabled: true, tavilyEnabled: true }), ['Parallel', 'Keenable', 'DeepSeek', 'Tavily']);
+  assert.equal(searchSettingsInput({ ...value, keenableEnabled: true }, '').keenableEnabled, true);
   assert.deepEqual(searchSettingsRoute({ parallelEnabled: true, tavilyEnabled: true }), ['Parallel', 'Tavily']);
   assert.deepEqual(searchSettingsRoute({ deepseekEnabled: false, parallelEnabled: false, tavilyEnabled: false }), []);
 });

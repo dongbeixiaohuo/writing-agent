@@ -88,11 +88,12 @@ import { checkpointCopy, composerRecoveryMode, recoveryContinueAction, stageRole
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { agentPersonas, personaForActor } from './agent-personas.ts'
 import { MarkdownContent } from './MarkdownContent.tsx'
+import { removeDuplicateDirectionOptions } from '../../../writing-core/src/direction-options.ts'
 import { runProgressSummary, runDisplayStatus, runSavedStageLabel, runStopReasonLabel } from './run-records.ts'
 import { publicationGateNotice, factVerificationNotice } from './publication-gate.ts'
 import { ConversationExportCard } from './ConversationExportCard.tsx'
 import { ConversationRevisionCard } from './ConversationRevisionCard.tsx'
-import { projectNavigationTarget } from './project-navigation.ts'
+import { conversationDateLabel, projectNavigationTarget } from './project-navigation.ts'
 import { ProviderSettings } from './ProviderSettings.tsx'
 import { SearchSettings } from './SearchSettings.tsx'
 import { StyleLibraryDialog, supportsStyleLibrary } from './StyleLibraryDialog.tsx'
@@ -234,6 +235,9 @@ function Timeline({ items, brand, footer, diagnostic = false }: { items: readonl
           brand.assistantName === WRITING_AGENT_BRAND.assistantName ? 'assistant' : undefined
         const persona = personaForActor(item.stage) ?? personaForActor(item.actorLabel) ?? genericAssistant
         const author = item.role === 'user' ? '你' : persona ? agentPersonas[persona] : item.actorLabel ?? brand.assistantName
+        const body = item.role === 'assistant' && !item.streaming && !diagnostic
+          ? removeDuplicateDirectionOptions(item.body)
+          : item.body
         return (
           <article
             className={clsx(css.message, item.role === 'user' ? css.userMessage : css.assistantMessage)}
@@ -249,7 +253,7 @@ function Timeline({ items, brand, footer, diagnostic = false }: { items: readonl
                 <div><strong>{author}</strong>{item.stage && <span>{stageRoleCopy(item.stage).action}</span>}</div>
               </header>
             )}
-            <MarkdownContent content={item.body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
+            <MarkdownContent content={body.replace(/^按刚才确认的方向继续：(#+\s)/u, '按刚才确认的方向继续：\n\n$1')} className={css.messageBody} />
             <div className={css.messageMeta}>{item.streaming ? `${item.streaming === 'saving' ? '正在保存' : '正在生成'} · 尚未保存` : `${author} · ${item.createdAt}`}
               {!item.streaming && item.role === 'assistant' && item.activeDurationMs != null && ` · 处理用时 ${Math.round(item.activeDurationMs / 1000)} 秒`}
             </div>
@@ -1530,8 +1534,8 @@ export function WritingAgentShell({
               <span className={sidebarCss.panelIcon}><PanelIcon /></span>
             </button>
           </div>
-          <button className={sidebarCss.newSession} type="button" aria-label="新建会话" onClick={beginNewConversation}>
-            <PlusIcon /><span className={sidebarCss.newSessionLabel}>新建会话</span>
+          <button className={sidebarCss.newSession} type="button" aria-label="新建创作" onClick={beginNewConversation}>
+            <PlusIcon /><span className={sidebarCss.newSessionLabel}>新建创作</span>
           </button>
           <div className={sidebarCss.panelList}>
             {extensions.listLaunchers('sidebar.primary').map(launcher => (
@@ -1548,7 +1552,9 @@ export function WritingAgentShell({
             ))}
           </div>
           <div className={sidebarCss.regionArea}>
-            {!sidebarCollapsed && snapshot.projects.map(project => (
+            {!sidebarCollapsed && snapshot.projects.map(project => {
+              const dateLabel = conversationDateLabel(project.updatedAt)
+              return (
                 <div className={css.conversationRowFrame} data-conversation-row key={project.id}>
                   <button
                     className={clsx(css.conversationRow, !newConversationIntent && project.id === snapshot.selectedProjectId && css.conversationActive)}
@@ -1561,6 +1567,8 @@ export function WritingAgentShell({
                     <ConversationIcon />
                     <span>{project.name}{project.readIssue ? ' · 需要修复' : ''}</span>
                   </button>
+                  {dateLabel !== null && <time className={css.conversationDate} dateTime={project.updatedAt}
+                    aria-label={`最后更新 ${dateLabel}`}>{dateLabel}</time>}
                   <button
                     className={css.projectRenameButton}
                     type="button"
@@ -1583,7 +1591,8 @@ export function WritingAgentShell({
                     }}
                   ><TrashIcon /></button>}
                 </div>
-            ))}
+              )
+            })}
             {!sidebarCollapsed && navigationError !== null && <p className={css.navigationError} role="alert">{navigationError}</p>}
             {!sidebarCollapsed && projectActionNotice !== null && <p className={css.projectActionNotice} role="status">{projectActionNotice}</p>}
           </div>
@@ -1680,7 +1689,7 @@ export function WritingAgentShell({
           <p>如有完好的工作区备份，可打开备份恢复。还原会替换整个工作区，影响所有会话。请先备份当前工作区。</p>
           {hostConfiguration && <button type="button" className={css.secondaryAction} onClick={() => openSettings('data')}>打开备份恢复</button>}
           <button type="button" className={css.secondaryAction} onClick={() => { void (bridge.recheckProject ? bridge.recheckProject(selectedProject.id) : bridge.refresh()).catch(error => setProjectActionNotice(commandErrorMessage(error, '重新检查未完成，请稍后重试。'))) }}>重新检查会话</button>
-          <button type="button" className={css.secondaryAction} onClick={beginNewConversation}>新建会话</button>
+          <button type="button" className={css.secondaryAction} onClick={beginNewConversation}>新建创作</button>
         </section> : hero ? <div className={css.heroStage}>
           <div className={css.heroCopy}><p className={css.heroKicker}>{heroDateLine()}</p><h1>{!newConversationIntent && selectedProject !== undefined ? selectedProject.name : '今天，写点什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
           <Composer bridge={bridge} startConversation={creation.start} hero newConversation={newConversationIntent} onSubmitted={submission => {

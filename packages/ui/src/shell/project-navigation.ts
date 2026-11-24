@@ -2,6 +2,17 @@ import type { ProjectSummary, SessionSummary } from '../../../client-bridge/src/
 
 const ACTIONABLE_SESSION_STATUSES = new Set<SessionSummary['status']>(['waiting_user', 'interrupted'])
 
+export function conversationDateLabel(updatedAt?: string, now = new Date()): string | null {
+  if (!updatedAt) return null
+  const updated = new Date(updatedAt)
+  if (Number.isNaN(updated.valueOf())) return null
+  const day = (date: Date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+  const daysAgo = (day(now) - day(updated)) / 86_400_000
+  if (daysAgo === 0) return '今天'
+  if (daysAgo > 0 && daysAgo <= 5) return `${daysAgo}天前`
+  return `${updated.getMonth() + 1}月${updated.getDate()}日`
+}
+
 export function resumeSessionForProject(
   project: ProjectSummary,
   sessions: readonly SessionSummary[],

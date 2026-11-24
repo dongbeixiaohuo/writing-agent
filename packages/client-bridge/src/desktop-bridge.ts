@@ -1,4 +1,5 @@
 import { assertMessageOwner, messageOwner } from './message-owner.js';
+import type { SearchProvider, SearchProviderFlags } from '../../writing-core/src/search-providers.js';
 import {
   UI_BRIDGE_PROTOCOL_VERSION,
   type BridgeCommandOptions,
@@ -311,27 +312,21 @@ export type DesktopPublicationSaveResult =
   | { readonly cancelled: true }
   | { readonly cancelled: false; readonly receiptId: string; readonly savedPath: string; readonly fileName: string };
 
-export interface SearchSettingsInput {
-  readonly deepseekEnabled?: boolean;
+export interface SearchSettingsInput extends SearchProviderFlags {
   readonly deepseekApiKey?: string;
   readonly researchSearchLimit?: number;
   readonly supplementSearchLimit?: number;
   readonly searchLimit?: number;
-  readonly parallelEnabled: boolean;
-  readonly tavilyEnabled: boolean;
   readonly tavilyApiKey?: string;
 }
-export interface SearchSettingsView {
-  readonly deepseekEnabled?: boolean;
+export interface SearchSettingsView extends SearchProviderFlags {
   readonly deepseekKeyConfigured?: boolean;
   readonly researchSearchLimit?: number;
   readonly supplementSearchLimit?: number;
   readonly searchLimit?: number;
-  readonly parallelEnabled: boolean;
-  readonly tavilyEnabled: boolean;
   readonly tavilyKeyConfigured: boolean;
   readonly credentialPersistence: 'system' | 'session' | 'environment' | 'missing';
-  readonly verification?: Partial<Record<'deepseek' | 'parallel' | 'tavily', SearchConnectionView>>;
+  readonly verification?: Partial<Record<SearchProvider, SearchConnectionView>>;
 }
 export interface SearchConnectionView {
   readonly status: 'available' | 'failed';
@@ -345,7 +340,7 @@ export interface DesktopHostConfiguration {
   styleLibrary?(command: import('../../writing-core/src/style-profile.js').StyleLibraryCommand): Promise<import('../../writing-core/src/style-profile.js').StyleLibraryResult>;
   searchStatus?(): Promise<SearchSettingsView>;
   configureSearch?(input: SearchSettingsInput): Promise<SearchSettingsView>;
-  testSearchConnection?(provider: 'deepseek' | 'parallel' | 'tavily'): Promise<SearchSettingsView>;
+  testSearchConnection?(provider: SearchProvider): Promise<SearchSettingsView>;
   savePublicationAs(input: DesktopPublicationSaveInput): Promise<DesktopPublicationSaveResult>;
   revealPublication(receiptId: string): Promise<void>;
   revealProviderConfig(): Promise<void>;

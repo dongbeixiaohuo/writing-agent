@@ -3,6 +3,7 @@ import type { RunRecord } from '../../runtime/session/src/index.js'
 import type { DiagnosticOperationStatus, RecoverableRunSummary, RunDiagnosticDecision, RunDiagnosticModelRequest, RunDiagnosticToolGroup, RunDiagnosticToolTarget, RunDiagnosticTraceStep, RunDiagnosticsView } from './protocol.js'
 import { explainRunFailure } from './run-failure-explanation.js'
 import { recordedActorLabel, toolPresentation } from './tool-presentation.js'
+import { isSearchProvider, searchProviderName } from '../../writing-core/src/search-providers.js'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/u
@@ -201,7 +202,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   const envelope = object(payload.result)
   const result = envelope?.ok === true ? object(envelope.result) : null
   if (toolName === 'search_fact_sources' || toolName === 'search_research_sources') {
-    const provider = result?.provider === 'deepseek' ? 'DeepSeek' : result?.provider === 'parallel' ? 'Parallel' : result?.provider === 'tavily' ? 'Tavily' : null
+    const provider = isSearchProvider(result?.provider) ? searchProviderName(result.provider) : null
     const hosts = safeSourceHosts(result?.evidenceText)
     const failure = safeCode(result?.failureCode)
     const mode = result?.mode === 'external' ? `${provider ?? '外部'} 搜索已返回`
@@ -209,7 +210,7 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
     const evidence = safePreview(result?.evidenceText)
     const attempts = Array.isArray(result?.attempts) ? result.attempts.map(item => {
       const attempt = object(item)
-      const service = attempt?.provider === 'deepseek' ? 'DeepSeek' : attempt?.provider === 'tavily' ? 'Tavily' : attempt?.provider === 'parallel' ? 'Parallel' : null
+      const service = isSearchProvider(attempt?.provider) ? searchProviderName(attempt.provider) : null
       return service ? `${service}：${count(attempt?.httpRequests) ?? 0} 个 HTTP 请求 · ${attempt?.status === 'completed' ? '已返回结果' : searchFailureTitle(toolName, safeCode(attempt?.errorCode))}` : null
     }).filter(Boolean).join(' → ') : ''
     const quota = result?.quotaCharged === false ? ' · 独立查询次数未增加' : result?.quotaCharged === true ? ' · 计入1次独立查询' : ''

@@ -51,7 +51,7 @@ app.once('browser-window-created', (_event, win) => {
     const type = text => js(`(()=>{const e=document.querySelector('[aria-label="写作指令"]');e.focus();e.textContent=${JSON.stringify(text)};e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}))})()`);
     const value = () => js(`document.querySelector('[aria-label="写作指令"]')?.textContent`);
     const openNew = async () => {
-      await textClick(await js(`document.querySelector('[aria-label="新建会话"]') ? '新建会话' : '新建项目'`));
+      await textClick(await js(`['新建创作','新建会话','新建项目'].find(label => document.querySelector('[aria-label="' + label + '"]'))`));
       await until(() => js(`document.querySelector('h1')?.textContent === '今天，写点什么？'`), 'new composer');
     };
     const project = async label => { await click(`[aria-label="${label}"]`); await until(() => js(`document.querySelector('[aria-label=${JSON.stringify(label)}]')?.getAttribute('aria-current')==='true'`), label); await wait(80); };

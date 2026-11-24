@@ -200,6 +200,33 @@ describe("conversation intake", () => {
     } finally { f.close(); }
   });
 
+  it('shows the FDE options once when the reply and structured options contain the same list', async () => {
+    const directions = [
+      '客户签合同时要的是“系统上线”，不是“工程师驻场三个月”——FDE 的价值怎么被写进报价单？',
+      '一家公司招 FDE，本质是在补产品的短板还是在补销售的短板？这两种定位下，这个岗位的结局完全不同。',
+      '国内 To B 项目里驻场工程师常常被当成“高级实施”用，FDE 和传统实施、解决方案架构师的边界到底在哪？',
+      '如果客户预算收紧、要求“先做出来再谈钱”，FDE 这种重人力的交付模式还能不能撑住毛利？',
+    ];
+    const inline = directions.map((line, i) => `${i + 1}. ${line.replace(/[“”]/gu, '"').replace('里驻场', '里，驻场').replace('补产品的短板还是', '补产品的短板，还是')}`).join('\n\n');
+    const provider = new IntakeProvider([[{
+      reply: `几个可以往下写的切口：\n\n${inline}\n\n想先确认，你更想写给谁看？`,
+      summary: 'FDE 中国市场', questions: [], ideation: { directions, reactions: [] },
+    }], [proposalResponse('模型另起的方向')]]);
+    const f = fixture(provider);
+    try {
+      const result = await f.service.startConversationTurn(runInput('FDE 在国内到底有没有市场？', 'fde-options')).result;
+      assert.equal(result.ok, true, JSON.stringify(result));
+      const state = f.service.getConversationIntake('project-1');
+      assert.equal(state.assistantTurns.length, 1);
+      assert.equal(state.reply.match(/^([1-4])\. /gmu)?.length, 4);
+      assert.ok(state.reply.includes(`2. ${directions[1]}`));
+      assert.match(state.reply, /你更想写给谁看/u);
+      const selected = await f.service.startConversationTurn(runInput('第二个', 'fde-select', result.sessionId)).result;
+      assert.equal(selected.ok, true, JSON.stringify(selected));
+      assert.equal(f.service.getConversationIntake('project-1').brief?.topic, directions[1]);
+    } finally { f.close(); }
+  });
+
   it('shows a fresh list when the same topic starts in another conversation, and keeps each conversation’s numbered choices', async () => {
     const topic = '离职明明提前 30 天通知就行，为什么想按时走还是像在求公司？';
     const earlier = ['错位分析：通知怎么变成了申请', '公司筹码：离职证明和交接', '为什么占理的人反而心虚', '想按时走怎么留痕', '几种不同的离职经历'];
