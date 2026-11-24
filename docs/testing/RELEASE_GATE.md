@@ -1,6 +1,6 @@
 # Writing Agent 桌面发布门禁
 
-当前桌面版 **1.0.0-rc.110**。发布页提供 Windows x64 安装包、SHA256、构建提交与安装升级记录。[RC110 发布页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.110)
+当前桌面版 **1.0.0-rc.111**。发布页提供 Windows x64 安装包、SHA256、构建提交与安装升级记录。[RC111 发布页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.111)
 
 以下为历次发布时的验证记录。RC96 对应构建提交 `12ac1ac48d1223bef9680223abfd4ed6479bfa11`。[RC96 发布记录](../launch/RC96_RELEASE_EXECUTION.md)
 

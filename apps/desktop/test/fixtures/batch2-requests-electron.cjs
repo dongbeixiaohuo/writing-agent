@@ -5,7 +5,7 @@ const { join } = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const phase = process.env.WA_REQUEST_PHASE
 const id = process.env.WRITING_AGENT_DESKTOP_TEST
-if (!/^requests-[\da-f-]{36}$/.test(id) || !['lost', 'reopened', 'partial-lost', 'partial-reopened', 'cancel'].includes(phase)) throw Error('Isolated test profile required')
+if (!/^requests-[\da-f-]{36}$/.test(id) || !['lost', 'reopened', 'partial-lost', 'partial-reopened', 'cancel', 'single-conversation'].includes(phase)) throw Error('Isolated test profile required')
 const loseWindow = phase === 'lost' || phase === 'partial-lost'
 const root = join(app.getPath('temp'), 'writing-agent-desktop-test-' + id)
 const resultPath = join(root, phase + '.json')
@@ -19,6 +19,14 @@ globalThis.fixtureProvider = { id: 'local-fake', adapterVersion: '1', capabiliti
   snapshotRequest(request) { return { normalizedPayload: { model: request.model, messages: request.messages }, serializationVersion: 'fixture-v1', redactions: [], unreconstructableFields: [] } },
   async *stream(request) {
     const n = ++seen.modelRequests
+    if (phase === 'single-conversation') {
+      const args = { reply: '从周末菜市场里消失的熟客写起。', summary: '周末菜市场的变化', questions: [], suggestedProjectName: '周末菜市场' }
+      yield { type: 'tool_call_complete', sequence: 1, index: 0, call: {
+        id: request.requestId, name: 'respond_writing_intake', rawArguments: JSON.stringify(args), arguments: args,
+      } }
+      yield { type: 'completed', sequence: 2, provider: 'local-fake', model: request.model, adapterVersion: '1', finishReason: 'tool_calls' }
+      return
+    }
     if (phase !== 'cancel') { await oldProvider.wait; return }
     if (n === 1) {
       await oldProvider.wait // Intentionally ignore AbortSignal, then yield late text and fail.
@@ -56,6 +64,8 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
   let db
   const run = js => window.webContents.executeJavaScript(js)
   const click = label => run(`document.querySelector('[aria-label="'+${JSON.stringify(label)}+'"]').click()`)
+  const clickNew = async () => click(await run(`document.querySelector('[aria-label="新建会话"]') ? '新建会话' : '新建项目'`))
+  const clickText = text => run(`[...document.querySelectorAll('button, summary')].find(el => el.textContent.trim().startsWith(${JSON.stringify(text)})).click()`)
   const editor = 'document.querySelector(\'[aria-label="写作指令"]\')'
   const type = value => run(`(()=>{const e=${editor};e.focus();e.textContent=${JSON.stringify(value)};e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));})()`)
   const submit = async value => { await until(() => run(editor+'?.isContentEditable'), 'editable'); await type(value)
@@ -82,8 +92,8 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
       db.exec('DROP TRIGGER fixture_before_run')
       const original = JSON.parse(readFileSync(join(root, 'partial-lost.json')))
       assert.deepEqual(projects(), original.projects)
-      await click('新建项目')
-      await until(() => run('document.body.innerText.includes("已找回上次保存的项目")'), 'partial receipt')
+      await clickNew()
+      await until(() => run('/已找回上次保存的(项目|会话)/u.test(document.body.innerText)'), 'partial receipt')
       await until(() => run(editor + '?.textContent === ' + JSON.stringify(first)), 'draft moved into recovered project')
       seen.recoveredDraft = await run(editor + '.textContent')
       assert.deepEqual(runs(), [])
@@ -96,7 +106,7 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
     } else if (phase === 'reopened') {
       const original = JSON.parse(readFileSync(join(root, 'lost.json')))
       assert.deepEqual(projects(), original.projects)
-      await click('新建项目')
+      await clickNew()
       // On RC102 this reopens a fresh editor; on the fix it reconciles the original creation.
       await until(() => run(`!!document.querySelector('[aria-label="新建回执"]') || document.body.innerText.includes('今天，写点什么')`), 'reconcile or new composer')
       if (!await run('document.body.innerText.includes("重复提交已拦截")')) {
@@ -116,6 +126,41 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
       await submit(first)
       await until(() => projects().length === 2 && seen.modelRequests === 1, 'intentional new project')
       seen.afterDeliberateNew = projects().length
+    } else if (phase === 'single-conversation') {
+      const rows = () => run('document.querySelectorAll("[data-conversation-row]").length')
+      await until(async () => await rows() === 1, 'one row for the existing theme')
+      await click('夜跑随想')
+      await until(() => run('document.body.innerText.includes("查看当前稿件")'), 'existing manuscript')
+      await type('夜跑随想的未发送采访笔记')
+      await clickText('旧对话记录')
+      await clickText('旧对话 1')
+      await until(() => run(`document.body.innerText.includes("正在查看旧对话记录") && !${editor}`), 'read-only history')
+      await clickText('运行记录')
+      await clickText('返回当前会话')
+      await until(() => run(editor + '?.textContent === "夜跑随想的未发送采访笔记"'), 'saved draft after history')
+
+      const topic = '我想写周末菜市场里为什么少了熟客'
+      await click('新建会话')
+      await until(() => run('document.querySelector("h1")?.textContent === "今天，写点什么？"'), 'fresh conversation')
+      assert.equal(await run(editor + '.textContent'), '')
+      assert.equal(await rows(), 1)
+      await submit(topic)
+      await until(() => runs().some(item => item.status === 'completed'), 'new turn saved')
+      await until(() => run('document.body.innerText.includes("从周末菜市场里消失的熟客写起。") && !!document.querySelector(\'[aria-label="周末菜市场"]\')'), 'reply and conversation name')
+      assert.equal(await rows(), 2)
+      const createdSessions = db.prepare("SELECT id FROM sessions WHERE project_id != 'publication-fixture'").all()
+      const newMaterials = db.prepare("SELECT DISTINCT project_id FROM materials WHERE content = ?").all(topic)
+      const versions = db.prepare("SELECT project_id FROM artifact_versions WHERE kind = 'body'").all()
+      assert.equal(createdSessions.length, 1)
+      assert.equal(newMaterials.length, 1)
+      assert.notEqual(newMaterials[0].project_id, 'publication-fixture')
+      assert.deepEqual(versions.map(row => row.project_id), ['publication-fixture'])
+      assert.equal(await run('document.body.innerText.includes("查看当前稿件")'), false)
+      await click('夜跑随想')
+      await until(() => run(editor + '?.textContent === "夜跑随想的未发送采访笔记" && document.body.innerText.includes("查看当前稿件")'), 'return to original topic')
+      seen.conversationRows = await rows()
+      seen.newSessions = createdSessions.length
+      seen.savedBodyCount = versions.length
     } else {
       await submit(first)
       await until(() => seen.modelRequests === 1 && seen.commands.some(c => c.run), 'old request ignoring abort')

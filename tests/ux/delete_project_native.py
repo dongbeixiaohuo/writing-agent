@@ -35,20 +35,20 @@ with (evidence/'stderr.log').open('wb') as stderr:
             report['buttons']=page.get_by_role('button').evaluate_all('(els)=>els.map(e=>({text:e.textContent,label:e.getAttribute("aria-label"),title:e.title}))')
             if '--probe' not in sys.argv:
                 assert report['rawFailure']['error']['code']=='PROJECT_DELETE_RUN_ACTIVE',report
-                page.get_by_role('button',name='删除项目“正在写作项目”',exact=True).click()
+                page.get_by_role('button',name='删除会话“正在写作项目”',exact=True).click()
                 dialog=page.get_by_role('dialog')
                 dialog.get_by_role('textbox').fill('正在写作项目')
-                dialog.get_by_role('button',name='永久删除项目',exact=True).click()
-                dialog.get_by_text('这个项目仍在写作中。请先停止该项目的任务，再删除；其他项目不受影响。',exact=True).wait_for()
+                dialog.get_by_role('button',name='永久删除会话',exact=True).click()
+                dialog.get_by_text('这条会话仍在写作。请先停止任务，再删除会话。',exact=True).wait_for()
                 page.screenshot(path=str(evidence/'active-error.png'))
                 dialog.get_by_role('button',name='取消',exact=True).click()
                 assert rpc('selectSession',['waiting','s-waiting'])['ok']
-                page.get_by_role('button',name='删除项目“待删除确认项目”',exact=True).click()
+                page.get_by_role('button',name='删除会话“待删除确认项目”',exact=True).click()
                 dialog=page.get_by_role('dialog')
                 dialog.get_by_role('textbox').fill('wrong')
-                assert dialog.get_by_role('button',name='永久删除项目',exact=True).is_disabled()
+                assert dialog.get_by_role('button',name='永久删除会话',exact=True).is_disabled()
                 dialog.get_by_role('textbox').fill('待删除确认项目')
-                dialog.get_by_role('button',name='永久删除项目',exact=True).click()
+                dialog.get_by_role('button',name='永久删除会话',exact=True).click()
                 dialog.wait_for(state='hidden')
                 snapshot=rpc('getSnapshot')['result']
                 assert sorted(x['id'] for x in snapshot['projects'])==['executing','other']

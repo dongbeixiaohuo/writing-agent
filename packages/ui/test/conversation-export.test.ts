@@ -79,7 +79,7 @@ test('main conversation links to the current manuscript while export settings li
       jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' }, loader: { '.css': 'empty' }, logLevel: 'silent' });
     const { render } = createRequire(import.meta.url)(output);
     const passed = render('passed');
-    assert.match(render('not_checked','ready',null,'background'), /查看运行中的对话/);
+    assert.match(render('not_checked','ready',null,'background'), /查看运行进度/);
     assert.match(render('not_checked','ready',null,'handoff'), /确认后稿件发生变化，请核对当前版本/);
     assert.match(passed, />查看当前稿件</u);
     assert.match(passed, /已通过核查/u);

@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import test, { after, before } from 'node:test'
 import { build } from 'esbuild'
+import { openWorkspaceStorage } from '../../packages/storage/src/index.js'
+import { seedPublicationWorkspace } from '../fixtures/publication-workspace.js'
 
 const source = resolve(process.env.WA_COMPILED_ROOT ?? '.')
 const staging = mkdtempSync(join(tmpdir(), 'wa-native-requests-'))
@@ -29,7 +31,8 @@ before(async () => {
 })
 after(() => rmSync(staging, { recursive: true, force: true, maxRetries: 3 }))
 
-const scenarios = { receipt: ['lost', 'reopened'], 'project-only': ['partial-lost', 'partial-reopened'], cancel: ['cancel'] }
+const scenarios = { receipt: ['lost', 'reopened'], 'project-only': ['partial-lost', 'partial-reopened'], cancel: ['cancel'],
+  'single-conversation': ['single-conversation'] }
 for (const [scenario, phases] of Object.entries(scenarios)) test(`Electron desktop ${scenario} fault through composer, IPC and SQLite`, t => {
   const id = 'requests-' + randomUUID()
   const root = join(tmpdir(), 'writing-agent-desktop-test-' + id)
@@ -37,6 +40,14 @@ for (const [scenario, phases] of Object.entries(scenarios)) test(`Electron deskt
   t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 3 }))
   writeFileSync(join(root, 'user-data/provider.json'), JSON.stringify({ schemaVersion: 2, kind: 'openai_compatible',
     providerId: 'offline-test', model: 'synthetic', baseURL: 'https://example.invalid/v1', credentialRef: 'env:WA_SYNTHETIC_KEY', tools: 'supported', usage: 'unknown' }))
+  if (scenario === 'single-conversation') {
+    const workspace = join(root, 'workspace')
+    seedPublicationWorkspace(workspace)
+    const storage = openWorkspaceStorage({ workspacePath: workspace })
+    try {
+      storage.createSession({ projectId: 'publication-fixture', sessionId: 'legacy-extra', purpose: 'writing-pack:author-conversation' })
+    } finally { storage.close() }
+  }
   for (const phase of phases) {
     const env: NodeJS.ProcessEnv = { ...process.env, WRITING_AGENT_DESKTOP_TEST: id, WA_SYNTHETIC_KEY: 'local-fixture',
       WA_REQUEST_PHASE: phase, WA_NATIVE_MAIN: join(staging, 'main.cjs') }

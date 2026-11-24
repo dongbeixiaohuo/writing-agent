@@ -28,13 +28,13 @@ test('all-bad project UI exposes a real raw export, explicit workspace restore a
     `, resolveDir: resolve('.'), loader: 'tsx' }, bundle: true, platform: 'node', format: 'cjs', outfile: output,
       jsx: 'automatic', loader: {'.css': 'empty'}, logLevel: 'silent' });
     const { html } = createRequire(import.meta.url)(output) as { html: string };
-    assert.match(html, /aria-label="项目修复"/);
-    assert.match(html, /导出此项目原始数据/);
-    assert.match(html, /从备份修复此项目/);
+    assert.match(html, /aria-label="会话修复"/);
+    assert.match(html, /导出此会话原始数据/);
+    assert.match(html, /从备份修复此会话/);
     assert.match(html, /打开备份恢复/);
-    assert.match(html, /还原会替换整个工作区，影响所有项目/);
-    assert.match(html, /重新检查项目/);
-    assert.match(html, /新建其他项目/);
+    assert.match(html, /还原会替换整个工作区，影响所有会话/);
+    assert.match(html, /重新检查会话/);
+    assert.match(html, /新建会话/);
     assert.doesNotMatch(html, /<textarea/);
     assert.match(html, /需要修复/);
   } finally { rmSync(directory, { recursive: true, force: true }); }

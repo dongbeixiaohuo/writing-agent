@@ -56,7 +56,7 @@ export function useConversationCreation(bridge: ClientBridge, snapshot: BridgeSn
     if (!ready) return
     let active = true
     void receipt(workspace).then(record => { if (active && !busy.current) setPending(record) })
-      .catch(() => { if (active) setNotice('上次新建的回执记录无法读取。请先核对侧栏项目，再决定是否另起一篇。') })
+      .catch(() => { if (active) setNotice('上次新建的回执记录无法读取。请先核对侧栏会话，再决定是否另起一篇。') })
     return () => { active = false }
   }, [workspace, ready])
 
@@ -77,7 +77,7 @@ export function useConversationCreation(bridge: ClientBridge, snapshot: BridgeSn
       if (error) setNotice(error)
     }
     const selection = first ? bridge.selectSession(project.id, first.sessionId) : bridge.selectProject(project.id)
-    void selection.catch(() => setNotice('项目已落库，自动打开未完成，可在侧栏选择该项目。'))
+    void selection.catch(() => setNotice('会话已保存，请从侧栏打开。'))
   }, [bridge, workspace, ready, pending, project])
 
   async function forget(operationId?: string) {
@@ -110,7 +110,7 @@ export function useConversationCreation(bridge: ClientBridge, snapshot: BridgeSn
       if (previous) { setPending(previous); throw Error('PROJECT_CREATE_CHECK_PENDING') }
     } catch (error) {
       if (error instanceof Error && error.message === 'PROJECT_CREATE_CHECK_PENDING') throw error
-      setNotice('新建回执无法保存。请先核对已有项目并检查本机存储。')
+      setNotice('新建回执无法保存。请先核对已有会话并检查本机存储。')
       throw Error('PROJECT_CREATE_RECEIPT_UNAVAILABLE')
     }
     return send(record)

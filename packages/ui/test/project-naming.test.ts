@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 
-test('sidebar exposes project rename separately from article title editing', () => {
+test('sidebar displays one row per writing conversation and keeps old threads available in history', () => {
   const directory = mkdtempSync(join(tmpdir(), 'wa-project-naming-ui-'))
   const output = join(directory, 'render.cjs')
   try {
@@ -30,8 +30,12 @@ test('sidebar exposes project rename separately from article title editing', () 
       logLevel: 'silent',
     })
     const { html } = createRequire(import.meta.url)(output) as { html: string }
-    assert.match(html, /aria-label="重命名项目“新品发布项目”"/u)
-    assert.match(html, /aria-label="重命名项目“客户案例专题”"/u)
+    const sidebar = html.match(/<aside[^>]+aria-label="会话列表"[\s\S]*?<\/aside>/u)?.[0] ?? ''
+    assert.equal((sidebar.match(/data-conversation-row/g) ?? []).length, 2)
+    assert.match(sidebar, /aria-label="重命名会话“新品发布项目”"/u)
+    assert.match(sidebar, /aria-label="重命名会话“客户案例专题”"/u)
+    assert.doesNotMatch(sidebar, /新建项目|在.*中新建对话|公众号初稿|文章提纲|访谈材料整理/u)
+    assert.match(html, /<summary>旧对话记录<\/summary>/u)
     assert.doesNotMatch(html, /重命名文章|重命名发布标题/u)
   } finally {
     rmSync(directory, { recursive: true, force: true })
