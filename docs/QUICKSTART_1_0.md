@@ -1,10 +1,10 @@
 # Writing Agent 桌面版快速开始
 
-当前 Windows x64 桌面版为 **1.0.0-rc.110**。[发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.110) · [发布验证与历史记录](testing/RELEASE_GATE.md)
+当前 Windows x64 桌面版为 **1.0.0-rc.111**。[发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.111) · [发布验证与历史记录](testing/RELEASE_GATE.md)
 
 ## 1. 下载、安装与升级
 
-下载 Windows x64 安装包 `Writing-Agent-Setup-1.0.0-rc.110-x64.exe`。安装后可在「设置 → 关于」查看版本。发布页提供 `SHA256SUMS.txt`、安装记录和 RC109 升级验证记录。[下载安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.110/Writing-Agent-Setup-1.0.0-rc.110-x64.exe) · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.110)
+下载 Windows x64 安装包 `Writing-Agent-Setup-1.0.0-rc.111-x64.exe`。安装后可在「设置 → 关于」查看版本。发布页提供 `SHA256SUMS.txt`、安装记录和 RC110 升级验证记录。[下载安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.111/Writing-Agent-Setup-1.0.0-rc.111-x64.exe) · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.111)
 
 维护者本地安装包统一放 `output/desktop`；这不是互联网下载地址。本次 RC 未签名，Windows 可能显示未知发布者提示。核对仓库来源与 SHA-256，不要关闭安全软件来强行安装。建议使用默认本地安装目录，不安装到 OneDrive 等云同步目录。
 
@@ -52,14 +52,14 @@ Key 优先放在系统凭据存储，不会明文写入模型配置。系统保�
 
 ## 4. 写第一篇文章
 
-1. 点击“新建项目”，直接在主对话描述想法。也可以说“我还没想好写什么”，或提供公开公众号文章链接作为素材；遇到验证码、登录或站点拒绝时，按提示粘贴已获授权的文字。
+1. 点击“新建会话”，直接描述想法。也可以说“我还没想好写什么”，或提供公开公众号文章链接作为素材；遇到验证码、登录或站点拒绝时，按提示粘贴已获授权的文字。
 2. 与助手讨论读者、篇幅、发布场景和材料。需要亲历时提供真实经历，不必一次填完表单。
 3. 确认写作方向；共创模式按阶段查看、讨论并确认。认可、修改和提问都从主对话输入。
 4. 看专家名称和阶段结果。读者审校模拟目标平台的阅读感受，并非真实读者调查；去 AI 味不应编造亲历。
 5. 确定标题、审阅当前稿件，继续事实核查。
 6. 主对话的“查看当前稿件”打开稿件；“稿件与版本”用于阅读、版本对比、材料过程及导出。
 
-左侧项目名选择已有项目，右侧加号在该项目中新建对话。主对话用于普通交流，运行记录用于查看模型请求、工具和专家执行情况；较早记录在上、最新记录在下，并显示本机当地日期和时间。点击步骤可看输入、输出、耗时和失败原因；模型请求次数不等于写作阶段数，输入字符数也不等于 Token 或费用。
+点击左侧会话名，就能接着写原来的稿件。每次独立的写作需求用一条会话，材料、稿件和运行记录随会话保存。旧版中同一主题的其他对话可以从「旧对话记录」查看。运行记录按本机时间从早到晚排列，点击步骤可看输入、输出、耗时和失败原因。
 
 ## 5. 核查状态和导出
 

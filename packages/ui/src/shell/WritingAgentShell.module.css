@@ -26,20 +26,6 @@
   letter-spacing: 0;
 }
 
-.workspaceHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 32px;
-  padding: 4px 8px 4px 4px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.workspaceActions {
-  display: flex;
-  gap: 2px;
-}
-
 .miniButton {
   display: inline-grid;
   place-items: center;
@@ -57,102 +43,56 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.projectGroup {
-  padding-right: 8px;
-}
-
-.projectRowFrame {
+.conversationRowFrame {
   display: flex;
   align-items: center;
   gap: 2px;
   min-width: 0;
+  padding: 2px 8px 2px 0;
 }
 
-.projectRow,
-.sessionRow {
+.conversationRow {
   display: flex;
   align-items: center;
-  width: 100%;
+  gap: 8px;
+  flex: 1;
   min-width: 0;
+  min-height: 34px;
+  padding: 6px 10px;
   border: 0;
+  border-radius: 9px;
   color: var(--dsw-alias-label-primary);
   background: transparent;
   cursor: pointer;
   font: inherit;
   text-align: left;
-}
-
-.projectRow {
-  flex: 0 1 auto;
-  gap: 7px;
-  width: auto;
-  min-height: 34px;
-  padding: 6px 8px;
-  border-radius: 9px;
   font-weight: 500;
 }
 
-.projectRow:hover {
+.conversationRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.projectActive {
+.conversationActive {
   color: var(--dsw-alias-state-business-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent);
+  background: var(--dsw-specific-sidebar-nav-item-active);
+  box-shadow: inset 3px 0 0 var(--dsw-alias-state-business-primary);
+  font-weight: 650;
 }
 
-.projectIdentity,
-.sessionIdentity {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
+.conversationRow > svg {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
 }
 
-.projectIdentity > span:last-child {
+.conversationActive > svg {
+  color: inherit;
+}
+
+.conversationRow > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.projectCurrent {
-  flex: none;
-  padding: 2px 6px;
-  border-radius: 999px;
-  color: var(--dsw-alias-state-business-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.projectNewConversationButton {
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  margin-left: auto;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  color: var(--dsw-alias-label-secondary);
-  background: transparent;
-  cursor: pointer;
-}
-
-.projectNewConversationButton:hover,
-.projectNewConversationButton:focus-visible {
-  color: var(--dsw-alias-state-business-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
-}
-
-.projectNewConversationButton:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: -2px;
-}
-
-.projectRow svg {
-  color: var(--dsw-alias-state-business-primary);
 }
 
 .projectDeleteButton,
@@ -193,62 +133,6 @@
 .projectDeleteButton:focus-visible {
   outline: 2px solid var(--dsw-static-red-500);
   outline-offset: -2px;
-}
-
-.sessionRow {
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 32px;
-  padding: 5px 8px 5px 28px;
-  border-radius: 7px;
-  font-size: 13px;
-}
-
-.sessionRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.sessionActive {
-  padding-left: 25px;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-specific-sidebar-nav-item-active);
-  box-shadow: inset 3px 0 0 var(--dsw-alias-state-business-primary);
-  font-weight: 650;
-}
-
-.sessionIndicator {
-  width: 5px;
-  height: 5px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--dsw-alias-label-caption);
-  opacity: 0.45;
-}
-
-.sessionActive .sessionIndicator {
-  background: var(--dsw-alias-state-business-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-business-primary) 14%, transparent);
-  opacity: 1;
-}
-
-.sessionTitle {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.relativeTime {
-  flex: none;
-  color: var(--dsw-alias-label-caption);
-  font-size: 12px;
-}
-
-.sessionCurrent {
-  flex: none;
-  color: var(--dsw-alias-state-business-primary);
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .navigationError {
@@ -367,24 +251,52 @@
   gap: 10px;
 }
 
-.breadcrumbs {
-  display: flex;
+.conversationTitle {
   flex: 1;
   min-width: 0;
-  align-items: center;
-  gap: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 500;
 }
 
-.crumbMuted {
-  color: var(--dsw-alias-label-caption);
-  font-weight: 400;
-}
-
 .headerActions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.conversationHistory {
+  position: relative;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.conversationHistory > summary {
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.conversationHistoryList {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 5;
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 8px;
+  background: var(--dsw-specific-popover);
+}
+
+.historyDraft {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .tabs {

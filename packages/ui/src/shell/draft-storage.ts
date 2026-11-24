@@ -34,5 +34,5 @@ export function removeProjectDrafts(workspaceId: string, projectId: string): str
       if (Array.isArray(owner) && owner[0] === workspaceId && owner[1] === projectId) { unsavedDrafts.delete(key); localStorage.removeItem(key) }
     }
     return null
-  } catch { return '项目已删除，但浏览器草稿清理失败。' }
+  } catch { return '会话已删除，但本机的未发送草稿未能清理。' }
 }

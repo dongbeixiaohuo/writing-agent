@@ -412,6 +412,7 @@ function sessionStatus(runs: readonly RunRecord[]): SessionSummary["status"] {
   const latest = runs.at(-1);
   if (latest === undefined) return "idle";
   if (ACTIVE_STATUSES.has(latest.status)) return "running";
+  if (latest.status === "budget_exhausted") return "interrupted";
   if (
     latest.status === "interrupted" ||
     latest.status === "waiting_user" ||
@@ -1440,7 +1441,7 @@ export class ApplicationClientBridge implements ClientBridge {
   ): Promise<void> {
     this.#ensureLive();
     if (!this.#service.tryProjectProjection(projectId) || this.#service.getProjectReadIssue(projectId)) {
-      throw Object.assign(new Error('当前项目数据无法读取，请先导出原始数据并修复。'), { code: 'PROJECT_DATA_UNREADABLE' });
+      throw Object.assign(new Error('当前会话数据无法读取，请先导出原始数据并修复。'), { code: 'PROJECT_DATA_UNREADABLE' });
     }
     const normalizedName = name.trim();
     if (!normalizedName || Array.from(normalizedName).length > 60) throw new Error("PROJECT_NAME_INVALID");
@@ -1635,7 +1636,7 @@ export class ApplicationClientBridge implements ClientBridge {
       if (this.#model.credentialReference === null) throw new Error('MODEL_CONFIGURATION_REQUIRED');
       if (options.styleSelection !== undefined) this.#service.resolveStyleSelection(options.styleSelection);
       mutationValue(this.#service.createProject({ operationId: `${operationId}:project`, projectId,
-        name: '新写作项目', nameSource: 'placeholder', conversationInputHash, mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
+        name: '新会话', nameSource: 'placeholder', conversationInputHash, mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
       if (options.styleSelection !== undefined) this.#service.selectProjectStyle(projectId, options.styleSelection, `${operationId}:style`);
       this.#replace(this.#buildSnapshot(projectId, null, this.#snapshot.generation + 1,
         this.#snapshot.revision + 1, this.#snapshot.settings, null), true);
@@ -2345,7 +2346,7 @@ export class ApplicationClientBridge implements ClientBridge {
     if (!['project.create', 'project.rename', 'conversation.start'].includes(kind) && this.#snapshot.selectedProjectId &&
         (!this.#service.tryProjectProjection(this.#snapshot.selectedProjectId) || this.#service.getProjectReadIssue(this.#snapshot.selectedProjectId))) {
       await this.refresh();
-      throw Object.assign(new Error('当前项目数据无法读取，请先导出原始数据并修复。'), { code: 'PROJECT_DATA_UNREADABLE' });
+      throw Object.assign(new Error('当前会话数据无法读取，请先导出原始数据并修复。'), { code: 'PROJECT_DATA_UNREADABLE' });
     }
     const result = action();
     this.#commands.set(operationId, { kind, input, result });
@@ -2384,11 +2385,17 @@ export class ApplicationClientBridge implements ClientBridge {
       ? requestedProjectId : projections[0]?.project.id ?? projects[0]?.id ?? "";
     const selectedProjection = projections.find(projection => projection.project.id === selectedProjectId);
     const selectedIssue = this.#service.getProjectReadIssue(selectedProjectId);
-    const selectedSession = requestedSessionId === null || requestedSessionId === ''
-      ? undefined
-      : selectedProjection?.sessions.find(
-          (session) => session.id === requestedSessionId,
-        ) ?? selectedProjection?.sessions.at(-1);
+    const selectedSession = (() => {
+      if (!selectedProjection || requestedSessionId === null || requestedSessionId === '') return undefined;
+      const { sessions, runs } = selectedProjection;
+      const explicit = sessions.find(session => session.id === requestedSessionId);
+      if (explicit) return explicit;
+      const running = runs.findLast(run => ACTIVE_STATUSES.has(run.status));
+      if (running) return sessions.find(session => session.id === running.sessionId);
+      return sessions.findLast(session => ['waiting_user', 'interrupted'].includes(
+        sessionStatus(runs.filter(run => run.sessionId === session.id)),
+      )) ?? sessions.at(-1);
+    })();
     const selectedSessionId = selectedSession?.id ?? "";
     const allRuns = projections.flatMap((projection) => projection.runs);
     const selectedRuns = allRuns.filter(
@@ -2656,11 +2663,11 @@ export class ApplicationClientBridge implements ClientBridge {
         }),
       lastError: lastError ?? selectedIssue ?? (savedHandoffError ? { code: 'CONVERSATION_HANDOFF_FAILED', message: savedHandoffError.message } : null) ?? (this.#handoffError?.projectId === selectedProjectId ? this.#handoffError.error : null),
       environmentNotice:
-        selectedIssue ? "当前项目已隔离，原始数据保留；其他项目可继续使用" : activeRun === undefined
+        selectedIssue ? "当前会话需要修复，原始数据仍在。其他会话可以继续使用。" : activeRun === undefined
           ? "本地保存已就绪"
           : "正在写作；已保存的内容会自动保留",
       composerHint:
-        "Enter 发送 · Shift+Enter 换行 · 项目和稿件会保存在这台电脑上",
+        "Enter 发送 · Shift+Enter 换行 · 对话和稿件保存在这台电脑上",
     };
   }
 }

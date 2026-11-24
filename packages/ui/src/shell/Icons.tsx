@@ -10,6 +10,12 @@ export const PanelIcon = (props: IconProps) => <IconBase {...props}><rect x="1.2
 export const PlusIcon = (props: IconProps) => <IconBase {...props}><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></IconBase>
 export const SearchIcon = (props: IconProps) => <IconBase {...props}><circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3" /><path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></IconBase>
 export const FolderIcon = (props: IconProps) => <IconBase {...props}><path d="M1.5 4.5h5l1.3 1.6h6.7v6.8H1.5V4.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" /><path d="M1.8 4.5V3.1h4.1l1.2 1.4" stroke="currentColor" strokeWidth="1.3" /></IconBase>
+export const ConversationIcon = (props: IconProps) => (
+  <IconBase {...props}>
+    <path d="M5.5 1.65h5c2.65 0 4.3 1.85 4.3 4.4v2.2c0 2.55-1.65 4.25-4.3 4.25H5.55L2.1 14.6l.65-2.95C1.75 10.9 1.2 9.7 1.2 8.25v-2.2c0-2.55 1.65-4.4 4.3-4.4Z" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+    <path d="M6.85 4h2.3l1.4 3.7-2.18 3.13V8.4a.8.8 0 1 0-.74 0v2.43L5.45 7.7 6.85 4Z" fill="currentColor" />
+  </IconBase>
+)
 export const SettingsIcon = (props: IconProps) => <IconBase {...props}><circle cx="8" cy="8" r="2.2" stroke="currentColor" strokeWidth="1.3" /><path d="M8 1.3v1.4M8 13.3v1.4M14.7 8h-1.4M2.7 8H1.3M12.7 3.3l-1 1M4.3 11.7l-1 1M12.7 12.7l-1-1M4.3 4.3l-1-1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></IconBase>
 export const DocumentIcon = (props: IconProps) => <IconBase {...props}><path d="M3 1.5h6l4 4v9H3v-13Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" /><path d="M9 1.8v4h3.8M5.5 9h5M5.5 11.5h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></IconBase>
 export const ArrowUpIcon = (props: IconProps) => <IconBase {...props}><path d="m4 7 4-4 4 4M8 3v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></IconBase>

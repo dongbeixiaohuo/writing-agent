@@ -1,10 +1,6 @@
 import type { ProjectSummary, SessionSummary } from '../../../client-bridge/src/protocol.ts'
 
-const ACTIONABLE_SESSION_STATUSES = new Set<SessionSummary['status']>([
-  'running',
-  'waiting_user',
-  'interrupted',
-])
+const ACTIONABLE_SESSION_STATUSES = new Set<SessionSummary['status']>(['waiting_user', 'interrupted'])
 
 export function resumeSessionForProject(
   project: ProjectSummary,
@@ -15,11 +11,11 @@ export function resumeSessionForProject(
     .map(sessionId => sessions.find(session => session.id === sessionId && session.projectId === project.id))
     .filter((session): session is SessionSummary => session !== undefined)
 
+  const active = ownedSessions.findLast(session => session.status === 'running')
+  if (active) return active.id
   if (ownedSessions.some(session => session.id === selectedSessionId)) return selectedSessionId
 
-  const actionable = [...ownedSessions]
-    .reverse()
-    .find(session => ACTIONABLE_SESSION_STATUSES.has(session.status))
+  const actionable = ownedSessions.findLast(session => ACTIONABLE_SESSION_STATUSES.has(session.status))
   return actionable?.id ?? ownedSessions.at(-1)?.id ?? null
 }
 

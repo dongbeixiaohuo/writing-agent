@@ -67,6 +67,7 @@ import {
   ArrowUpIcon,
   CheckIcon,
   CloseIcon,
+  ConversationIcon,
   EditIcon,
   FolderIcon,
   MonitorIcon,
@@ -535,11 +536,11 @@ function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings 
   </div>
 }
 
-function Composer({ bridge, startConversation, hero = false, newProject = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, onOpenStyleLibrary, styleInsertion, onStyleInserted, styleLibraryOpen, hostConfiguration }: {
+function Composer({ bridge, startConversation, hero = false, newConversation = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, onOpenStyleLibrary, styleInsertion, onStyleInserted, styleLibraryOpen, hostConfiguration }: {
   bridge: ClientBridge
   startConversation: ClientBridge['startConversation']
   hero?: boolean
-  newProject?: boolean
+  newConversation?: boolean
   initialDraft?: string
   focusRequest?: number
   contextChips?: readonly string[]
@@ -555,7 +556,7 @@ function Composer({ bridge, startConversation, hero = false, newProject = false,
   const snapshot = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot)
   const editorRef = useRef<HTMLDivElement>(null)
   const draftOwner = { workspaceId: snapshot.workspaceId, projectId: snapshot.selectedProjectId, sessionId: snapshot.selectedSessionId }
-  const storageKey = newProject || !snapshot.selectedProjectId
+  const storageKey = newConversation || !snapshot.selectedProjectId
     ? draftKey('new', snapshot.workspaceId)
     : draftKey('composer', snapshot.workspaceId, snapshot.selectedProjectId, snapshot.selectedSessionId)
   const ownerRef = useRef({ key: storageKey, owner: draftOwner })
@@ -571,11 +572,11 @@ function Composer({ bridge, startConversation, hero = false, newProject = false,
   const [submitting, setSubmitting] = useState(false)
   const [styleSelection, setStyleSelection] = useState<StyleSelectionInput | undefined>(undefined)
   const [styleBusy, setStyleBusy] = useState(false)
-  const running = !newProject && snapshot.activeRunId !== null
+  const running = !newConversation && snapshot.activeRunId !== null
   const recoveryMode = composerRecoveryMode(snapshot.recoverableRuns, snapshot.selectedSessionId)
-  const waitingForRecovery = !newProject && recoveryMode === 'decision'
+  const waitingForRecovery = !newConversation && recoveryMode === 'decision'
   const modelConfigured = snapshot.settings.credentialReference !== null
-  const writable = snapshot.connection !== 'offline' && modelConfigured && (newProject || !waitingForRecovery)
+  const writable = snapshot.connection !== 'offline' && modelConfigured && (newConversation || !waitingForRecovery)
 
   useLayoutEffect(() => {
     const restored = readDraft(storageKey, initialDraft)
@@ -604,7 +605,7 @@ function Composer({ bridge, startConversation, hero = false, newProject = false,
       setError(null)
       submittingRef.current = true
       setSubmitting(true)
-      if (newProject || snapshot.selectedProjectId.length === 0) await startConversation(submittedDraft, styleSelection === undefined ? undefined : { styleSelection })
+      if (newConversation || snapshot.selectedProjectId.length === 0) await startConversation(submittedDraft, styleSelection === undefined ? undefined : { styleSelection })
       else await bridge.sendMessage(submittedDraft, { owner: submittedOwner.owner })
       // A response can arrive after this editor unmounts and its draft is
       // reopened elsewhere. Compare with the latest saved text before clearing.
@@ -690,11 +691,11 @@ function Composer({ bridge, startConversation, hero = false, newProject = false,
             {draftEmpty && <div className={inputCss.placeholder}>
               {!modelConfigured
                   ? '请先配置模型，再开始写作'
-                  : !newProject && waitingForRecovery
+                  : !newConversation && waitingForRecovery
                     ? snapshot.recoverableRuns.some(run => run.sessionId === snapshot.selectedSessionId && run.interruption?.source === 'model')
                       ? '写作暂时暂停，请点击上方的“重试这一步”'
                       : '写作暂时暂停，请先选择上方的恢复操作'
-                  : newProject || snapshot.brief?.confirmationStatus !== 'confirmed'
+                  : newConversation || snapshot.brief?.confirmationStatus !== 'confirmed'
                     ? '说说你的想法，或直接粘贴材料，我们一起把文章想清楚…'
                   : recoveryMode === 'answer'
                     ? '在这里回答问题、确认方向或提出修改意见…'
@@ -704,8 +705,8 @@ function Composer({ bridge, startConversation, hero = false, newProject = false,
         </div>
         <div className={inputCss.row}>
           <div className={inputCss.tools}>
-            <span className={css.composerContext}>{newProject || snapshot.brief?.confirmationStatus !== 'confirmed' ? '从一句想法开始，边聊边完善' : '可随时补充材料、调整方向或提出修改'}</span>
-            {onOpenStyleLibrary && supportsStyleLibrary(hostConfiguration) && <StylePicker host={hostConfiguration} projectId={newProject ? '' : snapshot.selectedProjectId} disabled={running || submitting || waitingForRecovery} onChange={setStyleSelection} onBusyChange={setStyleBusy} onManage={onOpenStyleLibrary} refreshKey={`${styleLibraryOpen}:${newProject ? '' : JSON.stringify(snapshot.projectStyle)}`} requested={styleInsertion} onRequestedApplied={onStyleInserted} />}
+            <span className={css.composerContext}>{newConversation || snapshot.brief?.confirmationStatus !== 'confirmed' ? '从一句想法开始，边聊边完善' : '可随时补充材料、调整方向或提出修改'}</span>
+            {onOpenStyleLibrary && supportsStyleLibrary(hostConfiguration) && <StylePicker host={hostConfiguration} projectId={newConversation ? '' : snapshot.selectedProjectId} disabled={running || submitting || waitingForRecovery} onChange={setStyleSelection} onBusyChange={setStyleBusy} onManage={onOpenStyleLibrary} refreshKey={`${styleLibraryOpen}:${newConversation ? '' : JSON.stringify(snapshot.projectStyle)}`} requested={styleInsertion} onRequestedApplied={onStyleInserted} />}
           </div>
           <div className={inputCss.trailing}>
             {modelConfigured
@@ -882,7 +883,7 @@ function DeleteProjectDialog({
       await hostConfiguration.deleteProject(project.id, confirmation)
       onDeleted(project.name)
     } catch (reason) {
-      setError(dataActionErrorMessage(reason, '项目删除失败，没有删除任何数据。'))
+      setError(dataActionErrorMessage(reason, '会话删除失败，数据仍在。'))
     } finally {
       setDeleting(false)
     }
@@ -891,15 +892,15 @@ function DeleteProjectDialog({
   return <div className={css.overlay} role="presentation" onMouseDown={event => event.target === event.currentTarget && !deleting && onClose()}>
     <section ref={dialogRef} className={clsx(css.setupDialog, css.deleteProjectDialog)} role="dialog" aria-modal="true" aria-labelledby="delete-project-title">
       <div className={css.setupHeader}>
-        <div><h2 id="delete-project-title">删除项目“{project.name}”？</h2><p>这会永久删除该项目的材料、对话、稿件、版本、核查与运行记录，其他项目不受影响。</p></div>
-        <button className={css.miniButton} type="button" aria-label="关闭删除项目确认" disabled={deleting} onClick={onClose}><CloseIcon /></button>
+        <div><h2 id="delete-project-title">删除会话“{project.name}”？</h2><p>这会永久删除此会话的材料、稿件、版本、核查与运行记录，包括旧对话记录。其他会话不受影响。</p></div>
+        <button className={css.miniButton} type="button" aria-label="关闭删除会话确认" disabled={deleting} onClick={onClose}><CloseIcon /></button>
       </div>
       <div className={css.deleteProjectWarning}>此操作无法撤销。如需保留数据，请先在“设置 → 数据与诊断”中备份工作区。</div>
       {error !== null && <div className={css.editorError} role="alert">{error}</div>}
-      <label className={css.formField}><span>输入完整项目名称 <strong>{project.name}</strong> 以确认</span><input data-initial-focus aria-label="输入项目名称确认删除" value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" /></label>
+      <label className={css.formField}><span>输入完整会话名称 <strong>{project.name}</strong> 以确认</span><input data-initial-focus aria-label="输入会话名称确认删除" value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" /></label>
       <div className={css.setupActions}>
         <span className={css.settingHint}>只有名称完全一致后才能删除。</span>
-        <div className={css.connectionActions}><button className={css.secondaryAction} type="button" disabled={deleting} onClick={onClose}>取消</button><button className={css.dangerAction} type="button" disabled={!confirmed || deleting} onClick={() => void remove()}>{deleting ? '正在删除…' : '永久删除项目'}</button></div>
+        <div className={css.connectionActions}><button className={css.secondaryAction} type="button" disabled={deleting} onClick={onClose}>取消</button><button className={css.dangerAction} type="button" disabled={!confirmed || deleting} onClick={() => void remove()}>{deleting ? '正在删除…' : '永久删除会话'}</button></div>
       </div>
     </section>
   </div>
@@ -926,17 +927,17 @@ function RenameProjectDialog({ project, bridge, onClose, onRenamed }: {
       onRenamed(normalizedName)
       onClose()
     } catch (reason) {
-      setError(commandErrorMessage(reason, '项目重命名失败，请重试。'))
+      setError(commandErrorMessage(reason, '会话重命名失败，请重试。'))
     } finally {
       setSaving(false)
     }
   }
   return <section ref={dialogRef} className={css.setupDialog} role="dialog" aria-modal="true" aria-labelledby="rename-project-title">
     <header className={css.setupHeader}>
-      <div><h2 id="rename-project-title">重命名项目</h2><p>项目名称只用于侧边栏识别，不会修改文章的发布标题。</p></div>
-      <button className={css.miniButton} type="button" aria-label="关闭项目重命名" onClick={onClose}><CloseIcon /></button>
+      <div><h2 id="rename-project-title">重命名会话</h2><p>这个名称用于侧栏识别，稿件发布标题独立设置。</p></div>
+      <button className={css.miniButton} type="button" aria-label="关闭会话重命名" onClick={onClose}><CloseIcon /></button>
     </header>
-    <label className={css.formField}><span>项目名称</span><input data-initial-focus aria-label="项目名称" value={name} maxLength={60} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) void save() }} /></label>
+    <label className={css.formField}><span>会话名称</span><input data-initial-focus aria-label="会话名称" value={name} maxLength={60} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) void save() }} /></label>
     {error !== null && <div className={css.setupError} role="alert">{error}</div>}
     <footer className={css.setupFooter}>
       <button className={css.secondaryAction} type="button" disabled={saving} onClick={onClose}>取消</button>
@@ -1133,9 +1134,9 @@ function SettingsDialog({
       const cleanupError = removeProjectDrafts(snapshot.workspaceId, snapshot.selectedProjectId)
       if (cleanupError) setSettingsError(cleanupError)
       setDeleteConfirmation('')
-      setDeleteResult(`项目“${name}”已永久删除；其他项目未受影响。`)
+      setDeleteResult(`会话“${name}”已永久删除。其他会话仍在。`)
     } catch (reason) {
-      setSettingsError(dataActionErrorMessage(reason, '项目删除失败，没有删除任何数据。'))
+      setSettingsError(dataActionErrorMessage(reason, '会话删除失败，数据仍在。'))
     } finally {
       setDeleteBusy(false)
     }
@@ -1237,7 +1238,7 @@ function SettingsDialog({
 
                 <section className={css.dataCard}>
                   <div className={css.dataCardHeader}>
-                    <div><strong>导入旧项目</strong><p>只读扫描旧数据，先显示差异和空间检查；确认后备份来源与现有目标，再导入为新项目。</p></div>
+                    <div><strong>导入旧项目</strong><p>只读扫描旧数据，先显示差异和空间检查；确认后备份来源与现有目标，再导入为独立会话。</p></div>
                   </div>
                   <div className={css.dataControls}>
                     <label className={css.formField}><span>旧数据类型</span><select value={legacySourceKind} disabled={migrationBusy} onChange={event => {
@@ -1261,12 +1262,12 @@ function SettingsDialog({
                     <small>迁移校验：{migrationPlan.planHash.slice(0, 12)}…</small>
                     <button className={css.primaryAction} type="button" disabled={migrationBusy || !migrationPlan.spaceCheck.ok} onClick={() => void applyLegacyMigration()}>确认备份并导入这些项目</button>
                   </div>}
-                  {migrationResult !== null && <div className={css.dataResult} role="status">已导入 {migrationResult.projects.length} 个项目，旧源保持不变。关闭设置后可在左侧项目列表打开；正式交付前需重新核查。</div>}
+                  {migrationResult !== null && <div className={css.dataResult} role="status">已导入 {migrationResult.projects.length} 篇旧稿。关闭设置后可在左侧会话列表打开，正式交付前需重新核查。</div>}
                 </section>
 
                 <section className={css.dataCard}>
                   <div className={css.dataCardHeader}>
-                    <div><strong>工作区备份</strong><p>生成经过 SQLite 完整性校验的整库备份，包含本机工作区中的项目、版本、决定和运行记录，但不包含 Windows 凭据管理器中的 Key。</p></div>
+                    <div><strong>工作区备份</strong><p>生成经过 SQLite 完整性校验的整库备份，包含本机工作区中的会话、版本、决定和运行记录，但不包含 Windows 凭据管理器中的 Key。</p></div>
                     <button className={css.secondaryAction} type="button" disabled={backupBusy} onClick={() => void backupWorkspace()}>{backupBusy ? '正在备份…' : '选择位置并备份'}</button>
                   </div>
                   {backupResult !== null && <div className={css.dataResult} role="status">{backupResult.cancelled
@@ -1281,11 +1282,11 @@ function SettingsDialog({
                   </div>
                   {restorePreview !== null && <div className={css.dataPreview}>
                     <strong>将恢复：{restorePreview.fileName}</strong>
-                    <p>{restorePreview.projectCount} 个项目 · {formatBytes(restorePreview.byteLength)} · schema v{restorePreview.schemaVersion}</p>
+                    <p>{restorePreview.projectCount} 条会话 · {formatBytes(restorePreview.byteLength)} · schema v{restorePreview.schemaVersion}</p>
                     <small>备份校验：SHA-256 {restorePreview.sha256.slice(0, 12)}…</small>
                     <ul>
                       <li>当前完整工作区会先自动保存到本机 restore-backups 目录。</li>
-                      <li>恢复会替换当前项目、稿件、版本与运行记录，不会合并两个工作区。</li>
+                      <li>恢复会用备份替换当前工作区的会话、稿件、版本与运行记录。</li>
                       <li>只使用当前预览的同一份备份；文件变化后必须重新检查。</li>
                     </ul>
                     <div className={css.deleteControls}>
@@ -1293,16 +1294,16 @@ function SettingsDialog({
                       <button className={css.dangerAction} type="button" disabled={restoreBusy || restoreConfirmation.trim() !== restorePreview.confirmationPhrase} onClick={() => void applyWorkspaceRestore()}>{restoreBusy ? '正在创建安全备份并恢复…' : '恢复工作区并重启'}</button>
                     </div>
                   </div>}
-                  {restoreResult !== null && <div className={css.dataResult} role="status">已恢复 {restoreResult.restoredProjectCount} 个项目；恢复前安全备份为 {restoreResult.safetyBackupFileName}。程序正在重启…</div>}
+                  {restoreResult !== null && <div className={css.dataResult} role="status">已恢复 {restoreResult.restoredProjectCount} 条会话。恢复前的安全备份为 {restoreResult.safetyBackupFileName}。程序正在重启…</div>}
                 </section>
 
                 <section className={clsx(css.dataCard, css.dangerCard)}>
                   <div className={css.dataCardHeader}>
-                    <div><strong>永久删除当前项目</strong><p>{selectedProjectForData === undefined ? '当前没有可删除的项目。' : `将删除“${selectedProjectForData.name}”的材料、稿件、版本、核查与运行记录，不影响其他项目。建议先备份工作区。`}</p></div>
+                    <div><strong>永久删除当前会话</strong><p>{selectedProjectForData === undefined ? '当前没有可删除的会话。' : `将删除“${selectedProjectForData.name}”的材料、稿件、版本、核查与运行记录，包括旧对话记录。建议先备份工作区。`}</p></div>
                   </div>
                   {selectedProjectForData !== undefined && <div className={css.deleteControls}>
-                    <label className={css.formField}><span>输入完整项目名称以确认</span><input value={deleteConfirmation} onChange={event => setDeleteConfirmation(event.target.value)} placeholder={selectedProjectForData.name} /></label>
-                    <button className={css.dangerAction} type="button" disabled={deleteBusy || deleteConfirmation.trim() !== selectedProjectForData.name} onClick={() => void deleteSelectedProject()}>{deleteBusy ? '正在删除…' : '永久删除此项目'}</button>
+                    <label className={css.formField}><span>输入完整会话名称以确认</span><input value={deleteConfirmation} onChange={event => setDeleteConfirmation(event.target.value)} placeholder={selectedProjectForData.name} /></label>
+                    <button className={css.dangerAction} type="button" disabled={deleteBusy || deleteConfirmation.trim() !== selectedProjectForData.name} onClick={() => void deleteSelectedProject()}>{deleteBusy ? '正在删除…' : '永久删除此会话'}</button>
                   </div>}
                   {deleteResult !== null && <div className={css.dataResult} role="status">{deleteResult}</div>}
                 </section>
@@ -1322,7 +1323,7 @@ function SettingsDialog({
               {aboutVersion?.releaseExplanation && <p className={css.aboutReleaseExplanation}>{aboutVersion.releaseExplanation}</p>}
               {aboutError !== null && <div className={css.editorError} role="alert">{aboutError}</div>}
               <p className={css.aboutCopy}>{snapshot.mode === 'mock'
-                ? '当前是隔离的界面演示环境，不读取或保存真实用户项目。'
+                ? '当前是隔离的界面演示环境，不读取或保存真实用户会话。'
                 : ABOUT_DATA_DESCRIPTION}</p>
               {aboutVersion !== null && <details className={css.aboutDetails}>
                 <summary>反馈问题时使用</summary>
@@ -1365,7 +1366,7 @@ export function WritingAgentShell({
   const [styleLibraryOpen, setStyleLibraryOpen] = useState(false)
   const [styleComposerInsertion, setStyleComposerInsertion] = useState<StyleProfile | undefined>(undefined)
   const [hero, setHero] = useState(() => snapshot.selectedSessionId.length === 0)
-  const [newProjectIntent, setNewProjectIntent] = useState(() => snapshot.selectedProjectId.length === 0)
+  const [newConversationIntent, setNewConversationIntent] = useState(() => snapshot.selectedProjectId.length === 0)
   const creation = useConversationCreation(bridge, snapshot)
   const [activeTab, setActiveTab] = useState<'conversation' | 'runs'>('conversation')
   const loadTraceDetail = useCallback((runId: string, stepId: string) => bridge.getRunTraceDetail({
@@ -1389,8 +1390,14 @@ export function WritingAgentShell({
     sidebarCollapsed ? 0 : layout.sidebarWidth,
     rightOpen ? layout.rightPanelWidth : 0,
   )
-  const selectedSession = snapshot.sessions.find(session => session.id === snapshot.selectedSessionId)
   const selectedProject = snapshot.projects.find(project => project.id === snapshot.selectedProjectId)
+  const [historyView, setHistoryView] = useState<{ projectId: string, sessionId: string, returnSessionId: string } | null>(null)
+  const viewingHistory = historyView?.projectId === snapshot.selectedProjectId && historyView.sessionId === snapshot.selectedSessionId
+  const historyDraft = viewingHistory
+    ? readDraft(draftKey('composer', snapshot.workspaceId, snapshot.selectedProjectId, snapshot.selectedSessionId), '')
+    : null
+  const historySessions = snapshot.sessions.filter(session => session.projectId === selectedProject?.id &&
+    session.id !== snapshot.selectedSessionId && session.status !== 'running')
   const otherRunningSession = snapshot.sessions.find(session => session.projectId === snapshot.selectedProjectId &&
     session.id !== snapshot.selectedSessionId && session.status === 'running')
   const timeline = conversationWithPreview(snapshot.timelineBySession[snapshot.selectedSessionId] ?? [], snapshot.liveReply, snapshot.activeRunId)
@@ -1454,7 +1461,7 @@ export function WritingAgentShell({
         setProjectActionNotice(result.cancelled ? '已取消原始数据导出。' : `“${selectedProject.name}”的原始数据已保存到 ${result.fileName}。`)
       } else if (action === 'repair' && hostConfiguration.repairProjectFromBackup) {
         const result = await hostConfiguration.repairProjectFromBackup(selectedProject.id)
-        setProjectActionNotice(result.cancelled ? '已取消项目修复。' : `“${selectedProject.name}” · ${result.message}`)
+        setProjectActionNotice(result.cancelled ? '已取消会话修复。' : `“${selectedProject.name}” · ${result.message}`)
       }
     } catch (error) {
       setProjectActionNotice(commandErrorMessage(error, '操作未完成，请检查备份或保存位置后重试。'))
@@ -1466,11 +1473,13 @@ export function WritingAgentShell({
     setActivePanelId(panelId)
   }
 
-  const openSession = async (projectId: string, sessionId: string): Promise<void> => {
+  const openSession = async (projectId: string, sessionId: string, returnToSessionId: string | null = null): Promise<void> => {
     try {
       setNavigationError(null)
       await bridge.selectSession(projectId, sessionId)
-      setNewProjectIntent(false)
+      setHistoryView(returnToSessionId === null ? null : { projectId, sessionId, returnSessionId: returnToSessionId })
+      if (returnToSessionId !== null) setActivePanelId(null)
+      setNewConversationIntent(false)
       setActiveTab('conversation')
       setHero(false)
       forceFollowLatest()
@@ -1479,23 +1488,25 @@ export function WritingAgentShell({
     }
   }
 
-  const startNewConversation = async (projectId: string): Promise<void> => {
+  const openUnstartedConversation = async (projectId: string): Promise<void> => {
     try {
       setNavigationError(null)
       setProjectActionNotice(null)
       await bridge.selectProject(projectId)
-      setNewProjectIntent(false)
+      setHistoryView(null)
+      setActivePanelId(null)
+      setNewConversationIntent(false)
       setActiveTab('conversation')
       setHero(true)
     } catch (reason) {
-      setNavigationError(commandErrorMessage(reason, '无法在这个项目中开始新对话，请重试。'))
+      setNavigationError(commandErrorMessage(reason, '无法打开这条会话，请重试。'))
     }
   }
 
-  const openProject = async (project: BridgeSnapshot['projects'][number]): Promise<void> => {
-    const target = projectNavigationTarget(project, snapshot.sessions, snapshot.selectedSessionId)
+  const openConversation = async (project: BridgeSnapshot['projects'][number]): Promise<void> => {
+    const target = projectNavigationTarget(project, snapshot.sessions, viewingHistory ? historyView.returnSessionId : snapshot.selectedSessionId)
     if (target.kind === 'new_conversation') {
-      await startNewConversation(target.projectId)
+      await openUnstartedConversation(target.projectId)
       return
     }
     await openSession(target.projectId, target.sessionId)
@@ -1520,7 +1531,9 @@ export function WritingAgentShell({
   }
 
   const openNewComposer = (): void => {
-    setNewProjectIntent(true)
+    setActivePanelId(null)
+    setHistoryView(null)
+    setNewConversationIntent(true)
     setHero(true)
     setActiveTab('conversation')
     setNavigationError(null)
@@ -1528,20 +1541,20 @@ export function WritingAgentShell({
   }
 
   useEffect(() => applyThemeMode(snapshot.settings.theme), [snapshot.settings.theme])
-  const beginNewProject = async (): Promise<void> => {
+  const beginNewConversation = async (): Promise<void> => {
     if (creation.pending) { await creation.recheck(false); return }
     if (await creation.canOpenNew()) openNewComposer()
   }
   useEffect(() => {
     // Desktop handshake arrives after the first render; do not hide a restored
     // waiting conversation behind the welcome screen with a disabled composer.
-    if (snapshot.selectedSessionId.length > 0) { setHero(false); setNewProjectIntent(false) }
+    if (snapshot.selectedSessionId.length > 0) { setHero(false); setNewConversationIntent(false) }
   }, [snapshot.selectedSessionId])
   // A creation may have committed only its project, before the first session existed.
   useEffect(() => {
     if (creation.project?.id === snapshot.selectedProjectId && !creation.project.initialConversation &&
         !snapshot.selectedSessionId) {
-      setNewProjectIntent(false)
+      setNewConversationIntent(false)
       setHero(true)
     }
   }, [creation.project, snapshot.selectedProjectId, snapshot.selectedSessionId])
@@ -1579,10 +1592,10 @@ export function WritingAgentShell({
         gridTemplateColumns: `${columns.sidebar}px minmax(0, ${columns.center}px) ${columns.rightbar}px`,
       }}
     >
-      <aside className={appFrameCss.sidebarCol} aria-label="项目和会话">
+      <aside className={appFrameCss.sidebarCol} aria-label="会话列表">
         <div className={clsx(sidebarCss.root, sidebarCollapsed && sidebarCss.collapsed)}>
           <div className={sidebarCss.logoRow}>
-            {!sidebarCollapsed && <button className={sidebarCss.brand} type="button" onClick={beginNewProject}>
+            {!sidebarCollapsed && <button className={sidebarCss.brand} type="button" onClick={beginNewConversation}>
               <span className={sidebarCss.brandIdentity}>
                 <span className={sidebarCss.brandMark}><BrandMark /></span>
                 <span className={clsx(sidebarCss.brandName, css.brandText)}>{brand.productName} <span className={css.brandTag}>{snapshot.mode === 'mock' ? '演示' : '本地'}</span></span>
@@ -1598,8 +1611,8 @@ export function WritingAgentShell({
               <span className={sidebarCss.panelIcon}><PanelIcon /></span>
             </button>
           </div>
-          <button className={sidebarCss.newSession} type="button" aria-label="新建项目" onClick={beginNewProject}>
-            <PlusIcon /><span className={sidebarCss.newSessionLabel}>新建项目</span>
+          <button className={sidebarCss.newSession} type="button" aria-label="新建会话" onClick={beginNewConversation}>
+            <PlusIcon /><span className={sidebarCss.newSessionLabel}>新建会话</span>
           </button>
           <div className={sidebarCss.panelList}>
             {extensions.listLaunchers('sidebar.primary').map(launcher => (
@@ -1616,25 +1629,25 @@ export function WritingAgentShell({
             ))}
           </div>
           <div className={sidebarCss.regionArea}>
-            {!sidebarCollapsed && <div className={css.workspaceHeader}><span>项目</span><div className={css.workspaceActions}><button className={css.miniButton} type="button" aria-label="添加项目" onClick={beginNewProject}><PlusIcon /></button></div></div>}
             {!sidebarCollapsed && snapshot.projects.map(project => (
-              <div className={css.projectGroup} key={project.id}>
-                <div className={css.projectRowFrame} data-project-row>
+                <div className={css.conversationRowFrame} data-conversation-row key={project.id}>
                   <button
-                    className={clsx(css.projectRow, !newProjectIntent && project.id === snapshot.selectedProjectId && css.projectActive)}
+                    className={clsx(css.conversationRow, !newConversationIntent && project.id === snapshot.selectedProjectId && css.conversationActive)}
                     type="button"
                     aria-label={project.name}
-                    aria-current={!newProjectIntent && project.id === snapshot.selectedProjectId ? 'true' : undefined}
-                    onClick={() => void openProject(project)}
+                    aria-current={!newConversationIntent && project.id === snapshot.selectedProjectId ? 'true' : undefined}
+                    title={project.name}
+                    onClick={() => void openConversation(project)}
                   >
-                    <span className={css.projectIdentity}><FolderIcon /><span>{project.name}{project.readIssue ? ' · 需要修复' : ''}</span></span>
+                    <ConversationIcon />
+                    <span>{project.name}{project.readIssue ? ' · 需要修复' : ''}</span>
                   </button>
                   <button
                     className={css.projectRenameButton}
                     type="button"
-                    aria-label={`重命名项目“${project.name}”`}
+                    aria-label={`重命名会话“${project.name}”`}
                     disabled={!!project.readIssue}
-                    title="重命名项目"
+                    title="重命名会话"
                     onClick={() => {
                       setProjectActionNotice(null)
                       setRenameProjectTarget(project)
@@ -1643,36 +1656,14 @@ export function WritingAgentShell({
                   {hostConfiguration !== undefined && <button
                     className={css.projectDeleteButton}
                     type="button"
-                    aria-label={`删除项目“${project.name}”`}
-                    title="删除项目"
+                    aria-label={`删除会话“${project.name}”`}
+                    title="删除会话"
                     onClick={() => {
                       setProjectActionNotice(null)
                       setDeleteProjectTarget(project)
                     }}
                   ><TrashIcon /></button>}
-                  {!newProjectIntent && project.id === snapshot.selectedProjectId && <span className={css.projectCurrent}>当前</span>}
-                  <button
-                    className={css.projectNewConversationButton}
-                    type="button"
-                    aria-label={`在项目“${project.name}”中新建对话`}
-                    disabled={!!project.readIssue}
-                    title="在此项目中新建对话"
-                    onClick={() => void startNewConversation(project.id)}
-                  ><PlusIcon /></button>
                 </div>
-                {snapshot.sessions.filter(session => session.projectId === project.id).map(session => (
-                  <button
-                    className={clsx(css.sessionRow, session.id === snapshot.selectedSessionId && !hero && css.sessionActive)}
-                    type="button"
-                    key={session.id}
-                    aria-current={session.id === snapshot.selectedSessionId && !hero ? 'page' : undefined}
-                    onClick={() => void openSession(project.id, session.id)}
-                  >
-                    <span className={css.sessionIdentity}><span className={css.sessionIndicator} aria-hidden="true" /><span className={css.sessionTitle}>{session.title}</span></span>
-                    <span className={session.id === snapshot.selectedSessionId && !hero ? css.sessionCurrent : css.relativeTime}>{session.id === snapshot.selectedSessionId && !hero ? '正在查看' : session.relativeTime}</span>
-                  </button>
-                ))}
-              </div>
             ))}
             {!sidebarCollapsed && navigationError !== null && <p className={css.navigationError} role="alert">{navigationError}</p>}
             {!sidebarCollapsed && projectActionNotice !== null && <p className={css.projectActionNotice} role="status">{projectActionNotice}</p>}
@@ -1700,23 +1691,33 @@ export function WritingAgentShell({
         {snapshot.startupNotices?.map(notice => <div key={notice} className={css.modelSetupNotice} role="status">{notice}</div>)}
         {(creation.pending || creation.notice) && <div className={css.modelSetupNotice} role="status" aria-label="新建回执">
           {creation.pending && <span>{creation.project
-            ? creation.project.initialConversation ? '已找回上次新建的项目，重复提交已拦截，没有再次请求模型。' : '已找回上次保存的项目。尚未确认首条消息已启动，请打开该项目检查后继续。'
-            : '上次新建尚未收到回执。可以先核对项目；选择重试将沿用原编号，尚未受理时会发起模型请求。'}</span>}
+            ? creation.project.initialConversation ? '已找回上次新建的会话。重复提交已拦截。' : '已找回上次保存的会话。请打开它查看首条消息是否已发送。'
+            : '上次新建尚未收到回执。请先核对会话。重试会沿用上次的请求编号，首条消息尚未发出时才会请求模型。'}</span>}
           {creation.notice && <span>{creation.notice}</span>}
           {creation.pending && !creation.project && <>
-            <button type="button" disabled={creation.checking} onClick={() => void creation.recheck(false)}>核对已有项目</button>
+            <button type="button" disabled={creation.checking} onClick={() => void creation.recheck(false)}>核对已有会话</button>
             <button type="button" disabled={creation.checking} onClick={() => void creation.recheck(true)}>按原编号重试新建</button>
           </>}
-          {creation.project && <button type="button" onClick={() => void openProject(creation.project!)}>查看已建项目</button>}
+          {creation.project && <button type="button" onClick={() => void openConversation(creation.project!)}>打开已建会话</button>}
           {(creation.project || !creation.pending) && <button type="button" onClick={() => creation.acknowledge()}>知道了</button>}
           <button type="button" disabled={creation.checking} onClick={async () => { if (await creation.acknowledge()) openNewComposer() }}>另起一篇</button>
         </div>}
         {sidebarCollapsed && !selectedProject?.readIssue && projectActionNotice && <div className={css.modelSetupNotice} role="status">{projectActionNotice}</div>}
         {!hero && <header className={css.header}>
           <div className={css.titleRow}>
-            <div className={css.breadcrumbs}><span className={css.crumbMuted}>{selectedProject?.name}</span><span>/</span><span>{selectedSession?.title}</span></div>
+            <div className={css.conversationTitle}>{selectedProject?.name}</div>
             <div className={css.headerActions}>
-              {extensions.listLaunchers('conversation.actions').map(launcher => (
+              {viewingHistory && selectedProject !== undefined && <Button size="sm" variant="toolbar" onClick={() => void openConversation(selectedProject)}>返回当前会话</Button>}
+              {!viewingHistory && selectedProject !== undefined && historySessions.length > 0 && <details className={css.conversationHistory}>
+                <summary>旧对话记录</summary>
+                <div className={css.conversationHistoryList}>
+                  {historySessions.map((session, index) => <button className={css.secondaryAction} type="button" key={session.id}
+                    onClick={() => void openSession(selectedProject.id, session.id, snapshot.selectedSessionId)}>
+                    旧对话 {index + 1} · {session.relativeTime}
+                  </button>)}
+                </div>
+              </details>}
+              {!viewingHistory && extensions.listLaunchers('conversation.actions').map(launcher => (
                 <Button
                   size="sm"
                   variant="toolbar"
@@ -1742,36 +1743,37 @@ export function WritingAgentShell({
             if (composerRecoveryMode(snapshot.recoverableRuns, snapshot.selectedSessionId) === 'decision') forceFollowLatest()
           }}>对话</button><button className={clsx(css.tab, activeTab === 'runs' && css.tabActive)} type="button" onClick={() => setActiveTab('runs')}>{runRecordsTabLabel(snapshot.runRecords.length, snapshot.activeRunId, snapshot.liveActivity)}</button></div>
         </header>}
-        {otherRunningSession && <div className={css.modelSetupNotice} role="status">
-          <span>本项目的另一个对话正在运行。可以前往查看进度或停止；完成后再继续当前对话。</span>
-          <button type="button" onClick={() => void openSession(otherRunningSession.projectId, otherRunningSession.id)}>查看运行中的对话</button>
+        {!hero && viewingHistory && <div className={css.modelSetupNotice} role="status">正在查看旧对话记录。返回当前会话可继续写作。</div>}
+        {!hero && !viewingHistory && otherRunningSession && <div className={css.modelSetupNotice} role="status">
+          <span>这篇稿件还有一步正在执行。</span>
+          <button type="button" onClick={() => void openSession(otherRunningSession.projectId, otherRunningSession.id)}>查看运行进度</button>
         </div>}
-        {!newProjectIntent && selectedProject?.readIssue ? <section className={css.heroStage} aria-label="项目修复" role="status">
+        {!newConversationIntent && selectedProject?.readIssue ? <section className={css.heroStage} aria-label="会话修复" role="status">
           <h1>“{selectedProject.name}”需要修复</h1>
           <p>{selectedProject.readIssue.message}</p>
-          <p>{hostConfiguration?.exportProjectRecovery ? '可导出这个项目的材料、简报、正文和运行记录。损坏字段也会保留，便于在副本中排查。' : '在桌面客户端打开此工作区，可导出问题项目的原始记录，并从备份修复此项目。'}</p>
-          {hostConfiguration?.exportProjectRecovery && <button type="button" className={css.secondaryAction} disabled={recoveryBusy} onClick={() => void recoverSelectedProject('export')}>导出此项目原始数据</button>}
+          <p>{hostConfiguration?.exportProjectRecovery ? '可导出这条会话的材料、简报、正文和运行记录。损坏字段也会保留，便于在副本中排查。' : '在桌面客户端打开此工作区，可导出这条会话的原始记录，并从备份修复。'}</p>
+          {hostConfiguration?.exportProjectRecovery && <button type="button" className={css.secondaryAction} disabled={recoveryBusy} onClick={() => void recoverSelectedProject('export')}>导出此会话原始数据</button>}
           {hostConfiguration?.repairProjectFromBackup && <>
             <p>选择含同一版本的工作区备份，可单独修复这篇稿件的简报或正文记录。修复前会保留原始记录。</p>
-            <button type="button" className={css.secondaryAction} disabled={recoveryBusy} onClick={() => void recoverSelectedProject('repair')}>从备份修复此项目</button>
+            <button type="button" className={css.secondaryAction} disabled={recoveryBusy} onClick={() => void recoverSelectedProject('repair')}>从备份修复此会话</button>
           </>}
           {projectActionNotice && <p role="status">{projectActionNotice}</p>}
-          <p>如有完好的工作区备份，可打开备份恢复。还原会替换整个工作区，影响所有项目；请先备份当前工作区。</p>
+          <p>如有完好的工作区备份，可打开备份恢复。还原会替换整个工作区，影响所有会话。请先备份当前工作区。</p>
           {hostConfiguration && <button type="button" className={css.secondaryAction} onClick={() => openSettings('data')}>打开备份恢复</button>}
-          <button type="button" className={css.secondaryAction} onClick={() => { void (bridge.recheckProject ? bridge.recheckProject(selectedProject.id) : bridge.refresh()).catch(error => setProjectActionNotice(commandErrorMessage(error, '重新检查未完成，请稍后重试。'))) }}>重新检查项目</button>
-          <button type="button" className={css.secondaryAction} onClick={beginNewProject}>新建其他项目</button>
+          <button type="button" className={css.secondaryAction} onClick={() => { void (bridge.recheckProject ? bridge.recheckProject(selectedProject.id) : bridge.refresh()).catch(error => setProjectActionNotice(commandErrorMessage(error, '重新检查未完成，请稍后重试。'))) }}>重新检查会话</button>
+          <button type="button" className={css.secondaryAction} onClick={beginNewConversation}>新建会话</button>
         </section> : hero ? <div className={css.heroStage}>
-          <div className={css.heroCopy}><p className={css.heroKicker}>{heroDateLine()}</p><h1>{!newProjectIntent && selectedProject !== undefined ? `在“${selectedProject.name}”中开始新对话` : '今天，写点什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
+          <div className={css.heroCopy}><p className={css.heroKicker}>{heroDateLine()}</p><h1>{!newConversationIntent && selectedProject !== undefined ? selectedProject.name : '今天，写点什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
           {!modelConfigured && snapshot.mode === 'application' && <div className={css.modelSetupNotice}><span>先连接你的模型，然后就可以直接开始交流。</span><button type="button" onClick={() => openSettings('models')}>配置模型</button></div>}
-          <Composer bridge={bridge} startConversation={creation.start} hero newProject={newProjectIntent} onSubmitted={submission => {
+          <Composer bridge={bridge} startConversation={creation.start} hero newConversation={newConversationIntent} onSubmitted={submission => {
             setComposerHandoff(current => ({ id: (current?.id ?? 0) + 1, draft: submission.pendingDraft, restoreFocus: submission.restoreFocus }))
-            setNewProjectIntent(false)
+            setNewConversationIntent(false)
             setActiveTab('conversation')
             setHero(false)
             forceFollowLatest()
           }} onConfigureModel={() => openSettings('models')} {...(supportsStyleLibrary(hostConfiguration) ? { onOpenStyleLibrary: () => setStyleLibraryOpen(true) } : {})} {...(styleComposerInsertion === undefined ? {} : { styleInsertion: styleComposerInsertion, onStyleInserted: () => setStyleComposerInsertion(undefined) })} styleLibraryOpen={styleLibraryOpen} hostConfiguration={hostConfiguration} />
-          {!newProjectIntent && snapshot.brief !== null && <details className={css.optionalSetup}><summary>高级设置（可选）</summary>
-            <p>可查看和调整当前项目的写作要求，也可以直接在对话中说明。</p>
+          {!newConversationIntent && snapshot.brief !== null && <details className={css.optionalSetup}><summary>高级设置（可选）</summary>
+            <p>可查看和调整这条会话的写作要求，也可以直接在对话中说明。</p>
             <button className={css.secondaryAction} type="button" onClick={() => setBriefEditOpen(true)}>查看写作设置</button>
             {snapshot.brief.confirmationStatus === 'tentative' && snapshot.conversationIntake?.phase !== 'proposal' && <BriefConfirmationCard brief={snapshot.brief} confirming={briefConfirming} error={briefConfirmationError} onConfirm={() => void confirmBrief()} onEdit={() => setBriefEditOpen(true)} />}
           </details>}
@@ -1780,7 +1782,13 @@ export function WritingAgentShell({
           <div ref={conversationScrollRef} className={css.scrollBody} data-conversation-feed="true" onScroll={handleConversationScroll}>
             {snapshot.lastError?.code === 'CONVERSATION_HANDOFF_FAILED' && <p className={css.navigationError} role="alert">{snapshot.lastError.message}</p>}
             {latestRun !== undefined && latestRun.stages.length > 0 && <WorkflowProgress run={latestRun} />}
-            <Timeline items={timeline} brand={brand} footer={<>
+            <Timeline items={timeline} brand={brand} footer={viewingHistory ? <>
+              {historyDraft?.error && <p className={css.navigationError} role="alert">{historyDraft.error}</p>}
+              {typeof historyDraft?.value === 'string' && historyDraft.value.length > 0 && <details className={css.manuscriptLink}>
+                <summary>这段旧对话的未发送草稿</summary>
+                <p className={css.historyDraft}>{historyDraft.value}</p>
+              </details>}
+            </> : <>
               {snapshot.connection === 'running' && <ConversationWorking snapshot={snapshot} bridge={bridge} />}
               {selectedRecoveries.map(recovery => <CheckpointDecisionCard
                 key={recovery.runId}
@@ -1818,7 +1826,7 @@ export function WritingAgentShell({
           <ConversationNavigator scrollRef={conversationScrollRef} conversationKey={snapshot.selectedSessionId} />
           </div>
           {showJumpLatest && <button className={css.jumpLatest} type="button" onClick={forceFollowLatest}>回到最新进度 ↓</button>}
-          <div className={css.composerSeat}><Composer
+          {!viewingHistory && <div className={css.composerSeat}><Composer
             bridge={bridge}
             startConversation={creation.start}
             initialDraft={composerHandoff?.draft ?? ''}
@@ -1834,7 +1842,7 @@ export function WritingAgentShell({
             {...(styleComposerInsertion === undefined ? {} : { styleInsertion: styleComposerInsertion, onStyleInserted: () => setStyleComposerInsertion(undefined) })}
             styleLibraryOpen={styleLibraryOpen}
             hostConfiguration={hostConfiguration}
-          /></div>
+          /></div>}
         </> : <div className={css.runRecordsScroll}><RunRecords key={`${snapshot.selectedProjectId}:${snapshot.selectedSessionId}`} records={snapshot.runRecords} activeRunId={snapshot.activeRunId} liveActivity={snapshot.liveActivity} loadDetail={loadTraceDetail} /></div>}
       </section>
 
@@ -1869,16 +1877,20 @@ export function WritingAgentShell({
           setDeleteProjectTarget(null)
           setNavigationError(null)
           const cleanupError = removeProjectDrafts(snapshot.workspaceId, deleteProjectTarget.id)
-          setProjectActionNotice(cleanupError ?? `已删除项目“${projectName}”。`)
-          setNewProjectIntent(bridge.getSnapshot().selectedProjectId.length === 0)
-          setHero(true)
+          setProjectActionNotice(cleanupError ?? `已删除会话“${projectName}”。`)
+          if (deleteProjectTarget.id === snapshot.selectedProjectId && !newConversationIntent) {
+            const next = bridge.getSnapshot()
+            setHistoryView(null)
+            setNewConversationIntent(next.selectedProjectId.length === 0)
+            setHero(next.selectedSessionId.length === 0)
+          }
         }}
       /></div>}
       {renameProjectTarget !== null && <div className={appFrameCss.overlayLayer}><RenameProjectDialog
         project={renameProjectTarget}
         bridge={bridge}
         onClose={() => setRenameProjectTarget(null)}
-        onRenamed={name => setProjectActionNotice(`项目已重命名为“${name}”。`)}
+        onRenamed={name => setProjectActionNotice(`会话已重命名为“${name}”。`)}
       /></div>}
     </main>
   )

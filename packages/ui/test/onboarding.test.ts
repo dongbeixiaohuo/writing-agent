@@ -152,7 +152,7 @@ test("desktop command failures become visible user actions instead of transport 
 test("diagnostic and migration failures explain the safe next action", () => {
   // Electron contextBridge retains only standard Error fields, not custom code.
   assert.equal(dataActionErrorMessage(new Error("PROJECT_DELETE_RUN_ACTIVE"), "删除失败"),
-    "这个项目仍在写作中。请先停止该项目的任务，再删除；其他项目不受影响。");
+    "这条会话仍在写作。请先停止任务，再删除会话。");
   assert.match(dataActionErrorMessage(new Error("STORAGE_WRITE_FAILED"), "删除失败"), /已回滚/);
   assert.equal(
     dataActionErrorMessage(
