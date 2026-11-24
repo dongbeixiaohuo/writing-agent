@@ -244,6 +244,21 @@ function safeToolOutput(toolName: string, payload: Readonly<Record<string, unkno
   if (toolName === 'submit_writing_stage' && object(result?.handoff)?.kind === 'revision_required') {
     return '终审 Agent 发现仍需修正的内容，正在交回主笔继续修订；当前稿件已保留。'
   }
+  const researchAdjustment = toolName === 'submit_writing_stage' && result?.stage === 'research'
+    ? object(result.researchAdjustment) : null
+  if (researchAdjustment) {
+    const omitted = count(researchAdjustment.omittedClaims)
+    const normalized = count(researchAdjustment.normalizedClaimIds)
+    return [
+      '研究已保存，继续做提纲',
+      omitted ? `有 ${omitted} 条资料缺少可用出处或字段，已跳过` : null,
+      normalized ? `已统一 ${normalized} 条资料的编号字段写法，保留原编号` : null,
+      researchAdjustment.damagedPayload === true ? '研究回复残缺，沿已确认方向使用已有材料' : null,
+      researchAdjustment.planStatus === 'repaired' ? '已对齐选材表和资料编号' : null,
+      researchAdjustment.planStatus === 'skipped' ? '选材表有缺项，使用现有材料按原方向推进' : null,
+      researchAdjustment.discardedLegacyMetadata === true ? '已略过格式不完整的检索说明' : null,
+    ].filter(Boolean).join(' · ')
+  }
   if (toolName.startsWith('submit_') || toolName.startsWith('respond_') || toolName.startsWith('propose_')) {
     return artifactVersionId ? `已保存 · 版本 ${artifactVersionId.slice(0, 12)}` : '已保存'
   }

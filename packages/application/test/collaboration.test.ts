@@ -417,20 +417,33 @@ for (const asString of [false, true]) it(`expands compact research without losin
   } finally { f.close(); }
 });
 
-for (const defect of ['unknown-source', 'duplicate-source', 'empty-quote', 'missing-boundary', 'duplicate-evidence', 'bad-url']) it(`rejects compact research with ${defect} without saving partial evidence`, async () => {
+for (const defect of ['unknown-source', 'duplicate-source', 'empty-quote', 'missing-boundary', 'duplicate-evidence', 'bad-url']) it(`isolates bad rows in compact research (${defect})`, async () => {
   const content: any = compactResearch();
+  content.sources.push({ ...content.sources[0], source_id: 'S2' });
+  content.claims.at(-1).source_id = 'S2';
   if (defect === 'unknown-source') content.claims[0].source_id = 'missing';
-  if (defect === 'duplicate-source') content.sources.push({ ...content.sources[0] });
+  if (defect === 'duplicate-source') content.sources.push({ ...content.sources[0], source_title: '同编号的另一出处' });
   if (defect === 'empty-quote') content.claims[0].source_quote = '';
   if (defect === 'missing-boundary') delete content.claims[0].use_boundary;
   if (defect === 'duplicate-evidence') { content.claims[0].evidence_id = 'E001'; content.claims[1].evidence_id = 'E001'; }
   if (defect === 'bad-url') content.sources[0].source_url = 'file:///private';
   const f = setup(new CompactResearchProvider(content), 'co_creation');
   try {
-    const result = await f.app.runDraft({ ...f.input, budget: { ...f.input.budget, maxModelRequests: 4 } });
-    assert.equal(f.storage.inspectProject('p')!.currentEvidenceVersionId, null);
-    assert.notEqual(f.storage.getRun(result.runId)?.status, 'completed');
-    assert.equal(f.storage.listArtifactVersions('p', 'outline', 'main').length, 0);
+    const result = await f.app.runDraft(f.input);
+    const evidenceId = f.storage.inspectProject('p')!.currentEvidenceVersionId;
+    assert.ok(evidenceId);
+    const saved = f.storage.getArtifactVersion(evidenceId)!;
+    const ids = parseEvidenceLedger(saved.content).evidenceIds;
+    const discarded = defect === 'duplicate-source' || defect === 'bad-url' ? 19 : defect === 'duplicate-evidence' ? 2 : 1;
+    assert.equal(ids.size, 20 - discarded);
+    assert.equal(ids.has('E001'), false, 'omitted or ambiguous IDs must not point to a different claim');
+    const ledger = JSON.parse(saved.content);
+    assert.equal(ledger.claims.at(-1).claim_text, '仅支持观察20');
+    assert.ok(ledger.claims.every((claim: { claim_text: string }) => claim.claim_text !== '仅支持观察1'));
+    const events = f.storage.listRunEvents(result.runId);
+    const committed = events.find(event => event.type === 'tool.completed' && (event.payload.result as any)?.result?.stage === 'research');
+    assert.equal((committed?.payload.result as any)?.result?.researchAdjustment?.omittedClaims, discarded);
+    assert.equal(events.findLast(event => event.type === 'run.waiting_user')?.payload.stage, 'outline');
   } finally { f.close(); }
 });
 
@@ -3614,44 +3627,45 @@ it("reconstructs a legacy run baseline from pre-start history, not the resumed c
   }
 });
 
-it('rejects an invalid evidence ledger at research commit and stops the blind retry loop', async () => {
-  class InvalidLedger extends CollaborationProvider {
-    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
-      const state = collaborationState(request)!;
-      if (state.actor === 'research') {
-        this.requests.push(structuredClone(request));
-        const source = { source_id: 'S1', source_title: '材料', source_publisher: '用户提供', accessed_at: '本次运行' };
-        const claim = { source_id: source.source_id, evidence_id: 'E001', claim_type: 'other', claim_text: '无引句的事实',
-          source_quote: '', reliability: 'high', use_boundary: '无', verification_status: 'illustrative_only' };
-        yield { type: 'tool_call_delta', index: 0, id: `invalid-ledger-${this.requests.length}`, name: 'submit_writing_stage',
-          argumentsDelta: JSON.stringify({ stage: 'research', content: { sources: [source], claims: [claim],
-            notes: '尝试提交没有引句的主张。', editorialPlan: editorialPlanFixture(['E001']) } }) };
-        yield { type: 'completed', finishReason: 'tool_calls' };
-        return;
+for (const scenario of ['fde-alias', 'mixed-invalid', 'all-unusable', 'damaged-json'] as const) {
+  it(`continues from research without a repeated model submission (${scenario})`, async () => {
+    const ledger = compactResearch();
+    const originalClaims = ledger.claims.slice(0, 12).map((claim, index) => ({ ...claim, evidence_id: `E${String(index + 1).padStart(3, '0')}` }));
+    const plan = editorialPlanFixture(originalClaims.map(claim => claim.evidence_id));
+    const fdePlan = { ...plan, materialDecisions: plan.materialDecisions.map(({ evidenceId, ...decision }) => ({ ...decision, evidence_id: evidenceId })) };
+    const invalidClaim = { ...originalClaims[0]!, source_quote: '', verification_status: 'illustrative_only' };
+    const submitted = scenario === 'fde-alias' ? JSON.stringify({ ...ledger, claims: originalClaims, editorialPlan: fdePlan })
+      : scenario === 'mixed-invalid' ? { ...ledger, claims: [invalidClaim, ...originalClaims.slice(1)], editorialPlan: fdePlan }
+        : scenario === 'all-unusable' ? { sources: ledger.sources, claims: [invalidClaim], notes: '', editorialPlan: { malformed: true } }
+          : '{"sources":[],"claims":[{"claim_text":"这条残缺断言不能入账"';
+    const provider = new CompactResearchProvider(submitted);
+    const f = setup(provider, 'co_creation');
+    try {
+      const result = await f.app.runDraft(f.input);
+      const events = f.storage.listRunEvents(result.runId);
+      const evidenceId = f.storage.inspectProject('p')!.currentEvidenceVersionId;
+      assert.ok(evidenceId, 'research must save its usable subset before stepping into outline');
+      const saved = f.storage.getArtifactVersion(evidenceId)!;
+      const payload = JSON.parse(saved.content);
+      const survivingIds = scenario === 'fde-alias' ? originalClaims.map(claim => claim.evidence_id)
+        : scenario === 'mixed-invalid' ? originalClaims.slice(1).map(claim => claim.evidence_id) : [];
+      assert.deepEqual([...parseEvidenceLedger(saved.content).evidenceIds], survivingIds);
+      if (survivingIds.length) {
+        assert.deepEqual(payload.editorialPlan.materialDecisions.map((decision: { evidenceId: string }) => decision.evidenceId), survivingIds);
+        assert.deepEqual(payload.editorialPlan.angles[0].supportingEvidenceIds, survivingIds);
       }
-      yield* super.providerStream(request);
-    }
-  }
-  const provider = new InvalidLedger();
-  const f = setup(provider);
-  const bridge = createApplicationBridge({ service: f.app, workspaceId: 'ledger-gate-loop', model: { model: 'mock', providerLabel: 'test', credentialReference: null, parameters: {}, budget: f.input.budget } });
-  try {
-    const first = await f.app.runDraft(f.input);
-    const run = f.storage.getRun(first.runId)!;
-    assert.equal(run.status, 'waiting_user');
-    assert.equal(run.stopReason, 'TOOL_FAILURE_LOOP');
-    const failures = f.storage.listRunEvents(first.runId)
-      .filter((event) => event.type === 'tool.failed' && JSON.stringify(event.payload).includes('EVIDENCE_LEDGER_INVALID'));
-    assert.equal(failures.length, 3, 'the breaker stops the loop after three identical gate rejections');
-    const correction = provider.requests.flatMap(request => request.messages)
-      .filter(message => message.role === 'tool' && message.name === 'submit_writing_stage')
-      .map(message => JSON.parse(message.content).error?.details?.correction).find(Boolean);
-    assert.match(correction, /Empty source_quote.*verification_status exactly 'illustrative'.*'illustrative_only' is not that value/u);
-    assert.match(correction, /continuous source quote or omit the unsupported claim/u);
-    assert.equal(f.storage.inspectProject('p')!.currentEvidenceVersionId, null, 'invalid ledger must not persist');
-    await bridge.selectSession('p', first.sessionId);
-    assert.equal(bridge.getSnapshot().recoverableRuns[0]?.stopReason, 'TOOL_FAILURE_LOOP');
-    const rows = bridge.getSnapshot().timelineBySession[first.sessionId] ?? [];
-    assert.ok(rows.some((row) => row.kind === 'tool' && row.label === '这一步未能完成'));
-  } finally { bridge.dispose(); f.close(); }
-});
+      assert.doesNotMatch(saved.content, /这条残缺断言不能入账|illustrative_only/u);
+      assert.equal(provider.requests.filter(request => collaborationState(request)?.actor === 'research').length, 1);
+      assert.ok(provider.requests.some(request => collaborationState(request)?.actor === 'outline'));
+      assert.equal(events.findLast(event => event.type === 'run.waiting_user')?.payload.stage, 'outline');
+      await f.app.resumeDraft(withCheckpointIntent(f.storage, {
+        ...f.input, runId: result.runId, operationId: 'accept-recovered-research-outline',
+        expectedProjectRevision: f.storage.inspectProject('p')!.revision,
+        decision: 'resume', userInstruction: '继续',
+      })).result;
+      assert.ok(provider.requests.some(request => collaborationState(request)?.actor === 'draft'));
+      assert.equal(f.storage.listRunEvents(result.runId).findLast(event => event.type === 'run.waiting_user')?.payload.stage, 'draft');
+      assert.notEqual(f.storage.getFactCheckStatus('p').status, 'passed');
+    } finally { f.close(); }
+  });
+}

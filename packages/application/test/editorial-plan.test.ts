@@ -3,7 +3,7 @@ import { it } from 'node:test';
 import { Ajv } from 'ajv';
 import { parseEvidenceLedger } from '../../writing-core/src/index.js';
 import { EDITORIAL_PLAN_JSON_SCHEMA, parseEditorialPlan, type EditorialPlan } from '../src/editorial-plan.js';
-import { expandResearchEvidence } from '../src/research-evidence.js';
+import { expandResearchEvidence, prepareResearchEvidence } from '../src/research-evidence.js';
 
 const evidenceIds = new Set(['E002', 'E005']);
 
@@ -49,6 +49,39 @@ it('requires a unique, genuinely selectable list of angle records', () => {
   const sameAngle = plan();
   sameAngle.angles[1]!.angle = '部署成功后，责任 还卡在人工交接！';
   assert.throws(() => parseEditorialPlan(sameAngle, evidenceIds), /duplicate angle text/);
+});
+
+it('preserves E042 through either research ID spelling and never reuses conflicting IDs', () => {
+  const source = { source_title: '审批记录', source_publisher: '作者材料', accessed_at: '本次运行' };
+  const claim = { claim_type: 'other', claim_text: '审批存在人工交接', source_quote: '由主管手动转交',
+    reliability: 'high', use_boundary: '限本次流程', verification_status: 'user_provided' };
+  const editorialPlan = plan();
+  editorialPlan.angles = [{ ...editorialPlan.angles[0]!, supportingEvidenceIds: ['E042'] }];
+  editorialPlan.materialDecisions = [{ ...editorialPlan.materialDecisions[0]!, evidenceId: 'E042' }];
+  const prepare = (input: object) => prepareResearchEvidence(JSON.stringify({ ...input, editorialPlan, notes: '' }),
+    { requirePlan: true, confirmedDirection: true });
+
+  for (const evidence of [{ evidence_id: 'E042' }, { evidenceId: 'E042' }, { evidence_id: 'E042', evidenceId: 'E042' }]) {
+    for (const input of [
+      { sources: [{ ...source, source_id: 'S1' }], claims: [{ ...claim, ...evidence, source_id: 'S1' }] },
+      { claims: [{ ...source, ...claim, ...evidence }] },
+    ]) {
+      const saved = JSON.parse(prepare(input).content);
+      assert.equal(saved.claims[0].evidence_id, 'E042');
+      assert.equal(Object.hasOwn(saved.claims[0], 'evidenceId'), false);
+      assert.deepEqual(saved.editorialPlan.materialDecisions, editorialPlan.materialDecisions);
+      assert.deepEqual(saved.editorialPlan.angles[0].supportingEvidenceIds, ['E042']);
+    }
+  }
+
+  const conflicted = prepare({ sources: [{ ...source, source_id: 'S1' }], claims: [
+    { ...claim, source_id: 'S1', evidence_id: 'E042', evidenceId: 'E001' },
+    { ...claim, claim_text: '另一条有效记录', source_id: 'S1' },
+  ] });
+  const saved = JSON.parse(conflicted.content);
+  assert.equal(conflicted.omittedClaims, 1);
+  assert.deepEqual([...parseEvidenceLedger(conflicted.content).evidenceIds], ['E002']);
+  assert.deepEqual(saved.editorialPlan.angles[0].supportingEvidenceIds, []);
 });
 
 it('only allows one angle with the caller’s author-fixed permission', () => {
