@@ -1,10 +1,10 @@
 # Writing Agent 桌面版快速开始
 
-当前 Windows x64 桌面版为 **1.0.0-rc.113**。[发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.113) · [发布验证与历史记录](testing/RELEASE_GATE.md)
+当前 Windows x64 桌面版为 **1.0.0-rc.114**。[发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.114) · [发布验证与历史记录](testing/RELEASE_GATE.md)
 
 ## 1. 下载、安装与升级
 
-下载 Windows x64 安装包 `Writing-Agent-Setup-1.0.0-rc.113-x64.exe`。安装后可在「设置 → 关于」查看版本。发布页提供 `SHA256SUMS.txt` 和安装升级记录。[下载安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.113/Writing-Agent-Setup-1.0.0-rc.113-x64.exe) · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.113)
+下载 Windows x64 安装包 `Writing-Agent-Setup-1.0.0-rc.114-x64.exe`。安装后可在「设置 → 关于」查看版本。发布页提供 `SHA256SUMS.txt` 和安装升级记录。[下载安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.114/Writing-Agent-Setup-1.0.0-rc.114-x64.exe) · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.114)
 
 维护者本地安装包统一放 `output/desktop`；这不是互联网下载地址。本次 RC 未签名，Windows 可能显示未知发布者提示。核对仓库来源与 SHA-256，不要关闭安全软件来强行安装。建议使用默认本地安装目录，不安装到 OneDrive 等云同步目录。
 
