@@ -1,10 +1,10 @@
 # Writing Agent 桌面版快速开始
 
-当前 Windows x64 桌面版为 **1.0.0-rc.111**。[发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.111) · [发布验证与历史记录](testing/RELEASE_GATE.md)
+当前 Windows x64 桌面版为 **1.0.0-rc.113**。[发布说明](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.113) · [发布验证与历史记录](testing/RELEASE_GATE.md)
 
 ## 1. 下载、安装与升级
 
-下载 Windows x64 安装包 `Writing-Agent-Setup-1.0.0-rc.111-x64.exe`。安装后可在「设置 → 关于」查看版本。发布页提供 `SHA256SUMS.txt`、安装记录和 RC110 升级验证记录。[下载安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.111/Writing-Agent-Setup-1.0.0-rc.111-x64.exe) · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.111)
+下载 Windows x64 安装包 `Writing-Agent-Setup-1.0.0-rc.113-x64.exe`。安装后可在「设置 → 关于」查看版本。发布页提供 `SHA256SUMS.txt` 和安装升级记录。[下载安装包](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.113/Writing-Agent-Setup-1.0.0-rc.113-x64.exe) · [发布说明与校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.113)
 
 维护者本地安装包统一放 `output/desktop`；这不是互联网下载地址。本次 RC 未签名，Windows 可能显示未知发布者提示。核对仓库来源与 SHA-256，不要关闭安全软件来强行安装。建议使用默认本地安装目录，不安装到 OneDrive 等云同步目录。
 
@@ -25,7 +25,6 @@
 - 自定义接口需填协议和地址：OpenAI Chat Completions、OpenAI Responses 或 Anthropic-compatible，地址支持 HTTP 和 HTTPS。以实际服务商支持为准，不能仅因“兼容 OpenAI”就改成 Responses。
 - 使用 Magpie 时先启动网关并配置上游，选择 Magpie 预设后获取完整模型 ID；按网关实际配置填写 Key 和地址。
 - 点击保存并验证连接。测试会发出真实请求，可能产生用量；失败时看具体错误，不必重复建立项目。
-- 已保存模型可在主对话输入框附近切换；本轮运行中不要假设切换会改变已经发出的请求。
 - 在「角色模型分配」里为进阶、均衡、轻量三档各选一个已验证的模型。三档可以共用同一个。开始或继续写作时，角色按所在档使用已选的模型。验证失败时请重新验证或更换。
 
 Key 优先放在系统凭据存储，不会明文写入模型配置。系统保存不可用时，界面会提示仅当前会话有效，重启后需重填。连接测试通过只是代表性能力检查，不保证整篇长任务在该服务上永不超时或报错。
@@ -47,7 +46,7 @@ Key 优先放在系统凭据存储，不会明文写入模型配置。系统保�
 
 **不选择外部搜索，文章仍可能有事实错误；选择搜索也不等于已证实正确。** 搜索结果只是证据候选，核查专家仍需判断来源、时效和相关性。重要数字、引用、政策等应人工复核。开启并保存搜索设置后，会自动搜索公开事实，不再逐次弹窗；请勿用私人或客户机密作为检索内容。运行记录会显示检索词、服务、耗时、结果及错误原因。来源原文支持公开 HTTP 和 HTTPS 网页；关闭全部服务后不再联网搜索或读取来源，仅使用已有材料与模型复核，并说明未联网验证的限制。
 
-每轮事实核查默认 6 次检索，可在设置调整为 1—30 次；额度耗尽由你选择追加 3 次或停止搜索。重复查询可使用缓存，纯传输超时不占应用检索额度，但计入网络尝试保护上限；恢复和返工不会重置额度。同轮、同输入版本且仍获授权的来源快照可在当前工具实例内复用，跨轮或运行时重建不保证复用。这个上限不等于总模型请求数、HTTP 请求数或费用上限。来源网站的 403、限流、验证码等问题与搜索服务故障分开显示；网页无法读取时，不会假装已经核对原文。
+写前研究、写前补查和终稿事实核查的查询批次参考均默认 10 次，可分别调整为 1—30 次。已有素材够写或存疑事实查清时可以提前结束。运行记录按实际发出的独立查询计数，缓存、重复词和重试不增加独立次数。单次查询中的服务回退可能增加 HTTP 请求数。原文打不开时，运行记录会标明原因。
 
 同状态反复读取没有业务进展时会暂停，点击重试继续原专家；正常分页、保存和角色交接仍可推进。服务商要求等待过久时，会显示恢复提示及有效重试时间；到期前恢复不会提前向同服务和模型发新请求，没有自动恢复定时器。这些保护不保证模型下一次一定正确，具体范围见 [RC88 发布记录](launch/RC88_RELEASE_EXECUTION.md)。OneDrive 路径 GPU 异常与本地路径 smoke 通过分别记录；smoke 禁用硬件加速，不代表正常 GPU 或完整人工旅程通过。
 

@@ -4,11 +4,11 @@
 
 Writing Agent 是一款开源中文写作助手，适合写公众号文章、观点评论、经验分享和个人随笔。给它一句想法、一段材料或一条参考链接，先聊出一个值得写的切口。方向定了，再整理素材、写初稿，和助手一起改到你满意。
 
-**[下载 Windows x64 桌面版 · RC111](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.111/Writing-Agent-Setup-1.0.0-rc.111-x64.exe)** · [快速上手](#desktop-start) · [Claude Code 插件](#claude-code-skill) · [文档中心](docs/README.md)
+**[下载 Windows x64 桌面版 · RC113](https://github.com/dongbeixiaohuo/writing-agent/releases/download/desktop-v1.0.0-rc.113/Writing-Agent-Setup-1.0.0-rc.113-x64.exe)** · [快速上手](#desktop-start) · [Claude Code 插件](#claude-code-skill) · [文档中心](docs/README.md)
 
 ![Writing Agent 桌面端。左侧是历史会话，中间是共创对话，右侧是修改后保存的稿件。](docs/images/desktop-preview.png)
 
-*截图来自 Windows 桌面版 RC113，内容为示例。GitHub 当前公开下载为 RC111。*
+*截图来自 Windows 桌面版 RC113，内容为示例。*
 
 <a id="desktop-app"></a>
 <a id="rc-status"></a>
@@ -16,9 +16,9 @@ Writing Agent 是一款开源中文写作助手，适合写公众号文章、观
 
 ## 开始写第一篇文章
 
-1. **安装桌面版。** 运行 Windows x64 安装包。安装说明和 SHA256 校验文件在发布页。[RC111 发布页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.111)
-2. **连接模型。** 打开「设置 → 模型」，选择服务商，填写 API Key 和模型 ID，验证连接。桌面版无需另装 Claude Code、Node.js 或 Python。[RC111 快速开始](https://github.com/dongbeixiaohuo/writing-agent/blob/desktop-v1.0.0-rc.111/docs/QUICKSTART_1_0.md)
-3. **说说你想写什么。** 点击「新建会话」，也可以直接贴材料或链接。截图中的 RC113 把这个入口叫作「新建创作」。
+1. **安装桌面版。** 运行 Windows x64 安装包。安装说明和 SHA256 校验文件在发布页。[RC113 发布页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.113)
+2. **连接模型。** 打开「设置 → 模型」，填写服务商的 API Key 和模型 ID 并验证连接。三个角色分组可以共用一个已验证的模型。桌面版无需另装 Claude Code、Node.js 或 Python。[配置模型](docs/QUICKSTART_1_0.md#2-配置模型)
+3. **说说你想写什么。** 点击「新建创作」，输入想法，也可以直接贴材料或链接。
 
    > 想写一篇公众号文章。为什么下班后老板发条微信，最后坐立不安的是员工？先帮我找几个具体的切口。
 
@@ -51,7 +51,7 @@ claude plugin install writing-agent@writing-agent-marketplace
 
 ## 模型、搜索与本地数据
 
-桌面版支持常用模型服务的预设，也能连接自定义 API 或兼容的本地网关。可以全程用一个模型，也可以为不同写作角色选模型。搜索服务可在设置里开关。[模型和搜索设置](https://github.com/dongbeixiaohuo/writing-agent/blob/desktop-v1.0.0-rc.111/docs/QUICKSTART_1_0.md#2-配置模型)
+桌面版支持常用模型服务的预设，也能连接自定义 API 或兼容的本地网关。可以全程用一个模型，也可以为不同写作角色选模型。搜索服务可在设置里开关。[模型和搜索设置](docs/QUICKSTART_1_0.md#2-配置模型)
 
 会话、参考材料和稿件保存在本机。写作需要的上下文会发往你配置的模型服务，使用外部搜索时会把检索词发送给启用的搜索服务。服务用量和费用按对应服务商的规则计算。
 
