@@ -5,14 +5,14 @@ import { aboutVersionView } from '../src/shell/about.ts'
 
 test('desktop release candidate is explained in language a user can understand', () => {
   assert.deepEqual(aboutVersionView({
-    clientBuild: 'writing-agent-desktop@1.0.0-rc.111',
+    clientBuild: 'writing-agent-desktop@1.0.0-rc.112',
     runtimeBuild: 'writing-agent-runtime-v1',
     protocolVersion: 16,
     mock: false,
   }), {
-    version: '1.0.0-rc.111',
+    version: '1.0.0-rc.112',
     releaseLabel: '候选版',
-    buildLabel: '桌面版 1.0.0-rc.111',
+    buildLabel: '桌面版 1.0.0-rc.112',
     runtimeLabel: 'writing-agent-runtime-v1',
     protocolLabel: 'v16',
   })

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readLocalSettings, type LocalSettingsRecovery } from '../../../packages/client-bridge/src/local-settings-recovery.js';
-import { MODEL_GROUPS, modelGroupForActor, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
+import { DEFAULT_MODEL_GROUPS, MODEL_GROUPS, modelGroupForActor, type ModelGroup, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
 import {
   mkdirSync,
   readFileSync,
@@ -109,6 +109,7 @@ export interface SavedProviderEntry {
 }
 
 export interface DesktopProviderCatalog {
+  readonly modelRouting?: 'groups';
   readonly modelGroups?: ModelGroupSelections;
   readonly schemaVersion: 3;
   readonly activeProfileId: string | null;
@@ -118,6 +119,7 @@ export interface DesktopProviderCatalog {
 const groupSelectionSchema = z.object({ profileId: z.string().min(1).max(128), model: z.string().min(1).max(256) }).strict().nullable();
 const modelGroupsSchema = z.object({ planning: groupSelectionSchema, writing: groupSelectionSchema, review: groupSelectionSchema }).strict();
 const catalogSchema = z.object({
+  modelRouting: z.literal('groups').optional(),
   modelGroups: modelGroupsSchema.optional(),
   schemaVersion: z.literal(3), activeProfileId: z.string().nullable(),
   profiles: z.array(z.object({
@@ -151,19 +153,28 @@ function withPresetExtraBody(config: NormalizedProviderConfig): NormalizedProvid
 
 export function loadDesktopProviderCatalog(filePathInput: string, recovery?: LocalSettingsRecovery): DesktopProviderCatalog {
   const filePath = resolve(filePathInput);
-  return readLocalSettings<DesktopProviderCatalog>(filePath, 'provider', { schemaVersion: 3, activeProfileId: null, profiles: [] }, value => {
+  return readLocalSettings<DesktopProviderCatalog>(filePath, 'provider', {
+    schemaVersion: 3, activeProfileId: null, profiles: [], modelRouting: 'groups', modelGroups: DEFAULT_MODEL_GROUPS,
+  }, value => {
     if (typeof value === 'object' && value !== null && 'schemaVersion' in value && value.schemaVersion === 3) {
       const parsed = catalogSchema.parse(value);
       const profiles = parsed.profiles.map(profile => ({ ...profile, config: withPresetExtraBody(parseProviderConfig(profile.config)) }));
       if (new Set(profiles.map(profile => profile.id)).size !== profiles.length ||
         !profiles.some(profile => profile.id === parsed.activeProfileId) ||
         profiles.some(profile => !profile.models.includes(profile.config.model))) throw new Error('INVALID_CATALOG');
-      return { schemaVersion: 3, activeProfileId: parsed.activeProfileId, profiles,
-        ...(parsed.modelGroups ? { modelGroups: parsed.modelGroups } : {}) };
+      const groups = parsed.modelGroups ?? DEFAULT_MODEL_GROUPS;
+      const formerDefault = profiles.find(profile => profile.id === parsed.activeProfileId);
+      // Convert inherited slots to concrete selections when reading pre-group-only settings.
+      // The next settings write persists the converted list without changing the old Key.
+      const legacySelection = parsed.modelRouting === undefined && formerDefault?.config.tools === 'supported' &&
+        Object.hasOwn(verifiedProviderModels(formerDefault), formerDefault.config.model)
+        ? { profileId: formerDefault.id, model: formerDefault.config.model } : null;
+      return { schemaVersion: 3, activeProfileId: parsed.activeProfileId, profiles, modelRouting: 'groups',
+        modelGroups: Object.fromEntries(MODEL_GROUPS.map(({ id }) => [id, groups[id] ?? legacySelection])) as ModelGroupSelections };
     }
     const config = withPresetExtraBody(parseProviderConfig(value));
     // Read legacy files without rewriting them or moving their managed Key.
-    return { schemaVersion: 3, activeProfileId: 'legacy-primary', profiles: [
+    return { schemaVersion: 3, activeProfileId: 'legacy-primary', modelRouting: 'groups', modelGroups: DEFAULT_MODEL_GROUPS, profiles: [
       { id: 'legacy-primary', displayName: config.providerId, models: [config.model], config },
     ] };
   }, recovery);
@@ -184,16 +195,12 @@ function writeCatalog(filePathInput: string, catalog: DesktopProviderCatalog): v
 // preset extraBody fill-in stays a read-time concern (see withPresetExtraBody).
 export function markDesktopProviderVerified(filePathInput: string, profileId: string, testedConfig?: NormalizedProviderConfig, ok = true): void {
   const filePath = resolve(filePathInput);
-  let value: unknown;
-  try {
-    value = JSON.parse(readFileSync(filePath, "utf8"));
-  } catch {
-    return;
-  }
-  if (typeof value !== 'object' || value === null || !('schemaVersion' in value) || value.schemaVersion !== 3) return;
-  const catalog = value as DesktopProviderCatalog;
-  if (!catalog.profiles.some(profile => profile.id === profileId)) return;
-  const normalized = loadDesktopProviderCatalog(filePath).profiles.find(p => p.id === profileId)!;
+  let stored: unknown;
+  try { stored = JSON.parse(readFileSync(filePath, 'utf8')); }
+  catch { return; }
+  const catalog = loadDesktopProviderCatalog(filePath);
+  const normalized = catalog.profiles.find(p => p.id === profileId);
+  if (!normalized) return;
   const tested = testedConfig ?? normalized.config;
   if (!normalized.models.includes(tested.model) || providerFingerprint({ ...normalized.config, model: tested.model }) !== providerFingerprint(tested)) return;
   const verifications = { ...normalized.verifications };
@@ -205,7 +212,8 @@ export function markDesktopProviderVerified(filePathInput: string, profileId: st
   else delete verifications[tested.model];
   writeCatalog(filePath, {
     ...catalog,
-    profiles: catalog.profiles.map(profile => profile.id === profileId
+    profiles: (typeof stored === 'object' && stored !== null && 'schemaVersion' in stored && stored.schemaVersion === 3
+      ? (stored as DesktopProviderCatalog).profiles : catalog.profiles).map(profile => profile.id === profileId
       ? { ...profile, verifications, verifiedAt: verifications[normalized.config.model]?.verifiedAt }
       : profile),
   });
@@ -234,22 +242,33 @@ export function parseModelGroups(value: unknown): ModelGroupSelections {
   return result.data;
 }
 
-export function groupProviderConfig(catalog: DesktopProviderCatalog, fallback: NormalizedProviderConfig | null, actor?: string): NormalizedProviderConfig | null {
-  const group = modelGroupForActor(actor);
+export function configuredGroupProvider(catalog: DesktopProviderCatalog, group: ModelGroup): NormalizedProviderConfig | null {
   const selection = catalog.modelGroups?.[group];
-  if (!selection) return fallback;
+  if (!selection) return null;
   const profile = catalog.profiles.find(p => p.id === selection.profileId);
-  if (!profile || !verifiedProviderModels(profile)[selection.model] || profile.config.tools !== 'supported') {
-    throw providerProfileError('MODEL_GROUP_UNAVAILABLE', `${MODEL_GROUPS.find(g => g.id === group)!.label}的模型未通过验证，请在模型设置中重新验证或选择。`);
-  }
+  if (!profile || !Object.hasOwn(verifiedProviderModels(profile), selection.model) || profile.config.tools !== 'supported') return null;
   return parseProviderConfig({ ...profile.config, model: selection.model });
+}
+
+export function groupProviderConfig(catalog: DesktopProviderCatalog, actor?: string): NormalizedProviderConfig {
+  const group = modelGroupForActor(actor);
+  const config = configuredGroupProvider(catalog, group);
+  if (!config) throw providerProfileError('MODEL_GROUP_UNAVAILABLE', `${MODEL_GROUPS.find(g => g.id === group)!.label}档需要选择已验证的模型。`);
+  return config;
 }
 
 export function saveModelGroups(filePath: string, input: unknown, beforeCommit?: (catalog: DesktopProviderCatalog) => void): void {
   const catalog = loadDesktopProviderCatalog(filePath);
   const modelGroups = parseModelGroups(input);
-  const candidate = { ...catalog, modelGroups };
-  for (const actor of ['director', 'draft', 'fact_check']) groupProviderConfig(candidate, null, actor);
+  const candidate = { ...catalog, modelRouting: 'groups' as const, modelGroups };
+  for (const { id, label } of MODEL_GROUPS) {
+    const selected = modelGroups[id];
+    const previous = catalog.modelGroups?.[id];
+    if (selected && (previous?.profileId !== selected.profileId || previous.model !== selected.model) &&
+        !configuredGroupProvider(candidate, id)) {
+      throw providerProfileError('MODEL_GROUP_UNAVAILABLE', `${label}档需要选择已验证的模型。`);
+    }
+  }
   beforeCommit?.(candidate);
   writeCatalog(filePath, candidate);
 }
@@ -310,7 +329,7 @@ export async function saveDesktopProviderProfile(
   filePathInput: string,
   credentials: CredentialBroker,
   input: DesktopProviderProfileInput,
-  beforeCommit?: (config: NormalizedProviderConfig) => void,
+  beforeCommit?: (config: NormalizedProviderConfig, catalog: DesktopProviderCatalog) => void,
 ): Promise<SavedDesktopProviderProfile> {
   const catalog = loadDesktopProviderCatalog(filePathInput);
   const previous = previousProvider(catalog, input);
@@ -334,9 +353,10 @@ export async function saveDesktopProviderProfile(
   try {
     // Validate the replacement runtime before publishing the catalog. A fresh
     // key remains private to the candidate and is removed if preparation fails.
-    beforeCommit?.(savedConfig);
-    writeCatalog(filePathInput, { ...catalog, schemaVersion: 3, activeProfileId: profile.id,
-      profiles: [...catalog.profiles.filter(candidate => candidate.id !== profile.id), profile] });
+    const candidate = { ...catalog, activeProfileId: profile.id,
+      profiles: [...catalog.profiles.filter(entry => entry.id !== profile.id), profile] };
+    beforeCommit?.(savedConfig, candidate);
+    writeCatalog(filePathInput, candidate);
   } catch (error) {
     if (newKey) await credentials.deleteManaged(credential.reference.slice('managed:'.length)).catch(() => undefined);
     throw error;
@@ -345,7 +365,7 @@ export async function saveDesktopProviderProfile(
 }
 
 export function selectDesktopProvider(filePath: string, profileId: string, model: string,
-  beforeCommit?: (config: NormalizedProviderConfig) => void): NormalizedProviderConfig {
+  beforeCommit?: (config: NormalizedProviderConfig, catalog: DesktopProviderCatalog) => void): NormalizedProviderConfig {
   const catalog = loadDesktopProviderCatalog(filePath);
   const profile = catalog.profiles.find(entry => entry.id === profileId);
   if (!profile || !profile.models.includes(model)) throw providerProfileError('PROVIDER_PROFILE_NOT_FOUND', 'Saved provider or model is unavailable');
@@ -353,9 +373,10 @@ export function selectDesktopProvider(filePath: string, profileId: string, model
   const { verifiedAt, ...unverified } = profile;
   const verifications = { ...profile.verifications };
   if (!profile.verifications && verifiedAt) verifications[profile.config.model] = { fingerprint: providerFingerprint(profile.config), verifiedAt };
-  beforeCommit?.(config);
-  writeCatalog(filePath, { ...catalog, activeProfileId: profile.id,
+  const candidate = { ...catalog, activeProfileId: profile.id,
     profiles: catalog.profiles.map(entry => entry.id === profile.id
-      ? { ...unverified, verifications, verifiedAt: verifiedProviderModels(profile)[model], config } : entry) });
+      ? { ...unverified, verifications, verifiedAt: verifiedProviderModels(profile)[model], config } : entry) };
+  beforeCommit?.(config, candidate);
+  writeCatalog(filePath, candidate);
   return config;
 }

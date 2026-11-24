@@ -35,7 +35,6 @@ import type {
   DesktopLegacyMigrationPlanView,
   DesktopLegacyMigrationResultView,
   DesktopLegacySourceKind,
-  DesktopProviderStatusView,
   DesktopWorkspaceBackupResultView,
   DesktopWorkspaceRestorePreviewView,
   DesktopWorkspaceRestoreResultView,
@@ -461,81 +460,6 @@ interface ComposerSubmission {
   pendingDraft: string
 }
 
-function ModelSwitchMenu({ host, currentLabel, offline, running, onOpenSettings }: {
-  host: DesktopHostConfiguration
-  currentLabel: string
-  offline: boolean
-  running: boolean
-  onOpenSettings: () => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState<DesktopProviderStatusView | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const rootRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: MouseEvent) => {
-      if (rootRef.current !== null && !rootRef.current.contains(event.target as Node)) setOpen(false)
-    }
-    const onKeyDown = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => { document.removeEventListener('mousedown', onPointerDown); document.removeEventListener('keydown', onKeyDown) }
-  }, [open])
-
-  const toggle = async (): Promise<void> => {
-    if (busy) return
-    if (open) { setOpen(false); return }
-    setOpen(true); setLoading(true); setError(null)
-    try { setStatus(await host.providerStatus('summary')) }
-    catch (reason) { setError(commandErrorMessage(reason, '模型配置读取失败，请重试。')) }
-    finally { setLoading(false) }
-  }
-
-  const choose = async (profileId: string, model: string): Promise<void> => {
-    if (busy) return
-    setBusy(true); setError(null)
-    try { await host.selectProvider(profileId, model); setOpen(false) }
-    catch (reason) { setError(commandErrorMessage(reason, '模型切换失败，请稍后重试。')) }
-    finally { setBusy(false) }
-  }
-
-  // summary mode intentionally skips credential reads, so `configured` is
-  // always false and `credentialChecked` is false for every profile. Treat
-  // "not checked" as "key was saved at some point"; the host still verifies
-  // the credential on selectProvider and reports a missing key then.
-  const choices = (status?.profiles ?? []).filter(profile => profile.configured || profile.credentialChecked === false)
-    .flatMap(profile => profile.models.map(model => ({ profile, model })))
-
-  return <div className={css.modelSwitchRoot} ref={rootRef}>
-    <button type="button" aria-label={`切换默认模型，当前 ${currentLabel}`} aria-expanded={open} aria-haspopup="menu"
-      onClick={() => void toggle()}
-      className={clsx(css.connectionPill, css.connectionAction, offline && css.connectionOffline, running && css.connectionRunning)}>
-      默认 · {currentLabel}⌄</button>
-    {open && <div className={css.modelSwitchMenu} role="menu" aria-label="可切换的默认模型">
-      <p className={css.modelSwitchHint}>切换默认模型只影响“跟随默认”的分组。单独配置的分组保持不变，可在模型设置中调整。</p>
-      {loading && <p className={css.modelSwitchHint} role="status">正在读取已配置的模型…</p>}
-      {busy && <p className={css.modelSwitchHint} role="status">正在切换模型，请稍候…</p>}
-      {!loading && error === null && choices.length === 0 && <p className={css.modelSwitchHint}>没有已保存 Key 的模型可切换，请先在模型设置中完成配置。</p>}
-      {!loading && choices.map(({ profile, model }) => {
-        const active = profile.profileId === status?.activeProfileId && model === status.model
-        return <button key={`${profile.profileId}:${model}`} type="button" role="menuitemradio" aria-checked={active}
-          className={css.modelSwitchItem} disabled={busy || active} onClick={() => void choose(profile.profileId, model)}>
-          <span className={css.modelSwitchItemMain}>{model}<small>{profile.displayName}</small></span>
-          {active && <span className={css.modelSwitchCurrent}>当前默认</span>}
-        </button>
-      })}
-      {error !== null && <p className={css.modelSwitchError} role="alert">{error}</p>}
-      <div className={css.modelSwitchFooter}>
-        <button type="button" className={css.providerCustomize} onClick={() => { setOpen(false); onOpenSettings() }}>管理模型设置…</button>
-      </div>
-    </div>}
-  </div>
-}
-
 function Composer({ bridge, startConversation, hero = false, newConversation = false, initialDraft = '', focusRequest = 0, contextChips, onSubmitted, onHandoffConsumed, onConfigureModel, onOpenStyleLibrary, styleInsertion, onStyleInserted, styleLibraryOpen, hostConfiguration }: {
   bridge: ClientBridge
   startConversation: ClientBridge['startConversation']
@@ -690,7 +614,7 @@ function Composer({ bridge, startConversation, hero = false, newConversation = f
             />
             {draftEmpty && <div className={inputCss.placeholder}>
               {!modelConfigured
-                  ? '请先配置模型，再开始写作'
+                  ? '先为三档选择模型，再开始写作'
                   : !newConversation && waitingForRecovery
                     ? snapshot.recoverableRuns.some(run => run.sessionId === snapshot.selectedSessionId && run.interruption?.source === 'model')
                       ? '写作暂时暂停，请点击上方的“重试这一步”'
@@ -709,11 +633,7 @@ function Composer({ bridge, startConversation, hero = false, newConversation = f
             {onOpenStyleLibrary && supportsStyleLibrary(hostConfiguration) && <StylePicker host={hostConfiguration} projectId={newConversation ? '' : snapshot.selectedProjectId} disabled={running || submitting || waitingForRecovery} onChange={setStyleSelection} onBusyChange={setStyleBusy} onManage={onOpenStyleLibrary} refreshKey={`${styleLibraryOpen}:${newConversation ? '' : JSON.stringify(snapshot.projectStyle)}`} requested={styleInsertion} onRequestedApplied={onStyleInserted} />}
           </div>
           <div className={inputCss.trailing}>
-            {modelConfigured
-              ? (hostConfiguration !== undefined
-                ? <ModelSwitchMenu host={hostConfiguration} currentLabel={snapshot.settings.providerLabel} offline={snapshot.connection === 'offline'} running={running} onOpenSettings={() => onConfigureModel?.()} />
-                : <button type="button" aria-label={`切换模型，当前 ${snapshot.settings.providerLabel}`} onClick={onConfigureModel} className={clsx(css.connectionPill, css.connectionAction, snapshot.connection === 'offline' && css.connectionOffline, running && css.connectionRunning)}>{snapshot.settings.providerLabel}⌄</button>)
-              : <button className={clsx(css.connectionPill, css.connectionAction, css.connectionUnconfigured)} type="button" onClick={onConfigureModel}>模型未配置 · 去设置</button>}
+            {!modelConfigured && <button className={css.secondaryAction} type="button" onClick={onConfigureModel}>设置分组模型</button>}
             <button
               className={inputCss.primary}
               type="button"
@@ -1407,7 +1327,6 @@ export function WritingAgentShell({
   const checkpointApprovalRunId = selectedRecoveries.some(run => run.stopReason === 'WRITING_INPUT_REQUIRED')
     ? null
     : selectedRecoveries.findLast(run => run.stopReason === 'CO_CREATION_CHECKPOINT' || run.checkpointApproval)?.runId ?? null
-  const modelConfigured = snapshot.settings.credentialReference !== null
   const latestRun = snapshot.runRecords.at(-1)
 
   const latestMessageTarget = (scrollBody: HTMLDivElement): number => {
@@ -1764,7 +1683,6 @@ export function WritingAgentShell({
           <button type="button" className={css.secondaryAction} onClick={beginNewConversation}>新建会话</button>
         </section> : hero ? <div className={css.heroStage}>
           <div className={css.heroCopy}><p className={css.heroKicker}>{heroDateLine()}</p><h1>{!newConversationIntent && selectedProject !== undefined ? selectedProject.name : '今天，写点什么？'}</h1><p>一句想法、一段材料，或者一个还没想清楚的问题，都可以从这里开始。</p></div>
-          {!modelConfigured && snapshot.mode === 'application' && <div className={css.modelSetupNotice}><span>先连接你的模型，然后就可以直接开始交流。</span><button type="button" onClick={() => openSettings('models')}>配置模型</button></div>}
           <Composer bridge={bridge} startConversation={creation.start} hero newConversation={newConversationIntent} onSubmitted={submission => {
             setComposerHandoff(current => ({ id: (current?.id ?? 0) + 1, draft: submission.pendingDraft, restoreFocus: submission.restoreFocus }))
             setNewConversationIntent(false)

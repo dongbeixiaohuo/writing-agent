@@ -20,22 +20,26 @@ test('three simple group selectors show advice and only verified choices, retain
         const tree = ModelGroupSettings({status,busy:false,onChange:groups=>{changed=groups}});
         const visit = node => {
           if (!node || typeof node!=='object') return;
-          if (node.type==='select' && node.props['aria-label']==='写作与表达模型') node.props.onChange({target:{value}});
+          if (node.type==='select' && node.props['aria-label']==='进阶模型') node.props.onChange({target:{value}});
           React.Children.forEach(node.props?.children, visit);
         };
         visit(tree); return changed;
       };
     ` }, outfile: output, bundle:true, platform:'node', format:'cjs', jsx:'automatic', loader:{'.css':'text'} });
     const api = createRequire(import.meta.url)(output);
-    const status = { model:'default-model', modelGroups: DEFAULT_MODEL_GROUPS, profiles:[
+    const status = { model:null, modelGroups: DEFAULT_MODEL_GROUPS, profiles:[
       { profileId:'p', displayName:'测试供应商', model:'tested-model', models:['tested-model','untested-model'], tools:'supported', credentialChecked:false,
         verifiedModels:{'tested-model':'2026-11-06T00:00:00Z'} },
     ] };
     const html = api.render(status);
     assert.equal((html.match(/<select/g) ?? []).length, 3);
-    for (const text of ['策划与统筹','写作与表达','审校与辅助','不确定时','理解意图','中文写作','响应稳定','默认','测试供应商 / tested-model']) assert.ok(html.includes(text), text);
+    for (const text of ['进阶','均衡','轻量','汤大姆','托尼老师','包打听','三档都用','测试供应商 / tested-model']) assert.ok(html.includes(text), text);
+    assert.equal((html.match(/<li><strong>[^<]+<\/strong>（[^<]+）<\/li>/gu) ?? []).length, 13);
+    assert.match(html, /汤大姆<\/strong>（写作助手，聊选题、理需求）/u);
+    assert.doesNotMatch(html, /跟随默认|设为默认/u);
     assert.ok(!html.includes('untested-model'));
     assert.deepEqual(api.choose(status, JSON.stringify(['p','tested-model'])), { ...DEFAULT_MODEL_GROUPS, writing:{profileId:'p',model:'tested-model'} });
+    assert.equal(api.choose(status, ''), undefined);
     const invalid = api.render({...status, modelGroups:{...DEFAULT_MODEL_GROUPS, writing:{profileId:'p', model:'untested-model'}}});
     assert.match(invalid, /untested-model · 不可用，请重新验证或选择/);
     const missingKey = api.render({...status, profiles:status.profiles.map(p=>({...p,credentialChecked:true,configured:false}))});

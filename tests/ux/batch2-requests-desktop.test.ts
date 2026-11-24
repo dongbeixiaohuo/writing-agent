@@ -38,8 +38,13 @@ for (const [scenario, phases] of Object.entries(scenarios)) test(`Electron deskt
   const root = join(tmpdir(), 'writing-agent-desktop-test-' + id)
   mkdirSync(join(root, 'user-data'), { recursive: true })
   t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 3 }))
-  writeFileSync(join(root, 'user-data/provider.json'), JSON.stringify({ schemaVersion: 2, kind: 'openai_compatible',
-    providerId: 'offline-test', model: 'synthetic', baseURL: 'https://example.invalid/v1', credentialRef: 'env:WA_SYNTHETIC_KEY', tools: 'supported', usage: 'unknown' }))
+  writeFileSync(join(root, 'user-data/provider.json'), JSON.stringify({
+    schemaVersion: 3, activeProfileId: 'offline-test', profiles: [{
+      id: 'offline-test', displayName: '离线测试', models: ['synthetic'], verifiedAt: '2026-11-01T00:00:00.000Z',
+      config: { schemaVersion: 2, kind: 'openai_compatible', providerId: 'offline-test', model: 'synthetic',
+        baseURL: 'https://example.invalid/v1', credentialRef: 'env:WA_SYNTHETIC_KEY', tools: 'supported', usage: 'unknown' },
+    }],
+  }))
   if (scenario === 'single-conversation') {
     const workspace = join(root, 'workspace')
     seedPublicationWorkspace(workspace)

@@ -129,6 +129,14 @@ app.once('browser-window-created', (_e, window) => window.webContents.once('did-
     } else if (phase === 'single-conversation') {
       const rows = () => run('document.querySelectorAll("[data-conversation-row]").length')
       await until(async () => await rows() === 1, 'one row for the existing theme')
+      assert.equal(await run('!!document.querySelector(\'[aria-label^="切换默认模型"]\')'), false)
+      await clickText('设置')
+      await clickText('模型')
+      await until(() => run(`['进阶','均衡','轻量'].every(tier =>
+        document.querySelector('select[aria-label="' + tier + '模型"]')?.selectedOptions[0]?.textContent.includes('synthetic'))`), 'migrated three model selections')
+      assert.equal(await run('/跟随默认|设为默认|默认供应商/u.test(document.querySelector(\'[role="dialog"]\').innerText)'), false)
+      assert.equal(await run('document.querySelector(\'[aria-label="进阶档角色"]\').textContent.includes("汤大姆（写作助手，聊选题、理需求）")'), true)
+      await click('关闭设置')
       await click('夜跑随想')
       await until(() => run('document.body.innerText.includes("查看当前稿件")'), 'existing manuscript')
       await type('夜跑随想的未发送采访笔记')

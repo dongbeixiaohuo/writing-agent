@@ -5,7 +5,7 @@ import { STYLE_SAMPLE_LIMIT, ensureStyleSampleCapacity, normalizeStyleUrl, Style
 import { evaluateStylePreview } from '../../../packages/writing-core/src/style-package.js';
 import { readStyleBatch, readStyleDocument, readStyleUrl } from './style-source.js';
 import { styleProviderConfig } from './style-provider.js';
-import { DEFAULT_MODEL_GROUPS, type GroupModelSelection, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
+import { DEFAULT_MODEL_GROUPS, MODEL_GROUPS, type GroupModelSelection, type ModelGroupSelections } from '../../../packages/client-bridge/src/model-groups.js';
 import type { SearchSettingsInput } from '../../../packages/client-bridge/src/desktop-bridge.js';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -62,6 +62,8 @@ import {
   markDesktopProviderVerified,
   verifiedProviderModels,
   groupProviderConfig,
+  configuredGroupProvider,
+  type DesktopProviderCatalog,
   parseModelGroups,
   saveModelGroups,
   selectDesktopProvider,
@@ -144,7 +146,7 @@ export class DesktopApplicationHost {
     try {
       this.#searchSettings = new SearchSettingsStore(join(dirname(this.#providerProfilePath), 'search-settings.json'), this.#credentials, {}, this.#settingsRecovery);
       this.#providerConfig = loadDesktopProviderProfile(this.#providerProfilePath, this.#settingsRecovery);
-      const runtime = this.#createRuntime(this.#providerConfig, "");
+      const runtime = this.#createRuntime(loadDesktopProviderCatalog(this.#providerProfilePath, this.#settingsRecovery), "");
       this.#service = runtime.service;
       this.#bridge = runtime.bridge;
       this.#service.recoverWorkspace();
@@ -211,8 +213,7 @@ export class DesktopApplicationHost {
         else if (typeof selected === 'string') result = { sample: await readStyleDocument(selected) };
         else result = { items: await readStyleBatch(paths.map(path => ({ label: basename(path), read: () => readStyleDocument(path) })), controller.signal, 'STYLE_DOCUMENT_READ_FAILED') };
       } else {
-        const config = groupProviderConfig(loadDesktopProviderCatalog(this.#providerProfilePath), this.#providerConfig, 'style_modeler');
-        if (!config) throw new Error('MODEL_CONFIGURATION_REQUIRED');
+        const config = groupProviderConfig(loadDesktopProviderCatalog(this.#providerProfilePath), 'style_modeler');
         const provider = this.#providerFactory(styleProviderConfig(config), this.#credentials);
         const options = { provider, model: config.model, signal: controller.signal };
         if (command.action === 'analyze') result = { draft: await createStyleAnalysis({ ...options, name: command.name, samples: command.samples }) };
@@ -291,7 +292,7 @@ export class DesktopApplicationHost {
     input: DesktopProviderProfileInput,
   ): Promise<DesktopProviderStatus> {
     return this.#changeProvider(async prepare =>
-      (await saveDesktopProviderProfile(this.#providerProfilePath, this.#credentials, input, prepare)).config);
+      (await saveDesktopProviderProfile(this.#providerProfilePath, this.#credentials, input, prepare)).config, true);
   }
 
   async selectProvider(profileId: string, model: string): Promise<DesktopProviderStatus> {
@@ -299,7 +300,7 @@ export class DesktopApplicationHost {
       const profile = loadDesktopProviderCatalog(this.#providerProfilePath).profiles.find(entry => entry.id === profileId);
       if (!profile || !(await this.#credentials.inspect(profile.config.credentialRef)).configured) throw new Error('PROVIDER_API_KEY_REQUIRED');
       return selectDesktopProvider(this.#providerProfilePath, profileId, model, prepare);
-    });
+    }, true);
   }
 
   async configureModelGroups(groups: ModelGroupSelections): Promise<DesktopProviderStatus> {
@@ -308,17 +309,21 @@ export class DesktopApplicationHost {
       const config = this.#providerConfig;
       if (!config) throw new Error('MODEL_PROVIDER_REQUIRED');
       const catalog = loadDesktopProviderCatalog(this.#providerProfilePath);
-      for (const selection of Object.values(groups)) {
+      for (const { id } of MODEL_GROUPS) {
+        const selection = groups[id];
         if (!selection) continue;
+        const previous = catalog.modelGroups?.[id];
+        if (previous?.profileId === selection.profileId && previous.model === selection.model) continue;
         const profile = catalog.profiles.find(p => p.id === selection.profileId);
         if (!profile || !(await this.#credentials.inspect(profile.config.credentialRef)).configured) throw new Error('PROVIDER_API_KEY_REQUIRED');
       }
-      saveModelGroups(this.#providerProfilePath, groups, () => prepare(config));
+      saveModelGroups(this.#providerProfilePath, groups, candidate => prepare(config, candidate));
       return config;
     });
   }
 
-  async #changeProvider(change: (prepare: (config: NormalizedProviderConfig) => void) => Promise<NormalizedProviderConfig>): Promise<DesktopProviderStatus> {
+  async #changeProvider(change: (prepare: (config: NormalizedProviderConfig, catalog: DesktopProviderCatalog) => void) => Promise<NormalizedProviderConfig>,
+    validateProfile = false): Promise<DesktopProviderStatus> {
     this.#settingsRecovery.assertWritable(this.#providerProfilePath);
     if (this.#closed) throw new Error('DESKTOP_HOST_CLOSED');
     if (this.#providerChanging) throw new Error('PROVIDER_SETTINGS_BUSY');
@@ -327,8 +332,8 @@ export class DesktopApplicationHost {
     let runtime: { service: WritingApplicationService; bridge: ClientBridge } | undefined;
     try {
       const before = this.#bridge.getSnapshot();
-      const config = await change(candidate => {
-        runtime = this.#createRuntime(candidate, before.selectedProjectId, before, true);
+      const config = await change((candidate, catalog) => {
+        runtime = this.#createRuntime(catalog, before.selectedProjectId, before, validateProfile ? candidate : undefined);
       });
       if (!runtime) throw new Error('PROVIDER_RUNTIME_NOT_PREPARED');
       this.#bridgeUnsubscribe?.();
@@ -422,6 +427,13 @@ export class DesktopApplicationHost {
     if (testedProfileId === loadDesktopProviderCatalog(this.#providerProfilePath).activeProfileId && JSON.stringify(config) === JSON.stringify(this.#providerConfig)) this.#connectionTest = connectionTest;
     if (testedProfileId !== null) {
       markDesktopProviderVerified(this.#providerProfilePath, testedProfileId, config, connectionTest.ok && connectionTest.tools === 'supported');
+      const updated = loadDesktopProviderCatalog(this.#providerProfilePath, this.#settingsRecovery);
+      const ready = MODEL_GROUPS.every(({ id }) => configuredGroupProvider(updated, id) !== null);
+      const configured = this.#bridge.getSnapshot().settings.credentialReference !== null;
+      const current = this.#providerConfig;
+      if (ready !== configured && current && !this.#closed && !this.#providerChanging && !this.#hasExecutingRun()) {
+        await this.#changeProvider(async prepare => { prepare(current, updated); return current; });
+      }
     }
     return connectionTest;
   }
@@ -756,25 +768,27 @@ export class DesktopApplicationHost {
   }
 
   #createRuntime(
-    config: NormalizedProviderConfig | null,
+    catalog: DesktopProviderCatalog,
     initialProjectId: string,
     previous?: BridgeSnapshot,
-    deferHandoffsUntilRefresh = false,
+    profileToValidate?: NormalizedProviderConfig,
   ): { service: WritingApplicationService; bridge: ClientBridge } {
-    const provider = config === null
-      ? undefined
-      : this.#providerFactory(config, this.#credentials);
     const providers = new Map<string, ModelProvider>();
-    if (config && provider) providers.set(JSON.stringify(config), provider);
-    const resolveModel = (actor?: string) => {
-      // Settings changes are rejected while a run executes. A continued task
-      // reads the saved mapping; retries within a request retain its binding.
-      const selected = groupProviderConfig(loadDesktopProviderCatalog(this.#providerProfilePath, this.#settingsRecovery), config, actor);
-      if (!selected) return undefined;
+    const providerFor = (selected: NormalizedProviderConfig) => {
       const key = JSON.stringify(selected);
       let selectedProvider = providers.get(key);
       if (!selectedProvider) { selectedProvider = this.#providerFactory(selected, this.#credentials); providers.set(key, selectedProvider); }
-      return { provider: selectedProvider, model: selected.model };
+      return selectedProvider;
+    };
+    // Keep provider configuration transactional even before a model is assigned to a group.
+    if (profileToValidate) providerFor(profileToValidate);
+    const startModel = MODEL_GROUPS.every(({ id }) => configuredGroupProvider(catalog, id) !== null)
+      ? groupProviderConfig(catalog, 'intake') : null;
+    const provider = startModel ? providerFor(startModel) : undefined;
+    const resolveModel = (actor?: string) => {
+      // Profile selection for connection testing never participates in writing routes.
+      const selected = groupProviderConfig(loadDesktopProviderCatalog(this.#providerProfilePath, this.#settingsRecovery), actor);
+      return { provider: providerFor(selected), model: selected.model };
     };
     const service = new WritingApplicationService({
       storage: this.#storage,
@@ -787,12 +801,9 @@ export class DesktopApplicationHost {
       service,
       workspaceId: workspaceId(this.#workspacePath),
       model: {
-        model: config?.model ?? "not-configured",
-        providerLabel:
-          config === null
-            ? "尚未配置模型"
-            : `${config.providerId} · ${config.model}`,
-        credentialReference: config?.credentialRef ?? null,
+        model: startModel?.model ?? "not-configured",
+        providerLabel: startModel ? "角色模型已配置" : "请为三档选择模型",
+        credentialReference: startModel?.credentialRef ?? null,
         parameters: { temperature: 0, toolChoice: "auto" },
         budget: {
           maxModelRequests: 64,
@@ -805,7 +816,7 @@ export class DesktopApplicationHost {
       runtimeBuild: "writing-agent-runtime-v1",
       startupNotices: this.#settingsRecovery.notices,
       initialProjectId,
-      deferHandoffsUntilRefresh,
+      deferHandoffsUntilRefresh: previous !== undefined,
       ...(previous === undefined ? {} : { initialSessionId: previous.selectedSessionId, initialGeneration: previous.generation + 1 }),
       uiSettingsPersistence: createFileUiSettingsPersistence({
         filePath: join(this.#workspacePath, ".writing-agent", "ui-settings.json"),

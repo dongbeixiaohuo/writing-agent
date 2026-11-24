@@ -1633,7 +1633,7 @@ export class ApplicationClientBridge implements ClientBridge {
         await this.selectSession(projectId, receipt.sessionId);
         return { runId: receipt.runId };
       }
-      if (this.#model.credentialReference === null) throw new Error('MODEL_CONFIGURATION_REQUIRED');
+      this.#requireModelConfiguration();
       if (options.styleSelection !== undefined) this.#service.resolveStyleSelection(options.styleSelection);
       mutationValue(this.#service.createProject({ operationId: `${operationId}:project`, projectId,
         name: '新会话', nameSource: 'placeholder', conversationInputHash, mode: 'deep', actor: { kind: 'user', id: 'local-ui' } }));
@@ -1650,6 +1650,7 @@ export class ApplicationClientBridge implements ClientBridge {
     const operationId = options.operationId ?? this.#operationIdFactory();
     return this.#once(operationId, 'conversation.confirm', commandInput('conversation.confirm', [projectId, proposalVersionId]), async () => {
       if (!projectId) throw new Error('PROJECT_SELECTION_REQUIRED');
+      this.#requireModelConfiguration();
       const projection = this.#service.getProjectProjection(projectId);
       if (projection.runs.some(run => ACTIVE_STATUSES.has(run.status))) throw new Error('RUN_ALREADY_ACTIVE');
       const state = this.#service.confirmConversationBrief(projectId, proposalVersionId, operationId);
@@ -1716,6 +1717,7 @@ export class ApplicationClientBridge implements ClientBridge {
       commandInput("run.start", [owner.workspaceId, owner.projectId, options.owner === undefined ? 'legacy-session' : owner.sessionId, body, options.styleSelection === undefined ? 'unchanged' : JSON.stringify(options.styleSelection)]),
       async () => {
         assertMessageOwner(this.#snapshot, owner);
+        this.#requireModelConfiguration();
         const generation = this.#snapshot.generation;
         const projectId = owner.projectId;
         if (projectId.length === 0) throw new Error("PROJECT_SELECTION_REQUIRED");
@@ -1796,6 +1798,7 @@ export class ApplicationClientBridge implements ClientBridge {
       "fact-check.run",
       commandInput("fact-check.run", [this.#snapshot.selectedProjectId]),
       async () => {
+        this.#requireModelConfiguration();
         const generation = this.#snapshot.generation;
         const projectId = this.#snapshot.selectedProjectId;
         if (projectId.length === 0) throw new Error("PROJECT_SELECTION_REQUIRED");
@@ -1884,6 +1887,7 @@ export class ApplicationClientBridge implements ClientBridge {
         const projection = this.#service.getProjectProjection(projectId);
         const run = projection.runs.find((candidate) => candidate.id === runId);
         if (run === undefined) throw new Error("RUN_SCOPE_INVALID");
+        this.#requireModelConfiguration();
         if ((run.stopReason === 'FACT_SEARCH_DECISION_REQUIRED' || options.factSearchDecision) &&
           (decision !== 'resume' || feedback || options.checkpointApproval)) throw new Error('FACT_SEARCH_DECISION_REQUIRED');
         if (options.checkpointApproval) {
@@ -2351,6 +2355,10 @@ export class ApplicationClientBridge implements ClientBridge {
     const result = action();
     this.#commands.set(operationId, { kind, input, result });
     return result;
+  }
+
+  #requireModelConfiguration(): void {
+    if (this.#model.credentialReference === null) throw new Error('MODEL_CONFIGURATION_REQUIRED');
   }
 
   #ensureLive(): void {

@@ -58,10 +58,11 @@ test('re-verification clears stale success and scopes failure to the tested prof
     await ui.flush();
     const verify = () => ui.nodes().find((n: any) => n.type === 'button' && ui.text(n) === '验证连接').props.onClick();
     verify(); await ui.flush();
-    assert.match(ui.text(), /已验证通过，可在分组中选择/);
+    assert.match(ui.text(), /已通过验证，可在上方选择/);
+    assert.doesNotMatch(ui.text(), /默认供应商|设为默认|当前默认/u);
     next = 'failure';
     verify(); ui.render();
-    assert.doesNotMatch(ui.text(), /已验证通过，可在分组中选择/, 'old success is cleared as soon as re-verification starts');
+    assert.doesNotMatch(ui.text(), /已通过验证，可在上方选择/, 'old success is cleared as soon as re-verification starts');
     await ui.flush();
     assert.doesNotMatch(ui.text(), /已验证通过|尚未验证/);
     assert.match(ui.text(), /回复达到单次输出长度上限/);
@@ -78,7 +79,7 @@ test('re-verification clears stale success and scopes failure to the tested prof
     assert.match(ui.text(), /deepseek\/deepseek-flash · 已验证通过/, 'failure on a non-default model does not revoke another model');
     next = 'success'; verify(); await ui.flush();
     next = 'throw'; verify(); await ui.flush();
-    assert.doesNotMatch(ui.text(), /已验证通过，可在分组中选择/);
+    assert.doesNotMatch(ui.text(), /已通过验证，可在上方选择/);
     assert.equal(tested.length, 6);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -163,7 +163,10 @@ test('desktop URL reader survives provider replacement and imports a first-turn 
   try {
     const config = await host.configureProvider({ kind: 'openai_compatible', providerId: 'reader-provider', baseURL: 'https://example.test/v1',
       model: 'first', models: ['first', 'second'], tools: 'supported', usage: 'unknown', apiKey: 'test', persistence: 'session' });
-    await host.selectProvider(config.activeProfileId!, 'second');
+    const target = { profileId: config.activeProfileId!, model: 'second' };
+    const profilePath = join(root, 'provider.json');
+    markDesktopProviderVerified(profilePath, target.profileId, { ...loadDesktopProviderProfile(profilePath)!, model: target.model });
+    await host.configureModelGroups({ planning: target, writing: target, review: target });
     await host.bridge.startConversation(`参考这篇公众号文章：${url}`);
     const deadline = Date.now() + 20_000;
     while (host.bridge.getSnapshot().connection !== 'ready') {
@@ -275,8 +278,8 @@ test("model changes keep a waiting project's session and publish a newer rendere
     assert.equal(after.selectedProjectId, "p");
     assert.equal(after.selectedSessionId, "s-old");
     assert.ok(after.generation > before.generation);
-    assert.equal(after.settings.providerLabel, "new-provider · new-model");
-    assert.equal(renderer.getSnapshot().settings.providerLabel, "new-provider · new-model");
+    assert.equal(after.settings.providerLabel, "请为三档选择模型");
+    assert.equal(renderer.getSnapshot().settings.providerLabel, after.settings.providerLabel);
     assert.equal(renderer.getSnapshot().selectedSessionId, "s-old");
     const audit = openWorkspaceStorage({ workspacePath: root, readOnly: true });
     try { assert.equal(audit.getRun("r")?.status, "waiting_user"); } finally { audit.close(); }
@@ -309,6 +312,13 @@ test('an existing writing run resumes using the newly selected model without los
   };
   try {
     const config = await host.configureProvider(input);
+    const profilePath = join(root, 'provider.json');
+    const first = { profileId: config.activeProfileId!, model: 'first-model' };
+    const second = { ...first, model: 'second-model' };
+    const storedConfig = loadDesktopProviderProfile(profilePath)!;
+    markDesktopProviderVerified(profilePath, first.profileId, storedConfig);
+    markDesktopProviderVerified(profilePath, second.profileId, { ...storedConfig, model: second.model });
+    await host.configureModelGroups({ planning: first, writing: first, review: first });
     const project = await host.bridge.createProject({ name: '已有项目', mode: 'quick', topic: '个人感想', genre: 'narrative_observation',
       audience: '自己', targetCharacters: 800, constraints: ['不虚构'], interactionMode: 'co_creation', authorVoice: null,
       styleReference: null, styleDecision: 'unspecified', directionDecision: 'user_confirmed', platform: null, publicationGoal: 'not_applicable',
@@ -319,7 +329,11 @@ test('an existing writing run resumes using the newly selected model without los
     const before = host.bridge.getSnapshot();
     const count = requests.length;
     assert.ok(count > 0);
-    await host.selectProvider(config.activeProfileId!, 'second-model');
+    await host.configureModelGroups({ planning: first, writing: second, review: null });
+    await assert.rejects(host.bridge.resumeRun(run.runId, 'resume', { feedback: '补充一点。' }), /MODEL_CONFIGURATION_REQUIRED/u);
+    assert.equal(requests.length, count);
+    assert.ok(host.bridge.getSnapshot().recoverableRuns.some(candidate => candidate.runId === run.runId && candidate.status === 'waiting_user'));
+    await host.configureModelGroups({ planning: first, writing: second, review: first });
     const resumed = await host.bridge.sendMessage('我最想表达的是放慢脚步后看到的新变化。');
     assert.equal(resumed.runId, run.runId);
     await wait();
@@ -425,7 +439,7 @@ test("desktop application host switches from unconfigured to a securely managed 
     const initial = await host.bridge.handshake();
     assert.equal(initial.mock, false);
     assert.equal(initial.clientBuild, "writing-agent-desktop@1.0.0-rc.6");
-    assert.match(host.bridge.getSnapshot().settings.providerLabel, /未配置/u);
+    assert.match(host.bridge.getSnapshot().settings.providerLabel, /为三档选择模型/u);
     assert.equal((await host.providerStatus()).configured, false);
 
     const status = await host.configureProvider({
@@ -444,7 +458,8 @@ test("desktop application host switches from unconfigured to a securely managed 
     assert.equal(status.credentialPersistence, "system");
     assert.equal(JSON.stringify(status).includes(secret), false);
     assert.equal(readFileSync(profilePath, "utf8").includes(secret), false);
-    assert.equal(host.bridge.getSnapshot().settings.providerLabel, "example-provider · example-model");
+    assert.equal(host.bridge.getSnapshot().settings.credentialReference, null);
+    assert.deepEqual(status.modelGroups, { planning: null, writing: null, review: null });
 
     const project = await host.bridge.createProject({
       name: "桌面项目",
