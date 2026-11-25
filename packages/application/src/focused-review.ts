@@ -15,16 +15,20 @@ export const PERSUASION_REVIEW_INSTRUCTIONS = [
 
 export const FOCUSED_REVISION_INSTRUCTIONS = [
   '只修 revisionFeedback 定位到的问题，看原句所在的完整段落和前后文再动笔。审稿意见是待检验的推理，不能当出处。意见站不住或无需修改时跳过。',
-  '以 confirmedFocus 为准。修补只服务于作者的主问题，审稿提出的旁支不扩展为新主题或结论。',
+  '以 confirmedFocus 为准。每条意见先找一个最影响结论的读者疑问，把那一步讲清楚。材料回答的是相邻问题时，写清读者能感受到的差别。无需把审稿列出的反例、条件或术语逐项写进正文。',
   '逻辑问题用 paragraph，replacement 写完整的目标段落，让前提、推论和后一句接上。先交代建议是什么，再讨论它为何难实行。删掉建议时，一并处理依赖它的反驳和收尾。',
   '没出处的反例只当假设，可用具体的可能情形说清因果，也可删掉站不住的推断。保留确有必要的条件，不把可能写成已发生，不为了覆盖极端情况叠加限定。',
+  '把材料边界写成正文里的具体判断，例如说清某项数据统计了谁、能算出什么。不要写成向作者汇报“材料没写什么”。文章讨论公开披露本身时，保留读者需要知道的未披露事项和出处；不把可能的归因写成事实。',
   '有材料支持的订正用 source。source.id 和 source.quote 指向已提供的原文依据，replacement 是改好的整个段落。用自己的话把新信息接进段落，已说过的事实只说一次；写判例时，可以把案情、法院理由和结果合起来写。不要把原文当补丁贴回去，不增加无来源的新事实。',
+  '前文已经说清的一组数字、案情或例子，在修改段落中只留读者理解后续判断所需的一句回指，把篇幅留给本段新增的判断。',
   '同一段涉及多条意见时合并在一次修改里，只提交其中一个 findingId。保留作者的方向、语气和其余段落。',
   '按 revisionOutputSchema 提交 reviewEdits，复制 baseBodyVersionId 和要修的 findingId。没有需要改的原句则提交空数组。',
 ].join('\n');
 
 export const FINAL_LINT_INSTRUCTIONS = [
   '做局部检查：reference 是指代接不上，wording 是用词歧义或指错东西，material 是表述与所给原文不符，context 是一段话仍在反驳或引用已经被删掉的建议、前提或对象。新概念第一次出现本身不算问题。',
+  '先读本轮 beforeRevision 里的改动及其前后文。若新句像在汇报查了什么材料、或把审稿意见列成条件清单，用 wording 修掉打断阅读的那一句。保留对读者有用的来源归属、真实披露缺口和必要限定。',
+  'crossSectionDataRepeats 只是重复数据候选。看两处是否在讲同一件事、后一处有没有带来新判断。确属复述时，用 wording 在后一处保留简短回指，再继续本段推论。quote 带上只在后一处出现的连续上下文；比较不同对象或必要呼应时保留。',
   '判决或通报的转述若还带着拗口的公文句式，用 wording 把这一处说顺，保留原意和作者的语气。先弄清当事人说了什么、法院认定了什么、日期说的是哪段时间。转述已经说错原文时用 material，附给出的原句作为订正依据。',
   '用 wording 局部改掉反复出现的“某媒体那篇文章提到”“某评论说得很直”等转述套话。保留必要的报道、调查或观点归属，写清谁做了调查、谁说了什么，分清报道日期与调查时间。只在本次提供的材料能确认时补具体名称或时间；原始出处不明就保留真实的转引层级。删套话不能把评论意见变成已知事实，或连带删掉数字对应的样本。直接讨论某篇文章时保留必要指代。每条只替换相关短语或一句。',
   '优先改几个字或一句。发现 context 问题时先看全文和 beforeRevision（若有），用正文交代被省掉的对象，或收掉依赖它的话。看不出原意时不要编造前提。',
@@ -37,6 +41,72 @@ export const GUIDE_LINT_INSTRUCTIONS = [
   '实用指南中遇到只有行政部门职责、没有读者动作的句子，先看本次 sources。来源明确记载具体入口或所需材料时，用 material 局部换成读者能照做的一步，带上原句依据及实际适用范围。没有这类材料时，可用 wording 去掉重复而无助操作的职责说明，保留正文已有的有效做法及出处。不要猜按钮、把受理范围扩大或承诺结果。',
   '跨节重复的法条解释只修重复的位置，保留新的适用情形、反例或做法，以及读者理解后续所需的简短回指。结尾若混有新的判断与复述，局部删掉重复步骤、渠道与法条，留下新增判断。标题、段落布局与其它文字原样保留。',
 ].join('\n');
+
+const REPEATED_DATA_WINDOW = 3;
+const MAX_REPEATED_DATA_TERMS = 6;
+const MAX_REPEATED_DATA_SPAN = 160;
+const MAX_REPEATED_DATA_HINTS = 8;
+const measuredNumber = /[+-]?\d+(?:\.\d+)?[\t ]*(?:个百分点|[%％]|万亿(?:美元|元)?|亿(?:美元|元)?|万元|天|小时|分钟|个月|倍)/gu;
+
+type DataPassage = {
+  section: string;
+  sectionId: string;
+  paragraph: ReturnType<typeof articleParagraphs>[number];
+  measures: { value: string; index: number; end: number }[];
+};
+
+function dataExcerpt(passage: DataPassage, offset: number, count: number) {
+  const first = passage.measures[offset]!;
+  const last = passage.measures[offset + count - 1]!;
+  return { section: passage.section, paragraphId: passage.paragraph.id,
+    excerpt: passage.paragraph.text.slice(Math.max(0, first.index - 24), last.end + 24) };
+}
+
+function dataSpan(measures: DataPassage['measures'], offset: number, count: number) {
+  return measures[offset + count - 1]!.end - measures[offset]!.index;
+}
+
+/** Surface comparisons for the editor. Matching numbers alone never authorize an edit. */
+export function findCrossSectionDataRepeats(paragraphs: ReturnType<typeof articleParagraphs>) {
+  const seen = new Map<string, { passage: DataPassage; offset: number }>();
+  const repeats: { numbers: string[]; earlier: ReturnType<typeof dataExcerpt>; later: ReturnType<typeof dataExcerpt> }[] = [];
+  let section = '导语';
+  let sectionId = '';
+  for (const [index, paragraph] of paragraphs.entries()) {
+    if (isArticleHeading(paragraph, index)) {
+      if (index !== 0) {
+        section = paragraph.text.split(/\r?\n/u)[0]!.replace(/^#{1,6}\s+/u, '').trim();
+        sectionId = paragraph.id;
+      }
+      continue;
+    }
+    const measures = Array.from(paragraph.text.matchAll(measuredNumber), match => ({
+      value: match[0].replace(/[\t ]/gu, '').normalize('NFKC'), index: match.index, end: match.index + match[0].length,
+    }));
+    const passage = { section, sectionId, paragraph, measures };
+    const values = measures.map(number => number.value);
+    for (let offset = 0; offset + REPEATED_DATA_WINDOW <= measures.length; offset++) {
+      if (dataSpan(measures, offset, REPEATED_DATA_WINDOW) > MAX_REPEATED_DATA_SPAN) continue;
+      const key = values.slice(offset, offset + REPEATED_DATA_WINDOW).join('|');
+      const earlier = seen.get(key);
+      if (!earlier) {
+        seen.set(key, { passage, offset });
+        continue;
+      }
+      if (earlier.passage.sectionId === sectionId) continue;
+      let count = REPEATED_DATA_WINDOW;
+      while (count < MAX_REPEATED_DATA_TERMS && values[offset + count] !== undefined &&
+        values[offset + count] === earlier.passage.measures[earlier.offset + count]?.value &&
+        dataSpan(measures, offset, count + 1) <= MAX_REPEATED_DATA_SPAN &&
+        dataSpan(earlier.passage.measures, earlier.offset, count + 1) <= MAX_REPEATED_DATA_SPAN) count++;
+      repeats.push({ numbers: values.slice(offset, offset + count),
+        earlier: dataExcerpt(earlier.passage, earlier.offset, count), later: dataExcerpt(passage, offset, count) });
+      if (repeats.length === MAX_REPEATED_DATA_HINTS) return repeats;
+      break;
+    }
+  }
+  return repeats;
+}
 
 const shortText = (max: number) => z.string().max(max).regex(/\S/u);
 const span = shortText(320).regex(/^[^\r\n]+$/u);
