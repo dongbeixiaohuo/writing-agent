@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { WritingApplicationService } from "../../application/src/index.js";
+import { intentFixtureEvents } from "../../application/test/intent-fixture.js";
+import type { ModelRequest, ProviderStreamEvent } from "../../runtime/llm/src/index.js";
 import { openWorkspaceStorage } from "../../storage/src/index.js";
 import type { WritingBrief } from "../../writing-core/src/index.js";
 import { createApplicationBridge } from "../src/application-bridge.js";
@@ -167,6 +169,82 @@ async function apiWithHost(
 }
 
 describe("secure local Web host", () => {
+  it("FH-07 preserves selected, cleared and omitted styles through Local Web conversation commands", async () => {
+    const fixture = staticFixture();
+    const workspacePath = mkdtempSync(join(tmpdir(), "wa-web-style-"));
+    const storage = openWorkspaceStorage({ workspacePath });
+    const provider = new class extends ImmediateWorkflowProvider {
+      protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+        const intent = intentFixtureEvents(request);
+        if (intent) { yield* intent; return; }
+        const authorReply = request.tools?.some(tool => tool.name === 'respond_author');
+        const reply = '先聊聊城市步行。';
+        yield { type: 'tool_call_delta', index: 0, id: request.requestId, name: authorReply ? 'respond_author' : 'respond_writing_intake',
+          argumentsDelta: JSON.stringify(authorReply ? { reply } : { reply, summary: '记录写作想法', questions: ['想从哪里写起？'] }) };
+        yield { type: 'completed', finishReason: 'tool_calls' };
+      }
+    }();
+    const service = new WritingApplicationService({ storage, provider });
+    const profile = storage.styleProfiles().list().find(p => p.builtin)!;
+    const selection = { id: profile.id, version: profile.version };
+    const host = await startLocalWebHost({ staticRoot: fixture.root, bridgeFactory: () => createApplicationBridge({
+      service, workspaceId: 'web-style', model: { model: 'fixture', providerLabel: 'fixture', credentialReference: 'test', parameters: {} },
+    }) });
+    const requests: { route: string; body: Record<string, unknown> }[] = [];
+    const remote = createWebClientBridge({ baseUrl: host.origin, bootstrapCapability: (await loadBootstrap(host.origin)).token,
+      fetchImpl(input, init = {}) {
+        const route = new URL(String(input)).pathname;
+        if (route.endsWith('/start-conversation') || route.endsWith('/start-run')) {
+          requests.push({ route, body: JSON.parse(String(init.body)) });
+        }
+        const headers = new Headers(init.headers);
+        headers.set('origin', host.origin);
+        return fetch(input, { ...init, headers });
+      },
+    });
+    const waitForSavedReply = async (runId: string) => {
+      for (let i = 0; i < 200 && storage.getRun(runId)?.status !== 'completed'; i++) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      const run = storage.getRun(runId);
+      assert.equal(run?.status, 'completed', run?.stopReason ?? undefined);
+      await remote.refresh();
+    };
+    try {
+      const text = '写一篇城市步行文章';
+      const started = await remote.startConversation(text, { operationId: 'op-1', styleSelection: selection });
+      assert.deepEqual(requests.at(-1)?.body.styleSelection, selection);
+      const projectId = remote.getSnapshot().selectedProjectId;
+      const selected = service.getProjectStyleSelection(projectId);
+      assert.equal(selected?.id, selection.id);
+      assert.equal(selected?.version, selection.version);
+      await waitForSavedReply(started.runId);
+
+      const continued = await remote.sendMessage('从日常路线写起', { operationId: 'keep-style' });
+      assert.equal(Object.hasOwn(requests.at(-1)!.body, 'styleSelection'), false);
+      assert.deepEqual(service.getProjectStyleSelection(projectId), selected);
+      await waitForSavedReply(continued.runId);
+
+      const cleared = await remote.sendMessage('写我的常走路线', { operationId: 'clear-style', styleSelection: null });
+      assert.equal(requests.at(-1)?.body.styleSelection, null);
+      assert.equal(service.getProjectStyleSelection(projectId), null);
+      await waitForSavedReply(cleared.runId);
+
+      await remote.startConversation(text, { operationId: 'new-no-style' }).then(({ runId }) => waitForSavedReply(runId));
+      assert.equal(Object.hasOwn(requests.at(-1)!.body, 'styleSelection'), false);
+      assert.equal(service.getProjectStyleSelection(remote.getSnapshot().selectedProjectId), undefined);
+      await remote.startConversation(text, { operationId: 'new-clear-style', styleSelection: null }).then(({ runId }) => waitForSavedReply(runId));
+      assert.equal(requests.at(-1)?.body.styleSelection, null);
+      assert.equal(service.getProjectStyleSelection(remote.getSnapshot().selectedProjectId), null);
+    } finally {
+      remote.dispose();
+      await host.close();
+      storage.close();
+      fixture.cleanup();
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it('keeps an authenticated active session alive but expires an idle one', async () => {
     const fixture = staticFixture();
     const workspacePath = mkdtempSync(join(tmpdir(), 'wa-web-lease-'));

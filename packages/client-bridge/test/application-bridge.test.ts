@@ -1112,7 +1112,7 @@ describe("Application Service client bridge", () => {
     }
   });
 
-  it("reruns only fact checking after a user edit and projects one actionable stage", async () => {
+  it("FH-10 reruns only fact checking after a user edit without making the earlier run export-ready again", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "wa-bridge-fact-rerun-"));
     const storage = openWorkspaceStorage({ workspacePath });
     const provider = new BridgeWritingProvider();
@@ -1127,6 +1127,7 @@ describe("Application Service client bridge", () => {
       await bridge.refresh();
       const beforeEdit = bridge.getSnapshot();
       assert.notEqual(beforeEdit.revisionWorkspace.bodyVersionId, null);
+      assert.equal(beforeEdit.runRecords.find(run => run.id === drafted.runId)?.publicationReady, true);
       const processReviewIds = beforeEdit.materialProcessWorkspace.reviews.map((review) => review.id);
       assert.equal(processReviewIds.length, 2);
       await bridge.saveBody(
@@ -1136,6 +1137,7 @@ describe("Application Service client bridge", () => {
         { operationId: "fact-rerun-edit" },
       );
       assert.equal(bridge.getSnapshot().factCheckWorkspace.status, "stale");
+      assert.equal(bridge.getSnapshot().runRecords.find(run => run.id === drafted.runId)?.publicationReady, false);
       const bodyCount = bridge.getSnapshot().previewDocument.version;
 
       const checked = await bridge.runFactCheck({ operationId: "fact-rerun-only" });
@@ -1149,6 +1151,7 @@ describe("Application Service client bridge", () => {
         [["fact_check", "completed"]],
       );
       assert.equal(after.runRecords.at(-1)?.publicationReady, true);
+      assert.equal(after.runRecords.find(run => run.id === drafted.runId)?.publicationReady, false);
       const completion = JSON.stringify(after.timelineBySession[after.selectedSessionId]);
       assert.match(completion, /下一步.*查看当前稿件.*导出文章/u);
       const factMessages = (after.timelineBySession[after.selectedSessionId] ?? []).filter(item =>

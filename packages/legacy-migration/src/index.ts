@@ -28,7 +28,7 @@ import {
 } from "node:path";
 import { backup as backupDatabase, DatabaseSync } from "node:sqlite";
 
-import { canonicalJson } from "../../writing-core/src/index.js";
+import { canonicalJson, WritingBriefSchema } from "../../writing-core/src/index.js";
 import { openWorkspaceStorage } from "../../storage/src/index.js";
 
 export type LegacySourceSpec =
@@ -398,6 +398,8 @@ function scanManifestSource(source: Extract<LegacySourceSpec, { kind: "manifest"
     warnings: [
       "Legacy event history is not reconstructed.",
       "Legacy fact-check state is imported as not_checked and requires a new check.",
+      ...(manifest.mode !== undefined && manifest.mode !== 'quick' && manifest.mode !== 'deep'
+        ? ['Legacy manifest specifies an unsupported mode; migration will use deep.'] : []),
     ],
     totalBytes: [...files.values()].reduce((total, file) => total + file.byteLength, 0),
   };
@@ -664,6 +666,7 @@ function scanDesktopSource(
       outputs: DesktopOutputRow[];
       artifacts: ScannedArtifact[];
       contentHash: string;
+      targetCharacters: number;
     }> = [];
 
     for (const row of projectRows) {
@@ -724,7 +727,13 @@ function scanDesktopSource(
             .sort((left, right) => left.path.localeCompare(right.path)),
         }),
       );
-      projectInputs.push({ row, outputs: projectOutputs, artifacts, contentHash });
+      const targetCharacters = row.word_target ?? Math.max(1, artifacts.findLast(item => item.kind === 'body')?.content.length ?? 1);
+      if (!WritingBriefSchema.shape.lengthTarget.safeParse({ targetCharacters }).success) {
+        throw new LegacyMigrationError('LEGACY_WORD_TARGET_INVALID',
+          `Legacy project ${row.id} must have a word_target that is an integer from 1 to 1,000,000, or no word_target and a body of that length.`);
+      }
+      if (row.word_target === null) warnings.push(`Legacy project ${row.id}: word_target is missing; using ${targetCharacters} characters from the existing body (minimum 1).`);
+      projectInputs.push({ row, outputs: projectOutputs, artifacts, contentHash, targetCharacters });
     }
 
     const logicalDatabaseHash = sha256(
@@ -745,7 +754,7 @@ function scanDesktopSource(
       sourceLocatorHash,
       sourceContentHash,
       files: [...files.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath)),
-      projects: projectInputs.map(({ row, artifacts, contentHash }) => ({
+      projects: projectInputs.map(({ row, artifacts, contentHash, targetCharacters }) => ({
         sourceProjectId: row.id,
         targetProjectId: `legacy-${sha256(
           canonicalJson({ sourceLocatorHash, sourceProjectId: row.id, contentHash }),
@@ -754,10 +763,7 @@ function scanDesktopSource(
         mode: row.mode as "quick" | "deep",
         topic: row.topic,
         audience: row.audience,
-        targetCharacters:
-          typeof row.word_target === "number" && row.word_target > 0
-            ? row.word_target
-            : Math.max(1, artifacts.findLast((item) => item.kind === "body")?.content.length ?? 1),
+        targetCharacters,
         legacyFactStatus: "not_available",
         styleReference: row.style_profile_id,
         artifacts,
@@ -821,11 +827,15 @@ function planHashInput(plan: Omit<LegacyMigrationPlan, "planHash" | "createdAt" 
   return canonicalJson(plan);
 }
 
+function scanSource(source: LegacySourceSpec): ScannedSource {
+  return source.kind === "manifest" ? scanManifestSource(source) : scanDesktopSource(source);
+}
+
 export function planLegacyMigration(input: PlanLegacyMigrationInput): LegacyMigrationPlan {
-  const scanned =
-    input.source.kind === "manifest"
-      ? scanManifestSource(input.source)
-      : scanDesktopSource(input.source);
+  return buildLegacyMigrationPlan(input, scanSource(input.source));
+}
+
+function buildLegacyMigrationPlan(input: PlanLegacyMigrationInput, scanned: ScannedSource): LegacyMigrationPlan {
   const targetWorkspacePath = resolve(input.targetWorkspacePath);
   if (
     [scanned.sourceRoot, ...scanned.additionalSourceRoots].some((root) =>
@@ -1380,36 +1390,34 @@ function persistedReport(
 export async function applyLegacyMigration(
   input: ApplyLegacyMigrationInput,
 ): Promise<LegacyMigrationReport> {
-  const plan = input.plan;
-  if (plan.schemaVersion !== 1) {
+  const reviewed = input.plan;
+  if (reviewed.schemaVersion !== 1) {
     throw new LegacyMigrationError(
       "MIGRATION_PLAN_UNSUPPORTED",
       "Migration plan schema is not supported",
     );
   }
-  const refreshed = planLegacyMigration({
-    source: plan.source,
-    targetWorkspacePath: plan.targetWorkspacePath,
+  const scanned = scanSource(reviewed.source);
+  const plan = buildLegacyMigrationPlan({
+    source: reviewed.source,
+    targetWorkspacePath: reviewed.targetWorkspacePath,
     ...(input.clock === undefined ? {} : { clock: input.clock }),
     ...(input.spaceProbe === undefined ? {} : { spaceProbe: input.spaceProbe }),
-  });
-  if (refreshed.planHash !== plan.planHash) {
+  }, scanned);
+  const { planHash, createdAt: _createdAt, spaceCheck: _spaceCheck, ...reviewedInputs } = reviewed;
+  if (plan.planHash !== planHash || sha256(planHashInput(reviewedInputs)) !== planHash) {
     throw new LegacyMigrationError(
       "MIGRATION_PLAN_STALE",
-      "Legacy source or migration target changed after the dry-run",
+      "The reviewed migration plan, its source or its target changed after the dry-run. Run a new scan.",
     );
   }
-  if (!refreshed.spaceCheck.ok) {
+  if (!plan.spaceCheck.ok) {
     throw new LegacyMigrationError(
       "TARGET_SPACE_INSUFFICIENT",
       "Migration target does not have enough available space",
     );
   }
   assertMigrationTargetWritable(plan.targetWorkspacePath);
-  const scanned =
-    plan.source.kind === "manifest"
-      ? scanManifestSource(plan.source)
-      : scanDesktopSource(plan.source);
   const startedAt = input.clock?.() ?? new Date().toISOString();
   const migrationRoot = join(
     plan.targetWorkspacePath,

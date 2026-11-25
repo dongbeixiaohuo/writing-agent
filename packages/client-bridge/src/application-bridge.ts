@@ -833,6 +833,7 @@ function runRecordView(
   const state = new Map<WritingWorkflowStage, WorkflowStageView["status"]>();
   const operationStages = new Map<string, WritingWorkflowStage>();
   let sawWorkflowTool = false;
+  let passedFactSnapshotId: string | null = null;
 
   for (const event of projection.events) {
     if (event.runId !== run.id) continue;
@@ -862,12 +863,15 @@ function runRecordView(
     if (stage === undefined) continue;
     if (event.type === "tool.completed") {
       const result = successfulToolResult(event.payload);
+      if (stage === 'fact_check') {
+        passedFactSnapshotId = result?.status === 'passed' ? textPayload(result, 'snapshotId') : null;
+      }
       const handoff = result?.handoff as { kind?: string } | undefined;
       if (handoff?.kind === 'revision_required') {
         state.set(stage, 'pending');
         continue;
       }
-      state.set(stage, stage === 'fact_check' && successfulToolResult(event.payload)?.status !== 'passed'
+      state.set(stage, stage === 'fact_check' && result?.status !== 'passed'
         ? 'failed'
         : mergeWorkflowStageStatus(state.get(stage), "completed"));
     }
@@ -929,6 +933,7 @@ function runRecordView(
     publicationReady:
       run.status === "completed" &&
       state.get("fact_check") === "completed" &&
+      passedFactSnapshotId !== null && passedFactSnapshotId === projection.factCheck.currentSnapshotId &&
       projection.factCheck.status === "passed",
   };
 }

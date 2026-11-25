@@ -1626,7 +1626,8 @@ export function preparePublicationContent(
   const layoutSuffix = input.format === "html" && layoutPreset !== "clean"
     ? `-${layoutPreset}`
     : "";
-  const relativePath = `exports/${safeExportStem(input.project.id)}/publication/${safeExportStem(binding.title)}-${binding.bodyHash.slice(0, 12)}${layoutSuffix}.${input.format}`;
+  const titleSuffix = contentHash(binding.title).slice(0, 12);
+  const relativePath = `exports/${safeExportStem(input.project.id)}/publication/${safeExportStem(binding.title)}-${titleSuffix}-${binding.bodyHash.slice(0, 12)}${layoutSuffix}.${input.format}`;
   return {
     ...binding,
     mode: "publication",

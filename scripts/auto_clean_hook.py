@@ -17,6 +17,7 @@ if str(PROJECT_SOURCE_ROOT) not in sys.path:
 
 from scripts.claude_runtime_paths import resolve_workspace_root, workspace_articles_dir
 from scripts.fact_check_gate import publication_passed
+from scripts.generate_clean import clean_markdown
 
 # 默认工作区根目录。plugin 模式可通过事件里的 workspace_root 覆盖。
 PROJECT_ROOT = resolve_workspace_root()
@@ -161,13 +162,13 @@ def resolve_clean_source(event_data: dict, *, allow_legacy_fallback: bool = Fals
     return None
 
 
-def has_clean_version(draft_path: Path) -> bool:
-    """检查是否已经有对应的 _clean.txt，且比原稿更新"""
+def has_clean_version(draft_path: Path, source_text: str) -> bool:
+    """只复用与本轮正文清洗结果一致的交付文件。"""
     clean_path = draft_path.parent / (draft_path.stem + '_clean.txt')
-    if not clean_path.exists():
+    try:
+        return clean_path.read_text(encoding='utf-8') == clean_markdown(source_text)
+    except (FileNotFoundError, UnicodeDecodeError):
         return False
-    # 如果 clean.txt 比源稿新，说明已经处理过了，不重复
-    return clean_path.stat().st_mtime >= draft_path.stat().st_mtime
 
 
 def fact_check_passed(draft_path: Path) -> bool:
@@ -192,12 +193,12 @@ def main(event_data_override: dict | None = None, *, allow_legacy_fallback: bool
         # 没有找到定稿文件，静默退出
         return 0
 
+    source_bytes = latest_draft.read_bytes()
     if not fact_check_passed(latest_draft):
         print("跳过生成：事实核查未通过，或结果未绑定当前正文与锁定标题哈希", file=sys.stderr)
         return 0
 
-    if has_clean_version(latest_draft):
-        # 已经有最新的 clean 版本了，不重复生成
+    if has_clean_version(latest_draft, source_bytes.decode('utf-8')) and latest_draft.read_bytes() == source_bytes:
         return 0
 
     # 调用 generate_clean.py 生成纯净版
