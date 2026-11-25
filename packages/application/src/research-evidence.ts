@@ -1,7 +1,18 @@
+import { z } from 'zod';
 import { parseEvidenceLedger } from '../../writing-core/src/index.js';
 import { EDITORIAL_PLAN_JSON_SCHEMA, parseEditorialPlan, repairEditorialPlan, type EditorialPlan } from './editorial-plan.js';
 
 const text = { type: 'string', minLength: 1 } as const;
+const nonBlank = z.string().regex(/\S/u);
+const CounterclaimSchema = z.object({
+  claim_text: nonBlank,
+  source_url: z.string().refine(value => /^https?:\/\//i.test(value) && URL.canParse(value)).nullable().describe('HTTP(S) source URL, or null when unavailable.'),
+  outcome: z.enum(['supported', 'not_found', 'blocked']),
+  impact_on_argument: nonBlank,
+});
+const { $schema: _counterclaimSchemaVersion, ...counterclaimArraySchema } = z.toJSONSchema(z.array(CounterclaimSchema), { target: 'draft-07' });
+
+const COUNTERCLAIM_GUIDANCE = '逐条结合 counterclaims 的反例和对应的限制条件（impact_on_argument）判断原结论能说到哪里，沿作者确认的方向推进。反例记录不能替代原始材料；not_found 或 blocked 只说明材料缺口，不能写成事实。';
 
 /** Transport-only compression. The persisted ledger and fact gate stay unchanged. */
 export const COMPACT_RESEARCH_SCHEMA = {
@@ -9,6 +20,7 @@ export const COMPACT_RESEARCH_SCHEMA = {
   properties: {
     editorialPlan: EDITORIAL_PLAN_JSON_SCHEMA,
     notes: { type: 'string', description: 'Concise public gaps, exclusions and shared boundaries, not private reasoning.' },
+    counterclaims: { ...counterclaimArraySchema, description: 'Counterexamples that affect the argument, paired with their source, outcome and the specific limit they place on the conclusion. Keep them separate from evidence claims.' },
     sources: { type: 'array', items: {
       type: 'object', additionalProperties: false,
       properties: { source_id: text, source_title: text, source_publisher: text, accessed_at: text,
@@ -87,8 +99,24 @@ function readResearch(content: string): Record<string, unknown> | null {
   }
 }
 
+function usableCounterclaims(value: unknown) {
+  return (Array.isArray(value) ? value : []).flatMap(row => {
+    const result = CounterclaimSchema.safeParse(row);
+    return result.success ? [result.data] : [];
+  });
+}
+
+export function researchCounterclaimContext(content: string | undefined) {
+  const counterclaims = usableCounterclaims(content ? readResearch(content)?.counterclaims : undefined);
+  return counterclaims.length ? { counterclaims, counterclaimGuidance: COUNTERCLAIM_GUIDANCE } : {};
+}
+
 export function prepareResearchEvidence(content: string, options: { requirePlan: boolean; confirmedDirection: boolean }) {
   const submitted = readResearch(content);
+  const submittedCounterclaims = submitted?.counterclaims;
+  const counterclaims = usableCounterclaims(submittedCounterclaims);
+  const omittedCounterclaims = Array.isArray(submittedCounterclaims) ? submittedCounterclaims.length - counterclaims.length
+    : Number(submittedCounterclaims !== undefined);
   const originalRows = Array.isArray(submitted?.claims) ? submitted.claims : [];
   const frequencies = new Map<string, number>();
   let normalizedClaimIds = 0;
@@ -139,8 +167,9 @@ export function prepareResearchEvidence(content: string, options: { requirePlan:
       }
     }
   }
-  const ledger = { claims, notes, ...(editorialPlan ? { editorialPlan } : {}) };
-  const adjustments = { omittedClaims, normalizedClaimIds, planStatus, damagedPayload: !submitted };
+  const ledger = { claims, notes, ...(editorialPlan ? { editorialPlan } : {}),
+    ...(Array.isArray(submittedCounterclaims) ? { counterclaims } : {}) };
+  const adjustments = { omittedClaims, omittedCounterclaims, normalizedClaimIds, planStatus, damagedPayload: !submitted };
   // Older flat ledgers optionally record search attempts. Retain only valid metadata.
   const researchRequirement = expanded?.research_requirement;
   const researchAttempts = expanded?.research_attempts;

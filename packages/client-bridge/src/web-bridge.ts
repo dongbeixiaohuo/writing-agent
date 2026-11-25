@@ -385,14 +385,14 @@ export class WebClientBridge implements ClientBridge {
   }
 
   async startConversation(text: string, options: BridgeCommandOptions = {}): Promise<{ runId: string }> {
-    return this.#conversationCommand("start-conversation", { text }, options);
+    return this.#conversationCommand("start-conversation", { text, styleSelection: options.styleSelection }, options);
   }
 
   async confirmConversation(proposalVersionId: string, options: BridgeCommandOptions = {}): Promise<{ runId: string }> {
     return this.#conversationCommand("confirm-conversation", { proposalVersionId }, options);
   }
 
-  async #conversationCommand(route: string, payload: Record<string, string>, options: BridgeCommandOptions): Promise<{ runId: string }> {
+  async #conversationCommand(route: string, payload: Record<string, unknown>, options: BridgeCommandOptions): Promise<{ runId: string }> {
     await this.#ensureHandshake();
     const response = await this.#sessionRequest(`/api/v6/command/${route}`, {
       generation: this.#snapshot.generation,
@@ -418,6 +418,7 @@ export class WebClientBridge implements ClientBridge {
       operationId: options.operationId ?? this.#operationIdFactory(),
       text,
       owner,
+      styleSelection: options.styleSelection,
     });
     this.#accept(responseSnapshot(response.snapshot));
     const result = responseRecord(response.result);

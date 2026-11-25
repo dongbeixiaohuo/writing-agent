@@ -2,9 +2,11 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, relative, resolve, sep } from "node:path";
+import { StyleSelectionInputSchema } from "../../writing-core/src/style-package.js";
 
 import {
   UI_BRIDGE_PROTOCOL_VERSION,
+  type BridgeCommandOptions,
   type BridgeSnapshot,
   type ClientBridge,
   type CreateProjectInput,
@@ -183,6 +185,15 @@ function optionalString(
     );
   }
   return candidate;
+}
+
+function styleSelectionOption(body: Record<string, unknown>): Pick<BridgeCommandOptions, 'styleSelection'> {
+  if (body.styleSelection === undefined) return {};
+  const selection = StyleSelectionInputSchema.safeParse(body.styleSelection);
+  if (!selection.success) {
+    throw new LocalWebRequestError(400, 'INVALID_REQUEST', 'styleSelection needs a style ID and positive version, or null to clear it');
+  }
+  return { styleSelection: selection.data };
 }
 
 function projectMaterials(value: Record<string, unknown>): CreateProjectInput["materials"] {
@@ -708,6 +719,7 @@ export async function startLocalWebHost(
       const result = await bridge.sendMessage(requiredString(body, "text"), {
         ...(suppliedOwner === undefined ? {} : { owner: suppliedOwner as { workspaceId: string; projectId: string; sessionId: string } }),
         operationId,
+        ...styleSelectionOption(body),
       });
       json(response, 200, { result, snapshot: bridge.getSnapshot() });
       return;
@@ -715,7 +727,7 @@ export async function startLocalWebHost(
     if (route === "/api/v6/command/start-conversation" || route === "/api/v6/command/confirm-conversation") {
       const options = { operationId: requiredString(body, "operationId", 512) };
       const result = route.endsWith("/start-conversation")
-        ? await bridge.startConversation(requiredString(body, "text", 20_000), options)
+        ? await bridge.startConversation(requiredString(body, "text", 20_000), { ...options, ...styleSelectionOption(body) })
         : await bridge.confirmConversation(requiredString(body, "proposalVersionId", 512), options);
       json(response, 200, { result, snapshot: bridge.getSnapshot() });
       return;

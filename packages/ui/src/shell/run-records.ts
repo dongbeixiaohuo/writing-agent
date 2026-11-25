@@ -54,9 +54,11 @@ export function runProgressSummary(run: RunRecordView): string {
     return '等待你补充必要信息 · 后续步骤不会继续'
   }
   if (run.status === 'completed') {
-    return run.publicationReady
-      ? `全部 ${run.totalStages} 个阶段已保存 · 事实核查通过，可正式导出`
-      : '阶段结果已保存 · 尚未达到交付条件，请处理核查问题'
+    if (run.publicationReady) return `全部 ${run.totalStages} 个阶段已保存 · 事实核查通过，可正式导出`
+    if (run.stages.some(stage => stage.id === 'fact_check' && stage.status === 'completed')) {
+      return '本次核查已保存 · 当前稿件能否导出，请查看「稿件与版本」'
+    }
+    return '阶段结果已保存 · 尚未达到交付条件，请处理核查问题'
   }
   if (run.status === 'waiting_user' && run.stopReason === 'CO_CREATION_CHECKPOINT') {
     const next = run.stages.find(stage => stage.status === 'pending')
@@ -81,7 +83,8 @@ export function runDisplayStatus(run: RunRecordView): string {
   if (run.stopReason === 'PROVIDER_RETRY_DEFERRED') return '服务商要求等待 · 已暂停';
   if (run.status === 'waiting_user' && run.waitingFor === 'publication_selection') return '等待你选择标题';
   if (['writing-pack:intake', 'writing-pack:author-conversation'].includes(run.purpose ?? '') && run.status === 'completed') return '本轮交流已保存';
-  if (run.status === 'completed' && !run.publicationReady) return '尚未完成交付'
+  if (run.status === 'completed' && !run.publicationReady) return run.stages.some(stage => stage.id === 'fact_check' && stage.status === 'completed')
+    ? '本次核查已保存' : '尚未完成交付'
   return runStatusLabel(run.status)
 }
 

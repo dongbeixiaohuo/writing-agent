@@ -902,7 +902,7 @@ const WRITING_STAGE_SCHEMA = {
     content: {
       anyOf: [{ type: 'string', minLength: 1, maxLength: 1_000_000 }, COMPACT_RESEARCH_SCHEMA, { type: 'object' }],
       description:
-        "Research: submit {sources,claims,notes,editorialPlan}. Runtime expands shared sources, keeps usable evidence rows and normalizes plan references. Legacy ledger strings remain supported. Other stages require a plain Markdown string; body stages contain only the complete article.",
+        "Research: submit {sources,claims,notes,editorialPlan} with optional counterclaims. Runtime expands shared sources, keeps usable evidence and counterclaim rows, and normalizes plan references. Legacy ledger strings remain supported. Other stages require a plain Markdown string; body stages contain only the complete article.",
     },
   },
   required: ["stage", "content"],
@@ -1716,7 +1716,7 @@ export function createWritingWorkflowTools(options: {
           throw new ToolExecutionFault('EDITORIAL_PLAN_INVALID', 'There is no confirmed writing direction and no usable editorial plan.', true);
         }
         content = prepared;
-        if (adjustment.omittedClaims || adjustment.normalizedClaimIds || adjustment.damagedPayload || adjustment.planStatus || adjustment.discardedLegacyMetadata) {
+        if (adjustment.omittedClaims || adjustment.omittedCounterclaims || adjustment.normalizedClaimIds || adjustment.damagedPayload || adjustment.planStatus || adjustment.discardedLegacyMetadata) {
           researchAdjustment = adjustment;
         }
       }

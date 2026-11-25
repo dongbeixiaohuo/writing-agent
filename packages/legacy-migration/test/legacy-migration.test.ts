@@ -235,6 +235,77 @@ describe("legacy migration planning", () => {
     }
   });
 
+  it("FH-04 rejects an altered import identity and reviewed project fields before writing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "writing-agent-legacy-plan-binding-"));
+    const targetWorkspacePath = join(root, "workspace");
+    try {
+      const plan = planLegacyMigration({ source: { kind: "manifest", projectPath: join(FIXTURES, "manifest-project") }, targetWorkspacePath });
+      for (const changed of [
+        { ...plan, importId: "tampered-import" },
+        { ...plan, projects: [{ ...plan.projects[0]!, name: "Changed after review" }] },
+      ]) {
+        await assert.rejects(() => applyLegacyMigration({ plan: changed }), { code: "MIGRATION_PLAN_STALE" });
+        assert.equal(existsSync(targetWorkspacePath), false);
+      }
+      assert.equal((await applyLegacyMigration({ plan })).importId, plan.importId);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("FH-S01 warns about an explicit unknown manifest mode and retains the historical default", () => {
+    const root = mkdtempSync(join(tmpdir(), "writing-agent-legacy-manifest-mode-"));
+    const projectPath = join(root, "source");
+    cpSync(join(FIXTURES, "manifest-project"), projectPath, { recursive: true });
+    try {
+      const scan = () => planLegacyMigration({ source: { kind: 'manifest', projectPath }, targetWorkspacePath: join(root, 'target') });
+      const defaultPlan = scan();
+      assert.equal(defaultPlan.projects[0]?.mode, 'deep');
+      assert.doesNotMatch(defaultPlan.warnings.join('\n'), /unsupported mode/);
+      const manifestPath = join(projectPath, 'run_manifest.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      writeFileSync(manifestPath, JSON.stringify({ ...manifest, mode: 'quik' }), 'utf8');
+      const explicitPlan = scan();
+      assert.equal(explicitPlan.projects[0]?.mode, 'deep');
+      assert.match(explicitPlan.warnings.join('\n'), /unsupported mode.*use deep/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const wordTarget of [1.5, 1000001, 0, null, 1500]) it(`FH-06 checks the brief length before any migration write (${wordTarget})`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "writing-agent-legacy-word-target-"));
+    const targetWorkspacePath = join(root, "target");
+    try {
+      const source = createDesktopFixture(join(root, "source"));
+      const database = new DatabaseSync(source.databasePath);
+      try {
+        database.prepare("UPDATE writing_projects SET word_target = ?").run(wordTarget);
+      } finally {
+        database.close();
+      }
+      const scan = () => planLegacyMigration({ source: { kind: "desktop_v0_1", databasePath: source.databasePath, artifactsRoot: source.artifactsRoot }, targetWorkspacePath });
+      if (wordTarget !== null && wordTarget !== 1500) {
+        assert.throws(scan, { code: "LEGACY_WORD_TARGET_INVALID" });
+        assert.equal(existsSync(targetWorkspacePath), false);
+        return;
+      }
+      const plan = scan();
+      const expected = wordTarget ?? readFileSync(join(source.projectDirectory, "final.v1.md"), "utf8").length;
+      assert.equal(plan.warnings.some(warning => warning.includes(`word_target is missing; using ${expected}`)), wordTarget === null);
+      await applyLegacyMigration({ plan });
+      const storage = openWorkspaceStorage({ workspacePath: targetWorkspacePath, readOnly: true });
+      try {
+        const project = storage.inspectProject(plan.projects[0]!.targetProjectId)!;
+        assert.equal(storage.getWritingBriefVersion(project.currentBriefVersionId!)?.brief.lengthTarget.targetCharacters, expected);
+      } finally {
+        storage.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("classifies an invalid or unwritable target before creating migration state", async () => {
     const root = mkdtempSync(join(tmpdir(), "writing-agent-legacy-readonly-"));
     const sourcePath = join(root, "source-project");

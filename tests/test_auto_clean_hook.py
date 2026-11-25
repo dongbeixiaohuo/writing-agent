@@ -4,6 +4,7 @@ import json
 import io
 import hashlib
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -222,6 +223,29 @@ target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
         clean_path = self._run_hook_with_fact_status("passed")
 
         self.assertTrue(clean_path.exists())
+
+    def test_fh03_replaces_newer_stale_clean_and_reuses_matching_content(self) -> None:
+        body = self.project_dir / "draft_final.md"
+        title = self.project_dir / "04_title.md"
+        write(body, "# 正确标题\n\n这是本轮已经核查的正确正文。\n")
+        write(title, "- 选择状态：已锁定\n- 最终标题：「正确标题」\n")
+        approve(self.project_dir, body.name, title.name)
+        clean = body.with_name("draft_final_clean.txt")
+        write(clean, "这是历史遗留的错误交付文本。")
+        newer = body.stat().st_mtime + 60
+        os.utime(clean, (newer, newer))
+        command = [sys.executable, "-X", "utf8", str(RUNTIME_HOOK),
+                   "--workspace-root", str(self.root), "--project", self.project_dir.name]
+        result = subprocess.run(command, capture_output=True, encoding="utf-8", check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(clean.read_text(encoding="utf-8"), "正确标题\n这是本轮已经核查的正确正文。")
+
+        older = body.stat().st_mtime - 60
+        os.utime(clean, (older, older))
+        unchanged_mtime = clean.stat().st_mtime_ns
+        result = subprocess.run(command, capture_output=True, encoding="utf-8", check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(clean.stat().st_mtime_ns, unchanged_mtime)
 
     def test_auto_clean_hook_rejects_a_stale_fact_check_hash(self) -> None:
         clean_path = self._run_hook_with_fact_status("passed", valid_hash=False)

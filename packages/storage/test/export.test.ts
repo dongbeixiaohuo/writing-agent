@@ -101,6 +101,7 @@ function createProjectWithBody(
 function passFactGate(
   storage: ReturnType<typeof openWorkspaceStorage>,
   body: ReturnType<typeof createProjectWithBody>,
+  lockedTitle = titleContent,
 ) {
   const title = storage.commitArtifactVersion({
     operationId: "title-v1",
@@ -109,7 +110,7 @@ function passFactGate(
     kind: "title",
     logicalKey: "main",
     baseVersionId: null,
-    content: titleContent,
+    content: lockedTitle,
     reason: "locked title",
     actor,
   });
@@ -128,27 +129,39 @@ function passFactGate(
   });
   assert.equal(evidence.ok, true);
   if (!evidence.ok) throw new Error("evidence fixture failed");
+  const { snapshot, assessment } = evaluateFactGate(storage, {
+    operation: "first", revision: evidence.projectRevision, bodyId: body.result.versionId,
+    titleId: title.result.versionId, evidenceId: evidence.result.versionId,
+  });
+  return { title, evidence, snapshot, assessment };
+}
+
+function evaluateFactGate(storage: ReturnType<typeof openWorkspaceStorage>,
+  { operation, revision, bodyId, titleId, evidenceId }: {
+    operation: string; revision: number; bodyId: string; titleId: string; evidenceId: string;
+  },
+) {
   const snapshot = storage.createFactCheckSnapshot({
-    operationId: "fact-snapshot",
+    operationId: `fact-snapshot-${operation}`,
     projectId: "project-1",
-    expectedProjectRevision: evidence.projectRevision,
-    bodyVersionId: body.result.versionId,
-    titleVersionId: title.result.versionId,
-    evidenceVersionId: evidence.result.versionId,
+    expectedProjectRevision: revision,
+    bodyVersionId: bodyId,
+    titleVersionId: titleId,
+    evidenceVersionId: evidenceId,
     actor,
   });
   assert.equal(snapshot.ok, true);
   if (!snapshot.ok) throw new Error("snapshot fixture failed");
   const assessment = storage.evaluateFactCheckSnapshot({
-    operationId: "fact-assessment",
+    operationId: `fact-assessment-${operation}`,
     projectId: "project-1",
     expectedProjectRevision: snapshot.projectRevision,
     snapshotId: snapshot.result.snapshotId,
     payload: {
       schemaVersion: "fact-check-v2",
       snapshotId: snapshot.result.snapshotId,
-      bodyVersionId: body.result.versionId,
-      titleVersionId: title.result.versionId,
+      bodyVersionId: bodyId,
+      titleVersionId: titleId,
       coverage: { body: true, title: true, distributionCopy: true },
       claims: [],
       noFactualClaimsReason: "正文仅包含作者感受。",
@@ -157,10 +170,41 @@ function passFactGate(
   });
   assert.equal(assessment.ok, true);
   if (!assessment.ok) throw new Error("assessment fixture failed");
-  return { title, evidence, snapshot, assessment };
+  return { snapshot, assessment };
 }
 
 describe("durable working-copy and publication exports", () => {
+  it("FH-09 exports A/B and A:B independently and reuses the second export on retry", () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "wa-publication-title-collision-"));
+    const storage = openWorkspaceStorage({ workspacePath });
+    try {
+      const body = createProjectWithBody(storage);
+      const first = passFactGate(storage, body, titleContent.replace('正式交付标题', 'A/B'));
+      const api = requireExportApi(storage);
+      const options = { projectId: 'project-1', bodyVersionId: body.result.versionId, format: 'txt', actor };
+      const slash = api.exportPublication({ ...options, operationId: 'export-slash',
+        expectedProjectRevision: first.assessment.projectRevision, factSnapshotId: first.snapshot.result.snapshotId });
+      assert.equal(slash.ok, true, JSON.stringify(slash));
+      const retitled = storage.commitArtifactVersion({ operationId: 'title-v2', projectId: 'project-1',
+        expectedProjectRevision: slash.projectRevision, kind: 'title', logicalKey: 'main', baseVersionId: first.title.result.versionId,
+        content: titleContent.replace('正式交付标题', 'A:B'), reason: '锁定新标题', actor });
+      assert.ok(retitled.ok);
+      const second = evaluateFactGate(storage, { operation: 'second', revision: retitled.projectRevision, bodyId: body.result.versionId,
+        titleId: retitled.result.versionId, evidenceId: first.evidence.result.versionId });
+      const command = { ...options, operationId: 'export-colon', expectedProjectRevision: second.assessment.projectRevision,
+        factSnapshotId: second.snapshot.result.snapshotId };
+      const colon = api.exportPublication(command);
+      assert.equal(colon.ok, true, JSON.stringify(colon));
+      assert.notEqual(slash.result.relativePath, colon.result.relativePath);
+      assert.match(readFileSync(absoluteExportPath(workspacePath, slash.result.relativePath), 'utf8'), /^A\/B/u);
+      assert.match(readFileSync(absoluteExportPath(workspacePath, colon.result.relativePath), 'utf8'), /^A:B/u);
+      assert.deepEqual(api.exportPublication(command), colon);
+    } finally {
+      storage.close();
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("saves an unverified Markdown working copy and status manifest without opening the publication gate", () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "wa-working-copy-"));
     const storage = openWorkspaceStorage({ workspacePath });

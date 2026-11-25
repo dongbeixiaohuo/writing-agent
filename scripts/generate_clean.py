@@ -19,21 +19,8 @@ from pathlib import Path
 
 def iter_cleaned_lines(text: str):
     """逐行提取正文内容，统一过滤元数据和内部备注。"""
-    skip_internal_block = False
-
     for line in text.splitlines():
         stripped = line.strip()
-
-        if (stripped.startswith('## 写作备注') or stripped.startswith('## 修改记录')
-                or (stripped.startswith('##') and '分享指南' in stripped)):
-            skip_internal_block = True
-            continue
-
-        if skip_internal_block:
-            if re.match(r'^#{1,2}\s+', stripped):
-                skip_internal_block = False
-            else:
-                continue
 
         # 跳过图片引用 ![xxx](xxx)
         if re.match(r'!\[.*?\]\(.*?\)', stripped):
@@ -132,7 +119,8 @@ def main():
         sys.exit(1)
 
     source_text = input_path.read_text(encoding='utf-8')
-    body_text = clean_markdown(source_text)
+    notes_file = input_path.name.casefold().endswith('_notes.md')
+    body_text = '' if notes_file else clean_markdown(source_text)
     stats = build_body_stats(source_text, body_text)
 
     if args.stdout:
@@ -150,6 +138,10 @@ def main():
         print(f"正文行数：{stats['body_lines']}")
         print(f"全文行数：{stats['total_lines']}")
         return
+
+    if notes_file:
+        print('FAIL: 内部备注文件不能生成交付文本，请选择正文文件', file=sys.stderr)
+        raise SystemExit(1)
 
     # Stats/stdout are read-only inputs to the checker. A managed project's
     # actual delivery file must pass the same gate as the hook and HTML export.

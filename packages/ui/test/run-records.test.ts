@@ -115,6 +115,10 @@ test('completed run copy distinguishes publication-ready and blocked delivery', 
     '阶段结果已保存 · 尚未达到交付条件，请处理核查问题',
   )
   assert.equal(progress.runDisplayStatus(record({ status: 'completed', publicationReady: false })), '尚未完成交付')
+  const pastCheck = record({ status: 'completed', publicationReady: false,
+    stages: [{ id: 'fact_check', label: '事实核查', status: 'completed', detail: '已保存' }] })
+  assert.equal(progress.runDisplayStatus(pastCheck), '本次核查已保存')
+  assert.match(runProgressSummary(pastCheck), /当前稿件能否导出.*稿件与版本/u)
   assert.equal(progress.runSavedStageLabel(record({ status: 'completed', completedStages: 3 })), '3/3 阶段已保存')
   assert.doesNotMatch(progress.runSavedStageLabel(record()), /%/u)
 })
