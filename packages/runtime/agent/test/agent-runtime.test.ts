@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { openWorkspaceStorage } from "../../../storage/src/index.js";
+import { OpenAICompatibleProvider } from "../../../model-adapters/openai-compatible/src/index.js";
 import {
   ModelProviderBase,
   type ModelRequest,
@@ -104,6 +105,50 @@ class TwoStopProvider extends ModelProviderBase {
 }
 
 describe("AgentRuntime", () => {
+  it("FH-01 rejects duplicate streamed call IDs before any tool executes", async (t) => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "writing-agent-duplicate-call-"));
+    const storage = openWorkspaceStorage({ workspacePath });
+    try {
+      assert.ok(storage.createProject({ operationId: "create-project", projectId: "project-1",
+        name: "重复调用编号测试", mode: "quick", actor: runtimeActor }).ok);
+      const executions: number[] = [];
+      const record: ToolDefinition<{ value: number }, { value: number }> = {
+        name: "record", version: "1.0.0", effect: "local_idempotent", permissions: ["record:test"],
+        description: "仅记录测试计数",
+        inputSchema: { type: "object", properties: { value: { type: "integer" } }, required: ["value"], additionalProperties: false },
+        execute: ({ value }) => { executions.push(value); return { value }; },
+      };
+      let providerRequests = 0;
+      t.mock.method(globalThis, "fetch", async () => {
+        providerRequests++;
+        const chunk = (delta: unknown, finish_reason: string | null = null) =>
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+        const tool_calls = [1, 2].map((value, index) => ({
+          index, id: "call-duplicate", type: "function", function: { name: "record", arguments: JSON.stringify({ value }) },
+        }));
+        return new Response(chunk({ tool_calls }) + chunk({}, "tool_calls") + "data: [DONE]\n\n",
+          { headers: { "content-type": "text/event-stream" } });
+      });
+      const provider = new OpenAICompatibleProvider({ id: "offline-test", baseURL: "https://example.test/v1",
+        credentialRef: "test", resolveCredential: async () => "fixture-key", models: { test: { tools: "supported", usage: "unknown" } } });
+      const runtime = new AgentRuntime({ provider, tools: ToolRegistry.create([record]), sessions: storage,
+        createPermissionGrant: createToolPermissionGrant });
+      const result = await runtime.run({ projectId: "project-1", purpose: "record-fixture", model: "test",
+        systemPrompt: "离线工具测试。", userMessage: "记录测试计数。", parameters: { toolChoice: "auto" },
+        grantedPermissions: ["record:test"], expectedBodyVersionId: null });
+      const events = storage.listRunEvents(result.runId);
+      const outcome = { providerRequests, executions: executions.length,
+        toolRequested: events.filter(event => event.type === "tool.requested").length,
+        toolCompleted: events.filter(event => event.type === "tool.completed").length,
+        stopReason: storage.getRun(result.runId)?.stopReason };
+      t.diagnostic(JSON.stringify(outcome));
+      assert.deepEqual(outcome, { providerRequests: 1, executions: 0, toolRequested: 0, toolCompleted: 0, stopReason: "MODEL_RESPONSE_INVALID" });
+    } finally {
+      storage.close();
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("continues after a text-only acknowledgement when final output reports unfinished work", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "writing-agent-final-continuation-"));
     const storage = openWorkspaceStorage({ workspacePath });

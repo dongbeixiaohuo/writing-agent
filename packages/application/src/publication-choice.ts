@@ -126,6 +126,15 @@ export function publicationSelectionIndex(userText: string, saved: PublicationCa
     `用《${c.title}》吧`, `就用《${c.title}》`, `就用「${c.title}」`, `采用《${c.title}》`].includes(text));
   return index < 0 ? null : index + 1;
 }
+
+/** Distribution copy requires the author's own explicit choice of this pair. */
+export function publicationCopySelectionIndex(userText: string, saved: PublicationCandidates | null): number | null {
+  if (!saved || saved.candidates.some(candidate => candidate.title === userText.trim())) return null;
+  const text = userText.normalize('NFKC').replace(/\s+/gu, '');
+  const number = /^(?:那就|我就|就|我)?(?:标题[和与及跟、](?:配文|分发文案)|(?:配文|分发文案)[和与及跟、]标题)(?:都|一起|一并|均)?(?:选用|选择|选|采用|确认|用|定)(?:第)?([1-6一二三四五六])(?:个|项|号|条)?(?:吧|就行|即可|好了)?[。!]*$/u.exec(text)?.[1]
+    ?? /^(?:那就|我就|就|我)?(?:选用|选择|选|采用|确认|用|定)(?:第)?([1-6一二三四五六])(?:个|项|号|条)?标题[和与及跟、](?:配文|分发文案)(?:吧|就行|即可|好了)?[。!]*$/u.exec(text)?.[1];
+  return number ? publicationSelectionIndex(`第${number}个`, saved) : null;
+}
 export function savePublicationCandidates(storage: StoragePort, projectId: string, operationId: string, bodyVersionId: string, candidates: PublicationCandidate[], runId?: string): PublicationCandidates {
   const project = storage.inspectProject(projectId)!;
   if (project.latestBodyVersionId !== bodyVersionId) throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE', 'The article changed; prepare candidates for its current version');
@@ -180,7 +189,7 @@ export function submitPublicationCandidates(storage: StoragePort & Pick<SessionS
 
 /** The model chooses a proposed index; only the actual user operation can authorize it. */
 export function choosePublicationCandidate(storage: StoragePort, projectId: string, operationId: string, userText: string, candidateVersionId: string | undefined, index: number,
-  interpreted?: { sourceQuote: string; candidateVersionId: string; index: number | null; includeDistributionCopy?: boolean }) {
+  interpreted?: { sourceQuote: string; candidateVersionId: string; index: number | null }) {
   const saved = getPublicationCandidates(storage, projectId);
   const project = storage.inspectProject(projectId)!;
   if (!saved) throw new ToolExecutionFault('PUBLICATION_CANDIDATES_STALE', 'No saved candidates are available');
@@ -200,12 +209,13 @@ export function choosePublicationCandidate(storage: StoragePort, projectId: stri
   if (!candidate || body?.kind !== 'body' || !isUsablePublicationTitle(candidate.title, body.content)) {
     throw new ToolExecutionFault('PUBLICATION_CANDIDATES_INVALID', 'The saved title candidate is no longer usable; prepare fresh title options for the current article');
   }
-  const text = userText.trim().replace(/[。！!\s]+$/u, '');
-  const chosenIndex = publicationSelectionIndex(userText, saved);
-  const exact = candidate && [`确认标题：${candidate.title}`, `确认标题:${candidate.title}`, `选用标题：${candidate.title}`].includes(text);
+  const copyIndex = publicationCopySelectionIndex(userText, saved);
+  const chosenIndex = publicationSelectionIndex(userText, saved) ?? copyIndex;
   const semanticSelection = interpreted && interpreted.sourceQuote === userText && interpreted.candidateVersionId === saved.id && interpreted.index === index;
-  if (interpreted ? !semanticSelection : !exact && chosenIndex !== index) throw new ToolExecutionFault('USER_SELECTION_REQUIRED', '用户尚未明确选定这个方案。请先回应其疑问或修改意见；只有明确选择才能锁定，不能把讨论、否定或修改要求当成同意。');
-  const distributionCopy = interpreted?.includeDistributionCopy === true ? candidate.distributionCopy : null;
+  if (interpreted ? !semanticSelection || (chosenIndex !== null && chosenIndex !== index) : chosenIndex !== index) {
+    throw new ToolExecutionFault('USER_SELECTION_REQUIRED', '用户尚未明确选定这个方案。按用户明确选中的候选编号保存，只有明确选择才能锁定。');
+  }
+  const distributionCopy = copyIndex === index ? candidate.distributionCopy : null;
   const content = `- 选择状态：已锁定\n- 最终标题：「${candidate.title}」\n- 选择来源：用户明确选择\n- 候选版本：${saved.id}\n- 对应正文：${body.id}\n` +
     (distributionCopy === null ? '- 分发文案范围：本次不包含分发文案（可选，不阻塞核查）\n' : `- 分发文案选择：用户明确选定\n- 最终分发文案：${distributionCopy}\n`);
   const result = value(storage.commitArtifactVersion({ projectId, operationId, expectedProjectRevision: project.revision, kind: 'title', logicalKey: 'main',

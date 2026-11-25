@@ -376,6 +376,8 @@ export abstract class ModelProviderBase implements ModelProvider {
               );
               return;
             }
+            const executableCalls: { index: number; call: CompletedToolCall }[] = [];
+            const callIds = new Set<string>();
             for (const call of [...calls.values()].sort(
               (left, right) => left.index - right.index,
             )) {
@@ -384,11 +386,19 @@ export abstract class ModelProviderBase implements ModelProvider {
                 yield emitError(executable.error);
                 return;
               }
+              if (callIds.has(executable.call.id)) {
+                yield emitError(invalidResponse("同一批工具调用的编号重复，整批工具均未执行"));
+                return;
+              }
+              callIds.add(executable.call.id);
+              executableCalls.push({ index: call.index, call: executable.call });
+            }
+            for (const { index, call } of executableCalls) {
               yield {
                 type: "tool_call_complete",
                 sequence: ++sequence,
-                index: call.index,
-                call: event.toolContinuation === undefined ? executable.call : { ...executable.call, providerContinuation: event.toolContinuation },
+                index,
+                call: event.toolContinuation === undefined ? call : { ...call, providerContinuation: event.toolContinuation },
               };
             }
             yield {

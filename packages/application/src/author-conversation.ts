@@ -6,7 +6,7 @@ import type { ModelProvider, ModelRouteResolver } from '../../runtime/llm/src/in
 import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
 import { addConversationMaterialToBrief } from './conversation-materials.js';
 import { createAuthorWebTool, authorizedAuthorWebUrls, AUTHOR_WEB_INSTRUCTIONS, type AuthorWebFetcher } from './author-web.js';
-import { getPublicationCandidates, submitPublicationCandidates, publicationCandidateSubmissionSchema, choosePublicationCandidate, isPublicationSelectionWait, selectedPublicationContext, type PublicationCandidateSubmission } from './publication-choice.js';
+import { getPublicationCandidates, submitPublicationCandidates, publicationCandidateSubmissionSchema, choosePublicationCandidate, isPublicationSelectionWait, publicationCopySelectionIndex, selectedPublicationContext, type PublicationCandidateSubmission } from './publication-choice.js';
 import { listLegacyStyles, getLegacyStyle, getLegacyStyleMethodology } from '../../writing-pack/src/style-library.js';
 import { getApprovedAuthorPreferences, setAuthorPreferenceFromUserText } from './author-preferences.js';
 import { pendingReviewCheckpoint } from './review-checkpoint.js';
@@ -252,12 +252,12 @@ export function startAuthorConversation(options: {
     definition<{ candidateVersionId?: string; index: number; includeDistributionCopy?: boolean }>({
       name: 'choose_publication', version: '1.0.0', effect: 'local_idempotent', permissions: ['author:propose'],
       description: 'Confirm a previously displayed publication candidate only when the actual user explicitly selects its number or complete title. The tool independently validates the original user message and current article version. Cannot change article paragraphs.',
-      inputSchema: { type: 'object', properties: { candidateVersionId: { type: 'string', description: '可省略：省略时使用当前 publicationCandidates.id。不要填写正文 id；正文 id 会被拒绝并返回正确值。' }, index: { type: 'integer', minimum: 1, maximum: 6 }, includeDistributionCopy: { type: 'boolean', description: '仅作者明确同时选定分发文案时为true；只选择标题时省略或false。配文是可选项，不向作者追问确认。' } }, required: ['index'], additionalProperties: false },
+      inputSchema: { type: 'object', properties: { candidateVersionId: { type: 'string', description: '可省略：省略时使用当前 publicationCandidates.id。不要填写正文 id；正文 id 会被拒绝并返回正确值。' }, index: { type: 'integer', minimum: 1, maximum: 6 }, includeDistributionCopy: { type: 'boolean', description: '兼容旧请求，可省略。程序根据作者本轮原话决定是否一并保存配文。' } }, required: ['index'], additionalProperties: false },
       execute(args, context) {
         if (intent.result()?.intent !== 'select_title') throw new ToolExecutionFault('USER_SELECTION_REQUIRED', 'Resolve an explicit title selection before saving it');
         if (storage.inspectProject(project.id)?.latestBodyVersionId !== body?.versionId) throw new ToolExecutionFault('INTENT_CONTEXT_STALE', 'The article changed during this author turn');
         const selected = choosePublicationCandidate(storage, project.id, context.operationId, input.userInstruction, args.candidateVersionId, args.index,
-          { sourceQuote: input.userInstruction, candidateVersionId: selectedCandidates?.id ?? '', index: selectionIndex, includeDistributionCopy: args.includeDistributionCopy === true });
+          { sourceQuote: input.userInstruction, candidateVersionId: selectedCandidates?.id ?? '', index: selectionIndex });
         titleSelected = true;
         const reply = saveReply(`已选定标题「${selected.title}」。正文没有改动。${pendingPublicationSelection ? `接下来由事实核查专家核查当前成稿与所选标题${selected.distributionCopy ? '、已选配文' : '；分发文案为可选项，本次跳过'}，不再要求重复确认标题。` : '正式导出前仍需核查当前版本。'}`,
           { ...context, operationId: `${context.operationId}:selection-reply` });
@@ -425,9 +425,13 @@ export function startAuthorConversation(options: {
       if (!intent.result()) return intent.policy(runId);
       const decision = intent.result()!;
       selectionIndex = decision.intent === 'select_title' ? decision.selectionIndex ?? null : null;
+      const chosenCandidate = selectionIndex === null ? undefined : selectedCandidates?.candidates[selectionIndex - 1];
+      const copyIndex = publicationCopySelectionIndex(input.userInstruction, selectedCandidates);
+      const expectedCopy = copyIndex === selectionIndex ? chosenCandidate?.distributionCopy ?? null : null;
       if (selectionIndex !== null && selectedPublication?.reason === 'author-publication-selection' &&
+        chosenCandidate && publicationContext?.distributionCopy === expectedCopy &&
         selectedPublication.content.split(/\r?\n/u).includes(`- 候选版本：${selectedCandidates?.id}`) &&
-        selectedPublication.content.split(/\r?\n/u).includes(`- 最终标题：「${selectedCandidates?.candidates[selectionIndex - 1]?.title}」`)) titleSelected = true;
+        selectedPublication.content.split(/\r?\n/u).includes(`- 最终标题：「${chosenCandidate.title}」`)) titleSelected = true;
       requiresTitleCandidates = decision.intent === 'generate_titles';
       requiresIllustrationPlan = decision.intent === 'plan_illustrations';
       requiresIllustrationConfirmation = decision.intent === 'confirm_illustrations';

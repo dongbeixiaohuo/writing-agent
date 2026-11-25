@@ -8,7 +8,7 @@ import { openWorkspaceStorage } from '../../storage/src/index.js';
 import { WritingApplicationService } from '../src/index.js';
 import { createApplicationBridge } from '../../client-bridge/src/application-bridge.js';
 import { buildExpertInstructions } from '../../writing-pack/src/expert-instructions.js';
-import { savePublicationCandidates, choosePublicationCandidate, publicationSelectionIndex } from '../src/publication-choice.js';
+import { savePublicationCandidates, choosePublicationCandidate, publicationSelectionIndex, selectedPublicationContext } from '../src/publication-choice.js';
 import { withIntentFixture } from './intent-fixture.js';
 import { getApprovedAuthorPreferences } from '../src/author-preferences.js';
 import { authorConversationHistory } from '../src/author-conversation.js';
@@ -49,10 +49,10 @@ it('asks which title after a general acknowledgement without repeating proposals
   } finally { f.close(); }
 });
 
-function setup(provider: AuthorProvider) {
+function setup(provider: AuthorProvider, intentOverride?: Parameters<typeof withIntentFixture>[1]) {
   const directory = mkdtempSync(join(tmpdir(), 'author-conversation-'));
   const storage = openWorkspaceStorage({ workspacePath: directory });
-  const service = new WritingApplicationService({ storage, provider: withIntentFixture(provider) });
+  const service = new WritingApplicationService({ storage, provider: withIntentFixture(provider, intentOverride) });
   const actor = { kind: 'user', id: 'tester' } as const;
   storage.createProject({ projectId: 'p', operationId: 'project', name: '安静', mode: 'quick', actor });
   storage.saveWritingBrief({ operationId: 'brief', projectId: 'p', expectedProjectRevision: storage.inspectProject('p')!.revision,
@@ -345,6 +345,36 @@ it('self-corrects a wrong candidateVersionId and defaults to the current candida
       },
     );
     assert.ok(candidates.id !== fresh.id);
+  } finally { f.close(); }
+});
+
+it('FH-02 derives saved distribution copy from the current author message, including a later selection of the same title', async t => {
+  const provider = new AuthorProvider([]);
+  const f = setup(provider, ['select_title', 2]);
+  try {
+    const bodyId = f.storage.inspectProject('p')!.latestBodyVersionId!;
+    const candidates = savePublicationCandidates(f.storage, 'p', 'audit-candidates', bodyId, [
+      { title: '第一题', opening: null, distributionCopy: '第一配文', rationale: '一' },
+      { title: '第二题', opening: null, distributionCopy: '第二配文', rationale: '二' },
+    ]);
+    const cases = [
+      { userText: '选第2个标题', modelFlag: true, expectedCopy: null },
+      { userText: '标题和配文都选第2个', modelFlag: false, expectedCopy: '第二配文' },
+    ];
+    const outcomes = [];
+    for (const { userText, modelFlag } of cases) {
+      provider.calls.push({ name: 'choose_publication', args: { candidateVersionId: candidates.id, index: 2, includeDistributionCopy: modelFlag } });
+      const result = await f.service.startAuthorTurn(input(userText)).result;
+      const saved = selectedPublicationContext(f.storage, 'p');
+      const persisted = saved && f.storage.getArtifactVersion(saved.titleVersionId)?.content;
+      outcomes.push({ userText, modelFlag, ok: result.ok, title: saved?.finalTitle, distributionCopy: saved?.distributionCopy,
+        recordedAsExplicitCopy: Boolean(persisted?.includes('分发文案选择：用户明确选定')) });
+    }
+    t.diagnostic(JSON.stringify(outcomes));
+    assert.deepEqual(outcomes, cases.map(({ userText, modelFlag, expectedCopy }) => ({
+      userText, modelFlag, ok: true, title: '第二题', distributionCopy: expectedCopy, recordedAsExplicitCopy: expectedCopy !== null,
+    })));
+    assert.equal(f.storage.inspectProject('p')!.latestBodyVersionId, bodyId);
   } finally { f.close(); }
 });
 
