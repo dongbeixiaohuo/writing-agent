@@ -17,7 +17,7 @@ import { createWritingWorkflowTools } from '../src/workflow-tools.js';
 import { deliveredInlineMaterialIds, inlineMaterialContext } from '../src/material-context.js';
 import { getConversationIntakeState } from '../src/conversation-intake.js';
 import { parseEvidenceLedger, type ArtifactVersion } from '../../writing-core/src/index.js';
-import { expandResearchEvidence } from '../src/research-evidence.js';
+import { expandResearchEvidence, prepareResearchEvidence } from '../src/research-evidence.js';
 import { saveProjectStyleSelection } from '../src/style-selection.js';
 import { styleStatistics, STYLE_APPLICATION_POLICY } from '../../writing-core/src/style-package.js';
 
@@ -372,6 +372,93 @@ class CompactResearchProvider extends CollaborationProvider {
     yield* super.providerStream(request);
   }
 }
+
+const fh05Counterclaims = [
+  { claim_text: '反例：另一条件下结论不成立', source_url: 'https://example.com/counter', outcome: 'supported',
+    impact_on_argument: '必须把结论限制在条件A' },
+  { claim_text: '反例：条件B出现相反结果', source_url: 'https://example.com/counter-b', outcome: 'supported',
+    impact_on_argument: '条件B的结论应单独列明' },
+];
+
+for (const transport of ['legacy', 'compact'] as const) it(`FH-05 keeps both counterclaims and their boundaries through the writer request (${transport})`, async t => {
+  const claim = { evidence_id: 'E001', claim_type: 'other', claim_text: '原判断', source_title: '来源',
+    source_url: 'https://example.com/source', source_publisher: '发布方', source_quote: '支撑原句',
+    accessed_at: '2026-11-25', reliability: 'high', use_boundary: '仅条件A', verification_status: 'collected' };
+  const notes = '同时保留反证。';
+  const { source_title, source_url, source_publisher, accessed_at, ...claimFields } = claim;
+  const content = transport === 'legacy' ? JSON.stringify({ research_requirement: 'required',
+    research_attempts: [{ target_claim: '核心判断', query: '核心判断 反证', outcome: 'found', notes: '找到反证材料' }],
+    claims: [claim], counterclaims: fh05Counterclaims, notes,
+  }) : { sources: [{ source_id: 'S1', source_title, source_url, source_publisher, accessed_at }],
+    claims: [{ source_id: 'S1', ...claimFields }], counterclaims: fh05Counterclaims, notes };
+
+  const stop = new AbortController();
+  const provider = new class extends CompactResearchProvider {
+    protected override async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
+      const state = collaborationState(request);
+      if (state?.actor === 'outline' && transport === 'compact') {
+        this.requests.push(structuredClone(request));
+        yield* publicStageFixtureEvents(request, 'submit_writing_stage', { stage: 'outline', content: '说明适用条件',
+          prewriting: { decision: 'ready', promise: '安静', readerPayoff: '理解这项选择', readingRoute: { question: '如何感到安静？', moments: [] },
+            reason: '沿确认方向写。', queries: [], questions: [] } })!;
+        return;
+      }
+      if (state?.actor === 'draft') {
+        this.requests.push(structuredClone(request));
+        stop.abort();
+        return;
+      }
+      yield* super.providerStream(request);
+    }
+  }(content);
+  const network = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Offline replay reached network'); });
+  const f = setup(provider, 'co_creation');
+  try {
+    const first = await f.app.runDraft({ ...f.input, signal: stop.signal });
+    const project = f.storage.inspectProject('p')!;
+    const evidence = f.storage.getArtifactVersion(project.currentEvidenceVersionId!)!;
+    const saved = JSON.parse(evidence.content);
+    assert.deepEqual(saved.claims, [claim]);
+    assert.deepEqual(parseEvidenceLedger(evidence.content).evidenceIds, new Set(['E001']));
+    assert.equal(f.storage.listRunEvents(first.runId).findLast(event => event.type === 'run.waiting_user')?.payload.stage, 'outline');
+    await f.app.resumeDraft(withCheckpointIntent(f.storage, { ...f.input, runId: first.runId,
+      operationId: 'confirm-outline-offline', decision: 'resume', userInstruction: '继续',
+      expectedProjectRevision: project.revision, signal: stop.signal })).result;
+
+    const requestState = (actor: 'outline' | 'draft') => {
+      const requests = provider.requests.filter(request => collaborationState(request)?.actor === actor);
+      assert.equal(requests.length, 1, actor);
+      const message = requests[0]!.messages.find(item => item.role === 'user')!;
+      return JSON.parse(message.content.split('\nCOLLABORATION_STATE=')[1]!);
+    };
+    const outline = requestState('outline');
+    const draft = requestState('draft');
+    const draftCounterclaims = transport === 'legacy'
+      ? draft.artifacts.find((artifact: { kind: string }) => artifact.kind === 'evidence')?.content.counterclaims : draft.counterclaims;
+    const bodyVersions = f.storage.listArtifactVersions('p', 'body', 'main').length;
+    assert.equal(bodyVersions, 0);
+    assert.equal(network.mock.callCount(), 0);
+    t.diagnostic(JSON.stringify({ savedCounterclaims: saved.counterclaims ?? [], outlineCounterclaims: outline.counterclaims ?? [],
+      writerCounterclaims: draftCounterclaims ?? [], bodyVersions }));
+    assert.deepEqual(saved.counterclaims, fh05Counterclaims);
+    assert.deepEqual(outline.counterclaims, fh05Counterclaims);
+    assert.deepEqual(draftCounterclaims, fh05Counterclaims);
+    assert.match(outline.counterclaimGuidance, /impact_on_argument/);
+    assert.equal(draft.counterclaimGuidance, outline.counterclaimGuidance);
+    assert.equal(transport === 'compact' ? draft.artifacts : draft.counterclaims, undefined);
+  } finally { f.close(); }
+});
+
+it('FH-05 keeps usable siblings and unreached sources without inventing facts', () => {
+  const limited = { claim_text: '相关原文暂不可读', source_url: null, outcome: 'blocked', impact_on_argument: '保留这个范围的不确定性' };
+  const result = prepareResearchEvidence(JSON.stringify({ claims: [], notes: '已有材料可写', counterclaims: [
+    fh05Counterclaims[0], { ...fh05Counterclaims[0], source_url: 'file:///private' },
+    { ...fh05Counterclaims[1], impact_on_argument: ' ' }, limited, fh05Counterclaims[1],
+  ] }), { requirePlan: false, confirmedDirection: true });
+  assert.equal(result.omittedCounterclaims, 2);
+  assert.deepEqual(JSON.parse(result.content).counterclaims, [fh05Counterclaims[0], limited, fh05Counterclaims[1]]);
+  assert.equal(parseEvidenceLedger(result.content).evidenceIds.size, 0);
+});
 
 it('bounds expanded research size without truncating or allocating the whole amplified ledger', () => {
   const content = compactResearch();

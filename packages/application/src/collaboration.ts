@@ -27,6 +27,7 @@ import { getPublicationCandidates, submitPublicationCandidates, publicationCandi
   PUBLICATION_SELECTION_WAIT_REASON, selectedPublicationContext, type PublicationCandidateSubmission } from './publication-choice.js';
 import { createFactSourceTool, factToolFailureLoopKey } from './fact-web.js';
 import { usesPublicSources, withResearchSupplement } from './research-supplement.js';
+import { researchCounterclaimContext } from './research-evidence.js';
 import { createFactSearchTools, type FactSearchConfiguration } from './fact-search.js';
 import { checkpointIntentReceipt } from './conversation-intent.js';
 import { confirmedWritingDirection } from './conversation-intake.js';
@@ -58,6 +59,7 @@ function stageInstruction(stage: WritingWorkflowStage, basePrompt: string, resea
     ? '先读已有材料。只在缺少能把原题写具体的场景、行动、回应或后果时，用search_research_sources与read_fact_source找对应素材。打开检索原文用该条结果的 searchCallId 和 resultNumber，保留工具返回的 requestedUrl 与原文引句。搜到够写就停，已有材料够写可以直接提交。同一方向找不到合适素材就用已有材料继续。preferredBatchSize只供安排，实际按缺口决定。保留实际URL和引句。'
     : '当前为材料整理模式，没有外部搜索工具：从本次授权材料提取正文所需证据；多来源矛盾只对照实际提供的内容，不臆造检索或核验结果。')
     + '只提交研究账本，content直接用对象' + (editorialPlanRequired ? '{sources,claims,notes,editorialPlan}' : '{sources,claims,notes}') + '，不要转成带转义的JSON字符串。sources按来源列一次source_id、source_title、source_publisher、accessed_at及可选source_url；每条claim用source_id引用，填写claim_type、claim_text、source_quote、reliability、use_boundary、verification_status。evidence_id可省略，由程序编号；确需保留旧编号时明确填写。仅illustrative允许空引句，其余必须引用连续原文；用户材料不能自动标为已外部核实。无事实时sources和claims用空数组，notes说明原因。'
+    + '影响结论的反例可另填 counterclaims，每条保留 claim_text、source_url（没有公开链接时为 null）、outcome（supported、not_found 或 blocked）和 impact_on_argument（这条反例具体限制了哪个结论、适用条件是什么）。'
     + (confirmedDirection ? '沿writingRequirements.topic和作者明确补充的要求整理材料；某条素材缺依据就在原方向内补查或换素材，提交仍可用的内容。' : '关键前提存在必要证据缺口时暂停提问，不用猜测补足。')
     + '优先留下能说明当事人具体处境的素材。相关性相当时，先读调查发布方、官方统计原文或有实际经过的记录。调查注明材料能确认的时间、发布方和受访范围，转引保留报道归属；采访、真实案例和媒体评论的意见分别处理，评论意见不列作支撑主论点的事实。素材够写就停。'
     + '成稿后仍须独立事实核查。不要设计开头、结尾、标题或提纲；明确排除的材料只在notes简记理由和必要风险，不另造完整证据条目。';
@@ -405,6 +407,7 @@ export function createWritingCollaboration(options: {
           authorClarifications,
           artifacts: readerValueRequired ? [] : [{ id: research.id, kind: 'evidence', content: publicationReviewEvidence(research.content) }],
           sourceReadings,
+          ...researchCounterclaimContext(research.content),
           recoveryFeedback: inputs.filter(id => id !== research.id).map(id => storage.getArtifactVersion(id)).filter(v => v?.kind === 'review' || v?.reason === 'revision-required').map(v => ({ id: v!.id, content: JSON.parse(v!.content) })),
           materials: authorContext, materialCatalog: factMaterialContext(materials).materialCatalog,
           supplementSearchBudget: supplementSearch.progress(runId), externalSearchEnabled: supplementSearch.enabled(),
@@ -453,6 +456,7 @@ export function createWritingCollaboration(options: {
           writingRequirements, confirmedFocus, authorReplies, authorClarifications,
           authorWords,
           sourceReadings,
+          ...researchCounterclaimContext(research.content),
           ...(sourceReadings.length ? { materialGuidance: READING_MATERIAL_GUIDANCE +
             (plan.guideSteps?.length ? `\n${GUIDE_MATERIAL_GUIDANCE}` : '') } : {}),
           ...(additionalMaterials.length ? { materials: additionalMaterials } : {}),
@@ -741,6 +745,8 @@ export function createWritingCollaboration(options: {
         : writingBrief ? { audience: writingBrief.audience, platform: writingBrief.platform } : undefined,
       ...(['research', 'draft', 'central_revision'].includes(actor) ? { authorWords, authorReplies, authorClarifications } : {}),
       ...(approvedPlan ? { writingPlan: draftWritingPlan(approvedPlan) } : {}),
+      // The evidence table already carries the counterclaim rows on this draft path.
+      ...(actor === 'draft' ? { counterclaimGuidance: researchCounterclaimContext(artifacts.find(item => item.kind === 'evidence')?.content).counterclaimGuidance } : {}),
       ...(['draft', 'central_revision', 'language_review'].includes(actor) ? {
         sourceReadings: researchReadings(storage, projectId, stageArtifact(storage, projectId, runId, 'research'), authorizedMaterials),
       } : {}),
