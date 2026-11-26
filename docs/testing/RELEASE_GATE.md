@@ -1,6 +1,13 @@
 # Writing Agent 桌面发布门禁
 
-当前桌面版 **1.0.0-rc.115**。发布页提供 Windows x64 安装包、SHA256、构建提交与安装升级记录。[RC115 发布页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.115)
+当前桌面版 **1.0.0-rc.117**。发布页提供 Windows x64 安装包、SHA256、构建提交与安装升级记录。[RC117 发布页](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.117)
+
+## RC117 发布检查（2026-11-26）
+
+- 构建提交 `9f8b1036c9fe5b67b967a475752bf108c7b025cb` 已通过受保护分支检查并进入 `main`，与合并提交的文件一致。Windows CI 通过全新安装、启动、卸载，以及从 RC115 标签重建的安装包升级，合成工作区和应用数据保留。[构建及安装验证](https://github.com/dongbeixiaohuo/writing-agent/actions/runs/45738616398)
+- 隔离 Electron 测试通过运行中发现新版本、等待草稿保存与任务结束、重开后恢复草稿。公开 GitHub 发行版可被更新检查识别，未登录下载的安装包与 CI 产物的大小和 SHA-256 一致。[RC117 安装包及校验文件](https://github.com/dongbeixiaohuo/writing-agent/releases/tag/desktop-v1.0.0-rc.117)
+
+RC117 未签名，发现新版时跳转到 GitHub 下载。签名版在线自动安装仍待实测。两次安装启动检查均报告 `ready` 且退出码为 `0`，测试收尾记录了 IPC 处理器已移除的警告。
 
 以下为历次发布时的验证记录。RC96 对应构建提交 `12ac1ac48d1223bef9680223abfd4ed6479bfa11`。[RC96 发布记录](../launch/RC96_RELEASE_EXECUTION.md)
 
