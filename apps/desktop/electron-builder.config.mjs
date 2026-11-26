@@ -1,8 +1,16 @@
+const signed = Boolean(process.env.WRITING_AGENT_UPDATE_SIGNER_SHA256?.trim())
+
 export default {
   appId: 'com.dongbeixiaohuo.writingagent',
   productName: 'Writing Agent',
   copyright: 'Copyright © 2026 Writing Agent contributors',
-  publish: null,
+  publish: {
+    provider: 'generic',
+    url: 'https://github.com/dongbeixiaohuo/writing-agent/releases/download/',
+    channel: 'latest',
+  },
+  detectUpdateChannel: false,
+  forceCodeSigning: signed,
   asar: true,
   npmRebuild: false,
   directories: {
@@ -12,7 +20,7 @@ export default {
   win: {
     target: ['nsis'],
     icon: '../../assets/icon.ico',
-    signExecutable: false,
+    signExecutable: signed,
     artifactName: 'Writing-Agent-Setup-${version}-${arch}.${ext}',
   },
   nsis: {

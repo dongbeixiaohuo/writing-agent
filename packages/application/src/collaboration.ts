@@ -15,7 +15,7 @@ import { PREWRITING_INSTRUCTIONS, PREWRITING_JSON_SCHEMA, bindConfirmedReadingPl
 import { fitResearchReadings, researchReadings } from './research-readings.js';
 import { redevelopmentReference, redevelopmentProblems, redevelopmentHistory } from './revision-context.js';
 import { articleParagraphs, paragraphEditsOutputSchema, paragraphRepairScope } from './paragraph-revision.js';
-import { FINAL_LINT_INSTRUCTIONS, FOCUSED_REVISION_INSTRUCTIONS, GUIDE_LINT_INSTRUCTIONS, LINT_EDITS_SCHEMA, PERSUASION_REVIEW_INSTRUCTIONS, REVIEW_EDITS_SCHEMA } from './focused-review.js';
+import { FINAL_LINT_INSTRUCTIONS, FOCUSED_REVISION_INSTRUCTIONS, GUIDE_LINT_INSTRUCTIONS, LINT_EDITS_SCHEMA, PERSUASION_REVIEW_INSTRUCTIONS, REVIEW_EDITS_SCHEMA, findCrossSectionDataRepeats } from './focused-review.js';
 import { PARAGRAPH_REVISION_SUBMISSION, READING_EDITOR_INSTRUCTIONS, READING_REVISION_INSTRUCTIONS, readingAuditPrompt } from './review-closure-prompts.js';
 import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, isReadOnlyRevisionAudit, isReadingFirstRun, usesFocusedReview, workflowStagesForRun, stageArtifact, stageMarker, type WritingWorkflowTools } from "./workflow-tools.js";
 import { EDITORIAL_PLAN_INSTRUCTIONS } from './editorial-plan.js';
@@ -585,6 +585,7 @@ export function createWritingCollaboration(options: {
       const parent = parentId ? storage.getArtifactVersion(parentId) : null;
       const previousParagraphs = parent?.projectId === projectId ? articleParagraphs(parent.content) : [];
       const currentParagraphs = articleParagraphs(body.content);
+      const repeatedData = findCrossSectionDataRepeats(currentParagraphs);
       const beforeRevision = previousParagraphs.length === currentParagraphs.length ? currentParagraphs.flatMap((paragraph, index) => {
         const before = previousParagraphs[index]!.text;
         return before === paragraph.text ? [] : [{ before, after: paragraph.text }];
@@ -596,6 +597,7 @@ export function createWritingCollaboration(options: {
         userMessage: `请检查这版文章。\nCOLLABORATION_STATE=${JSON.stringify({
           actor: 'language_review', stage: 'language_review', baseBodyVersionId: body.id, body: body.content, confirmedFocus,
           sources: workflow.lintSources(runId), protectedHypotheses: workflow.protectedHypotheses(runId), beforeRevision,
+          ...(repeatedData.length ? { crossSectionDataRepeats: repeatedData } : {}),
           lintOutputSchema: { type: 'object', properties: { lintEdits: LINT_EDITS_SCHEMA }, required: ['lintEdits'], additionalProperties: false },
         })}`,
         allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',

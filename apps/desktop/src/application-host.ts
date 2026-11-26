@@ -643,6 +643,10 @@ export class DesktopApplicationHost {
     return deleted.result;
   }
 
+  hasWorkBeforeRestart(): boolean {
+    return this.#styleOperation !== null || this.#failureAnalysis !== null || this.#storage.hasRunInStates(['queued', 'running']);
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#styleOperation?.abort(new Error('STYLE_ANALYSIS_CANCELLED'));

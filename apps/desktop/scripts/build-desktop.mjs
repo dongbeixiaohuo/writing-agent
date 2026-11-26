@@ -10,6 +10,10 @@ const desktopRoot = resolve(repositoryRoot, 'apps/desktop')
 const stageRoot = resolve(desktopRoot, 'dist/package')
 const rendererSource = resolve(repositoryRoot, 'apps/web/dist/production')
 const rendererTarget = resolve(stageRoot, 'renderer')
+const updateSigner = (process.env.WRITING_AGENT_UPDATE_SIGNER_SHA256 ?? '').trim().toLowerCase()
+if (updateSigner && !/^[a-f0-9]{64}$/u.test(updateSigner)) {
+  throw new Error('WRITING_AGENT_UPDATE_SIGNER_SHA256 must be the SHA-256 of the Windows signing certificate')
+}
 
 function sourceRevision() {
   const revision = process.env.GITHUB_SHA
@@ -52,6 +56,7 @@ await Promise.all([
     format: 'cjs',
     target: 'node24',
     external: ['electron'],
+    define: { __WRITING_AGENT_UPDATE_SIGNER_SHA256__: JSON.stringify(updateSigner) },
     sourcemap: false,
     minify: false,
     legalComments: 'none',
@@ -85,6 +90,11 @@ await writeFile(resolve(stageRoot, 'package.json'), `${JSON.stringify({
 
 for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
   await cp(resolve(repositoryRoot, file), resolve(stageRoot, file))
+}
+const licenses = resolve(stageRoot, 'licenses')
+await mkdir(licenses, { recursive: true })
+for (const dependency of ['electron-updater', 'semver']) {
+  await cp(resolve(repositoryRoot, 'node_modules', dependency, 'LICENSE'), resolve(licenses, `${dependency}.txt`))
 }
 
 const manifest = {

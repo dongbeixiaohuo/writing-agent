@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyLintEdits, applyReviewEdits } from '../src/focused-review.js';
+import { applyLintEdits, applyReviewEdits, findCrossSectionDataRepeats } from '../src/focused-review.js';
+import { articleParagraphs } from '../src/paragraph-revision.js';
 import { validatePersuasionFindings } from '../src/review-closure.js';
 import { editorialPlanFixture } from './collaboration-fixture.js';
 import { replayReadingHandoff, type ReadingHandoffFixture } from './reading-handoff-replay.js';
@@ -115,6 +116,45 @@ test('a sourced correction replaces the anchored paragraph only, preserving the 
   const result = applyReviewEdits(article, 'body', patch([{ findingId: 'f1', kind: 'source', replacement: correction,
     source: { id: url, quote: sourceText } }]), [{ id: 'f1', quote: claim }], sources);
   assert.equal(result.content, article.replace(caseParagraph, correction));
+});
+
+test('cross-section hints pair measured sequences and leave isolated numbers and same-section repetition alone', () => {
+  const measurements = '整理平均 14 天，接入从 45 天减到 4 天。';
+  const replayed = '接下来的例子仍写了14天、45天和4天。';
+  const separated = `14 天。${'这里讲的是另一个步骤。'.repeat(18)}45 天。又一段用了 4 天。`;
+  const document = ['# 交付', '## 交付耗时', measurements, measurements, '整体毛利率为 82%。',
+    '## 回款', '项目回款比例为 82%。', '另一项流程先后用了 4 天、14 天和 45 天。', '## 复用', replayed, separated].join('\n\n');
+  assert.deepEqual(findCrossSectionDataRepeats(articleParagraphs(document)), [{
+    numbers: ['14天', '45天', '4天'],
+    earlier: { section: '交付耗时', paragraphId: 'p3', excerpt: measurements },
+    later: { section: '复用', paragraphId: 'p10', excerpt: replayed },
+  }]);
+});
+
+test('final lint receives both occurrences of a repeated data group and can shorten the later one only', async () => {
+  const claim = '交付变快，首单就一定能回本。';
+  const earlier = '报告记下来的是整合平均 14 天，接入从 45 天减到 4 天。';
+  const repeated = '再看一遍，整合平均14天，接入从45天减到4天。';
+  const article = [title, opening, '## 交付耗时', earlier, '## 付款', claim, '结尾仍保留。'].join('\n\n');
+  const newParagraph = `${repeated}先看谁愿意为这次交付付钱。`;
+  const echo = '前面讲的是交付变快。';
+  const replay = await replayReadingHandoff(fixture, 'not_authorized', { body: article,
+    answer(request, stage) {
+      const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
+      if (stage === 'review_editor') return { findings: [{ ...finding, quote: claim, issue: '交付耗时不等于已经下单。' }] };
+      if (stage === 'central_revision') {
+        assert.match(request.messages[0]!.content, /最影响结论的读者疑问/u);
+        return { reviewEdits: patch([{ findingId: state.revisionFeedback.findings[0].id, kind: 'paragraph', replacement: newParagraph }], state.baseBodyVersionId) };
+      }
+      assert.deepEqual(state.beforeRevision, [{ before: claim, after: newParagraph }]);
+      assert.deepEqual(state.crossSectionDataRepeats.map((item: { earlier: { section: string }; later: { section: string }; numbers: string[] }) =>
+        [item.earlier.section, item.later.section, item.numbers]), [['交付耗时', '付款', ['14天', '45天', '4天']]]);
+      assert.match(request.messages[0]!.content, /只在后一处出现的连续上下文/u);
+      return { lintEdits: patch([{ kind: 'wording', quote: repeated, replacement: echo, reason: '数据已经说明。' }], state.baseBodyVersionId) };
+    },
+  });
+  assert.equal(replay.finalBody, article.replace(claim, newParagraph.replace(repeated, echo)));
+  assert.deepEqual(replay.publicQueries, []);
 });
 
 for (const noEdits of [false, true]) test(`the saved article goes through only targeted review and lint (empty: ${noEdits})`, async () => {

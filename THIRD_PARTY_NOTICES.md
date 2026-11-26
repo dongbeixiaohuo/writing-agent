@@ -47,4 +47,8 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+## Windows update dependencies
+
+The Windows application bundles `electron-updater` from the [electron-builder project](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater), and `semver` from [node-semver](https://github.com/npm/node-semver). Their direct license texts are included with the desktop build under `licenses/`.
+
 Writing Agent itself remains licensed under the repository `LICENSE`. Nothing in this file changes the terms of any third-party component.

@@ -10,12 +10,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Get-Sha256Hex {
-    param([Parameter(Mandatory = $true)][string]$LiteralPath)
+function Get-ArtifactHash {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath, [switch]$Manifest)
     $stream = [System.IO.File]::OpenRead($LiteralPath)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $sha = if ($Manifest) { [System.Security.Cryptography.SHA512]::Create() } else { [System.Security.Cryptography.SHA256]::Create() }
     try {
-        return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        $hash = $sha.ComputeHash($stream)
+        if ($Manifest) { return [System.Convert]::ToBase64String($hash) }
+        return ([System.BitConverter]::ToString($hash)).Replace('-', '').ToLowerInvariant()
     }
     finally {
         $sha.Dispose()
@@ -35,8 +37,31 @@ $artifacts = Get-ChildItem -LiteralPath $directory -File | Where-Object {
 if ($artifacts.Count -ne 2 -or @($artifacts | Where-Object Name -like '*.exe').Count -ne 1 -or @($artifacts | Where-Object Name -like '*.exe.blockmap').Count -ne 1) {
     throw "Expected exactly one installer and blockmap for version $Version in $directory"
 }
+$installer = $artifacts | Where-Object Name -like '*.exe'
+$updateManifestPath = Join-Path $directory 'latest.yml'
+$updateManifest = Get-Content -Raw -LiteralPath $updateManifestPath
+$installerPattern = [regex]::Escape($installer.Name)
+$hashPattern = [regex]::Escape((Get-ArtifactHash -LiteralPath $installer.FullName -Manifest))
+$installerBytes = $installer.Length
+if ($updateManifest -cnotmatch "(?m)^version: $versionPattern\r?$" -or
+    $updateManifest -cnotmatch "(?m)^path: $installerPattern\r?$" -or
+    $updateManifest -cnotmatch "(?m)^sha512: $hashPattern\r?$" -or
+    $updateManifest -cnotmatch "(?m)^  - url: $installerPattern\r?\n    sha512: $hashPattern\r?\n    size: $installerBytes\r?$") {
+    throw 'Update metadata does not match this installer version and SHA-512'
+}
+if ($env:WRITING_AGENT_UPDATE_SIGNER_SHA256) {
+    $securityModule = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+    Import-Module -Name $securityModule -ErrorAction Stop
+    $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+    if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) { throw 'Installer Authenticode signature is invalid' }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $signer = ([System.BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData))).Replace('-', '') }
+    finally { $sha.Dispose() }
+    if ($signer -ne $env:WRITING_AGENT_UPDATE_SIGNER_SHA256.Trim()) { throw 'Installer signing certificate does not match the configured update signer' }
+}
+$artifacts += Get-Item -LiteralPath $updateManifestPath
 $lines = foreach ($artifact in $artifacts) {
-    $hash = Get-Sha256Hex -LiteralPath $artifact.FullName
+    $hash = Get-ArtifactHash -LiteralPath $artifact.FullName
     "$hash  $($artifact.Name)"
 }
 $outputPath = Join-Path $directory $OutputName

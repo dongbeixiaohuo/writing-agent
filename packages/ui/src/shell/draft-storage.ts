@@ -1,5 +1,6 @@
 const unsavedDrafts = new Map<string, unknown>()
 const SAVE_FAILURE = '草稿保存失败，文字暂存在当前页面；请复制备份后再刷新或退出。'
+export function hasUnsavedDrafts(): boolean { return unsavedDrafts.size !== 0 }
 /** Browser-local drafts never become published body versions. Writes are synchronous before navigation. */
 export function draftKey(kind: string, ...owner: string[]): string {
   return `writing-agent:draft:v1:${kind}:${JSON.stringify(owner)}`

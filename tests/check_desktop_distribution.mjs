@@ -23,6 +23,8 @@ for (const required of [
   'SHA256SUMS.txt',
   'main.cjs',
   'preload.cjs',
+  'licenses/electron-updater.txt',
+  'licenses/semver.txt',
   'renderer/index.html',
 ]) assert.equal(names.includes(required), true, `missing ${required}`)
 

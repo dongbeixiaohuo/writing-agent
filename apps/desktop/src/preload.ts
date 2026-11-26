@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { DesktopUpdateState } from '../../../packages/client-bridge/src/desktop-update.js';
 
 import {
   UI_BRIDGE_PROTOCOL_VERSION,
@@ -23,12 +24,22 @@ import type {
 import {
   DESKTOP_BRIDGE_CHANNEL,
   DESKTOP_SNAPSHOT_CHANNEL,
+  DESKTOP_UPDATE_CHANNEL,
+  DESKTOP_UPDATE_STATE_CHANNEL,
 } from "./channels.js";
 
 const invoke = (request: DesktopRpcRequest): Promise<DesktopRpcResponse> =>
   ipcRenderer.invoke(DESKTOP_BRIDGE_CHANNEL, request) as Promise<DesktopRpcResponse>;
 
 const api: DesktopHostApi = {
+  updates: {
+    request: action => ipcRenderer.invoke(DESKTOP_UPDATE_CHANNEL, action) as Promise<DesktopUpdateState>,
+    subscribe(listener) {
+      const wrapped = (_event: Electron.IpcRendererEvent, state: DesktopUpdateState) => listener(state);
+      ipcRenderer.on(DESKTOP_UPDATE_STATE_CHANNEL, wrapped);
+      return () => ipcRenderer.removeListener(DESKTOP_UPDATE_STATE_CHANNEL, wrapped);
+    },
+  },
   invoke,
   async styleLibrary(command) {
     const response = await invoke({ protocolVersion: UI_BRIDGE_PROTOCOL_VERSION, method: 'styleLibrary', args: [command] });
