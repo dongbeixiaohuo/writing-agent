@@ -80,6 +80,7 @@ jobs:
         run: |
           npm run desktop:package
           node tests/check_desktop_distribution.mjs
+          node --import tsx --test tests/ux/desktop-update.test.ts
       - name: Install, launch and uninstall in the clean runner
         shell: pwsh
         run: |

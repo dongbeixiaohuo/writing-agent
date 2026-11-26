@@ -65,6 +65,8 @@ async function until(fn, label) {
 
 app.once('browser-window-created', (_event, browserWindow) => {
   window = browserWindow;
+  // Cover the narrow layout used on Windows runners as well as local desktops.
+  window.setSize(1000, 720);
   const send = window.webContents.send.bind(window.webContents);
   window.webContents.send = (channel, ...args) => send(channel, ...args.map(patchSnapshot));
   window.webContents.once('did-finish-load', async () => {
@@ -82,7 +84,11 @@ app.once('browser-window-created', (_event, browserWindow) => {
     })()`);
     try {
       // Select the same real, pre-seeded conversation on both launches.
-      await until(() => js(`!!document.querySelector('[aria-label="夜跑随想"]')`), 'saved project');
+      await until(() => js(`(() => {
+        if (document.querySelector('[aria-label="夜跑随想"]')) return true;
+        document.querySelector('[aria-label="展开侧边栏"]')?.click();
+        return false;
+      })()`), 'saved project in sidebar');
       await js(`document.querySelector('[aria-label="夜跑随想"]').click()`);
       await until(() => js(`document.querySelector(${JSON.stringify(composer)})?.isContentEditable`), 'composer');
       if (launch === 'reopen') {
