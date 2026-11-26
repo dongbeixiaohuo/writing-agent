@@ -27,7 +27,7 @@ test("candidate validation includes search safety and conversation rendering reg
   assert.match(scripts["test:ui"]!, /packages\/ui\/test\/conversation-readability\.test\.ts/u);
 });
 
-test("desktop package owns its identity and produces an explicit unsigned NSIS artifact", async () => {
+test("desktop package preserves its NSIS identity and emits update metadata without publishing", async () => {
   const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
     name: string;
     version: string;
@@ -37,7 +37,7 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
   assert.deepEqual(packageJson, {
     ...packageJson,
     name: "writing-agent-desktop",
-    version: "1.0.0-rc.116",
+    version: "1.0.0-rc.117",
     productName: "Writing Agent",
     main: "dist/main.cjs",
   });
@@ -48,14 +48,18 @@ test("desktop package owns its identity and produces an explicit unsigned NSIS a
     appId: string;
     productName: string;
     publish: unknown;
+    forceCodeSigning: boolean;
     win: { target: readonly string[]; signExecutable: boolean };
     nsis: Record<string, unknown>;
   };
   assert.equal(config.appId, "com.dongbeixiaohuo.writingagent");
   assert.equal(config.productName, "Writing Agent");
-  assert.equal(config.publish, null);
+  assert.deepEqual(config.publish, { provider: 'generic', url: 'https://github.com/dongbeixiaohuo/writing-agent/releases/download/', channel: 'latest' });
+  const { scripts } = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { scripts: Record<string, string> };
+  assert.match(scripts['desktop:package']!, /--publish never/u);
   assert.deepEqual(config.win.target, ["nsis"]);
-  assert.equal(config.win.signExecutable, false);
+  assert.equal(config.win.signExecutable, Boolean(process.env.WRITING_AGENT_UPDATE_SIGNER_SHA256?.trim()));
+  assert.equal(config.forceCodeSigning, config.win.signExecutable);
   assert.equal(config.nsis.guid, "c03d2689-78a4-57b7-813e-a5d1cf38cbb8");
   assert.equal(config.nsis.include, "../../build/installer.nsh");
   assert.equal(config.nsis.oneClick, false);
@@ -163,6 +167,10 @@ test("release checksum helper is self-contained under Windows PowerShell", {
     const historicalBlockmap = `${historicalInstaller}.blockmap`;
     const sourceManifest = join(directory, "source-manifest.json");
     writeFileSync(installer, "installer", "utf8");
+    const updateManifest = join(directory, 'latest.yml');
+    const installerHash = createHash('sha512').update('installer').digest('base64');
+    const installerName = 'Writing-Agent-Setup-1.0.0-rc.58-x64.exe';
+    writeFileSync(updateManifest, `version: 1.0.0-rc.58\nfiles:\n  - url: ${installerName}\n    sha512: ${installerHash}\n    size: 9\npath: ${installerName}\nsha512: ${installerHash}\n`, 'utf8');
     writeFileSync(blockmap, "blockmap", "utf8");
     writeFileSync(historicalInstaller, "historical-installer", "utf8");
     writeFileSync(historicalBlockmap, "historical-blockmap", "utf8");
@@ -171,7 +179,7 @@ test("release checksum helper is self-contained under Windows PowerShell", {
       version: "1.0.0-rc.58",
       sourceRevision: "0123456789abcdef0123456789abcdef01234567",
     }), "utf8");
-    const result = spawnSync("powershell.exe", [
+    const run = () => spawnSync("powershell.exe", [
       "-NoProfile",
       "-ExecutionPolicy",
       "Bypass",
@@ -183,10 +191,11 @@ test("release checksum helper is self-contained under Windows PowerShell", {
       "1.0.0-rc.58",
       "-SourceManifestPath",
       sourceManifest,
-    ], { encoding: "utf8" });
+    ], { encoding: "utf8", env: { ...process.env, WRITING_AGENT_UPDATE_SIGNER_SHA256: '' } });
+    const result = run();
     assert.equal(result.status, 0, result.stderr);
     const sums = readFileSync(join(directory, "SHA256SUMS.txt"), "utf8");
-    for (const [path, name] of [[installer, "Writing-Agent-Setup-1.0.0-rc.58-x64.exe"], [blockmap, "Writing-Agent-Setup-1.0.0-rc.58-x64.exe.blockmap"]] as const) {
+    for (const [path, name] of [[installer, "Writing-Agent-Setup-1.0.0-rc.58-x64.exe"], [blockmap, "Writing-Agent-Setup-1.0.0-rc.58-x64.exe.blockmap"], [updateManifest, 'latest.yml']] as const) {
       const expected = createHash("sha256").update(readFileSync(path)).digest("hex");
       assert.match(sums, new RegExp(`${expected}  ${name.replaceAll(".", "\\.")}`, "u"));
     }
@@ -203,9 +212,12 @@ test("release checksum helper is self-contained under Windows PowerShell", {
       artifacts: [
         "Writing-Agent-Setup-1.0.0-rc.58-x64.exe",
         "Writing-Agent-Setup-1.0.0-rc.58-x64.exe.blockmap",
+        'latest.yml',
       ],
       checksumFile: "SHA256SUMS.txt",
     });
+    writeFileSync(installer, 'changed installer', 'utf8');
+    assert.notEqual(run().status, 0, 'metadata for a different installer must fail packaging');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -224,13 +236,15 @@ test("upgrade smoke validates the current bridge protocol rather than the prior 
   assert.match(upgradeScript, /-ExpectedProtocolVersion \$ExpectedProtocolVersion/u);
 });
 
-test("desktop shell contains no updater, external navigation, upstream runtime, or old Tauri path", () => {
+test("desktop shell allows only the fixed update entry and preserves renderer navigation restrictions", () => {
   const mainSource = readFileSync(resolve(root, "src/main.ts"), "utf8");
   const preloadSource = readFileSync(resolve(root, "src/preload.ts"), "utf8");
   const source = [mainSource, preloadSource].join("\n");
+  assert.equal(mainSource.match(/shell\.openExternal\(/gu)?.length, 1);
+  assert.match(mainSource, /openRelease: url => shell\.openExternal\(url\)/u);
+  assert.match(mainSource, /!trustedSender\(event\) \|\| event\.sender !== mainWindow\?\.webContents/u);
   for (const forbidden of [
-    "autoUpdater",
-    "shell.openExternal",
+    'autoUpdater',
     "@tauri-apps",
     "DSH_HOME",
     "dsh-app",

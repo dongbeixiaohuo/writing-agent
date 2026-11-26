@@ -3,6 +3,7 @@ import { draftKey, readDraft, saveDraft, removeProjectDrafts } from './draft-sto
 import { useConversationCreation } from './conversation-creation.js'
 import { RunDiagnostics } from './RunDiagnostics.tsx'
 import { FailureAnalysisSettings } from './FailureAnalysisSettings.tsx'
+import { DesktopUpdates, useDesktopUpdates } from './DesktopUpdates.tsx'
 import { RunTrace, type RunTraceProps } from './RunTrace.tsx'
 import './RunTrace.css'
 import { ConversationWorking } from './ConversationWorking.tsx'
@@ -871,12 +872,14 @@ function SettingsDialog({
   bridge,
   brand,
   hostConfiguration,
+  update,
   initialSection,
   onClose,
 }: {
   bridge: ClientBridge
   brand: WritingAgentBrand
   hostConfiguration?: DesktopHostConfiguration
+  update: ReturnType<typeof useDesktopUpdates>
   initialSection: SettingsSection
   onClose: () => void
 }) {
@@ -1078,6 +1081,7 @@ function SettingsDialog({
                 </div>
               </section>
               <p className={css.aboutCopy}>{ABOUT_PRODUCT_DESCRIPTION}</p>
+              <DesktopUpdates update={update} about />
               {aboutVersion?.releaseExplanation && <p className={css.aboutReleaseExplanation}>{aboutVersion.releaseExplanation}</p>}
               {aboutError !== null && <div className={css.editorError} role="alert">{aboutError}</div>}
               <p className={css.aboutCopy}>{snapshot.mode === 'mock'
@@ -1108,6 +1112,7 @@ export function WritingAgentShell({
   hostConfiguration,
 }: WritingAgentShellProps) {
   const snapshot = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot)
+  const update = useDesktopUpdates(hostConfiguration?.updates)
   const frameRef = useRef<HTMLDivElement>(null)
   const conversationScrollRef = useRef<HTMLDivElement>(null)
   const followLatestRef = useRef(true)
@@ -1455,6 +1460,7 @@ export function WritingAgentShell({
             ? `本地服务连接已中断${snapshot.lastError === null ? '' : `：${snapshot.lastError.code}`}`
             : snapshot.environmentNotice}
         </div>
+        <DesktopUpdates update={update} />
         {snapshot.startupNotices?.map(notice => <div key={notice} className={css.modelSetupNotice} role="status">{notice}</div>)}
         {(creation.pending || creation.notice) && <div className={css.modelSetupNotice} role="status" aria-label="新建回执">
           {creation.pending && <span>{creation.project
@@ -1631,7 +1637,7 @@ export function WritingAgentShell({
           </div>
         )}
       </aside>
-      {settingsOpen && <div className={appFrameCss.overlayLayer}><SettingsDialog bridge={bridge} brand={brand} initialSection={settingsSection} {...(hostConfiguration === undefined ? {} : { hostConfiguration })} onClose={() => setSettingsOpen(false)} /></div>}
+      {settingsOpen && <div className={appFrameCss.overlayLayer}><SettingsDialog bridge={bridge} brand={brand} update={update} initialSection={settingsSection} {...(hostConfiguration === undefined ? {} : { hostConfiguration })} onClose={() => setSettingsOpen(false)} /></div>}
       {briefEditOpen && snapshot.brief !== null && <div className={appFrameCss.overlayLayer}><BriefEditDialog bridge={bridge} brief={snapshot.brief} {...(hostConfiguration === undefined ? {} : { hostConfiguration })} onClose={() => setBriefEditOpen(false)} /></div>}
       {styleLibraryOpen && supportsStyleLibrary(hostConfiguration) && <StyleLibraryDialog host={hostConfiguration} onClose={() => setStyleLibraryOpen(false)} onSelect={(profile: StyleProfile) => {
         setStyleComposerInsertion(profile)

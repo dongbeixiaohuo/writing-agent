@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 import {
   app,
@@ -8,6 +8,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  powerMonitor,
   protocol,
   session,
   shell,
@@ -49,6 +50,12 @@ import {
 } from "./security-policy.js";
 import { claimDesktopSingleInstance } from "./single-instance.js";
 import { inspectPendingWorkspaceRestore, recoverPendingWorkspaceRestore, replaceWorkspaceDatabaseFromBackup } from "./workspace-restore.js";
+import { DESKTOP_UPDATE_CHANNEL, DESKTOP_UPDATE_STATE_CHANNEL } from './channels.js';
+import { DESKTOP_RELEASES_API, DesktopUpdate, UPDATE_INTERVAL_MS } from './desktop-update.js';
+import { downloadWindowsUpdate, launchWindowsUpdateInstaller } from './windows-update.js';
+import type { DesktopUpdateState } from '../../../packages/client-bridge/src/desktop-update.js';
+
+declare const __WRITING_AGENT_UPDATE_SIGNER_SHA256__: string;
 
 const APP_ID = "com.dongbeixiaohuo.writingagent";
 const RPC_METHODS = new Set<DesktopRpcMethod>(DESKTOP_RPC_METHODS);
@@ -101,6 +108,9 @@ let restoringWorkspace = false;
 // The window close button asks first; app.quit() paths set this to skip the prompt.
 let allowClose = false;
 let desktopFailureReported = false;
+let desktopUpdate: DesktopUpdate | null = null;
+let updateTimer: ReturnType<typeof setInterval> | undefined;
+let activeDesktopRequests = 0;
 let rendererHandshakeResolve: (() => void) | null = null;
 const rendererHandshakeCompleted = new Promise<void>((resolve) => {
   rendererHandshakeResolve = resolve;
@@ -178,6 +188,9 @@ async function handleRpc(
   if (parsed === null) {
     return { ok: false, error: { code: "DESKTOP_REQUEST_INVALID", message: "Desktop request is invalid" } };
   }
+  if (desktopUpdate?.installing) {
+    return { ok: false, error: { code: 'UPDATE_RESTARTING', message: '正在安装更新，Writing Agent 会重新打开。' } };
+  }
   const currentHost = host;
   if (restoringWorkspace) {
     return { ok: false, error: { code: 'RESTORE_IN_PROGRESS', message: '工作区正在恢复，请等待恢复完成或重启后的恢复提示。' } };
@@ -185,6 +198,7 @@ async function handleRpc(
   if (currentHost === null) {
     return { ok: false, error: { code: "DESKTOP_HOST_NOT_READY", message: "Desktop host is not ready" } };
   }
+  activeDesktopRequests++;
   try {
     if (parsed.method === 'styleLibrary') {
       const result = await currentHost.styleLibrary(parsed.args[0], async () => {
@@ -428,6 +442,70 @@ async function handleRpc(
     return response;
   } catch (error) {
     return safeDesktopFailure(error);
+  } finally {
+    activeDesktopRequests--;
+  }
+}
+
+function checkDesktopUpdate(): void { void desktopUpdate?.check(); }
+
+function startDesktopUpdate(window: BrowserWindow): void {
+  if (runEnvironment.mode !== 'production' || !app.isPackaged || process.platform !== 'win32' || process.arch !== 'x64') return;
+  // electron-updater uses this private in-memory partition, separate from the renderer.
+  const updateSession = session.fromPartition('electron-updater', { cache: false });
+  const allowedHosts = new Set(['api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com']);
+  updateSession.webRequest.onBeforeRequest(({ url }, callback) => {
+    const target = new URL(url);
+    callback({ cancel: target.protocol !== 'https:' || target.port !== '' || !allowedHosts.has(target.hostname) });
+  });
+  const signer = __WRITING_AGENT_UPDATE_SIGNER_SHA256__;
+  desktopUpdate = new DesktopUpdate({
+    version: app.getVersion(),
+    canInstallInApp: /^[a-f0-9]{64}$/u.test(signer) && existsSync(join(dirname(process.execPath), 'Uninstall Writing Agent.exe')),
+    async listReleases(signal) {
+      const response = await updateSession.fetch(DESKTOP_RELEASES_API, {
+        credentials: 'omit', redirect: 'error', cache: 'no-store',
+        headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
+      });
+      if (!response.ok) throw new Error(`UPDATE_GITHUB_HTTP_${response.status}`);
+      return await response.json() as unknown;
+    },
+    download: (release, progress, signal) => downloadWindowsUpdate(release, signer, progress, signal),
+    safeToRestart: () => !quitting && !allowClose && !restoringWorkspace && activeDesktopRequests === 0 && host !== null && !host.hasWorkBeforeRestart(),
+    async install(path) {
+      window.webContents.session.flushStorageData();
+      await launchWindowsUpdateInstaller(path);
+      allowClose = true;
+      app.quit();
+    },
+    openRelease: url => shell.openExternal(url),
+    publish(state) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(DESKTOP_UPDATE_STATE_CHANNEL, state);
+    },
+    logFailure(operation, error) {
+      const name = error instanceof Error ? error.message : '';
+      const code = /^[A-Z0-9_]{3,80}$/u.test(name) ? name : 'DESKTOP_UPDATE_FAILED';
+      try {
+        const logs = join(userDataPath, 'logs');
+        mkdirSync(logs, { recursive: true });
+        appendFileSync(join(logs, 'desktop-update.jsonl'), `${JSON.stringify({ time: new Date().toISOString(), version: app.getVersion(), operation, code })}\n`);
+      } catch { process.stderr.write(`Writing Agent update ${operation} failed (${code}); log unavailable\n`); }
+    },
+  });
+  // The controller enforces the 30-minute network cadence. A shorter wake-up
+  // keeps a manual check from pushing the next background check back a full cycle.
+  updateTimer = setInterval(checkDesktopUpdate, UPDATE_INTERVAL_MS / 30);
+  window.on('focus', checkDesktopUpdate);
+  powerMonitor.on('resume', checkDesktopUpdate);
+  checkDesktopUpdate();
+}
+
+async function handleDesktopUpdate(event: IpcMainInvokeEvent, action: unknown): Promise<DesktopUpdateState> {
+  if (!trustedSender(event) || event.sender !== mainWindow?.webContents || desktopUpdate === null) return { phase: 'disabled' };
+  switch (action) {
+    case 'status': case 'check': case 'download': case 'install': case 'open-release':
+      return desktopUpdate.request(action);
+    default: return { phase: 'disabled' };
   }
 }
 
@@ -603,8 +681,10 @@ async function start(): Promise<void> {
   });
   hostUnsubscribe = host.subscribe(broadcast);
   ipcMain.handle(DESKTOP_BRIDGE_CHANNEL, handleRpc);
+  ipcMain.handle(DESKTOP_UPDATE_CHANNEL, handleDesktopUpdate);
   mainWindow = createWindow();
   mainWindow.on("closed", () => { mainWindow = null; });
+  startDesktopUpdate(mainWindow);
   await runSmoke(mainWindow);
 }
 
@@ -636,11 +716,15 @@ if (ownsInstance) {
   app.on("before-quit", () => {
     if (quitting) return;
     quitting = true;
+    clearInterval(updateTimer);
+    powerMonitor.removeListener('resume', checkDesktopUpdate);
+    desktopUpdate?.stop();
     hostUnsubscribe?.();
     hostUnsubscribe = null;
     host?.close();
     host = null;
     ipcMain.removeHandler(DESKTOP_BRIDGE_CHANNEL);
+    ipcMain.removeHandler(DESKTOP_UPDATE_CHANNEL);
   });
   void start().catch((error: unknown) => {
     reportDesktopFailure(error);

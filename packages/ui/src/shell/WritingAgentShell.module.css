@@ -2953,3 +2953,35 @@ label.searchProviderCard, .searchProviderToggle { grid-template-columns: minmax(
   color: var(--dsw-alias-label-primary);
   font-weight: 600;
 }
+.updateBanner,
+.aboutUpdate {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 10px 16px;
+  background: var(--dsw-specific-popover);
+  color: var(--dsw-alias-label-primary);
+  font-size: 0.875rem;
+}
+
+.updateBanner {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--dsw-alias-border-l3);
+}
+
+.aboutUpdate {
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 10px;
+}
+
+.updateActions {
+  display: flex;
+  gap: 8px;
+}
+
+.updateBanner progress,
+.aboutUpdate progress {
+  width: 100px;
+  vertical-align: middle;
+}

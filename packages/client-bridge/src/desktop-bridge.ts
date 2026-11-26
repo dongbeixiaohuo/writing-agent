@@ -294,6 +294,7 @@ export interface SearchConnectionView {
   readonly message: string;
 }
 export interface DesktopHostConfiguration {
+  readonly updates?: import('./desktop-update.js').DesktopUpdateApi;
   exportProjectRecovery?(projectId: string): Promise<{ cancelled: boolean; fileName?: string }>;
   repairProjectFromBackup?(projectId: string): Promise<{ cancelled: boolean; message?: string }>;
   styleLibrary?(command: import('../../writing-core/src/style-profile.js').StyleLibraryCommand): Promise<import('../../writing-core/src/style-profile.js').StyleLibraryResult>;

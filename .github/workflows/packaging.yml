@@ -94,5 +94,6 @@ jobs:
           retention-days: 7
           path: |
             output/desktop/SHA256SUMS.txt
+            output/desktop/latest.yml
             output/desktop/build-manifest.json
             output/desktop/installer-test.json

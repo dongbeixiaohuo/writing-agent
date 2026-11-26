@@ -47,6 +47,8 @@ npm run desktop:package
 
 `git status --porcelain` 应为空；后续生成物处于忽略范围。构建与测试版本必须一致。如果最终 SHA/版本改变，重新构建并重新核对受影响测试。
 
+Windows 应用内安装需要可信的 Authenticode 签名。正式构建时，将发布证书 DER 的 SHA-256 指纹配置为 GitHub Actions 变量 `DESKTOP_UPDATE_SIGNER_SHA256`，并将签名证书和密码配置为 `DESKTOP_WIN_CSC_LINK`、`DESKTOP_WIN_CSC_KEY_PASSWORD` secrets。使用本地签名环境时，对应构建变量为 `WRITING_AGENT_UPDATE_SIGNER_SHA256`、`WIN_CSC_LINK`、`WIN_CSC_KEY_PASSWORD`。校验脚本检查安装器已受 Windows 信任，且证书指纹与客户端绑定值一致。证书更换后，现有客户端需手动安装首个绑定新证书的版本。
+
 ## 5. 只整理本版本资产与校验值
 
 用户指定本地交付目录为仓库的 `output/desktop` **根目录**。每次生成或从 CI 下载的最新安装包，都必须在该目录直接提供 `Writing-Agent-Setup-<version>-x64.exe`；不能仅放在 `rc*-build`、`release-*` 等子目录后让用户另找。隔离构建与历史验证证据可以保留在子目录，但交付前须将最终安装包复制到根目录并核对 SHA-256。若根目录已有同名文件，先核对来源与哈希，保留旧测试包证据后再更新，不混用测试包与公开构建的校验值。
@@ -62,14 +64,20 @@ $releaseDirectory = Join-Path 'output/desktop' "release-$releaseVersion"
 if (Test-Path -LiteralPath $releaseDirectory) { throw '发布目录已存在，请先人工核对，不覆盖旧资产' }
 New-Item -ItemType Directory -Path $releaseDirectory | Out-Null
 Copy-Item -LiteralPath (Join-Path 'output/desktop' $releaseFile) -Destination $releaseDirectory
-# 当前没有自动更新：blockmap 不作为普通用户必需下载项。
+Copy-Item -LiteralPath (Join-Path 'output/desktop' "$releaseFile.blockmap") -Destination $releaseDirectory
 $releaseAsset = Join-Path $releaseDirectory $releaseFile
-$releaseHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $releaseAsset).Hash.ToLowerInvariant()
-"$releaseHash  $releaseFile" | Set-Content -LiteralPath (Join-Path $releaseDirectory 'SHA256SUMS.txt') -Encoding utf8
-Get-AuthenticodeSignature -LiteralPath $releaseAsset | Select-Object Status
+$signature = Get-AuthenticodeSignature -LiteralPath $releaseAsset
+if ($signature.Status -eq 'Valid') {
+    Copy-Item -LiteralPath 'output/desktop/latest.yml' -Destination $releaseDirectory
+    Copy-Item -LiteralPath 'output/desktop/SHA256SUMS.txt' -Destination $releaseDirectory
+} else {
+    Get-Content -LiteralPath 'output/desktop/SHA256SUMS.txt' |
+        Where-Object { $_ -notmatch '  latest\.yml$' } |
+        Set-Content -LiteralPath (Join-Path $releaseDirectory 'SHA256SUMS.txt') -Encoding utf8
+}
 ```
 
-这里是在发布操作手册中给出资产生成命令，不代表已经执行。签名必须在最终计算哈希前完成；若资产字节变化则重新校验。
+签名必须在 `electron-builder` 生成 `latest.yml` 和校验文件前完成。受信任的签名包将该版本 `latest.yml` 和 `SHA256SUMS.txt` 一并复制到发布目录。未签名包只发布安装器、blockmap 和这两项的校验值，GitHub 提示仍可发现它并引导手动下载。打包后替换任何文件都需要重新生成并校验同一组资产。
 
 检查候选包不含 Key、用户库、私人稿件、绝对开发路径、源码映射和无关运行时。保留 LICENSE、THIRD_PARTY_NOTICES 和构建清单。安装包未签名时，维护者需明确接受公开风险，并在 Release 说明，不要求用户关闭安全防护。
 
@@ -80,7 +88,7 @@ Get-AuthenticodeSignature -LiteralPath $releaseAsset | Select-Object Status
 1. 从最终验收 commit 创建不可随意移动的桌面 Tag。
 2. GitHub → Releases → Draft a new release，选择对应 Tag，标题标注“Writing Agent 桌面版 + 版本 + Windows x64”。
 3. 根据 [Release 草稿](DESKTOP_RELEASE_DRAFT.md)填写内容；发布正文中的文档链接改为锁定 Tag 下的 GitHub 完整链接，不把仓库相对路径原样粘到 Release。公开测试版勾选 Pre-release，不设置为仓库 latest。
-4. 上传 **本版本** `.exe` 与 `SHA256SUMS.txt`，核对文件名、大小、签名、哈希；不要上传整个 output 或用户测试数据库。
+4. 上传本版本 `.exe`、`.exe.blockmap` 与 `SHA256SUMS.txt`。支持应用内安装的版本同时上传同一次签名构建生成的 `latest.yml`。核对文件名、大小、签名和哈希，再公开 Release。
 5. 草稿状态下完成维护者签收。批准后 Publish release，再以未登录视角核对资产可访问，重新下载验证哈希。
 6. 将 README 桌面入口改为该 Release 的真实固定链接，或提供真实资产直链；链接只有在公开后才可供普通用户访问。
 
@@ -88,7 +96,8 @@ Get-AuthenticodeSignature -LiteralPath $releaseAsset | Select-Object Status
 
 ## 7. 发布后与回退
 
-- 当前客户端没有自动更新；向用户说明重新下载安装与备份步骤。
+- App 启动和运行期间会检查公开的 `desktop-v*` Windows x64 发行版。签名校验通过才允许应用内安装。首次引入更新功能时，现有客户端通过 GitHub 下载页手动升级一次。
+- 用含更新功能的旧版保持 App 打开，发布更高版本后验收自动提示、点击下载、等待写作和保存结束、安装并重开。打开旧稿并确认未发送草稿仍在。
 - Issue 模板/反馈要求版本、系统、协议、步骤、脱敏运行记录，不收集 Key 或完整私人数据库。
 - 出现严重问题，先标明问题版本和受影响范围，按需要下架问题附件；保留历史说明，修复用新版本，不替换成同名不同哈希资产而不告知。
 - 不强推 main、不移动已发布 Tag。程序降级前核对数据库兼容，必要时恢复旧版备份，不能承诺任何新库都能被旧程序打开。

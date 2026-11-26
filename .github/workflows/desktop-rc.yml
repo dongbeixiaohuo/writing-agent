@@ -16,6 +16,7 @@ jobs:
     runs-on: windows-latest
     env:
       PYTHONUTF8: "1"
+      WRITING_AGENT_UPDATE_SIGNER_SHA256: ${{ vars.DESKTOP_UPDATE_SIGNER_SHA256 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,7 +40,10 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - run: python -B tests/check_document_pack.py
       - run: npm run desktop:package
-      - name: Install, launch and uninstall the unsigned candidate
+        env:
+          WIN_CSC_LINK: ${{ secrets.DESKTOP_WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_WIN_CSC_KEY_PASSWORD }}
+      - name: Install, launch and uninstall the candidate
         shell: pwsh
         run: |
           $installers = @(Get-ChildItem output/desktop/Writing-Agent-Setup-*-x64.exe)
@@ -54,6 +58,8 @@ jobs:
       - name: Build the prior RC installer
         if: inputs.previous_ref != ''
         working-directory: previous-source
+        env:
+          WRITING_AGENT_UPDATE_SIGNER_SHA256: ''
         run: |
           npm ci
           npm run desktop:package
@@ -68,12 +74,13 @@ jobs:
       - name: Upload candidate for maintainer review only
         uses: actions/upload-artifact@v4
         with:
-          name: writing-agent-windows-x64-unsigned-candidate
+          name: writing-agent-windows-x64-candidate
           if-no-files-found: error
           retention-days: 7
           path: |
             output/desktop/Writing-Agent-Setup-*-x64.exe
             output/desktop/Writing-Agent-Setup-*-x64.exe.blockmap
+            output/desktop/latest.yml
             output/desktop/SHA256SUMS.txt
             output/desktop/build-manifest.json
             output/desktop/installer-test.json
