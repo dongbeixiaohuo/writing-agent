@@ -3,15 +3,9 @@ import type { DesktopUpdateAction, DesktopUpdateApi, DesktopUpdateState } from '
 import { hasUnsavedDrafts } from './draft-storage.ts'
 import css from './WritingAgentShell.module.css'
 
-const DEFERRED_VERSION_KEY = 'writing-agent:deferred-update-version'
-
 export function useDesktopUpdates(api?: DesktopUpdateApi) {
   const [state, setState] = useState<DesktopUpdateState>({ phase: 'disabled' })
   const [actionError, setActionError] = useState('')
-  const [deferredVersion, setDeferredVersion] = useState(() => {
-    try { return localStorage.getItem(DEFERRED_VERSION_KEY) }
-    catch { return null }
-  })
   useEffect(() => {
     if (!api) return
     let received = false
@@ -47,20 +41,14 @@ export function useDesktopUpdates(api?: DesktopUpdateApi) {
     void api?.request(action).catch(() => setActionError(action === 'open-release' ? '暂时打不开 GitHub 下载页。' : '更新服务暂时不可用，请稍后重试。'))
   }
 
-  function defer(version: string) {
-    setDeferredVersion(version)
-    try { localStorage.setItem(DEFERRED_VERSION_KEY, version) }
-    catch { /* The in-memory dismissal still applies until this window closes. */ }
-  }
-
-  return { state, act, actionError, defer, deferredVersion }
+  return { state, act, actionError }
 }
 
 export function DesktopUpdates({ update, about = false }: { update: ReturnType<typeof useDesktopUpdates>; about?: boolean }) {
-  const { state, act, actionError, defer, deferredVersion } = update
+  const { state, act, actionError } = update
   if (state.phase === 'disabled') return about && actionError ? <p role="status">{actionError}</p> : null
   if (!about && (state.phase === 'idle' || state.phase === 'current' || state.phase === 'checking' ||
-    (state.phase === 'available' && state.version === deferredVersion) ||
+    (state.phase === 'available' && state.deferred) ||
     (state.phase === 'error' && state.operation === 'check'))) return null
 
   const busy = state.phase === 'checking' || state.phase === 'downloading' || state.phase === 'ready' || state.phase === 'installing'
@@ -80,7 +68,7 @@ export function DesktopUpdates({ update, about = false }: { update: ReturnType<t
     </div>
     {state.phase === 'available' && <div className={css.updateActions}>
       {state.installInApp ? button('立即更新', 'download', true) : button('打开 GitHub 下载页', 'open-release', true)}
-      {!about && <button type="button" className={css.secondaryAction} onClick={() => defer(state.version)}>稍后</button>}
+      {!about && button('稍后', 'defer')}
     </div>}
     {state.phase === 'error' && state.operation !== 'check' && <div className={css.updateActions}>
       {state.operation === 'download' ? button('重试下载', 'download', true) : button('重试安装', 'install', true)}

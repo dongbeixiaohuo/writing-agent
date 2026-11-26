@@ -48,7 +48,7 @@ test('while a window stays open, polling or resuming discovers a newly published
   now++;
   await Promise.all([update.check(), update.check(), update.request('check')]);
   assert.equal(checks, 2);
-  assert.deepEqual(states.at(-1), { phase: 'available', version: '1.0.0-rc.117', installInApp: false });
+  assert.deepEqual(states.at(-1), { phase: 'available', version: '1.0.0-rc.117', installInApp: false, deferred: false });
   await update.request('download');
   await update.request('open-release');
   update.stop();
@@ -116,8 +116,29 @@ test('signed build offers a release missing update metadata as a manual download
     download: async () => assert.fail('no update metadata'), safeToRestart: () => true, install: async () => assert.fail('must not install'),
     openRelease: async () => {}, publish: () => {}, logFailure: (_, error) => assert.fail(String(error)),
   });
-  assert.deepEqual(await update.request('check'), { phase: 'available', version: '1.0.0-rc.117', installInApp: false });
+  assert.deepEqual(await update.request('check'), { phase: 'available', version: '1.0.0-rc.117', installInApp: false, deferred: false });
   assert.equal((await update.request('download')).phase, 'available');
+});
+
+test('deferring a release suppresses its banner across app launches without hiding newer releases', async () => {
+  let latest = '1.0.0-rc.117';
+  let saved: string | null = null;
+  const openApp = () => new DesktopUpdate({
+    version: '1.0.0-rc.116', canInstallInApp: false, deferredVersion: saved,
+    saveDeferredVersion: version => { saved = version; },
+    listReleases: async () => [release(latest)],
+    download: async () => assert.fail('must not download'),
+    safeToRestart: () => true, install: async () => assert.fail('must not install'),
+    openRelease: async () => {}, publish: () => {}, logFailure: (_, error) => assert.fail(String(error)),
+  });
+  const first = openApp();
+  await first.check();
+  await first.request('defer');
+  assert.equal(saved, latest);
+  const reopened = openApp();
+  assert.deepEqual(await reopened.request('check'), { phase: 'available', version: latest, installInApp: false, deferred: true });
+  latest = '1.0.0-rc.118';
+  assert.deepEqual(await reopened.request('check'), { phase: 'available', version: latest, installInApp: false, deferred: false });
 });
 
 test('update metadata can only point at the exact version and asset discovered on GitHub', () => {

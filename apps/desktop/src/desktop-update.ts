@@ -48,6 +48,8 @@ interface DesktopUpdateOptions {
   safeToRestart(): boolean;
   install(path: string): Promise<void>;
   openRelease(url: string): Promise<void>;
+  deferredVersion?: string | null;
+  saveDeferredVersion?(version: string): void;
   publish(state: DesktopUpdateState): void;
   logFailure(operation: string, error: unknown): void;
   now?: () => number;
@@ -57,12 +59,16 @@ export class DesktopUpdate {
   #state: DesktopUpdateState = { phase: 'idle' };
   #offer: DesktopRelease | null = null;
   #verifiedInstaller: string | null = null;
+  #deferredVersion: string | null;
   #lastCheckAt = -Infinity;
   #work: AbortController | null = null;
   #stopped = false;
   readonly #options: DesktopUpdateOptions;
 
-  constructor(options: DesktopUpdateOptions) { this.#options = options; }
+  constructor(options: DesktopUpdateOptions) {
+    this.#options = options;
+    this.#deferredVersion = options.deferredVersion ?? null;
+  }
 
   get installing(): boolean { return this.#state.phase === 'installing'; }
 
@@ -91,6 +97,7 @@ export class DesktopUpdate {
       this.#offer = offer;
       this.#publish(offer === null ? { phase: 'current' } : {
         phase: 'available', version: offer.version, installInApp: this.#options.canInstallInApp && offer.hasUpdateManifest,
+        deferred: this.#deferredVersion === offer.version,
       });
     } catch (error) {
       if (this.#stopped) return;
@@ -137,6 +144,12 @@ export class DesktopUpdate {
     if (action === 'check') await this.check(true);
     if (action === 'download') await this.#download();
     if (action === 'install') await this.#install();
+    if (action === 'defer' && this.#state.phase === 'available' && !this.#state.deferred) {
+      this.#deferredVersion = this.#state.version;
+      try { this.#options.saveDeferredVersion?.(this.#deferredVersion); }
+      catch (error) { this.#options.logFailure('defer', error); }
+      this.#publish({ ...this.#state, deferred: true });
+    }
     if (action === 'open-release' && this.#offer && !this.installing) await this.#options.openRelease(releaseUrl(this.#offer, 'tag'));
     return this.#state;
   }

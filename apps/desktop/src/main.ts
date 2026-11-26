@@ -459,8 +459,15 @@ function startDesktopUpdate(window: BrowserWindow): void {
     callback({ cancel: target.protocol !== 'https:' || target.port !== '' || !allowedHosts.has(target.hostname) });
   });
   const signer = __WRITING_AGENT_UPDATE_SIGNER_SHA256__;
+  const deferredPath = join(userDataPath, 'deferred-update-version');
+  let deferredVersion = null;
+  try {
+    if (existsSync(deferredPath) && statSync(deferredPath).size <= 80) deferredVersion = readFileSync(deferredPath, 'utf8').trim();
+  } catch { process.stderr.write('Writing Agent could not read the deferred update version\n'); }
   desktopUpdate = new DesktopUpdate({
     version: app.getVersion(),
+    deferredVersion,
+    saveDeferredVersion: version => writeFileSync(deferredPath, version, { encoding: 'utf8', mode: 0o600 }),
     canInstallInApp: /^[a-f0-9]{64}$/u.test(signer) && existsSync(join(dirname(process.execPath), 'Uninstall Writing Agent.exe')),
     async listReleases(signal) {
       const response = await updateSession.fetch(DESKTOP_RELEASES_API, {
@@ -503,7 +510,7 @@ function startDesktopUpdate(window: BrowserWindow): void {
 async function handleDesktopUpdate(event: IpcMainInvokeEvent, action: unknown): Promise<DesktopUpdateState> {
   if (!trustedSender(event) || event.sender !== mainWindow?.webContents || desktopUpdate === null) return { phase: 'disabled' };
   switch (action) {
-    case 'status': case 'check': case 'download': case 'install': case 'open-release':
+    case 'status': case 'check': case 'download': case 'install': case 'open-release': case 'defer':
       return desktopUpdate.request(action);
     default: return { phase: 'disabled' };
   }
