@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { gunzipSync } from "node:zlib";
 import test from "node:test";
 import { UI_BRIDGE_PROTOCOL_VERSION } from '../../../packages/client-bridge/src/protocol.js';
 
@@ -37,7 +38,7 @@ test("desktop package preserves its NSIS identity and emits update metadata with
   assert.deepEqual(packageJson, {
     ...packageJson,
     name: "writing-agent-desktop",
-    version: "1.0.0-rc.117",
+    version: "1.0.0-rc.118",
     productName: "Writing Agent",
     main: "dist/main.cjs",
   });
@@ -142,6 +143,31 @@ test("desktop package preserves its NSIS identity and emits update metadata with
     "testRootRemoved",
     "CSIDL_DESKTOPDIRECTORY",
   ]) assert.equal(visibleProgressScript.includes(required), true, required);
+});
+
+test("external signing regenerates the feed and blockmap from the final bytes without changing the installer", () => {
+  const directory = mkdtempSync(join(tmpdir(), "wa-signed-metadata-"));
+  try {
+    const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    const filename = `Writing-Agent-Setup-${version}-x64.exe`;
+    const installer = join(directory, filename);
+    const original = Buffer.alloc(33_000, 0x41);
+    const signed = Buffer.concat([original, Buffer.from("fixture certificate table")]);
+    for (const bytes of [original, signed]) {
+      writeFileSync(installer, bytes);
+      const run = spawnSync(process.execPath, [join(root, "scripts/signed-update-metadata.mjs"), directory], { encoding: "utf8" });
+      assert.equal(run.status, 0, run.stderr);
+      assert.deepEqual(readFileSync(installer), bytes);
+      const sha = createHash("sha512").update(bytes).digest("base64");
+      const metadata = readFileSync(join(directory, "latest.yml"), "utf8");
+      assert.ok(metadata.includes(`url: ${filename}\n    sha512: ${sha}\n    size: ${bytes.length}\n`));
+      assert.ok(metadata.includes(`path: ${filename}\nsha512: ${sha}\n`));
+      const blocks = JSON.parse(gunzipSync(readFileSync(`${installer}.blockmap`)).toString("utf8"));
+      assert.equal(blocks.files[0].sizes.reduce((total: number, size: number) => total + size, 0), bytes.length);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("release checksum helper is self-contained under Windows PowerShell", {

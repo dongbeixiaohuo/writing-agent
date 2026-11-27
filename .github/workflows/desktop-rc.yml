@@ -3,6 +3,14 @@ name: Desktop RC candidate
 on:
   workflow_dispatch:
     inputs:
+      signing:
+        description: "SignPath policy or ordinary candidate build"
+        type: choice
+        default: candidate
+        options:
+          - candidate
+          - test-signing
+          - release-signing
       previous_ref:
         description: "Optional prior RC Git ref for a real upgrade and data-retention test"
         required: false
@@ -14,10 +22,25 @@ permissions:
 jobs:
   windows-x64-candidate:
     runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: read
     env:
       PYTHONUTF8: "1"
-      WRITING_AGENT_UPDATE_SIGNER_SHA256: ${{ vars.DESKTOP_UPDATE_SIGNER_SHA256 }}
+      WRITING_AGENT_UPDATE_SIGNER_SHA256: ${{ inputs.signing != 'test-signing' && vars.DESKTOP_UPDATE_SIGNER_SHA256 || '' }}
     steps:
+      - name: Check signing prerequisites
+        if: inputs.signing != 'candidate'
+        shell: pwsh
+        env:
+          SIGNING_POLICY: ${{ inputs.signing }}
+          PREVIOUS_REF: ${{ inputs.previous_ref }}
+          ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main' -or $env:PREVIOUS_REF) { throw 'Sign from main without a second checkout.' }
+          if ($env:SIGNING_POLICY -notin @('test-signing', 'release-signing')) { throw 'Unknown SignPath policy.' }
+          if (-not $env:ORGANIZATION_ID) { throw 'Set SIGNPATH_ORGANIZATION_ID in repository variables.' }
+          if ($env:SIGNING_POLICY -eq 'release-signing' -and $env:WRITING_AGENT_UPDATE_SIGNER_SHA256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Set DESKTOP_UPDATE_SIGNER_SHA256 to the production certificate SHA-256 before building.' }
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -40,15 +63,62 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - run: python -B tests/check_document_pack.py
       - run: npm run desktop:package
+        if: inputs.signing == 'candidate'
         env:
           WIN_CSC_LINK: ${{ secrets.DESKTOP_WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_WIN_CSC_KEY_PASSWORD }}
-      - name: Install, launch and uninstall the candidate
+      - name: Build app with the intended update signer
+        if: inputs.signing != 'candidate'
+        run: npm run build:desktop
+      - name: Package installer for external signing
+        if: inputs.signing != 'candidate'
+        env:
+          WRITING_AGENT_UPDATE_SIGNER_SHA256: ''
+        run: npm exec --no -- electron-builder --projectDir apps/desktop/dist/package --config ../../electron-builder.config.mjs --win nsis --x64 --publish never
+      - name: Upload installer for SignPath
+        id: unsigned
+        if: inputs.signing != 'candidate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: writing-agent-signing-input
+          path: output/desktop/Writing-Agent-Setup-*-x64.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Submit installer to SignPath
+        if: inputs.signing != 'candidate'
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: writing-agent
+          signing-policy-slug: ${{ inputs.signing }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: output/signpath/signed
+      - name: Verify returned installer and record certificate
+        if: inputs.signing != 'candidate'
+        shell: pwsh
+        env:
+          SIGNING_POLICY: ${{ inputs.signing }}
+        run: ./apps/desktop/scripts/verify_signpath_installer.ps1 -Directory output/signpath/signed -Policy $env:SIGNING_POLICY
+      - name: Generate release metadata from signed bytes
+        if: inputs.signing == 'release-signing'
         shell: pwsh
         run: |
-          $installers = @(Get-ChildItem output/desktop/Writing-Agent-Setup-*-x64.exe)
+          node apps/desktop/scripts/signed-update-metadata.mjs output/signpath/signed
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & apps/desktop/scripts/write_release_checksums.ps1 -ArtifactDirectory output/signpath/signed
+      - name: Install, launch and uninstall the candidate
+        shell: pwsh
+        env:
+          INSTALLER_DIRECTORY: ${{ inputs.signing == 'candidate' && 'output/desktop' || 'output/signpath/signed' }}
+        run: |
+          $installers = @(Get-ChildItem -LiteralPath $env:INSTALLER_DIRECTORY -Filter 'Writing-Agent-Setup-*-x64.exe' -File)
           if ($installers.Count -ne 1) { throw "Expected exactly one installer, found $($installers.Count)" }
-          & apps/desktop/scripts/test_desktop_installer.ps1 -InstallerPath $installers[0].FullName -EvidencePath output/desktop/installer-test.json
+          & apps/desktop/scripts/test_desktop_installer.ps1 -InstallerPath $installers[0].FullName -EvidencePath (Join-Path $env:INSTALLER_DIRECTORY 'installer-test.json')
       - name: Check out the explicitly selected prior RC
         if: inputs.previous_ref != ''
         uses: actions/checkout@v4
@@ -72,6 +142,7 @@ jobs:
           if ($previous.Count -ne 1 -or $current.Count -ne 1) { throw "Expected exactly one prior and one current installer" }
           & apps/desktop/scripts/test_desktop_installer.ps1 -PreviousInstallerPath $previous[0].FullName -InstallerPath $current[0].FullName -EvidencePath output/desktop/upgrade-test.json
       - name: Upload candidate for maintainer review only
+        if: inputs.signing == 'candidate'
         uses: actions/upload-artifact@v4
         with:
           name: writing-agent-windows-x64-candidate
@@ -85,3 +156,12 @@ jobs:
             output/desktop/build-manifest.json
             output/desktop/installer-test.json
             output/desktop/upgrade-test.json
+      - name: Upload signed installer and verification
+        if: inputs.signing != 'candidate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: writing-agent-windows-x64-${{ inputs.signing }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: output/signpath/signed/
