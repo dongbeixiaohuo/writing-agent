@@ -44,6 +44,8 @@ it('hands off the author’s title question, opening situation and ending withou
     core_keyword_from_title: '难受',
     questionToAnswer: '不回消息为什么还要猜以后会不会吃亏？',
     openingSituation: '从下班后收到一条工作消息、犹豫要不要回的处境写起。',
+    analysisSections: [{ heading: '十点后的消息', readerGain: '看到晚回消息的顾虑从哪里来。' },
+      { heading: '谁在承担等待', readerGain: '知道两边的时间成本怎么分配。' }],
     ending: { mode: 'structural_critique', focus: '收回到员工独自承担不回的后果。' },
   };
   const submitted = {
@@ -62,6 +64,9 @@ it('hands off the author’s title question, opening situation and ending withou
   assert.equal(plan.narrativePlan.core_keyword_from_title, '难受');
   assert.equal(plan.narrativePlan.questionToAnswer, narrativePlan.questionToAnswer);
   assert.equal(plan.narrativePlan.openingSituation, narrativePlan.openingSituation);
+  assert.deepEqual(plan.narrativePlan.analysisSections, narrativePlan.analysisSections);
+  assert.ok(!('guideSteps' in plan));
+  assert.equal(narrativeOf(project({ ...submitted, narrativePlan: { ...narrativePlan, analysisSections: [{ heading: '缺少职责' }] } }))?.analysisSections, undefined);
   assert.match(plan.narrativePlan.ending.guidance ?? '', /不必另给行动建议/u);
   assert.ok(!('readerPayoff' in plan));
   assert.equal(narrativeOf(project(submitted, [direction]))?.core_keyword_from_title, undefined);
@@ -71,6 +76,46 @@ it('hands off the author’s title question, opening situation and ending withou
   const decision = project({ ...submitted, narrativePlan: { ...narrativePlan,
     ending: { mode: 'actionable_heuristic', focus: '给读者一个材料能支撑的判断标准。' } } });
   assert.match(narrativeOf(decision)?.ending.guidance ?? '', /具体判断标准/u);
+});
+
+it('keeps a complete two-person scene in the writer handoff without blocking legacy or incomplete plans', () => {
+  const direction = 'AI 停了，先慌的是活儿还是自己？';
+  const sceneContrast = {
+    sharedTask: '两个人都要在十点前交客户方案。',
+    detailToConfirm: '交付能不能提前一周？',
+    first: { firstAction: '翻客户原邮件找提前一周交付的确认。', blocker: '邮件没写谁拍板，只能打电话问。' },
+    second: { firstAction: '在昨天的 AI 摘要里查是否确认提前一周交付。', blocker: '摘要只说周期可协商，找不到谁确认过。' },
+    framing: 'hypothetical',
+  } as const;
+  const narrativePlan = {
+    questionToAnswer: direction, openingSituation: 'AI 工具一早全停。', ending: { focus: '回到开头。' },
+  };
+  const assessment = {
+    decision: 'ready', promise: direction, readerPayoff: '看工具停下后动作怎么分岔。', reason: '可直接展开。',
+    readingRoute: { question: direction, moments: [] }, queries: [], questions: [],
+  };
+  const accepts = new Ajv().compile(READING_SELECTION_JSON_SCHEMA);
+  const submitted = { ...assessment, narrativePlan: { ...narrativePlan, sceneContrast } };
+  const bound = (value: unknown) => parsePrewriting(value, JSON.stringify(ledger), '', true, { direction, sources: [] });
+  assert.ok(accepts(submitted));
+  assert.deepEqual(bound(submitted).narrativePlan?.sceneContrast, sceneContrast);
+  const handoff = draftWritingPlan(bound(submitted));
+  assert.ok('narrativePlan' in handoff);
+  assert.deepEqual(handoff.narrativePlan?.sceneContrast, sceneContrast);
+  assert.match(JSON.stringify(READING_SELECTION_JSON_SCHEMA), /同一件具体任务.*那一条具体判断或承诺/u);
+  assert.match(READING_DRAFT_INSTRUCTIONS, /两人都要去查这一条/u);
+  assert.match(READING_DRAFT_INSTRUCTIONS, /第一个人的卡点改成“时间不够”/u);
+  assert.match(READING_DRAFT_INSTRUCTIONS, /framing=hypothetical.{0,50}“设想”/u);
+
+  const incomplete = { ...submitted, narrativePlan: { ...narrativePlan,
+    sceneContrast: { ...sceneContrast, second: { firstAction: '打开摘要。' } } } };
+  assert.equal(accepts(incomplete), false);
+  assert.equal(bound(incomplete).decision, 'ready');
+  assert.equal(bound(incomplete).narrativePlan?.sceneContrast, undefined);
+  assert.deepEqual(bound(incomplete).narrativePlan?.ending, narrativePlan.ending);
+  assert.ok(accepts({ ...assessment, narrativePlan }));
+  assert.equal(bound({ ...assessment, narrativePlan }).narrativePlan?.sceneContrast, undefined);
+  assert.equal(bound({ ...submitted, readingRoute: { question: '换了题', moments: [] } }).narrativePlan, undefined);
 });
 
 it('runs targeted persuasion review into scoped revision and carries that contract across continuation', () => {
@@ -115,8 +160,12 @@ it('runs targeted persuasion review into scoped revision and carries that contra
 
     const revised = stageArtifact(storage, 'p', 'r2', 'central_revision')!;
     assert.deepEqual(workflow.protectedHypotheses('r2'), []);
-    const edit = { kind: 'context', quote: '值得保留的动作', replacement: '这一步做的是把两家的住所安排近一些。这个动作看得见。', reason: '交代动作指什么。' };
+    // This edit was already committed under an older policy, before local sample-size checks.
+    const edit = { kind: 'context', quote: '值得保留的动作', replacement: '12名受访者提到了把两家的住所安排近一些。这个动作看得见。', reason: '交代动作指什么。' };
     const lintEdits = { baseBodyVersionId: revised.id, edits: [edit] };
+    const formerlyRejected = { kind: 'context', quote: '住得近，见面可能方便些。',
+      replacement: '见面多了，不能单凭这一点认定两家一定相处得好。', reason: '分清见面次数和相处。' };
+    const submittedLintEdits = { ...lintEdits, edits: [{ ...edit, quote: '这段并不存在。' }, edit, formerlyRejected] };
     const finalBody = revised.content.replace(`${edit.quote}。`, edit.replacement);
     storage.recordRunEvent({ projectId: 'p', runId: 'r2', operationId: 'lint-dispatch', type: 'tool.completed',
       payload: { result: { toolName: 'director_decide', result: { collaboration: {
@@ -125,7 +174,7 @@ it('runs targeted persuasion review into scoped revision and carries that contra
       } } } } });
     storage.recordRunEvent({ projectId: 'p', runId: 'r2', operationId: 'lint-save', type: 'tool.requested',
       payload: { actor: 'language_review', toolName: 'submit_writing_stage',
-        arguments: { stage: 'language_review', content: revised.content, lintEdits } } });
+        arguments: { stage: 'language_review', content: revised.content, lintEdits: submittedLintEdits } } });
     assert.equal(workflow.recoverLanguageReview('r2', storage.listRunEvents('r2')), null, 'dispatch alone is not a saved lint');
     const saved = storage.commitArtifactVersion({ projectId: 'p', kind: 'body', logicalKey: 'main', operationId: 'lint-save:artifact',
       baseVersionId: revised.id, content: finalBody, reason: 'workflow:language_review', requestSnapshotId: null,
@@ -133,7 +182,11 @@ it('runs targeted persuasion review into scoped revision and carries that contra
     assert.ok(saved.ok);
     const recovered = workflow.recoverLanguageReview('r2', storage.listRunEvents('r2'));
     assert.ok(recovered, 'a body saved before the final stage receipt can be reconciled');
-    assert.deepEqual(JSON.parse(recovered.content).lintEdits, lintEdits);
+    const receipt = JSON.parse(recovered.content);
+    assert.deepEqual(receipt.lintEdits, lintEdits);
+    assert.deepEqual(receipt.lintRejectedEdits.map((item: { index: number; code: string }) => [item.index, item.code]),
+      [[1, 'FINAL_LINT_INVALID'], [3, 'BODY_STAGE_CONTAINS_EDITORIAL_CAVEATS']]);
+    assert.equal(workflow.recoverLanguageReview('r2', storage.listRunEvents('r2'))?.id, recovered.id);
     assert.equal(stageArtifact(storage, 'p', 'r2', 'language_review')?.content, finalBody);
     assert.equal(workflow.progress('r2').nextStage, 'fact_check');
   } finally { storage.close(); rmSync(path, { recursive: true, force: true }); }

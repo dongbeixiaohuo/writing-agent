@@ -15,7 +15,8 @@ import { PREWRITING_INSTRUCTIONS, PREWRITING_JSON_SCHEMA, bindConfirmedReadingPl
 import { fitResearchReadings, researchReadings } from './research-readings.js';
 import { redevelopmentReference, redevelopmentProblems, redevelopmentHistory } from './revision-context.js';
 import { articleParagraphs, paragraphEditsOutputSchema, paragraphRepairScope } from './paragraph-revision.js';
-import { FINAL_LINT_INSTRUCTIONS, FOCUSED_REVISION_INSTRUCTIONS, GUIDE_LINT_INSTRUCTIONS, LINT_EDITS_SCHEMA, PERSUASION_REVIEW_INSTRUCTIONS, REVIEW_EDITS_SCHEMA, findCrossSectionDataRepeats } from './focused-review.js';
+import { finalLintMessages, FOCUSED_REVISION_INSTRUCTIONS, PERSUASION_REVIEW_INSTRUCTIONS,
+  REVIEW_EDITS_SCHEMA, REVIEW_EXCERPT_SCHEMA, isArticleHeading, reviewOriginQuote } from './focused-review.js';
 import { PARAGRAPH_REVISION_SUBMISSION, READING_EDITOR_INSTRUCTIONS, READING_REVISION_INSTRUCTIONS, readingAuditPrompt } from './review-closure-prompts.js';
 import { assertBusinessInputQuestions, bodyArticleBaseline, evidenceIdsFromLedger, isReadOnlyRevisionAudit, isReadingFirstRun, usesFocusedReview, workflowStagesForRun, stageArtifact, stageMarker, type WritingWorkflowTools } from "./workflow-tools.js";
 import { EDITORIAL_PLAN_INSTRUCTIONS } from './editorial-plan.js';
@@ -549,26 +550,79 @@ export function createWritingCollaboration(options: {
     const reviewClosure = revisionWork?.closure ?? workflow.reviewClosure(runId);
     const repairBody = (revisionWork?.returnReportId || readingFirst) && current.expectedBodyVersionId ? storage.getArtifactVersion(current.expectedBodyVersionId) : null;
     if (assignment?.stage === 'central_revision' && revisionWork && repairBody && (readingFirst || revisionWork.closure.findings.length)) {
-      const scope = paragraphRepairScope(repairBody.content, revisionWork.closure.findings, repairBody.id);
       const selectedStyle = projectStyleSelection(storage, projectId);
+      const findings = revisionWork.closure.findings;
+      const excerpt = focusedReview ? workflow.reviewExcerpt(repairBody, findings) : null;
+      if (excerpt) {
+        const { id, quote, issue, severity } = excerpt.finding;
+        return {
+          scopeId: `excerpt-revision:${assignment.decisionId}:${repairBody.id}`, actor: 'central_revision', expectedBodyVersionId: repairBody.id,
+          systemPrompt: '只替换选定的原句，把过强的归因收窄成这一步值得先查的线索。保留原有事实和句子作用。按 revisionOutputSchema 提交。',
+          userMessage: `${styleContext(selectedStyle, 'central_revision')}\nCOLLABORATION_STATE=${JSON.stringify({
+            actor: 'central_revision', stage: 'central_revision', baseBodyVersionId: repairBody.id,
+            target: { paragraphId: excerpt.paragraphId, quote: excerpt.quote },
+            finding: { id, quote, issue, severity },
+            revisionOutputSchema: { type: 'object', properties: { reviewEdits: { ...REVIEW_EXCERPT_SCHEMA,
+              properties: { ...REVIEW_EXCERPT_SCHEMA.properties, baseBodyVersionId: { const: repairBody.id } } } },
+            required: ['reviewEdits'], additionalProperties: false },
+          })}`,
+          allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
+          textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'central_revision', content: repairBody.content }, format: 'json_object' },
+          roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'reviewEdits'], required: ['reviewEdits'], stringFields: ['content'] } },
+          authorizeTool: call => call.name === 'submit_writing_stage' && (call.arguments as {stage?:string}).stage === 'central_revision',
+        };
+      }
+      const scope = paragraphRepairScope(repairBody.content, findings, repairBody.id);
+      const originQuotes = new Map(focusedReview ? findings.flatMap(finding => {
+        const quote = reviewOriginQuote(repairBody.content, finding.quote, finding.originQuote);
+        return quote ? [[finding.id, quote] as const] : [];
+      }) : []);
       const authorized = storage.listMaterials(projectId).filter(m => options.materialIds.includes(m.id));
       const research = stageArtifact(storage, projectId, runId, 'research');
       const field = focusedReview ? 'reviewEdits' : 'paragraphEdits';
-      const findings = revisionWork.closure.findings;
+      const lastSection = scope.paragraphs.findLastIndex(p => /^ {0,3}#{2,6}\s/u.test(p.text));
+      const endingParagraphs = (lastSection >= 0 ? scope.paragraphs.slice(lastSection + 1) : scope.paragraphs.slice(-3))
+        .filter(p => !/^ {0,3}#{1,6}\s/u.test(p.text));
+      const closingFinding = focusedReview && endingParagraphs.slice(-2).some(p => scope.editableParagraphIds.includes(p.id));
+      const precedingBody = closingFinding ? scope.paragraphs.slice(0, lastSection >= 0 ? lastSection : -3)
+        .filter((paragraph, index) => !isArticleHeading(paragraph, index)).slice(-2)
+        .map(({ id, text }) => ({ id, text })) : [];
+      const paragraphScope = focusedReview ? {
+        paragraphs: scope.paragraphs.map(({ id, text }) => ({ id, text })),
+        directParagraphIds: scope.editableParagraphIds,
+        endingParagraphIds: endingParagraphs.map(p => p.id),
+      } : scope;
+      const relatedEndingCandidates = focusedReview ? findings.flatMap(({ id, issue }) => {
+        const cues = [...issue.matchAll(/[“「]([^”」\r\n]{4,80})[”」]/gu)].map(match => match[1]!);
+        const matches = endingParagraphs.filter(p => cues.some(cue => p.text.includes(cue)));
+        return matches.length ? [{ findingId: id, paragraphs: matches.map(({ id, text }) => ({ id, text })) }] : [];
+      }) : [];
+      const revisionNeighbors = focusedReview ? articleParagraphs(repairBody.content).flatMap((paragraph, index, paragraphs) => {
+        if (!scope.editableParagraphIds.includes(paragraph.id)) return [];
+        const neighbor = (position: number) => {
+          const item = paragraphs[position];
+          return item && !isArticleHeading(item, position) ? item.id : null;
+        };
+        return [{ paragraphId: paragraph.id, previousParagraphId: neighbor(index - 1), nextParagraphId: neighbor(index + 1) }];
+      }) : [];
       return {
         scopeId: `paragraph-revision:${assignment.decisionId}:${repairBody.id}`, actor: 'central_revision', expectedBodyVersionId: repairBody.id,
         systemPrompt: [focusedReview ? FOCUSED_REVISION_INSTRUCTIONS : readingFirst ? READING_REVISION_INSTRUCTIONS : PARAGRAPH_REVISION_SUBMISSION,
           !focusedReview && scope.duplicateParagraphIds.length ? '旧审校引文已无法定位当前稿。本轮只删除 duplicateParagraphIds 中与上一段逐字相同的重复段，每段的 replacement 必须为空字符串。其余段落原样保留。'
             : scope.editableParagraphIds.length ? '' : '当前稿没有可安全修改的段落。本轮提交空的 edits 数组，保留现稿。'].filter(Boolean).join('\n'),
-        userMessage: `修订当前文章的问题段落。\n${styleContext(selectedStyle, 'central_revision')}\nCOLLABORATION_STATE=${JSON.stringify({
+        userMessage: `修订当前文章的问题段落。\n${styleContext(selectedStyle, 'central_revision')}${closingFinding ? '\n本轮有意见标在末两段。先看 precedingBody（如有）和全文：如果前文用相同的迹象断定原因，先把那句作为 relatedEdits 的 quote，就地写清这一步值得查什么。即使不在 directParagraphIds，也可以用其段落编号。倒数第二段如已给做法，保留原有动作，把归因、分类和例外清单拿掉。最后一段如被指出推断有问题，整段换成一个已有的场景或动作，或直接收回作者的态度。就此落笔，别重复或反驳审稿所引的话。' : ''}\nCOLLABORATION_STATE=${JSON.stringify({
           actor: 'central_revision', stage: 'central_revision', revisionMode: 'paragraphs', ready: current.ready, finished: false,
           nextStage: current.nextStage, inputVersionIds: inputs, unreadArtifactVersionIds: [],
           confirmedFocus, authorReplies, authorClarifications, ...(!focusedReview ? { taskInstruction: assignment.reason } : {}),
-          baseBodyVersionId: repairBody.id, paragraphScope: scope,
+          baseBodyVersionId: repairBody.id, paragraphScope,
+          ...(precedingBody.length ? { precedingBody } : {}),
           ...(focusedReview ? { sources: workflow.lintSources(runId) } : { sourceReadings: researchReadings(storage, projectId, research, authorized) }),
-          revisionFeedback: { findings: focusedReview ? findings.map(({ id, quote, issue }) => ({ id, quote, issue })) : findings },
+          revisionFeedback: { findings: focusedReview ? findings.map(({ id, quote, issue, severity }) => ({ id, quote, issue, severity,
+            ...(originQuotes.has(id) ? { originQuote: originQuotes.get(id) } : {}) })) : findings },
           revisionOutputSchema: { type: 'object', properties: { [field]: focusedReview
             ? REVIEW_EDITS_SCHEMA : paragraphEditsOutputSchema(repairBody.id, scope) }, required: [field], additionalProperties: false },
+          ...(relatedEndingCandidates.length ? { relatedEndingCandidates } : {}),
+          ...(revisionNeighbors.length ? { revisionNeighbors } : {}),
         })}`,
         allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
         textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'central_revision', content: repairBody.content }, format: 'json_object' },
@@ -581,25 +635,9 @@ export function createWritingCollaboration(options: {
       if (!body || body.id !== current.expectedBodyVersionId || !inputs.includes(body.id)) {
         throw new ToolExecutionFault('BASE_VERSION_CONFLICT', '终稿检查需要使用这次任务绑定的修订稿。');
       }
-      const parentId = body.reason === 'workflow:central_revision' ? body.parentVersionIds[0] : undefined;
-      const parent = parentId ? storage.getArtifactVersion(parentId) : null;
-      const previousParagraphs = parent?.projectId === projectId ? articleParagraphs(parent.content) : [];
-      const currentParagraphs = articleParagraphs(body.content);
-      const repeatedData = findCrossSectionDataRepeats(currentParagraphs);
-      const beforeRevision = previousParagraphs.length === currentParagraphs.length ? currentParagraphs.flatMap((paragraph, index) => {
-        const before = previousParagraphs[index]!.text;
-        return before === paragraph.text ? [] : [{ before, after: paragraph.text }];
-      }) : [];
       return {
         scopeId: `language-lint:${assignment.decisionId}:${body.id}`, actor: 'language_review', expectedBodyVersionId: body.id,
-        disableConfiguredThinking: true, systemPrompt: FINAL_LINT_INSTRUCTIONS +
-          (practicalGuide ? `\n${GUIDE_LINT_INSTRUCTIONS}` : ''),
-        userMessage: `请检查这版文章。\nCOLLABORATION_STATE=${JSON.stringify({
-          actor: 'language_review', stage: 'language_review', baseBodyVersionId: body.id, body: body.content, confirmedFocus,
-          sources: workflow.lintSources(runId), protectedHypotheses: workflow.protectedHypotheses(runId), beforeRevision,
-          ...(repeatedData.length ? { crossSectionDataRepeats: repeatedData } : {}),
-          lintOutputSchema: { type: 'object', properties: { lintEdits: LINT_EDITS_SCHEMA }, required: ['lintEdits'], additionalProperties: false },
-        })}`,
+        disableConfiguredThinking: true, ...finalLintMessages(body.content, body.id, practicalGuide),
         allowedTools: ['submit_writing_stage'], modelTools: [], toolChoice: 'none',
         textOutputTool: { name: 'submit_writing_stage', arguments: { stage: 'language_review', content: body.content }, format: 'json_object' },
         roleToolFields: { submit_writing_stage: { allowed: ['stage', 'content', 'lintEdits'], required: ['lintEdits'], stringFields: ['content'] } },

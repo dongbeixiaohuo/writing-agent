@@ -427,7 +427,7 @@ test('targeted verification of a suspect year exposes the material error without
       const messages = request.messages.filter(m => m.role === 'tool');
       let name: string, args: unknown;
       if (state.factPhase === 'extract') {
-        assert.match(request.messages.filter(m => m.role === 'system').map(m => m.content).join('\n'), /重要、易错或疑似错误/u);
+        assert.match(request.messages.filter(m => m.role === 'system').map(m => m.content).join('\n'), /容易出错的事实/u);
         name = 'prepare_fact_check';
         args = { claims: [{ claimText: '示例项目在2025年发布', articleQuote: '示例项目在2025年发布',
           location: 'body', matchedEvidenceIds: [], checkReason: 'key_fact' }], noFactualClaimsReason: '' };
@@ -479,7 +479,7 @@ test('enabled Tavily does not force public proof of author firsthand facts, and 
     constructor() { super('firsthand-mock', '1', { protocol: 'mock', tools: 'supported', streaming: 'supported', usage: 'unknown' }); }
     protected async *providerStream(request: ModelRequest): AsyncIterable<ProviderStreamEvent> {
       requests++;
-      assert.match(request.messages.filter(m => m.role === 'system').map(m => m.content).join('\n'), /不是论文审稿/u);
+      assert.match(request.messages.filter(m => m.role === 'system').map(m => m.content).join('\n'), /不追加论文式限定或出处要求/u);
       const state = JSON.parse(request.messages.find(m => m.role === 'user')!.content);
       const extract = state.factPhase === 'extract';
       const name = extract ? 'prepare_fact_check' : 'submit_fact_check';

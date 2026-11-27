@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ToolExecutionFault } from '../../runtime/tools/src/index.js';
 import { articleParagraphs, quoteParagraphIds } from './paragraph-revision.js';
-import { MAX_PERSUASION_FINDINGS, isArticleHeading } from './focused-review.js';
+import { MAX_PERSUASION_FINDINGS, isArticleHeading, reviewOriginQuote } from './focused-review.js';
 
 const nonBlank = z.string().regex(/\S/u, 'Expected non-blank text');
 const recoverySchema = z.strictObject({
@@ -32,6 +32,8 @@ const findingsSchema = z.array(findingSchema).max(12);
 const coldFindingsSchema = z.array(findingSchema.omit({ recovery: true }).extend({ evidenceIds: z.array(nonBlank).max(0) })).max(12);
 const persuasionFindings = z.array(coldFindingsSchema.element.omit({ paragraphIds: true, repairTarget: true }).extend({
   kind: z.literal('inference'),
+  evidenceIds: z.array(nonBlank).max(0).optional(),
+  originQuote: z.string().max(900).nullable().optional().describe('一句可收窄的过强归因：逐字引用正文最早作出这个判断的原句；可与 quote 相同。'),
 })).max(MAX_PERSUASION_FINDINGS);
 const coldReadingSchema = readingSchema.extend({ verdict: z.enum(['delivered', 'revise']), queries: z.array(nonBlank).max(0), questions: z.array(nonBlank).max(0) });
 const resolutionsSchema = z.array(z.strictObject({
@@ -74,7 +76,7 @@ const auditDefinition = toolSchema(auditSchema.extend({ newFindings: publicFindi
 export const REVISION_AUDIT_JSON_SCHEMA = { ...auditDefinition,
   properties: { ...auditDefinition.properties, reading: READING_JSON_SCHEMA } };
 
-export type ReviewFinding = z.infer<typeof findingSchema>;
+export type ReviewFinding = z.infer<typeof findingSchema> & { originQuote?: string };
 export type ReadingAssessment = z.infer<typeof readingSchema>;
 export type BoundReviewFinding = ReviewFinding & {
   readonly id: string;
@@ -183,7 +185,10 @@ export function validatePersuasionFindings(value: unknown, body: string): Review
     covered.add(quote);
   }
   // Older review records share a storage schema that requires repairTarget.
-  return findings.map(finding => ({ ...finding, repairTarget: finding.issue }));
+  return findings.map(({ originQuote, ...finding }) => {
+    const origin = reviewOriginQuote(body, finding.quote, originQuote);
+    return { ...finding, ...(origin ? { originQuote: origin } : {}), evidenceIds: [], repairTarget: finding.issue };
+  });
 }
 
 export function parseReviewResolutions(value: unknown, findings: readonly BoundReviewFinding[], content: string) {

@@ -36,8 +36,9 @@ import { confirmedWritingDirection } from './conversation-intake.js';
 import { researchReadings } from './research-readings.js';
 import { usesPublicSources, withResearchSupplement, type OutlineSupplement } from './research-supplement.js';
 import { JSON_SCHEMA as REVISION_COMPARISON_SCHEMA, parseRevisionComparison } from './revision-comparison.js';
-import { applyParagraphEdits, PARAGRAPH_EDITS_SCHEMA, quoteParagraphIds } from './paragraph-revision.js';
-import { applyLintEdits, applyReviewEdits, LINT_EDITS_SCHEMA, REVIEW_EDITS_SCHEMA, type LintSource } from './focused-review.js';
+import { applyParagraphEdits, articleParagraphs, PARAGRAPH_EDITS_SCHEMA, quoteParagraphIds } from './paragraph-revision.js';
+import { applyLintEdits, applyReviewEdits, bindReviewExcerpt, isArticleHeading, LINT_SUBMISSION_SCHEMA, REVIEW_EDITS_SCHEMA,
+  REVIEW_EXCERPT_SCHEMA, type LintSource, type ReviewExcerptSelection } from './focused-review.js';
 import { inlineMaterialContext } from './material-context.js';
 import { JSON_SCHEMA as REVIEW_FINDINGS_SCHEMA, PERSUASION_FINDINGS_SCHEMA, RESOLUTIONS_JSON_SCHEMA, REVISION_AUDIT_JSON_SCHEMA,
   validateReviewFindings, validateColdReviewFindings, validatePersuasionFindings, parseReadingAssessment, parseReviewResolutions, parseRevisionAudit, READING_JSON_SCHEMA, needsArticleRedevelopment,
@@ -96,6 +97,7 @@ export interface WritingWorkflowTools {
   recoverCentralRevision(runId: string, events: readonly RuntimeEvent[]): ArtifactVersion | null;
   reviewClosure(runId: string): ReviewClosure | null;
   revisionWork(runId: string, bodyVersionId: string | null): { closure: ReviewClosure; returnReportId: string | null } | null;
+  reviewExcerpt(base: ArtifactVersion, findings: readonly BoundReviewFinding[]): ReturnType<typeof bindReviewExcerpt<BoundReviewFinding>> | null;
   reviewFindingsRequired(runId: string): boolean;
   lintSources(runId: string): LintSource[];
   protectedHypotheses(runId: string): string[];
@@ -224,9 +226,13 @@ export function bodyArticleBaseline(content: string): string {
   return (marker ? content.slice(0, marker.index).replace(/\n\s*(?:---|\*\*\*)\s*$/u, '') : content).trim();
 }
 
+// A limit on an inference can itself be the article's point. The older body
+// policy treated it as a work note even when no source assessment was present.
+const inferenceLimit = /(?:不能|不宜|无法|难以|不足以)[^。！？\n]{0,24}(?:推断|认定|猜测|扩写|证明|当作|归因|算作|算到|算在)/u;
+const editorialInferenceLimit = new RegExp('(?:现有|手头|本轮|所给)的?(?:材料|资料|证据)[^。！？\\n]{0,20}' + inferenceLimit.source, 'u');
 const EDITORIAL_CAVEAT_PATTERNS = [
   /(?:细节|记载|记述|故事|传闻|传说|史料|记录|证据)[^。！？\n]{0,24}(?:未必|很难|难以|无法|不能|不可)[^。！？\n]{0,16}(?:核实|证实|确认|断定)/u,
-  /(?:不能|不宜|无法|难以|不足以)[^。！？\n]{0,24}(?:推断|认定|猜测|扩写|证明|当作|归因|算作|算到|算在)/u,
+  inferenceLimit,
   /(?:材料|证据|报道|记载|回忆|转述|史料)[^。！？；：，,\n]{0,20}(?:不能|不宜|无法|难以|不足以)[^。！？；：，,\n]{0,16}判断/u,
   /(?:不能|不宜|无法|难以|不足以)[^。！？；：\n]{0,8}(?:据此|凭[^。！？；：\n]{1,10}(?:材料|证据|报道|记载|回忆|转述|史料))[^。！？；：\n]{0,8}判断/u,
   /(?:细节|记载|记述|故事|传闻|传说|史料|记录|证据|材料|文本)[^。！？\n]{0,16}(?:不能|无法|难以)[^。！？\n]{0,12}告诉/u,
@@ -237,24 +243,39 @@ const EDITORIAL_CAVEAT_PATTERNS = [
   /(?:^|\n)这是(?:一则|一段)?[^。！？\n]{0,16}(?:野史|传闻|传说|后人记述|后人转述|笔记)/u,
   /应当当作(?:传闻|传说|野史)读/u,
 ];
+const READER_CAVEAT_PATTERNS = EDITORIAL_CAVEAT_PATTERNS.map(pattern =>
+  pattern === inferenceLimit ? editorialInferenceLimit : pattern);
 
 export function assertCleanBodyStageContent(stage: BodyStage, content: string, boundBody?: string,
-  rejectEditorialCaveats = false): void {
+  rejectEditorialCaveats: boolean | 'reader_review' = false): void {
   const normalized = content.trim();
   if (rejectEditorialCaveats) {
-    const quotes = [...new Set(EDITORIAL_CAVEAT_PATTERNS.flatMap(pattern =>
+    const patterns = rejectEditorialCaveats === 'reader_review' ? READER_CAVEAT_PATTERNS : EDITORIAL_CAVEAT_PATTERNS;
+    const quotes = [...new Set(patterns.flatMap(pattern =>
       Array.from(normalized.matchAll(new RegExp(pattern.source, 'gu')), match => match[0])))];
-    if (quotes.length > 0) throw new ToolExecutionFault(
-      'BODY_STAGE_CONTAINS_EDITORIAL_CAVEATS',
-      'Remove editorial source assessment and inference-boundary commentary from the article',
-      false,
-      {
-        stage,
-        quote: quotes[0]!,
-        quotes,
-        correction: '删除来源可靠性、核实难度、材料缺口、推断边界和人物内心不可知的说明，不换同义句保留。必要限定只用事实归属、时间和行动表达，再以新的动作、回应或后果推进。',
-      },
-    );
+    if (quotes.length > 0) {
+      const repairNeighborhoods = stage === 'draft' ? articleParagraphs(normalized).flatMap((paragraph, index, paragraphs) => {
+        if (isArticleHeading(paragraph, index) || !quotes.some(quote => paragraph.text.includes(quote))) return [];
+        const neighborhood = [index - 1, index, index + 1].flatMap(position => {
+          const item = paragraphs[position];
+          return item && !isArticleHeading(item, position) ? [{ paragraphId: item.id, text: item.text.slice(0, 4000) }] : [];
+        });
+        return [{ flaggedParagraphId: paragraph.id, paragraphs: neighborhood }];
+      }).slice(0, 4) : [];
+      throw new ToolExecutionFault(
+        'BODY_STAGE_CONTAINS_EDITORIAL_CAVEATS',
+        'Remove editorial source assessment and inference-boundary commentary from the article',
+        false,
+        {
+          stage,
+          quote: quotes[0]!,
+          quotes,
+          correction: '删除来源可靠性、核实难度、材料缺口、推断边界和人物内心不可知的说明，不换同义句保留。必要限定只用事实归属、时间和行动表达，再以新的动作、回应或后果推进。' + (stage === 'draft'
+            ? '先看问题段和前后正文。研究样本或自报口径放进首次介绍，后段只留新解释，别重播前段已交代的数字、设定和发现。只改问题段及需要承接的邻段，标题与其余段落按原稿输出。' : ''),
+          ...(repairNeighborhoods.length ? { repairNeighborhoods } : {}),
+        },
+      );
+    }
   }
   const baseline = boundBody === undefined ? undefined : bodyArticleBaseline(boundBody);
   const containsProcessPostscript = bodyArticleBaseline(normalized) !== normalized;
@@ -884,8 +905,8 @@ const WRITING_STAGE_SCHEMA = {
     resolutions: RESOLUTIONS_JSON_SCHEMA,
     audit: REVISION_AUDIT_JSON_SCHEMA,
     paragraphEdits: PARAGRAPH_EDITS_SCHEMA,
-    reviewEdits: REVIEW_EDITS_SCHEMA,
-    lintEdits: LINT_EDITS_SCHEMA,
+    reviewEdits: { anyOf: [REVIEW_EDITS_SCHEMA, REVIEW_EXCERPT_SCHEMA] },
+    lintEdits: LINT_SUBMISSION_SCHEMA,
     stage: {
       type: "string",
       enum: [
@@ -949,7 +970,7 @@ const FACT_CHECK_SCHEMA = {
           status: {
             type: "string",
             enum: FactClaimStatusSchema.options,
-            description: 'Exact uppercase enum. Unverifiable=UNSUPPORTED; missing author evidence=NEEDS_USER_SOURCE. Partial belongs to supportScope, never status. SUPPORTED requires complete evidence. Final passed/blocked is computed by the application.',
+            description: 'SUPPORTED requires complete evidence. CONTRADICTED requires direct contrary evidence. An aggregate release or notice to institutions neither establishes nor rules out public lookup: use UNSUPPORTED if access is unverified. Missing author evidence=NEEDS_USER_SOURCE. Partial belongs to supportScope. The app computes passed/blocked.',
           },
           risk: { type: "string", enum: ["red", "yellow", "green"] },
           supportScope: { type: "string", enum: ["full", "partial", "none"] },
@@ -1006,6 +1027,7 @@ export function createWritingWorkflowTools(options: {
   readonly requiredInitialArtifactIds?: readonly string[];
   readonly completedArtifactReadIds?: (runId: string) => readonly string[];
   readonly supplementOutline?: OutlineSupplement;
+  readonly reviewExcerpt?: ReviewExcerptSelection;
 }): WritingWorkflowTools {
   const {
     storage,
@@ -1095,6 +1117,22 @@ export function createWritingWorkflowTools(options: {
     const original = stageMarkerLineage(storage, stageMarker(storage, projectId, runId, 'central_revision')).at(-1);
     return original ? JSON.parse(original.content).protectedHypotheses ?? [] : [];
   };
+  const checkLintSubmission = (runId: string, base: ArtifactVersion, edits: unknown,
+    options: Parameters<typeof applyLintEdits>[5] = {}, legacyInferenceVeto = false) => {
+    const editorialPolicy = !isReadingFirstRun(storage, projectId, runId) ? false : legacyInferenceVeto ? true : 'reader_review';
+    return applyLintEdits(base.content, base.id, edits, lintSources(runId), protectedHypotheses(runId), {
+      ...options,
+      trimEditorialAsides: editorialPolicy === 'reader_review',
+      validateBody: (content, headingBaseline) => {
+        if (content.length > 1_000_000) throw new ToolExecutionFault('FINAL_LINT_INVALID', '这条修改使稿件超出可保存长度。');
+        assertCleanBodyStageContent('language_review', content, headingBaseline, editorialPolicy);
+      },
+    });
+  };
+  const lintStageData = (lint: ReturnType<typeof applyLintEdits>) => ({
+    lintEdits: lint.edits, ...(lint.rejected.length ? { lintRejectedEdits: lint.rejected } : {}),
+    ...(lint.editorialCuts.length ? { editorialCuts: lint.editorialCuts } : {}),
+  });
   function revisionReturnOwners(runId: string): Set<string> {
     const owners = new Set([runId]);
     for (const stage of ['review_editor', 'review_publish', 'central_revision'] as const) {
@@ -1161,6 +1199,9 @@ export function createWritingWorkflowTools(options: {
     }
     return { closure: { ...closure, findings, reportVersionIds: [...new Set([...closure.reportVersionIds, report.id])] }, returnReportId: report.id };
   }
+  function reviewExcerpt(base: ArtifactVersion, findings: readonly BoundReviewFinding[]) {
+    return options.reviewExcerpt ? bindReviewExcerpt(base, findings, options.reviewExcerpt) : null;
+  }
   function paragraphSubmission(runId: string, bodyVersionId: string | null, args: Partial<SubmitWritingStageArgs>, reconcileRecorded = false) {
     if (args.paragraphEdits === undefined && args.reviewEdits === undefined) return null;
     const base = bodyVersionId ? storage.getArtifactVersion(bodyVersionId) : null;
@@ -1173,6 +1214,8 @@ export function createWritingWorkflowTools(options: {
       if (args.paragraphEdits !== undefined || !usesFocusedReview(storage, projectId, runId)) {
         throw new ToolExecutionFault('REVIEW_EDITS_INVALID', '仅本轮论点审稿对应的修订可以提交这些局部修改。', true);
       }
+      const excerpt = reviewExcerpt(base, work.closure.findings);
+      if (excerpt) return excerpt.apply(args.reviewEdits);
       return applyReviewEdits(base.content, base.id, args.reviewEdits, work.closure.findings, lintSources(runId), reconcileRecorded);
     }
     return { ...applyParagraphEdits(base.content, base.id, args.paragraphEdits, work.closure.findings), protectedHypotheses: [] };
@@ -1339,11 +1382,27 @@ export function createWritingWorkflowTools(options: {
       if (!base || base.id !== assignment.expectedBodyVersionId || args.content !== base.content ||
           !assignment.inputVersionIds?.includes(base.id) || (!newBody && !(marker && body.id === base.id))) return null;
       try {
-        const lint = applyLintEdits(base.content, base.id, args.lintEdits, lintSources(runId), protectedHypotheses(runId));
-        if (lint.content !== body.content) return null;
-        if (marker) return canonicalJson(JSON.parse(marker.content).lintEdits) === canonicalJson(lint.edits) ? marker : null;
+        const recorded = marker ? JSON.parse(marker.content) : undefined;
+        const matchesSaved = (lint: ReturnType<typeof checkLintSubmission>) => lint.content === body.content &&
+          (!recorded || (canonicalJson(recorded.lintEdits) === canonicalJson(lint.edits) &&
+            canonicalJson(recorded.editorialCuts ?? []) === canonicalJson(lint.editorialCuts) &&
+            canonicalJson(recorded.lintRejectedEdits ?? []) === canonicalJson(lint.rejected)));
+        let lint = checkLintSubmission(runId, base, args.lintEdits);
+        // A skipped edit can leave identical prose with a different receipt.
+        for (const olderChecks of [{}, { checkLocalSampleSizes: false }, { checkLocalSampleSizes: false, checkDetachedReferences: false }]) {
+          if (matchesSaved(lint)) break;
+          lint = checkLintSubmission(runId, base, args.lintEdits, olderChecks, true);
+        }
+        if (!matchesSaved(lint)) {
+          // Older receipts contain only fully accepted batches. Recover one only if it reproduces the committed body exactly.
+          const legacy = applyLintEdits(base.content, base.id, args.lintEdits, lintSources(runId), protectedHypotheses(runId),
+            { checkIntroducedRepeats: false, checkDetachedReferences: false, checkLocalSampleSizes: false });
+          if (legacy.rejected.length || !matchesSaved(legacy)) return null;
+          lint = legacy;
+        }
+        if (marker) return marker;
         markStage(storage, { projectId, runId, operationId }, 'language_review', body.id, undefined, undefined, body.id,
-          { lintEdits: lint.edits });
+          lintStageData(lint));
         return stageMarker(storage, projectId, runId, 'language_review');
       } catch {
         return null; // The normal stage retry retains the already-saved body.
@@ -1661,7 +1720,7 @@ export function createWritingWorkflowTools(options: {
         if (args.audit !== undefined || args.comparison !== undefined) {
           throw new ToolExecutionFault('FINAL_LINT_INVALID', '终稿检查只提交局部修改。', true);
         }
-        lint = applyLintEdits(base.content, base.id, args.lintEdits, lintSources(context.runId), protectedHypotheses(context.runId));
+        lint = checkLintSubmission(context.runId, base, args.lintEdits);
       } else if (args.lintEdits !== undefined) {
         throw new ToolExecutionFault('FINAL_LINT_INVALID', '只有终稿检查可以提交这组局部修改。', true);
       }
@@ -1808,15 +1867,16 @@ export function createWritingWorkflowTools(options: {
       const candidates = args.stage === 'language_review' && !focusedLint ? revisionCandidates(context.runId) : null;
       const comparison = candidates ? parseRevisionComparison(args.comparison, readOnlyAudit ? { ...candidates, allowOriginal: false } : candidates, content) : null;
       if (args.comparison !== undefined && !candidates) throw new ToolExecutionFault('REVISION_COMPARISON_UNEXPECTED', 'Comparison is only accepted for the bound final review.');
-      if (
+      if (!lint && (
         args.stage === "draft" ||
         args.stage === "central_revision" ||
         args.stage === "language_review"
-      ) {
+      )) {
         const languageSource = args.stage === "language_review" ? markerPayload(stageMarker(storage, context.projectId, context.runId, "central_revision")) : null;
         const selected = candidates && comparison ? (comparison.selectedVersionId === candidates.original.id ? candidates.original : candidates.revised) : null;
-        assertCleanBodyStageContent(args.stage, content, selected?.content ?? (languageSource === null ? undefined : storage.getArtifactVersion(languageSource.artifactVersionId)?.content),
-          isReadingFirstRun(storage, projectId, context.runId));
+        const structureBaseline = selected?.content ??
+          (languageSource === null ? undefined : storage.getArtifactVersion(languageSource.artifactVersionId)?.content);
+        assertCleanBodyStageContent(args.stage, content, structureBaseline, isReadingFirstRun(storage, projectId, context.runId));
       }
       const artifact = commitStageArtifact(storage, context, args.stage, content, findings, reading);
       if (prewriting) savePrewriting(context, prewriting, artifact.id);
@@ -1826,7 +1886,7 @@ export function createWritingWorkflowTools(options: {
       }
       markStage(storage, context, args.stage, artifact.id, undefined, undefined, lint || comparison || resolutions || args.stage === 'central_revision' && closure ? artifact.id : undefined,
         { ...(prewriting?.readingRoute ? { readingFirst: true, focusedReview: true } : {}),
-          ...(lint ? { lintEdits: lint.edits } : {}),
+          ...(lint ? lintStageData(lint) : {}),
           ...(args.stage === 'central_revision' && closure ? { ...(resolutions ? { resolutions } : { revisionMode: paragraphRepair ? 'paragraphs' : 'redevelop' }),
           ...(paragraphRepair ? { baseBodyVersionId: context.expectedBodyVersionId,
             ...(args.reviewEdits === undefined ? { paragraphEdits: args.paragraphEdits } : { reviewEdits: args.reviewEdits,
@@ -1849,6 +1909,9 @@ export function createWritingWorkflowTools(options: {
         artifactVersionId: artifact.id,
         bodyVersionId: storage.inspectProject(context.projectId)?.latestBodyVersionId ?? null,
         nextStage,
+        ...(lint ? { lintAppliedIndexes: lint.appliedIndexes, lintRejectedEdits: lint.rejected,
+          ...(lint.editorialCuts.length ? { editorialCuts: lint.editorialCuts } : {}),
+          ...(lint.rejected.length ? { message: `终审已保存 ${lint.appliedIndexes.length} 条修改，跳过 ${lint.rejected.length} 条。可在本步输出里查看原因。` } : {}) } : {}),
         ...(args.stage === "research"
           ? {
               evidenceIds: [...evidenceIdsFromLedger(artifact.content)],
@@ -2121,6 +2184,7 @@ export function createWritingWorkflowTools(options: {
     revisionCandidates,
     reviewClosure,
     revisionWork,
+    reviewExcerpt,
     reviewFindingsRequired,
     lintSources,
     protectedHypotheses,

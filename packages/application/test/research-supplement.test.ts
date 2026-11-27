@@ -4,6 +4,7 @@ import test from 'node:test';
 import { editorialPlanFixture } from './collaboration-fixture.js';
 import { replayReadingHandoff, type ReadingHandoffFixture } from './reading-handoff-replay.js';
 import { parsePrewriting } from '../src/prewriting.js';
+import type { ResearchReading } from '../src/research-readings.js';
 import { selectedSourceCoverage } from '../src/research-supplement.js';
 
 const direction = '老板说员工在乎钱，奖金规则却说不清。';
@@ -142,24 +143,25 @@ test('a guide preserves an actionable excerpt within the source budget and hands
       ],
     },
   };
-  const saved = '# 扫码点餐遇到卡点\n\n记好店名。有关部门在各自职责范围内负责监督管理。';
+  const boilerplate = '有关部门在各自职责范围内负责监督管理。';
+  const saved = `# 扫码点餐遇到卡点\n\n记好店名。${boilerplate}${instructions}`;
   const replay = await replayReadingHandoff(guide, 'missing', { body: saved, answer(request, stage) {
     const state = JSON.parse(request.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
     if (stage === 'review_editor') return { findings: [] };
     if (stage === 'central_revision') return { reviewEdits: { baseBodyVersionId: state.baseBodyVersionId, edits: [] } };
-    assert.match(request.messages[0]!.content, /没有读者动作的句子/u);
-    assert.ok(state.sources.some((item: { id: string; sourceType?: string }) => item.id === portalUrl && item.sourceType === 'search_excerpt'));
-    return { lintEdits: { baseBodyVersionId: state.baseBodyVersionId, edits: [{ kind: 'material',
-      quote: '有关部门在各自职责范围内负责监督管理。', replacement: instructions,
-      source: { id: portalUrl, quote: instructions }, reason: '给出具体入口和材料。' }] } };
+    assert.equal(state.body, saved);
+    assert.equal(state.sources, undefined);
+    assert.match(request.messages[0]!.content, /保留已写清的操作入口/u);
+    return { lintEdits: { baseBodyVersionId: state.baseBodyVersionId, edits: [{ kind: 'wording',
+      quote: boilerplate, replacement: '', reason: '下一句已经给出投诉入口和材料。' }] } };
   } });
   assert.deepEqual(replay.publicQueries, [startQuery]);
   const handoff = JSON.parse(replay.draftRequest.messages[1]!.content.split('\nCOLLABORATION_STATE=').at(-1)!);
   assert.equal(handoff.writingPlan.readingRoute.question, topic);
   assert.deepEqual(handoff.writingPlan.guideSteps, guide.assessment.guideSteps?.slice(0, 2));
   assert.equal(handoff.sourceReadings.length, 4);
-  assert.ok(handoff.sourceReadings.some((entry: { url: string }) => entry.url === portalUrl));
-  assert.equal(replay.finalBody, saved.replace('有关部门在各自职责范围内负责监督管理。', instructions));
+  assert.ok(handoff.sourceReadings.some((entry: ResearchReading) => entry.url === portalUrl && entry.text.includes(instructions)));
+  assert.equal(replay.finalBody, saved.replace(boilerplate, ''));
 
   const missing = await replayReadingHandoff({ ...guide,
     recordedResearch: { ...guide.recordedResearch!, queries: new Map([[startQuery, []]]) },

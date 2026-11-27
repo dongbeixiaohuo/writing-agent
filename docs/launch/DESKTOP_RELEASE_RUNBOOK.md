@@ -47,7 +47,13 @@ npm run desktop:package
 
 `git status --porcelain` 应为空；后续生成物处于忽略范围。构建与测试版本必须一致。如果最终 SHA/版本改变，重新构建并重新核对受影响测试。
 
-Windows 应用内安装需要可信的 Authenticode 签名。正式构建时，将发布证书 DER 的 SHA-256 指纹配置为 GitHub Actions 变量 `DESKTOP_UPDATE_SIGNER_SHA256`，并将签名证书和密码配置为 `DESKTOP_WIN_CSC_LINK`、`DESKTOP_WIN_CSC_KEY_PASSWORD` secrets。使用本地签名环境时，对应构建变量为 `WRITING_AGENT_UPDATE_SIGNER_SHA256`、`WIN_CSC_LINK`、`WIN_CSC_KEY_PASSWORD`。校验脚本检查安装器已受 Windows 信任，且证书指纹与客户端绑定值一致。证书更换后，现有客户端需手动安装首个绑定新证书的版本。
+Windows 应用内安装需要可信的 Authenticode 签名。SignPath 的 CI 令牌保存在仓库 Actions Secret `SIGNPATH_API_TOKEN`，组织 ID 保存在 Actions Variable `SIGNPATH_ORGANIZATION_ID`。在 SignPath 的 `writing-agent` 项目关联 GitHub.com，并将[安装包 XML](../../.github/signpath/windows-installer.xml)保存为默认 Artifact Configuration。若使用具名配置，把它的 slug 填入 Actions Variable `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`。[SignPath 的 GitHub 集成说明](https://docs.signpath.io/trusted-build-systems/github)
+
+- 从受保护的 `main` 手动运行 **Desktop RC candidate**，选择 `test-signing`。GitHub 将本次构建的一个安装器打成 ZIP。SignPath 返回后，临时 Windows runner 验证测试签名，记录证书指纹并试装。测试结果在 Actions 的 `writing-agent-windows-x64-test-signing` 中，仅用于配置复核。
+- Foundation 签发正式证书后，从 SignPath 导出的生产证书独立核对 DER SHA-256，将该值填入 `DESKTOP_UPDATE_SIGNER_SHA256`。用下一个 RC 选择 `release-signing`。构建将指纹写入 App，正常的 Windows 信任验证及签名者指纹均须通过。工作流使用签名后的安装器重新生成 blockmap、`latest.yml` 和校验文件。公开发布使用 `writing-agent-windows-x64-release-signing` 中同次构建的资产。
+- 首次从旧的未签名版本升级时，先手动安装第一个绑定正式证书的 RC。保持 App 开启，在相同证书的下一 RC 发布后点一次「立即更新」，验证自动重开、原稿和未发送草稿。以后更换所绑定的证书同样需要引导安装一次。
+
+既有的本地证书构建可在 `candidate` 模式下通过 `DESKTOP_WIN_CSC_LINK`、`DESKTOP_WIN_CSC_KEY_PASSWORD` 提供签名凭据。本地变量为 `WRITING_AGENT_UPDATE_SIGNER_SHA256`、`WIN_CSC_LINK`、`WIN_CSC_KEY_PASSWORD`。
 
 ## 5. 只整理本版本资产与校验值
 
@@ -77,7 +83,7 @@ if ($signature.Status -eq 'Valid') {
 }
 ```
 
-签名必须在 `electron-builder` 生成 `latest.yml` 和校验文件前完成。受信任的签名包将该版本 `latest.yml` 和 `SHA256SUMS.txt` 一并复制到发布目录。未签名包只发布安装器、blockmap 和这两项的校验值，GitHub 提示仍可发现它并引导手动下载。打包后替换任何文件都需要重新生成并校验同一组资产。
+更新清单和校验文件必须匹配最终签名的安装器。使用 SignPath 时，以签名返回后重新生成的资产为准。历史未签名包只发布安装器、blockmap 和这两项的校验值，GitHub 提示仍可发现它并引导手动下载。打包后替换任何文件都需要重新生成并校验同一组资产。
 
 检查候选包不含 Key、用户库、私人稿件、绝对开发路径、源码映射和无关运行时。保留 LICENSE、THIRD_PARTY_NOTICES 和构建清单。安装包未签名时，维护者需明确接受公开风险，并在 Release 说明，不要求用户关闭安全防护。
 

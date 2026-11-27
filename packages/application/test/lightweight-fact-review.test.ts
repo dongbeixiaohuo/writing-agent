@@ -34,6 +34,8 @@ test('extraction and verification have compact, distinct prompts without writing
   assert.match(verify, /先对照已有材料[\s\S]*只对仍存疑/u);
   assert.doesNotMatch(verify, /searchBudget.target|最低.*查询/u);
   assert.match(verify, /callId.*URL/u);
+  assert.match(extract, /谁能查到哪项明细.*总数分开/u);
+  assert.match(verify, /具体入口才是SUPPORTED.*不对这类读者开放才是CONTRADICTED.*只公布总数.*UNSUPPORTED/u);
   assert.match(builder('verify', false), /未联网/u);
 });
 

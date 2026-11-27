@@ -891,13 +891,13 @@ export class AgentRuntime {
     let pendingOutputTokenLimit: number | null = null;
     let textSaveFailures = 0;
     const rejectedTextHashes = new Set<string>();
-    const rejectTextOutput = (actor: string | undefined, code: string, text: string): AgentRunResult | null => {
+    const rejectTextOutput = (actor: string | undefined, code: string, text: string, automaticCorrections = 2): AgentRunResult | null => {
       textSaveFailures++;
       const failureKey = `${code}:${contentHash(text.trim())}`;
       const repeated = rejectedTextHashes.has(failureKey);
       rejectedTextHashes.add(failureKey);
       // Local validation feedback is not a provider retry. Bound it per expert assignment.
-      if (!repeated && textSaveFailures < 3) return null;
+      if (!repeated && textSaveFailures <= automaticCorrections) return null;
       this.#sessions.pauseRun({ projectId, runId, operationId: this.#idFactory(), reason: 'STAGE_OUTPUT_NOT_SAVED',
         payload: { actor, validationCode: code, rejectedAttempts: textSaveFailures } });
       return { ok: false, ...this.#facts(active), error: { code: 'STAGE_OUTPUT_NOT_SAVED',
@@ -1380,7 +1380,8 @@ export class AgentRuntime {
             continue executionLoop;
           }
           if (harnessTextOutput && !result.ok) {
-            const stopped = rejectTextOutput(policy?.actor, result.error.code, attempt.text);
+            const stopped = rejectTextOutput(policy?.actor, result.error.code, attempt.text,
+              result.error.details?.automaticCorrections === 1 ? 1 : undefined);
             if (stopped) return stopped;
           }
           if (!harnessTextOutput && !result.ok) {

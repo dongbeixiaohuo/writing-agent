@@ -592,7 +592,8 @@ it('fact check offers local material readback without resending the writing pack
     assert.equal(typeof state.artifacts.find((a: any) => a.kind === 'evidence').content, 'object');
     assert.equal(state.authorAuthorization, undefined);
     assert.ok(Array.isArray(state.preparedClaims));
-    assert.match(request.messages[0]!.content, /重要、易错或疑似错误/u);
+    assert.match(request.messages[0]!.content, /(?:关键|重要)事实/u);
+    assert.match(request.messages[0]!.content, /(?:存疑|疑点|疑似错误)/u);
     assert.ok(request.messages[0]!.content.length < 1400);
     assert.doesNotMatch(request.messages[1]!.content, /必须先用 read_material|约 800 字符/);
     assert.ok(!request.tools?.some(t => t.name === 'read_artifact_version'), 'no reread tool when bound artifacts already provided in full');
@@ -2375,6 +2376,8 @@ it('returns every reading-first caveat to the writer and saves only the correcte
     assert.match(correction, /BODY_STAGE_CONTAINS_EDITORIAL_CAVEATS/u);
     assert.match(correction, /不能因此认定/u);
     assert.match(correction, /算作/u);
+    assert.match(correction, /repairNeighborhoods/u);
+    assert.match(correction, /首次介绍/u);
     const bodies = f.storage.listArtifactVersions('p', 'body', 'main');
     assert.equal(bodies.length, 1);
     assert.doesNotMatch(bodies[0]!.content, /不能因此认定|后辈遭遇.*算作/u);
@@ -3017,7 +3020,7 @@ it('fact specialist contract explicitly separates uncertain evidence from schema
     assert.ok(request);
     assert.match(request.messages[0]!.content, /NEEDS_USER_SOURCE/);
     assert.match(request.messages[0]!.content, /UNSUPPORTED/);
-    assert.match(request.messages[0]!.content, /中低风险忽略.*不阻断/u);
+    assert.match(request.messages[0]!.content, /中低风险[^。\n]*不阻断/u);
     assert.match(request.messages[0]!.content, /external_source.*callId.*URL/u);
     assert.ok(request.tools?.some(tool => tool.name === 'submit_fact_check'));
     assert.equal(request.parameters.toolChoice, 'required');
