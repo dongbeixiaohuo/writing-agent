@@ -10,6 +10,7 @@ import type { JsonValue, WritingBrief } from '../../writing-core/src/index.js';
 import type { StyleSelectionSnapshot } from '../../writing-core/src/style-package.js';
 import { createWritingCollaboration } from '../src/collaboration.js';
 import { createFactSearchTools } from '../src/fact-search.js';
+import type { ReviewExcerptSelection } from '../src/focused-review.js';
 import type { PrewritingAssessment } from '../src/prewriting.js';
 import type { ResearchReading } from '../src/research-readings.js';
 import { createOutlineSupplement } from '../src/research-supplement.js';
@@ -47,6 +48,7 @@ export interface ReadingHandoffFixture {
 
 interface PostDraftReplay {
   body: string;
+  reviewExcerpt?: ReviewExcerptSelection;
   stopAfterCentralRevision?: boolean;
   answer(request: ModelRequest, stage: 'review_editor' | 'central_revision' | 'language_review'): Record<string, unknown>;
 }
@@ -126,6 +128,7 @@ export async function replayReadingHandoff(fixture: ReadingHandoffFixture,
       },
     };
     const workflow = createWritingWorkflowTools({ storage, projectId, mode: 'deep', requireEditorialPlan: true,
+      ...(postDraft?.reviewExcerpt ? { reviewExcerpt: postDraft.reviewExcerpt } : {}),
       supplementOutline: createOutlineSupplement(storage, projectId, supplementSearch, reader) });
     const collaboration = createWritingCollaboration({ storage, projectId, workflow, researchSearch: search, supplementSearch,
       systemPrompt: '使用已确认的作者方向。', directorMessage: '按顺序交接。', expertMessage: '按顺序交接。', materialIds,

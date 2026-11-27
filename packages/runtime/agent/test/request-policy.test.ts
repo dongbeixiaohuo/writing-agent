@@ -221,7 +221,7 @@ it('projects duplicate read results for a request without losing original histor
   } finally { storage.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-for (const scenario of ['repeated', 'changing', 'corrected'] as const) {
+for (const scenario of ['repeated', 'changing', 'corrected', 'one-correction'] as const) {
 it(`bounds local text-save corrections without replaying a stage indefinitely: ${scenario}`, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'text-save-loop-'));
   const storage = openWorkspaceStorage({ workspacePath: dir });
@@ -230,7 +230,8 @@ it(`bounds local text-save corrections without replaying a stage indefinitely: $
     constructor() { super('loop', '1', { protocol:'mock', streaming:'supported', tools:'supported', usage:'unknown' }); }
     protected async *providerStream(): AsyncIterable<ProviderStreamEvent> {
       requests++;
-      yield {type:'text_delta', delta: scenario === 'corrected' && requests > 1 ? '# Correct article' : scenario === 'changing' ? `invalid ${requests}` : 'same invalid article'};
+      yield {type:'text_delta', delta: scenario === 'corrected' && requests > 1 ? '# Correct article'
+        : scenario === 'changing' || scenario === 'one-correction' ? `invalid ${requests}` : 'same invalid article'};
       yield {type:'completed', finishReason:'stop'};
     }
   }
@@ -238,7 +239,11 @@ it(`bounds local text-save corrections without replaying a stage indefinitely: $
     storage.createProject({operationId:'p',projectId:'p',name:'fixture',mode:'quick',actor:{kind:'user',id:'u'}});
     const tools = ToolRegistry.create([{ name:'save',version:'1.0.0',description:'save',effect:'local_idempotent',permissions:[],
       inputSchema:{type:'object',properties:{content:{type:'string'}},required:['content']},
-      execute(args:any) { if (!args.content.startsWith('#')) throw new ToolExecutionFault('BODY_STAGE_STRUCTURE_MISMATCH','missing title',false,{requiredHeadings:['# Correct article']}); saves++; return {}; } }]);
+      execute(args:any) {
+        if (!args.content.startsWith('#')) throw new ToolExecutionFault('BODY_STAGE_STRUCTURE_MISMATCH','missing title',false,
+          { requiredHeadings:['# Correct article'], ...(scenario === 'one-correction' ? { automaticCorrections: 1 } : {}) });
+        saves++; return {};
+      } }]);
     const runtime = new AgentRuntime({provider:new Provider(),sessions:storage,tools,
       requestPolicy:()=>({scopeId:'language',actor:'language_review',systemPrompt:'write',userMessage:'write',allowedTools:['save'],modelTools:[],textOutputTool:{name:'save',arguments:{},contentArgument:'content'}}),
       completeAfterTool:result=>result.ok ? {artifactVersionId:'saved',content:'done'} : null});
