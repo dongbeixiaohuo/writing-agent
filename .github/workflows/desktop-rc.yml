@@ -100,6 +100,7 @@ jobs:
           output-artifact-directory: output/signpath/signed
       - name: Verify returned installer and record certificate
         if: inputs.signing != 'candidate'
+        timeout-minutes: 5
         shell: pwsh
         env:
           SIGNING_POLICY: ${{ inputs.signing }}
