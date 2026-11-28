@@ -13,7 +13,11 @@ import {
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "author-preferences-"));
-  const storage = openWorkspaceStorage({ workspacePath: directory });
+  let nextTimestamp = Date.UTC(2026, 0, 1);
+  const storage = openWorkspaceStorage({
+    workspacePath: directory,
+    clock: () => new Date(nextTimestamp++).toISOString(),
+  });
   for (const projectId of ["project-a", "project-b"]) {
     assert.equal(storage.createProject({
       operationId: `create-${projectId}`,

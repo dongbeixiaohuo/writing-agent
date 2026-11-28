@@ -11,6 +11,7 @@ if ($entries.Count -ne 1 -or $entries[0].PSIsContainer -or $entries[0].Name -cne
     throw "Expected only the Windows x64 installer for $version from SignPath."
 }
 $installer = $entries[0]
+Write-Host "Checking the embedded Authenticode signature on $($installer.Name)."
 $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
 $certificate = $signature.SignerCertificate
 if ($null -eq $certificate -or $signature.SignatureType -ne 'Authenticode') { throw 'Missing embedded Authenticode signature.' }
@@ -26,14 +27,17 @@ if ($Policy -eq 'release-signing') {
     if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $certificate.Subject -ne $certificate.Issuer) {
         throw 'Test certificate validation needs a GitHub-hosted Windows runner and the self-signed test certificate.'
     }
-    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser')
+    # CurrentUser\Root can display a consent dialog and stall an unattended runner.
+    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'LocalMachine')
     $added = $false
     try {
-        $store.Open('ReadWrite')
+        $store.Open('ReadWrite, OpenExistingOnly')
         if (-not ($store.Certificates | Where-Object Thumbprint -eq $certificate.Thumbprint)) {
+            Write-Host 'Temporarily trusting the test certificate on the disposable Windows runner.'
             $store.Add($certificate)
             $added = $true
         }
+        Write-Host 'Verifying the signed installer with Windows.'
         $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
         if ($signature.Status -ne 'Valid') { throw "Test installer signature validation failed: $($signature.StatusMessage)" }
     } finally {
